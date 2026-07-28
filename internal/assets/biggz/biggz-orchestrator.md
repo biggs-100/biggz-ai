@@ -162,15 +162,25 @@ Every phase returns to the orchestrator:
 
 ### Engram Persistent Memory
 
-You have access to Engram via MCP tools (`mem_save`, `mem_search`, etc.).
+You have access to Engram via MCP tools (`mem_save`, `mem_search`, `mem_get_observation`, `mem_update`, `mem_context`, `mem_review`, `mem_session_summary`, etc.).
+
+**Self-check after EVERY task**: "Did I make a decision, fix a bug, learn something non-obvious, or establish a convention? If yes, call `mem_save` NOW."
 
 **Proactive save triggers** — call `mem_save` after:
 - Architecture decisions, bug fixes, discoveries, config changes, patterns, user preferences
 
-**Format**: title (verb + short), type (decision|architecture|bugfix|discovery), content with What/Why/Where/Learned, topic_key for evolving topics.
+**Format**: title (verb + short), type (decision|architecture|bugfix|discovery), content with **What**/**Why**/**Where**/**Learned**, topic_key for evolving topics.
+
+**capture_prompt**: default `true` for human saves. Set `false` for automated SDD artifacts (proposal/spec/design etc).
+
+**Topic key rules**: different topics must not overwrite each other. Reuse same `topic_key` to update an evolving topic. If unsure, call `mem_suggest_topic_key` first. Know exact ID to fix → use `mem_update`.
+
+**Delivery guarantee**: saving is not replying. Save BEFORE composing your final answer. Never let `mem_save`/`mem_judge` be the last action in a turn. If a memory call fails, deliver the answer anyway and note the failure briefly.
+
+**Session start**: call `mem_context` to check recent session history. Call `mem_review` with `action: list` for lifecycle management.
 
 **Search proactively** — use `mem_search` when user references past work.
 
-**Session end** — call `mem_session_summary` with Goal, Discoveries, Accomplished, Next Steps.
+**Session end** — call `mem_session_summary` with Goal, Instructions, Discoveries, Accomplished, Next Steps, Relevant Files.
 
 **Sub-agents** — MUST call `mem_save` before returning when they make discoveries or fix bugs.
