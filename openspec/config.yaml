@@ -1,0 +1,44 @@
+# biggz-ai — SDD Configuration
+# Rebuild of gentle-ai from scratch, incorporating architectural lessons.
+
+context: |
+  biggz-ai es una reimplementación completa de gentle-ai.
+  El proyecto arranca desde cero con Go como lenguaje target.
+  No hay código base existente — todo se construye desde el protocolo hacia adelante.
+
+strict_tdd: false
+
+testing:
+  runner: none
+  runner_command: ""
+  layers:
+    unit: false
+    integration: false
+    e2e: false
+  coverage: false
+  linter: false
+  type_checker: false
+  formatter: false
+
+phases:
+  proposal:
+    required: true
+    artifact: openspec/changes/{change}/proposal.md
+  spec:
+    required: true
+    artifact: openspec/changes/{change}/spec.md
+  design:
+    required: true
+    artifact: openspec/changes/{change}/design.md
+  tasks:
+    required: true
+    artifact: openspec/changes/{change}/tasks.md
+  apply:
+    required: true
+    artifact: openspec/changes/{change}/apply-progress.md
+  verify:
+    required: true
+    artifact: openspec/changes/{change}/verify-report.md
+  archive:
+    required: true
+    artifact: openspec/changes/{change}/archive-report.md
