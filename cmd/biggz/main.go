@@ -16,6 +16,7 @@ import (
 	"github.com/biggz-ai/biggz/policy"
 	"github.com/biggz-ai/biggz/registry"
 
+	"github.com/biggz-ai/biggz/internal/agents/claude"
 	"github.com/biggz-ai/biggz/internal/agents/opencode"
 	"github.com/biggz-ai/biggz/internal/agents/qwen"
 	"github.com/biggz-ai/biggz/internal/install"
@@ -224,8 +225,9 @@ func installRun() int {
 	adapters := map[string]plugin.AgentAdapter{
 		"opencode": opencode.NewAdapter(),
 		"qwen":     qwen.NewAdapter(),
+		"claude":   claude.NewAdapter(),
 	}
-	priority := []string{"opencode", "qwen"}
+	priority := []string{"opencode", "claude", "qwen"}
 
 	// Determine which adapters to try
 	toTry := priority
