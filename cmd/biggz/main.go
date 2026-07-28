@@ -7,12 +7,6 @@ import (
 	"io"
 	"os"
 
-	"github.com/biggz-ai/biggz/internal/agents/opencode"
-	"github.com/biggz-ai/biggz/internal/install"
-	"github.com/biggz-ai/biggz/internal/lens/readability"
-	"github.com/biggz-ai/biggz/internal/lens/reliability"
-	"github.com/biggz-ai/biggz/internal/lens/resilience"
-	"github.com/biggz-ai/biggz/internal/lens/risk"
 	"github.com/biggz-ai/biggz/model"
 	"github.com/biggz-ai/biggz/orchestrator"
 	"github.com/biggz-ai/biggz/plugin"
@@ -20,6 +14,14 @@ import (
 	"github.com/biggz-ai/biggz/plugintest"
 	"github.com/biggz-ai/biggz/policy"
 	"github.com/biggz-ai/biggz/registry"
+
+	"github.com/biggz-ai/biggz/internal/agents/opencode"
+	"github.com/biggz-ai/biggz/internal/agents/qwen"
+	"github.com/biggz-ai/biggz/internal/install"
+	"github.com/biggz-ai/biggz/internal/lens/readability"
+	"github.com/biggz-ai/biggz/internal/lens/reliability"
+	"github.com/biggz-ai/biggz/internal/lens/resilience"
+	"github.com/biggz-ai/biggz/internal/lens/risk"
 )
 
 // ---- Pipeline Stages ----
@@ -179,11 +181,15 @@ func main() {
 }
 
 // installRun handles the "biggz install" subcommand.
-// It detects the OpenCode agent, deploys skills, merges config, and writes
-// command files. Returns 0 on success, 1 on failure.
+// It tries each supported agent adapter (OpenCode, Qwen) and uses the first
+// one detected. Returns 0 on success, 1 on failure.
 func installRun() int {
 	ctx := context.Background()
-	adapter := opencode.NewAdapter()
+
+	adapters := []plugin.AgentAdapter{
+		opencode.NewAdapter(),
+		qwen.NewAdapter(),
+	}
 
 	dryRun := false
 	for _, arg := range os.Args[2:] {
@@ -192,20 +198,32 @@ func installRun() int {
 		}
 	}
 
-	result, err := install.Run(ctx, adapter, install.Config{DryRun: dryRun})
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
+	var result *install.Result
+	cfg := install.Config{DryRun: dryRun}
+
+	for _, adapter := range adapters {
+		r, err := install.Run(ctx, adapter, cfg)
+		if err == nil && r.AgentDetected {
+			result = r
+			break
+		}
+	}
+
+	if result == nil {
+		fmt.Fprintln(os.Stderr, "error: no supported AI agent detected")
+		fmt.Fprintln(os.Stderr, "Tried: opencode, qwen")
+		fmt.Fprintln(os.Stderr, "Install one of these agents and try again.")
 		return 1
 	}
 
 	if result.DryRun {
-		fmt.Println("Dry-run: would install biggz-ai for OpenCode")
+		fmt.Printf("Dry-run: would install biggz-ai for %s\n", result.BinaryPath)
 		fmt.Printf("  Skills: %d\n", result.SkillsDeployed)
 		fmt.Printf("  Config merge: %v\n", result.ConfigMerged)
 		fmt.Printf("  Commands: %d\n", result.CommandsWritten)
 	} else {
 		fmt.Println("biggz-ai installed successfully")
-		fmt.Printf("  Agent: %s (%s)\n", "opencode", result.BinaryPath)
+		fmt.Printf("  Agent: %s\n", result.BinaryPath)
 		fmt.Printf("  Skills deployed: %d\n", result.SkillsDeployed)
 		fmt.Printf("  Config merged: %v\n", result.ConfigMerged)
 		fmt.Printf("  Commands written: %d\n", result.CommandsWritten)
