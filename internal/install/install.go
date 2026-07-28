@@ -8,6 +8,7 @@ package install
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -86,6 +87,12 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		return result, fmt.Errorf("write commands: %w", err)
 	}
 	result.CommandsWritten = written
+
+	// Update biggz-orchestrator prompt in opencode.json
+	agentConfigPath := filepath.Join(adapter.GlobalConfigDir(homeDir), "opencode.json")
+	if err := updateOrchestratorPrompt(agentConfigPath); err != nil {
+		return result, fmt.Errorf("update orchestrator prompt: %w", err)
+	}
 
 	return result, nil
 }
@@ -205,4 +212,58 @@ func countDirFiles(ffs fs.FS, dir string) int {
 		return nil
 	})
 	return count
+}
+
+// updateOrchestratorPrompt reads the biggz orchestrator prompt from embedded
+// assets and updates the biggz-orchestrator entry in the agent's opencode.json.
+// Uses proper JSON manipulation (encoding/json), never string replacement.
+// This is safe — it only modifies the prompt field of the biggz-orchestrator
+// agent and preserves all other config.
+func updateOrchestratorPrompt(agentConfigPath string) error {
+	// Read the prompt from embedded assets
+	promptData, err := fs.ReadFile(assets.FS, "biggz/biggz-orchestrator.md")
+	if err != nil {
+		// If the prompt file doesn't exist, skip silently
+		return nil
+	}
+	prompt := string(promptData)
+
+	// Read the existing agent config
+	data, err := os.ReadFile(agentConfigPath)
+	if err != nil {
+		// If opencode.json doesn't exist, skip silently
+		return nil
+	}
+
+	// Parse with encoding/json — handles all edge cases
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		return fmt.Errorf("parse opencode.json: %w", err)
+	}
+
+	// Navigate to agent > biggz-orchestrator > prompt
+	agents, ok := config["agent"].(map[string]any)
+	if !ok {
+		return nil // no agents section
+	}
+
+	biggzAgent, ok := agents["biggz-orchestrator"].(map[string]any)
+	if !ok {
+		return nil // no biggz-orchestrator entry
+	}
+
+	// Update the prompt
+	biggzAgent["prompt"] = prompt
+
+	// Write back with proper JSON marshaling
+	out, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(agentConfigPath, out, 0644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	return nil
 }
