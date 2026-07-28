@@ -100,6 +100,11 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		return result, fmt.Errorf("update orchestrator prompt: %w", err)
 	}
 
+	// Deploy MCP binary to ~/.biggz/ and update config
+	if err := deployMCPBinary(homeDir, agentConfigPath); err != nil {
+		return result, fmt.Errorf("deploy mcp: %w", err)
+	}
+
 	return result, nil
 }
 
@@ -294,6 +299,77 @@ func updateOrchestratorPrompt(agentConfigPath string) error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 
+	if err := os.WriteFile(agentConfigPath, out, 0644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	return nil
+}
+
+// deployMCPBinary copies biggz-mcp.exe to ~/.biggz/ and updates the MCP config
+// in opencode.json to point to the deployed binary. This ensures the MCP server
+// works even if the biggz-ai source directory is moved or deleted.
+func deployMCPBinary(homeDir, agentConfigPath string) error {
+	// Determine the deployed binary path
+	biggzDir := filepath.Join(homeDir, ".biggz")
+	if err := os.MkdirAll(biggzDir, 0755); err != nil {
+		return fmt.Errorf("mkdir .biggz: %w", err)
+	}
+
+	// Find the source binary — look next to the running binary first
+	srcPath := "biggz-mcp.exe"
+	exe, err := os.Executable()
+	if err == nil {
+		srcPath = filepath.Join(filepath.Dir(exe), "biggz-mcp.exe")
+	}
+
+	// Check if source exists
+	if _, err := os.Stat(srcPath); err != nil {
+		// Source binary not found, skip MCP deploy
+		return nil
+	}
+
+	dstPath := filepath.Join(biggzDir, "biggz-mcp.exe")
+
+	// Read source
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return fmt.Errorf("read mcp binary: %w", err)
+	}
+
+	// Write destination atomically
+	if err := filemerge.WriteFile(dstPath, data, 0755); err != nil {
+		return fmt.Errorf("write mcp binary: %w", err)
+	}
+
+	// Update MCP config in opencode.json
+	data, err = os.ReadFile(agentConfigPath)
+	if err != nil {
+		return nil // opencode.json doesn't exist, skip
+	}
+
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		return nil
+	}
+
+	mcp, ok := config["mcp"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	engram, ok := mcp["engram"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	// Update the command path
+	engram["command"] = []string{dstPath, "--tools=agent"}
+
+	out, err := json.MarshalIndent(config, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
 	if err := os.WriteFile(agentConfigPath, out, 0644); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
