@@ -108,6 +108,8 @@ func main() {
 		os.Exit(sddVerifyValidateRun())
 	case "sdd-attempt":
 		os.Exit(sddAttemptRun())
+	case "sdd-continue":
+		os.Exit(sddContinueRun())
 	}
 	}
 
@@ -412,5 +414,34 @@ func sddAttemptRun() int {
 	if result.CorrectionLines > 0 {
 		fmt.Printf("Correction lines: %d\n", result.CorrectionLines)
 	}
+	return 0
+}
+
+// sddContinueRun handles the "biggz sdd-continue" subcommand.
+// Usage: biggz sdd-continue <change>
+// It checks which artifacts exist and recommends the next phase.
+func sddContinueRun() int {
+	if len(os.Args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: biggz sdd-continue <change>")
+		return 1
+	}
+	change := os.Args[2]
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	openspecRoot := filepath.Join(cwd, "openspec")
+
+	phase, err := sdd.NextPhase(openspecRoot, change)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Change: %s\n", change)
+	fmt.Printf("Next phase: %s\n", phase)
+	fmt.Printf("Description: %s\n", sdd.NextPhaseDescription(phase))
 	return 0
 }
