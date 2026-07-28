@@ -171,7 +171,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 		textResult(id, "Deleted")
 
 	case "mem_context":
-		sessions, _, err := store.SessionContext(getInt(args, "limit", 5))
+		sessions, err := store.SessionContext(getInt(args, "limit", 5))
 		if err != nil {
 			writeError(id, err.Error())
 			return

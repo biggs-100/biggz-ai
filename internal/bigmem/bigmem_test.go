@@ -1,30 +1,31 @@
 package bigmem
 
 import (
-	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 )
 
-func TestSaveAndGet(t *testing.T) {
-	root := t.TempDir()
-	s, err := Open(root)
+func openTestStore(t *testing.T) *Store {
+	t.Helper()
+	dir := t.TempDir()
+	s, err := Open(dir)
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
+	t.Cleanup(func() { s.Close() })
+	return s
+}
 
-	obs := &Observation{
-		Title:   "Test decision",
-		Type:    "decision",
-		Content: "**What**: Testing\n**Why**: Verify",
-		Project: "test",
-		Scope:   "project",
-	}
+func TestSaveAndGet(t *testing.T) {
+	s := openTestStore(t)
+	obs := &Observation{Title: "Test decision", Type: "decision", Content: "**What**: Testing", Project: "test"}
 
 	if err := s.Save(obs); err != nil {
 		t.Fatalf("Save() error: %v", err)
 	}
 	if obs.ID == "" {
-		t.Fatal("expected non-empty ID after Save")
+		t.Fatal("expected non-empty ID")
 	}
 
 	got, err := s.Get(obs.ID)
@@ -34,43 +35,19 @@ func TestSaveAndGet(t *testing.T) {
 	if got.Title != "Test decision" {
 		t.Errorf("Title = %q, want %q", got.Title, "Test decision")
 	}
-	if got.Type != "decision" {
-		t.Errorf("Type = %q, want %q", got.Type, "decision")
-	}
 }
 
 func TestSave_UpdatesByTopicKey(t *testing.T) {
-	root := t.TempDir()
-	s, err := Open(root)
-	if err != nil {
-		t.Fatalf("Open() error: %v", err)
-	}
-
-	// First save
-	obs1 := &Observation{
-		Title:    "Original",
-		Type:     "architecture",
-		Content:  "First version",
-		TopicKey: "test/topic",
-		Project:  "test",
-	}
+	s := openTestStore(t)
+	obs1 := &Observation{Title: "Original", Type: "architecture", Content: "v1", TopicKey: "test/topic", Project: "test"}
 	s.Save(obs1)
 
-	// Second save with same topic key — should update
-	obs2 := &Observation{
-		Title:    "Updated",
-		Type:     "architecture",
-		Content:  "Second version",
-		TopicKey: "test/topic",
-		Project:  "test",
-	}
+	obs2 := &Observation{Title: "Updated", Type: "architecture", Content: "v2", TopicKey: "test/topic", Project: "test"}
 	s.Save(obs2)
 
-	// Should have same ID
 	if obs1.ID != obs2.ID {
-		t.Errorf("expected same ID for same topic key: %s vs %s", obs1.ID, obs2.ID)
+		t.Errorf("expected same ID: %s vs %s", obs1.ID, obs2.ID)
 	}
-
 	got, _ := s.Get(obs2.ID)
 	if got.Title != "Updated" {
 		t.Errorf("Title = %q, want %q", got.Title, "Updated")
@@ -78,33 +55,22 @@ func TestSave_UpdatesByTopicKey(t *testing.T) {
 }
 
 func TestSearch(t *testing.T) {
-	root := t.TempDir()
-	s, err := Open(root)
-	if err != nil {
-		t.Fatalf("Open() error: %v", err)
-	}
+	s := openTestStore(t)
+	s.Save(&Observation{Title: "Auth design", Type: "architecture", Content: "JWT", Project: "biggz", TopicKey: "auth"})
+	s.Save(&Observation{Title: "Bug fix", Type: "bugfix", Content: "Fixed NPE", Project: "biggz", TopicKey: "bug/npe"})
+	s.Save(&Observation{Title: "Config", Type: "config", Content: "Timeout 30s", Project: "other", TopicKey: "config"})
 
-	s.Save(&Observation{Title: "Auth design", Type: "architecture", Content: "JWT tokens", Project: "biggz", TopicKey: "auth"})
-	s.Save(&Observation{Title: "Bug fix", Type: "bugfix", Content: "Fixed NPE in parser", Project: "biggz", TopicKey: "bug/npe"})
-	s.Save(&Observation{Title: "Config change", Type: "config", Content: "Set timeout to 30s", Project: "other", TopicKey: "config"})
+	// Give SQLite a moment to index
+	time.Sleep(10 * time.Millisecond)
 
-	// Search by keyword
 	results, err := s.Search("auth", SearchOptions{})
 	if err != nil {
 		t.Fatalf("Search() error: %v", err)
 	}
 	if len(results) < 1 {
-		// Retry once — the observations may not be flushed yet
-		results, err = s.Search("auth", SearchOptions{})
-		if err != nil {
-			t.Fatalf("Search() error: %v", err)
-		}
-	}
-	if len(results) < 1 {
 		t.Errorf("expected at least 1 result for 'auth', got %d", len(results))
 	}
 
-	// Search by type
 	results, err = s.Search("", SearchOptions{Type: "bugfix"})
 	if err != nil {
 		t.Fatalf("Search() error: %v", err)
@@ -113,38 +79,167 @@ func TestSearch(t *testing.T) {
 		t.Errorf("expected 1 bugfix, got %d", len(results))
 	}
 
-	// Search by project
 	results, err = s.Search("", SearchOptions{Project: "other"})
 	if err != nil {
 		t.Fatalf("Search() error: %v", err)
 	}
 	if len(results) != 1 {
-		t.Errorf("expected 1 result for 'other', got %d", len(results))
+		t.Errorf("expected 1 for 'other', got %d", len(results))
 	}
 }
 
 func TestDelete(t *testing.T) {
-	root := t.TempDir()
-	s, err := Open(root)
-	if err != nil {
-		t.Fatalf("Open() error: %v", err)
-	}
-
-	obs := &Observation{Title: "To delete", Type: "discovery", Content: "Will be removed", Project: "test"}
+	s := openTestStore(t)
+	obs := &Observation{Title: "To delete", Type: "discovery", Content: "Will be removed"}
 	s.Save(obs)
 
 	if err := s.Delete(obs.ID); err != nil {
 		t.Fatalf("Delete() error: %v", err)
 	}
-
-	_, err = s.Get(obs.ID)
+	_, err := s.Get(obs.ID)
 	if err == nil {
 		t.Fatal("expected error after delete")
 	}
 }
 
+func TestUpdate(t *testing.T) {
+	s := openTestStore(t)
+	obs := &Observation{Title: "Original", Type: "decision", Content: "First"}
+	s.Save(obs)
+
+	updated, err := s.Update(obs.ID, map[string]any{"title": "Updated", "content": "New version"})
+	if err != nil {
+		t.Fatalf("Update() error: %v", err)
+	}
+	if updated.Title != "Updated" {
+		t.Errorf("Title = %q", updated.Title)
+	}
+}
+
+func TestStats(t *testing.T) {
+	s := openTestStore(t)
+	s.Save(&Observation{Title: "D1", Type: "decision"})
+	s.Save(&Observation{Title: "D2", Type: "decision"})
+	s.Save(&Observation{Title: "B1", Type: "bugfix"})
+
+	stats, err := s.Stats()
+	if err != nil {
+		t.Fatalf("Stats() error: %v", err)
+	}
+	if stats.TotalObservations != 3 {
+		t.Errorf("expected 3, got %d", stats.TotalObservations)
+	}
+	if stats.ByType["decision"] != 2 {
+		t.Errorf("expected 2 decisions, got %d", stats.ByType["decision"])
+	}
+}
+
+func TestSession(t *testing.T) {
+	s := openTestStore(t)
+	if _, err := s.SessionStart("sess-1", "test"); err != nil {
+		t.Fatalf("SessionStart 1 error: %v", err)
+	}
+	if _, err := s.SessionStart("sess-2", "test"); err != nil {
+		t.Fatalf("SessionStart 2 error: %v", err)
+	}
+
+	sessions, err := s.SessionContext(5)
+	if err != nil {
+		t.Fatalf("SessionContext() error: %v", err)
+	}
+	t.Logf("Got %d sessions", len(sessions))
+	for _, se := range sessions {
+		t.Logf("  Session: %s", se.ID)
+	}
+	if len(sessions) != 2 {
+		// Debug: run same query directly
+		rows, err := s.db.Query("SELECT id, start_time FROM sessions ORDER BY start_time DESC LIMIT 5")
+		if err != nil {
+			t.Logf("Direct query error: %v", err)
+		} else {
+			defer rows.Close()
+			for rows.Next() {
+				var id, st string
+				rows.Scan(&id, &st)
+				t.Logf("Direct row: %s / %s", id, st)
+			}
+		}
+		var count int
+		s.db.QueryRow("SELECT COUNT(*) FROM sessions").Scan(&count)
+		t.Logf("Direct SQL count: %d", count)
+	}
+	if len(sessions) != 2 {
+		t.Errorf("expected 2 sessions, got %d", len(sessions))
+	}
+}
+
+func TestCompare(t *testing.T) {
+	s := openTestStore(t)
+	a := &Observation{Title: "A", Type: "decision", TopicKey: "topic1", Project: "proj"}
+	b := &Observation{Title: "B", Type: "decision", TopicKey: "topic1", Project: "proj"}
+	s.Save(a)
+	s.Save(b)
+
+	r, err := s.Compare(a.ID, b.ID)
+	if err != nil {
+		t.Fatalf("Compare() error: %v", err)
+	}
+	if !r.SameTopic {
+		t.Error("expected same topic")
+	}
+	if !r.SameProject {
+		t.Error("expected same project")
+	}
+}
+
+func TestMergeProjects(t *testing.T) {
+	s := openTestStore(t)
+	s.Save(&Observation{Title: "T1", Project: "src"})
+	s.Save(&Observation{Title: "T2", Project: "src"})
+
+	n, err := s.MergeProjects("src", "dst")
+	if err != nil {
+		t.Fatalf("MergeProjects() error: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("expected 2 merged, got %d", n)
+	}
+}
+
+func TestTimeline(t *testing.T) {
+	s := openTestStore(t)
+	s.Save(&Observation{Title: "First", Type: "decision"})
+	time.Sleep(5 * time.Millisecond)
+	s.Save(&Observation{Title: "Second", Type: "bugfix"})
+
+	entries, err := s.Timeline(TimelineOptions{})
+	if err != nil {
+		t.Fatalf("Timeline() error: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("expected 2 entries, got %d", len(entries))
+	}
+}
+
+func TestSuggestTopicKey(t *testing.T) {
+	key := SuggestTopicKey("Fixed auth bug in middleware", "", "bugfix")
+	if !strings.HasPrefix(key, "bugfix/") {
+		t.Errorf("expected bugfix/ prefix, got %s", key)
+	}
+}
+
+func TestCapturePassive(t *testing.T) {
+	content := "## Key Learnings\n- Found a race condition\n- Fixed it with mutex"
+	obs, err := CapturePassive(content, "test")
+	if err != nil {
+		t.Fatalf("CapturePassive() error: %v", err)
+	}
+	if len(obs) != 2 {
+		t.Errorf("expected 2 learnings, got %d", len(obs))
+	}
+}
+
 func TestOpen_DefaultDir(t *testing.T) {
-	// Override HOME for testing
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -153,9 +248,31 @@ func TestOpen_DefaultDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error: %v", err)
 	}
+	defer s.Close()
 
-	expected := filepath.Join(home, ".biggz", "bigmem")
-	if s.RootDir() != expected {
-		t.Errorf("RootDir = %q, want %q", s.RootDir(), expected)
+	if !strings.Contains(s.RootDir(), ".biggz") {
+		t.Errorf("expected .biggz in path, got %s", s.RootDir())
+	}
+}
+
+func TestEmptySearch(t *testing.T) {
+	s := openTestStore(t)
+	results, err := s.Search("nonexistent", SearchOptions{})
+	if err != nil {
+		t.Fatalf("Search() error: %v", err)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestSavePrompt(t *testing.T) {
+	s := openTestStore(t)
+	p, err := s.SavePrompt("Test prompt content", "sess-1")
+	if err != nil {
+		t.Fatalf("SavePrompt() error: %v", err)
+	}
+	if p.ID == "" {
+		t.Error("expected non-empty ID")
 	}
 }

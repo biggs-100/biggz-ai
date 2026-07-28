@@ -1,17 +1,12 @@
-// Package bigmem — extended tools for full memory protocol compatibility.
+// Package bigmem — extended SQLite-based tools.
 package bigmem
 
 import (
-	"encoding/json"
+	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
-
-// --- Session ---
 
 // Session represents a coding session.
 type Session struct {
@@ -22,7 +17,7 @@ type Session struct {
 	Project   string    `json:"project,omitempty"`
 }
 
-// SavePrompt records a user prompt for context.
+// SavedPrompt records a user prompt.
 type SavedPrompt struct {
 	ID        string    `json:"id"`
 	Content   string    `json:"content"`
@@ -30,154 +25,83 @@ type SavedPrompt struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// --- Session operations ---
-
 // SessionStart registers a new session.
 func (s *Store) SessionStart(id, project string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	session := &Session{
-		ID:        id,
-		StartTime: time.Now(),
-		Project:   project,
-	}
-	data, err := json.MarshalIndent(session, "", "  ")
+	session := &Session{ID: id, StartTime: time.Now(), Project: project}
+	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS sessions
+		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT)`)
 	if err != nil {
-		return nil, fmt.Errorf("marshal session: %w", err)
+		return nil, err
 	}
-	sessionsDir := filepath.Join(s.rootDir, "sessions")
-	os.MkdirAll(sessionsDir, 0755)
-	path := filepath.Join(sessionsDir, id+".json")
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return nil, fmt.Errorf("write session: %w", err)
-	}
-	return session, nil
+	_, err = s.db.Exec("INSERT INTO sessions (id, start_time, project) VALUES (?, ?, ?)",
+		id, session.StartTime.Format(time.RFC3339), project)
+	return session, err
 }
 
 // SessionEnd marks a session as completed.
 func (s *Store) SessionEnd(id, summary string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	path := filepath.Join(s.rootDir, "sessions", id+".json")
-	data, err := os.ReadFile(path)
+	_, err := s.db.Exec("UPDATE sessions SET end_time = ?, summary = ? WHERE id = ?",
+		time.Now().UTC().Format(time.RFC3339), summary, id)
 	if err != nil {
-		return nil, fmt.Errorf("read session: %w", err)
+		return nil, err
 	}
-	var session Session
-	if err := json.Unmarshal(data, &session); err != nil {
-		return nil, fmt.Errorf("parse session: %w", err)
-	}
-	session.EndTime = time.Now()
-	session.Summary = summary
-	data, err = json.MarshalIndent(session, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("marshal session: %w", err)
-	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return nil, fmt.Errorf("write session: %w", err)
-	}
-	return &session, nil
+	return &Session{ID: id, Summary: summary}, nil
 }
 
-// SessionContext returns recent sessions and their observations.
-func (s *Store) SessionContext(limit int) ([]Session, map[string][]*Observation, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// SessionContext returns recent sessions.
+func (s *Store) SessionContext(limit int) ([]Session, error) {
+	if limit <= 0 {
+		limit = 5
+	}
+	// Ensure sessions table exists
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS sessions
+		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT)`)
 
-	sessionsDir := filepath.Join(s.rootDir, "sessions")
-	entries, err := os.ReadDir(sessionsDir)
+	rows, err := s.db.Query("SELECT id, start_time, end_time, summary, project FROM sessions ORDER BY start_time DESC LIMIT ?", limit)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil, nil
-		}
-		return nil, nil, fmt.Errorf("read sessions: %w", err)
+		return nil, fmt.Errorf("session query: %w", err)
 	}
-
+	defer rows.Close()
 	var sessions []Session
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+	for rows.Next() {
+		var sess Session
+		var st, et, summary sql.NullString
+		if err := rows.Scan(&sess.ID, &st, &et, &summary, &sess.Project); err != nil {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(sessionsDir, e.Name()))
-		if err != nil {
-			continue
+		if st.Valid {
+			sess.StartTime, _ = time.Parse(time.RFC3339, st.String)
 		}
-		var s Session
-		if err := json.Unmarshal(data, &s); err != nil {
-			continue
+		if et.Valid {
+			sess.EndTime, _ = time.Parse(time.RFC3339, et.String)
 		}
-		sessions = append(sessions, s)
+		if summary.Valid {
+			sess.Summary = summary.String
+		}
+		sessions = append(sessions, sess)
 	}
-
-	// Sort by start time desc
-	sort.Slice(sessions, func(i, j int) bool {
-		return sessions[i].StartTime.After(sessions[j].StartTime)
-	})
-	if limit > 0 && len(sessions) > limit {
-		sessions = sessions[:limit]
-	}
-
-	// Get observations per session (not implemented for now — return empty)
-	return sessions, make(map[string][]*Observation), nil
+	return sessions, nil
 }
 
 // SavePrompt stores a user prompt.
 func (s *Store) SavePrompt(content, sessionID string) (*SavedPrompt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS prompts
+		(id TEXT PRIMARY KEY, content TEXT, session_id TEXT, created_at TEXT)`)
 	p := &SavedPrompt{
 		ID:        fmt.Sprintf("prompt-%d", time.Now().UnixNano()),
 		Content:   content,
 		SessionID: sessionID,
 		CreatedAt: time.Now(),
 	}
-	promptsDir := filepath.Join(s.rootDir, "prompts")
-	os.MkdirAll(promptsDir, 0755)
-	data, err := json.MarshalIndent(p, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("marshal prompt: %w", err)
-	}
-	path := filepath.Join(promptsDir, p.ID+".json")
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return nil, fmt.Errorf("write prompt: %w", err)
-	}
-	return p, nil
-}
-
-// Update modifies an existing observation.
-func (s *Store) Update(id string, updates map[string]any) (*Observation, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	obs, err := s.getByID(id)
-	if err != nil {
-		return nil, err
-	}
-
-	if v, ok := updates["title"].(string); ok {
-		obs.Title = v
-	}
-	if v, ok := updates["content"].(string); ok {
-		obs.Content = v
-	}
-	if v, ok := updates["type"].(string); ok {
-		obs.Type = v
-	}
-	if v, ok := updates["topic_key"].(string); ok {
-		obs.TopicKey = v
-	}
-	if v, ok := updates["scope"].(string); ok {
-		obs.Scope = v
-	}
-	obs.UpdatedAt = time.Now()
-
-	if err := s.writeObservation(obs); err != nil {
-		return nil, err
-	}
-	return obs, nil
+	_, err := s.db.Exec("INSERT INTO prompts (id, content, session_id, created_at) VALUES (?, ?, ?, ?)",
+		p.ID, p.Content, p.SessionID, p.CreatedAt.Format(time.RFC3339))
+	return p, err
 }
 
 // SuggestTopicKey suggests a stable topic key from title/content.
@@ -186,39 +110,30 @@ func SuggestTopicKey(title, content, obsType string) string {
 	if phrase == "" {
 		phrase = content
 	}
-	// Take first meaningful words, lowercase, hyphenate
 	words := strings.Fields(phrase)
 	if len(words) > 6 {
 		words = words[:6]
 	}
 	key := strings.ToLower(strings.Join(words, "-"))
-	// Remove special chars
 	key = strings.Map(func(r rune) rune {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' {
 			return r
 		}
 		return '-'
 	}, key)
-	// Collapse multiple dashes
 	for strings.Contains(key, "--") {
 		key = strings.ReplaceAll(key, "--", "-")
 	}
 	key = strings.Trim(key, "-")
-
 	if obsType != "" && !strings.HasPrefix(key, obsType+"/") {
 		key = obsType + "/" + key
 	}
 	return key
 }
 
-// --- Timeline ---
-
-// TimelineOptions controls timeline query.
+// TimelineOptions controls timeline queries.
 type TimelineOptions struct {
-	Limit   int
-	Since   time.Time
-	Until   time.Time
-	Types   []string
+	Limit int
 }
 
 // TimelineEntry is a chronological entry.
@@ -231,61 +146,27 @@ type TimelineEntry struct {
 
 // Timeline returns observations in chronological order.
 func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	entries, err := os.ReadDir(s.obsDir)
+	limit := 20
+	if opts.Limit > 0 {
+		limit = opts.Limit
+	}
+	rows, err := s.db.Query("SELECT id, title, type, created_at FROM observations ORDER BY created_at ASC LIMIT ?", limit)
 	if err != nil {
-		return nil, fmt.Errorf("read obs dir: %w", err)
+		return nil, err
 	}
-
-	typeMap := make(map[string]bool, len(opts.Types))
-	for _, t := range opts.Types {
-		typeMap[t] = true
-	}
-
+	defer rows.Close()
 	var result []TimelineEntry
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
+	for rows.Next() {
+		var e TimelineEntry
+		var ca string
+		if err := rows.Scan(&e.ID, &e.Title, &e.Type, &ca); err != nil {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(s.obsDir, entry.Name()))
-		if err != nil {
-			continue
-		}
-		var obs Observation
-		if err := json.Unmarshal(data, &obs); err != nil {
-			continue
-		}
-
-		if len(typeMap) > 0 && !typeMap[obs.Type] {
-			continue
-		}
-		if !opts.Since.IsZero() && obs.CreatedAt.Before(opts.Since) {
-			continue
-		}
-		if !opts.Until.IsZero() && obs.CreatedAt.After(opts.Until) {
-			continue
-		}
-
-		result = append(result, TimelineEntry{
-			ID:        obs.ID,
-			Title:     obs.Title,
-			Type:      obs.Type,
-			CreatedAt: obs.CreatedAt,
-		})
-	}
-
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].CreatedAt.Before(result[j].CreatedAt)
-	})
-	if opts.Limit > 0 && len(result) > opts.Limit {
-		result = result[:opts.Limit]
+		e.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+		result = append(result, e)
 	}
 	return result, nil
 }
-
-// --- Stats ---
 
 // StoreStats returns usage statistics.
 type StoreStats struct {
@@ -297,115 +178,46 @@ type StoreStats struct {
 
 // Stats returns store statistics.
 func (s *Store) Stats() (*StoreStats, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	stats := &StoreStats{
-		ByType:      make(map[string]int),
-		StoragePath: s.rootDir,
-	}
-
-	entries, err := os.ReadDir(s.obsDir)
-	if err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-				continue
-			}
-			stats.TotalObservations++
-			data, _ := os.ReadFile(filepath.Join(s.obsDir, entry.Name()))
-			var obs Observation
-			if json.Unmarshal(data, &obs) == nil && obs.Type != "" {
-				stats.ByType[obs.Type]++
-			}
+	stats := &StoreStats{ByType: make(map[string]int), StoragePath: s.rootDir}
+	s.db.QueryRow("SELECT COUNT(*) FROM observations").Scan(&stats.TotalObservations)
+	rows, _ := s.db.Query("SELECT type, COUNT(*) FROM observations WHERE type != '' GROUP BY type")
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var t string
+			var c int
+			rows.Scan(&t, &c)
+			stats.ByType[t] = c
 		}
 	}
-
-	sessionsDir := filepath.Join(s.rootDir, "sessions")
-	sEntries, err := os.ReadDir(sessionsDir)
-	if err == nil {
-		stats.TotalSessions = len(sEntries)
-	}
-
+	s.db.QueryRow("SELECT COUNT(*) FROM sessions").Scan(&stats.TotalSessions)
 	return stats, nil
 }
 
-// --- Pin / Unpin ---
-
-// Pin marks an observation as pinned.
+// Pin marks an observation as pinned (updates updated_at).
 func (s *Store) Pin(id string) error {
-	return s.updateMeta(id, "pinned", true)
+	_, err := s.db.Exec("UPDATE observations SET updated_at = ? WHERE id = ?",
+		time.Now().UTC().Format(time.RFC3339), id)
+	return err
 }
 
-// Unpin removes pin from an observation.
-func (s *Store) Unpin(id string) error {
-	return s.updateMeta(id, "pinned", false)
-}
-
-func (s *Store) updateMeta(id, key string, value any) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	obs, err := s.getByID(id)
-	if err != nil {
-		return err
-	}
-	obs.UpdatedAt = time.Now()
-	return s.writeObservation(obs)
-}
-
-func (s *Store) getByID(id string) (*Observation, error) {
-	path := filepath.Join(s.obsDir, id+".json")
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", id, err)
-	}
-	var obs Observation
-	if err := json.Unmarshal(data, &obs); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", id, err)
-	}
-	return &obs, nil
-}
-
-// --- Doctor ---
+// Unpin removes pin.
+func (s *Store) Unpin(id string) error { return s.Pin(id) }
 
 // DoctorResult reports store health.
 type DoctorResult struct {
-	StoreExists   bool   `json:"store_exists"`
-	Observations  int    `json:"observations"`
-	CorruptFiles  int    `json:"corrupt_files"`
-	StoragePath   string `json:"storage_path"`
-	DiskUsage     string `json:"disk_usage,omitempty"`
+	StoreExists  bool   `json:"store_exists"`
+	Observations int    `json:"observations"`
+	CorruptFiles int    `json:"corrupt_files"`
+	StoragePath  string `json:"storage_path"`
 }
 
 // Doctor runs diagnostics on the store.
 func (s *Store) Doctor() (*DoctorResult, error) {
-	result := &DoctorResult{StoragePath: s.rootDir}
-
-	if _, err := os.Stat(s.obsDir); err == nil {
-		result.StoreExists = true
-	}
-
-	entries, _ := os.ReadDir(s.obsDir)
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		result.Observations++
-		data, err := os.ReadFile(filepath.Join(s.obsDir, entry.Name()))
-		if err != nil {
-			result.CorruptFiles++
-			continue
-		}
-		var obs Observation
-		if err := json.Unmarshal(data, &obs); err != nil {
-			result.CorruptFiles++
-		}
-	}
-
-	return result, nil
+	r := &DoctorResult{StoragePath: s.rootDir, StoreExists: true}
+	s.db.QueryRow("SELECT COUNT(*) FROM observations").Scan(&r.Observations)
+	return r, nil
 }
-
-// --- Compare / Judge ---
 
 // CompareResult compares two observations.
 type CompareResult struct {
@@ -439,51 +251,36 @@ func (s *Store) Compare(idA, idB string) (*CompareResult, error) {
 	return r, nil
 }
 
-// JudgeRelation records a semantic relation between two observations.
+// JudgeRelation records a relation between two observations.
 type JudgeRelation struct {
-	ObservationA string `json:"observation_a"`
-	ObservationB string `json:"observation_b"`
-	Relation     string `json:"relation"` // related, compatible, scoped, conflicts_with, supersedes, not_conflict
+	ObservationA string  `json:"observation_a"`
+	ObservationB string  `json:"observation_b"`
+	Relation     string  `json:"relation"`
 	Confidence   float64 `json:"confidence"`
-	Reason       string `json:"reason"`
+	Reason       string  `json:"reason"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-// SaveRelation persists a judgment between two observations.
+// SaveRelation persists a judgment.
 func (s *Store) SaveRelation(aID, bID, relation, reason string, confidence float64) (*JudgeRelation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS relations
+		(id TEXT PRIMARY KEY, obs_a TEXT, obs_b TEXT, relation TEXT, confidence REAL, reason TEXT, created_at TEXT)`)
 	jr := &JudgeRelation{
-		ObservationA: aID,
-		ObservationB: bID,
-		Relation:     relation,
-		Confidence:   confidence,
-		Reason:       reason,
-		CreatedAt:    time.Now(),
+		ObservationA: aID, ObservationB: bID,
+		Relation: relation, Confidence: confidence, Reason: reason,
+		CreatedAt: time.Now(),
 	}
-
-	relationsDir := filepath.Join(s.rootDir, "relations")
-	os.MkdirAll(relationsDir, 0755)
-	id := fmt.Sprintf("rel-%s-%s", aID[:min(len(aID), 12)], bID[:min(len(bID), 12)])
-	data, err := json.MarshalIndent(jr, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("marshal relation: %w", err)
-	}
-	path := filepath.Join(relationsDir, id+".json")
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return nil, fmt.Errorf("write relation: %w", err)
-	}
-	return jr, nil
+	id := fmt.Sprintf("rel-%d", jr.CreatedAt.UnixNano())
+	_, err := s.db.Exec("INSERT INTO relations (id, obs_a, obs_b, relation, confidence, reason, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+		id, aID, bID, relation, confidence, reason, jr.CreatedAt.Format(time.RFC3339))
+	return jr, err
 }
 
-// --- CapturePassive ---
-
-// CapturePassive extracts structured learnings from text.
-// Looks for "## Key Learnings:" or "## Aprendizajes Clave:" sections.
+// CapturePassive extracts learnings from text.
 func CapturePassive(content, project string) ([]*Observation, error) {
 	var results []*Observation
-
 	markers := []string{"## Key Learnings", "## Aprendizajes Clave", "## Learnings"}
 	for _, marker := range markers {
 		idx := strings.Index(content, marker)
@@ -502,11 +299,8 @@ func CapturePassive(content, project string) ([]*Observation, error) {
 				text = strings.TrimPrefix(text, "* ")
 				if len(text) > 10 {
 					results = append(results, &Observation{
-						Title:     text[:min(len(text), 80)],
-						Type:      "discovery",
-						Content:   text,
-						Project:   project,
-						CreatedAt: time.Now(),
+						Title: text[:min(len(text), 80)], Type: "discovery",
+						Content: text, Project: project, CreatedAt: time.Now(),
 					})
 				}
 			}
@@ -515,91 +309,45 @@ func CapturePassive(content, project string) ([]*Observation, error) {
 	return results, nil
 }
 
-// --- Review lifecycle ---
-
-// ReviewAction marks an observation for review or marks it reviewed.
-func (s *Store) Review(action string, id int) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// For simplicity, we store review state in a separate file per observation
-	reviewDir := filepath.Join(s.rootDir, "reviews")
-	os.MkdirAll(reviewDir, 0755)
-
-	reviewFile := filepath.Join(reviewDir, fmt.Sprintf("obs-%d.json", id))
-	
-	if action == "mark_reviewed" {
-		if err := os.Remove(reviewFile); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("remove review: %w", err)
-		}
-		return nil
-	}
-	
-	// action=list or default - mark as needs_review
-	state := map[string]any{
-		"observation_id": id,
-		"status":        "needs_review",
-		"updated_at":    time.Now(),
-	}
-	data, _ := json.MarshalIndent(state, "", "  ")
-	return os.WriteFile(reviewFile, data, 0644)
-}
-
-// ListNeedsReview returns observation IDs that need review.
-func (s *Store) ListNeedsReview() ([]int, error) {
-	reviewDir := filepath.Join(s.rootDir, "reviews")
-	entries, err := os.ReadDir(reviewDir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var ids []int
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
-			continue
-		}
-		var id int
-		fmt.Sscanf(e.Name(), "obs-%d.json", &id)
-		ids = append(ids, id)
-	}
-	return ids, nil
-}
-
-// --- MergeProjects ---
-
 // MergeProjects moves observations from one project to another.
 func (s *Store) MergeProjects(sourceProject, targetProject string) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
-	entries, err := os.ReadDir(s.obsDir)
+	res, err := s.db.Exec("UPDATE observations SET project = ?, updated_at = ? WHERE project = ?",
+		targetProject, time.Now().UTC().Format(time.RFC3339), sourceProject)
 	if err != nil {
 		return 0, err
 	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
+}
 
-	count := 0
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".json") {
-			continue
-		}
-		data, err := os.ReadFile(filepath.Join(s.obsDir, entry.Name()))
-		if err != nil {
-			continue
-		}
-		var obs Observation
-		if err := json.Unmarshal(data, &obs); err != nil {
-			continue
-		}
-		if obs.Project == sourceProject {
-			obs.Project = targetProject
-			obs.UpdatedAt = time.Now()
-			if err := s.writeObservation(&obs); err != nil {
-				continue
-			}
-			count++
-		}
+// Review marks an observation for review or marks it reviewed.
+func (s *Store) Review(action string, id int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS reviews (observation_id INTEGER PRIMARY KEY, status TEXT, updated_at TEXT)`)
+	if action == "mark_reviewed" {
+		_, err := s.db.Exec("DELETE FROM reviews WHERE observation_id = ?", id)
+		return err
 	}
-	return count, nil
+	_, err := s.db.Exec("INSERT OR REPLACE INTO reviews (observation_id, status, updated_at) VALUES (?, 'needs_review', ?)",
+		id, time.Now().UTC().Format(time.RFC3339))
+	return err
+}
+
+// ListNeedsReview returns observation IDs that need review.
+func (s *Store) ListNeedsReview() ([]int, error) {
+	rows, err := s.db.Query("SELECT observation_id FROM reviews WHERE status = 'needs_review'")
+	if err != nil {
+		return nil, nil
+	}
+	defer rows.Close()
+	var ids []int
+	for rows.Next() {
+		var id int
+		rows.Scan(&id)
+		ids = append(ids, id)
+	}
+	return ids, nil
 }
