@@ -28,6 +28,7 @@ import (
 	"github.com/biggz-ai/biggz/internal/lens/risk"
 	"github.com/biggz-ai/biggz/internal/release"
 	"github.com/biggz-ai/biggz/internal/sdd"
+	"github.com/biggz-ai/biggz/internal/skillregistry"
 )
 
 // ---- Pipeline Stages ----
@@ -120,6 +121,8 @@ func main() {
 		os.Exit(backupRun())
 	case "release":
 		os.Exit(releaseRun())
+	case "skill-registry":
+		os.Exit(skillRegistryRun())
 	}
 	}
 
@@ -645,5 +648,32 @@ func releaseRun() int {
 		return 1
 	}
 
+	return 0
+}
+
+// skillRegistryRun handles the "biggz skill-registry" subcommand.
+// Usage: biggz skill-registry refresh   — regenerate skill registry
+func skillRegistryRun() int {
+	args := os.Args[2:]
+
+	if len(args) < 1 || args[0] != "refresh" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz skill-registry refresh")
+		return 1
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	result, err := skillregistry.Refresh(cwd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Skill registry regenerated: %d skills\n", result.SkillCount)
+	fmt.Printf("  Path: %s\n", result.Registry)
 	return 0
 }
