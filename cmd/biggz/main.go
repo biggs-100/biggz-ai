@@ -331,11 +331,22 @@ func sddStatusRun() int {
 // Validates a verify report against authoritative requirement/scenario counts.
 // Usage: biggz sdd-verify-validate --input <path> [--requirements N] [--scenarios N]
 func sddVerifyValidateRun() int {
+	args := os.Args[2:]
+	for _, a := range args {
+		if a == "--help" || a == "-h" {
+			fmt.Fprintln(os.Stderr, "Usage: biggz sdd-verify-validate --input <path> [--requirements N] [--scenarios N]")
+			fmt.Fprintln(os.Stderr, "  --input <path>       — path to verify report (required)")
+			fmt.Fprintln(os.Stderr, "  --requirements N     — authoritative requirement count")
+			fmt.Fprintln(os.Stderr, "  --scenarios N        — authoritative scenario count")
+			return 0
+		}
+	}
+
 	input := ""
 	req := -1
 	scen := -1
 
-	args := os.Args[2:]
+	args = os.Args[2:]
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--input":
@@ -553,9 +564,12 @@ func bigmemRun() int {
 //        biggz backup restore <id> <target>
 func backupRun() int {
 	args := os.Args[2:]
-	if len(args) == 0 {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		fmt.Fprintln(os.Stderr, "Usage: biggz backup <create|list|restore> ...")
-		return 1
+		fmt.Fprintln(os.Stderr, "  create <path> [path...]  — create a backup snapshot")
+		fmt.Fprintln(os.Stderr, "  list                     — list available backups")
+		fmt.Fprintln(os.Stderr, "  restore <id> <target>    — restore a backup")
+		return 0
 	}
 
 	switch args[0] {
@@ -612,9 +626,12 @@ func backupRun() int {
 //        biggz release verify <version> — verify tag exists
 func releaseRun() int {
 	args := os.Args[2:]
-	if len(args) == 0 {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		fmt.Fprintln(os.Stderr, "Usage: biggz release <status|tag|verify> ...")
-		return 1
+		fmt.Fprintln(os.Stderr, "  status              — show git state")
+		fmt.Fprintln(os.Stderr, "  tag <version>       — create version tag")
+		fmt.Fprintln(os.Stderr, "  verify <version>    — verify tag exists")
+		return 0
 	}
 
 	switch args[0] {
@@ -694,9 +711,9 @@ func skillRegistryRun() int {
 // Usage: biggz rdd enable|disable|status [--scope global|clone]
 func rddRun() int {
 	args := os.Args[2:]
-	if len(args) == 0 {
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		fmt.Fprintln(os.Stderr, "Usage: biggz rdd <enable|disable|status> [--scope global|clone]")
-		return 1
+		return 0
 	}
 
 	op := args[0]
@@ -708,17 +725,22 @@ func rddRun() int {
 		}
 	}
 
-	// Detect clone git dir
+	// Detect clone git dir (always, for status to show clone mode)
 	var gitDir string
-	if scope == "clone" {
-		out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output()
-		if err == nil {
-			gitDir = strings.TrimSpace(string(out))
+	out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output()
+	if err == nil {
+		gitDir = strings.TrimSpace(string(out))
+	}
+
+	// For disable --scope clone, force clone mode
+	if op == "disable" && scope == "clone" && gitDir == "" {
+		// Try to detect manually
+		if cwd, err := os.Getwd(); err == nil {
+			gitDir = filepath.Join(cwd, ".git")
 		}
 	}
 
 	var status *review.RDDStatusReport
-	var err error
 
 	switch op {
 	case "status":
