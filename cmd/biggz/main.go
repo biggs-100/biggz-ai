@@ -181,28 +181,49 @@ func main() {
 }
 
 // installRun handles the "biggz install" subcommand.
-// It tries each supported agent adapter (OpenCode, Qwen) and uses the first
-// one detected. Returns 0 on success, 1 on failure.
+// It supports --dry-run and --agent flags.
+// Without --agent, tries each adapter in priority order and uses the first detected.
 func installRun() int {
 	ctx := context.Background()
 
-	adapters := []plugin.AgentAdapter{
-		opencode.NewAdapter(),
-		qwen.NewAdapter(),
-	}
-
+	// Parse flags
 	dryRun := false
-	for _, arg := range os.Args[2:] {
-		if arg == "--dry-run" {
+	var selectedAgent string
+	args := os.Args[2:]
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--dry-run":
 			dryRun = true
+		case "--agent":
+			if i+1 < len(args) {
+				i++
+				selectedAgent = args[i]
+			}
 		}
 	}
 
-	var result *install.Result
-	cfg := install.Config{DryRun: dryRun}
+	// Build adapter map
+	adapters := map[string]plugin.AgentAdapter{
+		"opencode": opencode.NewAdapter(),
+		"qwen":     qwen.NewAdapter(),
+	}
+	priority := []string{"opencode", "qwen"}
 
-	for _, adapter := range adapters {
-		r, err := install.Run(ctx, adapter, cfg)
+	// Determine which adapters to try
+	toTry := priority
+	if selectedAgent != "" {
+		if _, ok := adapters[selectedAgent]; !ok {
+			fmt.Fprintf(os.Stderr, "error: unknown agent %q (supported: opencode, qwen)\n", selectedAgent)
+			return 1
+		}
+		toTry = []string{selectedAgent}
+	}
+
+	cfg := install.Config{DryRun: dryRun}
+	var result *install.Result
+
+	for _, name := range toTry {
+		r, err := install.Run(ctx, adapters[name], cfg)
 		if err == nil && r.AgentDetected {
 			result = r
 			break
@@ -211,13 +232,13 @@ func installRun() int {
 
 	if result == nil {
 		fmt.Fprintln(os.Stderr, "error: no supported AI agent detected")
-		fmt.Fprintln(os.Stderr, "Tried: opencode, qwen")
-		fmt.Fprintln(os.Stderr, "Install one of these agents and try again.")
+		fmt.Fprintln(os.Stderr, "Tried:", toTry)
+		fmt.Fprintln(os.Stderr, "Install one of these agents and try again, or use --agent to select one.")
 		return 1
 	}
 
 	if result.DryRun {
-		fmt.Printf("Dry-run: would install biggz-ai for %s\n", result.BinaryPath)
+		fmt.Printf("Dry-run: would install biggz-ai for %q\n", result.BinaryPath)
 		fmt.Printf("  Skills: %d\n", result.SkillsDeployed)
 		fmt.Printf("  Config merge: %v\n", result.ConfigMerged)
 		fmt.Printf("  Commands: %d\n", result.CommandsWritten)
