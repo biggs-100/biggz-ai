@@ -21,7 +21,7 @@ biggz sdd-status
 biggz sdd-verify-validate --help
 biggz sdd-attempt --help
 biggz sdd-continue --help
-biggz BigMem --help
+biggz bigmem --help
 biggz backup --help
 biggz release --help
 biggz skill-registry --help
@@ -134,7 +134,7 @@ biggz rdd status
 # Expected: enabled
 ```
 
-## Test 7: BigMem Memory (via MCP)
+## Test 7: bigmem Memory (via MCP)
 
 ```bash
 # Start the MCP server in test mode
@@ -150,9 +150,13 @@ echo '{"jsonrpc":"2.0","id":"3","method":"tools/call","params":{"name":"mem_sear
 # Expected: Results with the saved observation
 
 # Test via CLI
-biggz BigMem save "Test" "decision" "Testing BigMem"
-biggz BigMem search "Test"
-biggz BigMem get <id-from-search>
+biggz bigmem save "Test" "decision" "Testing bigmem"
+biggz bigmem search "Test"
+biggz bigmem get <id-from-search>
+
+# Verify SQLite store directly (optional)
+# dir %USERPROFILE%\.biggz\bigmem\bigmem.db
+# Expected: SQLite database file exists
 ```
 
 ## Test 8: SDD Workflow
@@ -246,8 +250,8 @@ type C:\Users\USER\.config\opencode\opencode.json | findstr "biggz-orchestrator"
 # Expected: agent entry found
 
 # Verify the prompt was updated
-type C:\Users\USER\.config\opencode\opencode.json | findstr "BigMem"
-# Expected: "BigMem" found in the prompt
+type C:\Users\USER\.config\opencode\opencode.json | findstr "bigmem"
+# Expected: "bigmem" found in the prompt
 
 # Launch with biggz-orchestrator
 opencode --agent biggz-orchestrator
