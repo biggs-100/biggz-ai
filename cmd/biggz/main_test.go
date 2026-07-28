@@ -2,7 +2,10 @@ package main
 
 import (
 	"bytes"
+	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -46,16 +49,50 @@ func TestMain_InvalidJSONInput(t *testing.T) {
 }
 
 // TestMain_ValidJSONInput verifies that valid JSON input causes the CLI to exit
-// with code 0.
+// with code 0. It creates a temporary git repo so the RiskLens can run its
+// git commands successfully.
 func TestMain_ValidJSONInput(t *testing.T) {
+	repoDir := t.TempDir()
+
+	// Initialize a git repo
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.name", "Test")
+	runGit(t, repoDir, "config", "user.email", "test@test.com")
+
+	// Create an initial commit so HEAD~1 exists
+	readmePath := filepath.Join(repoDir, "README.md")
+	if err := os.WriteFile(readmePath, []byte("# test"), 0644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runGit(t, repoDir, "add", ".")
+	runGit(t, repoDir, "commit", "-m", "initial")
+
+	// Make a change and commit it so git diff HEAD~1..HEAD has output
+	if err := os.WriteFile(readmePath, []byte("# test\n\nchanged content"), 0644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runGit(t, repoDir, "add", ".")
+	runGit(t, repoDir, "commit", "-m", "second commit")
+
+	jsonSubject := fmt.Sprintf(`{"repository":"%s","commit_sha":"HEAD"}`, filepath.ToSlash(repoDir))
 	cmd := exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz")
-	cmd.Stdin = strings.NewReader(`{"repository":"test/repo","commit_sha":"abc123"}`)
+	cmd.Stdin = strings.NewReader(jsonSubject)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
 	if err != nil {
 		t.Fatalf("expected exit 0 for valid JSON, got error: %v (stderr: %s)", err, stderr.String())
+	}
+}
+
+// runGit is a helper that runs a git command in the given directory.
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(out))
 	}
 }
 

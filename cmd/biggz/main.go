@@ -9,6 +9,7 @@ import (
 
 	"github.com/biggz-ai/biggz/internal/agents/opencode"
 	"github.com/biggz-ai/biggz/internal/install"
+	"github.com/biggz-ai/biggz/internal/lens/risk"
 	"github.com/biggz-ai/biggz/model"
 	"github.com/biggz-ai/biggz/orchestrator"
 	"github.com/biggz-ai/biggz/plugin"
@@ -115,9 +116,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Pipeline stages
+	riskLens := &risk.RiskLens{}
+	if err := reg.RegisterLens(riskLens); err != nil {
+		fmt.Fprintf(os.Stderr, "error: registering lens: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Pipeline stages — RiskLens runs first, then DummyLens as fallback
 	minEvEval := &minimumEvidenceEvaluator{}
 	stages := []pipeline.Stage{
+		&lensStage{lens: riskLens},
 		&lensStage{lens: dummyLens},
 		&policyStage{evaluator: minEvEval},
 	}
