@@ -40,7 +40,7 @@ func (l *RiskLens) Analyze(ctx context.Context, subject model.ReviewSubject) (*p
 		return nil, fmt.Errorf("risk lens: %w", err)
 	}
 
-	execMode, err := gitdiff.HasModeChanges(ctx, subject)
+	execMode, err := gitdiff.DetectGitModeChanges(ctx, subject)
 	if err != nil {
 		return nil, fmt.Errorf("risk lens: %w", err)
 	}
