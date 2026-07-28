@@ -139,11 +139,19 @@ func mergeConfig(settingsPath string, ffs fs.FS) (bool, error) {
 	var merged []byte
 	if len(existingData) > 0 {
 		merged, err = filemerge.MergeJSONC(existingData, overlayData)
+		if err != nil {
+			// If existing config can't be parsed (e.g. Windows paths with
+			// unescaped backslashes), write overlay only.
+			merged, err = filemerge.MergeJSONC([]byte("{}"), overlayData)
+			if err != nil {
+				return false, fmt.Errorf("merge config: %w", err)
+			}
+		}
 	} else {
 		merged, err = filemerge.MergeJSONC([]byte("{}"), overlayData)
-	}
-	if err != nil {
-		return false, fmt.Errorf("merge config: %w", err)
+		if err != nil {
+			return false, fmt.Errorf("merge config: %w", err)
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {

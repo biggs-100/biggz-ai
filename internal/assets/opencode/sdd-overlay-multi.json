@@ -36,34 +36,5 @@
     "sdd-ff": {
       "path": "skills/sdd-ff/SKILL.md"
     }
-  },
-  "commands": {
-    "/sdd-init": {
-      "description": "Initialize SDD context for this project"
-    },
-    "/sdd-new": {
-      "description": "Start a new SDD change"
-    },
-    "/sdd-ff": {
-      "description": "Fast-forward through SDD phases"
-    },
-    "/sdd-status": {
-      "description": "Show SDD change status"
-    },
-    "/sdd-continue": {
-      "description": "Continue the next SDD phase"
-    },
-    "/sdd-explore": {
-      "description": "Explore an idea before committing"
-    },
-    "/sdd-apply": {
-      "description": "Apply current SDD tasks"
-    },
-    "/sdd-verify": {
-      "description": "Verify SDD implementation"
-    },
-    "/sdd-archive": {
-      "description": "Archive completed SDD change"
-    }
   }
 }

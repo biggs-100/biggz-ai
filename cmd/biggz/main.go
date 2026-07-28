@@ -250,6 +250,7 @@ func installRun() int {
 
 	cfg := install.Config{DryRun: dryRun, HomeDir: homeDir}
 	var result *install.Result
+	var lastErr error
 
 	for _, name := range toTry {
 		r, err := install.Run(ctx, adapters[name], cfg)
@@ -257,10 +258,14 @@ func installRun() int {
 			result = r
 			break
 		}
+		lastErr = err
 	}
 
 	if result == nil {
 		fmt.Fprintln(os.Stderr, "error: no supported AI agent detected")
+		if lastErr != nil {
+			fmt.Fprintf(os.Stderr, "cause: %v\n", lastErr)
+		}
 		fmt.Fprintln(os.Stderr, "Tried:", toTry)
 		fmt.Fprintln(os.Stderr, "Install one of these agents and try again, or use --agent to select one.")
 		return 1
