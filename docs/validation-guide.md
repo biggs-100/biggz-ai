@@ -21,7 +21,7 @@ biggz sdd-status
 biggz sdd-verify-validate --help
 biggz sdd-attempt --help
 biggz sdd-continue --help
-biggz engram --help
+biggz BigMem --help
 biggz backup --help
 biggz release --help
 biggz skill-registry --help
@@ -134,7 +134,7 @@ biggz rdd status
 # Expected: enabled
 ```
 
-## Test 7: Engram Memory (via MCP)
+## Test 7: BigMem Memory (via MCP)
 
 ```bash
 # Start the MCP server in test mode
@@ -150,9 +150,9 @@ echo '{"jsonrpc":"2.0","id":"3","method":"tools/call","params":{"name":"mem_sear
 # Expected: Results with the saved observation
 
 # Test via CLI
-biggz engram save "Test" "decision" "Testing engram"
-biggz engram search "Test"
-biggz engram get <id-from-search>
+biggz BigMem save "Test" "decision" "Testing BigMem"
+biggz BigMem search "Test"
+biggz BigMem get <id-from-search>
 ```
 
 ## Test 8: SDD Workflow
@@ -246,8 +246,8 @@ type C:\Users\USER\.config\opencode\opencode.json | findstr "biggz-orchestrator"
 # Expected: agent entry found
 
 # Verify the prompt was updated
-type C:\Users\USER\.config\opencode\opencode.json | findstr "Engram"
-# Expected: "Engram" found in the prompt
+type C:\Users\USER\.config\opencode\opencode.json | findstr "BigMem"
+# Expected: "BigMem" found in the prompt
 
 # Launch with biggz-orchestrator
 opencode --agent biggz-orchestrator

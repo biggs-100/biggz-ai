@@ -57,7 +57,7 @@ Use `biggz <command>` for SDD operations:
 - `biggz sdd-verify-validate --input <report> --requirements N --scenarios N` — validate verify reports
 - `biggz sdd-attempt begin|finish|status|reset <change>` — manage attempt budgets
 - `biggz sdd-continue <change>` — determine next phase
-- `biggz engram save|search|get` — persistent memory
+- `biggz BigMem save|search|get` — persistent memory
 - `biggz backup create|list|restore` — snapshot state
 - `biggz release status|tag|verify` — version management
 
@@ -66,7 +66,7 @@ Use `biggz <command>` for SDD operations:
 ### Artifact Store Policy
 
 - `openspec` — file-based artifacts under openspec/changes/{change}/
-- `engram` — persistent memory via `biggz engram`
+- `BigMem` — persistent memory via `biggz BigMem`
 - `hybrid` — both backends
 - `none` — return results inline only
 
@@ -74,7 +74,7 @@ Use `biggz <command>` for SDD operations:
 
 Before executing ANY SDD command, ensure this session has an explicit preflight decision block with:
 1. **Execution mode**: `interactive` or `auto`.
-2. **Artifact store**: `openspec`, `engram`, `hybrid`, or `none`.
+2. **Artifact store**: `openspec`, `BigMem`, `hybrid`, or `none`.
 3. **Delivery strategy**: `ask-on-risk`, `auto-chain`, `single-pr`, or `exception-ok`.
 4. **Review budget**: maximum changed lines before stopping (default 400).
 
@@ -119,13 +119,13 @@ Sub-agents get a fresh context with NO memory. The orchestrator controls context
 
 #### SDD Phases
 
-Each phase has explicit read/write rules. Phases use `mem_search`/`mem_get_observation` for Engram context and `mem_save` for persistence.
+Each phase has explicit read/write rules. Phases use `mem_search`/`mem_get_observation` for BigMem context and `mem_save` for persistence.
 
 | Phase | Reads | Writes |
 |-------|-------|--------|
 | explore | nothing (or `mem_search` for context) | explore |
 | propose | exploration (optional) + `mem_search` | proposal |
-| spec | proposal + `mem_search` | spec (or `mem_save` via engram) |
+| spec | proposal + `mem_search` | spec (or `mem_save` via BigMem) |
 | design | proposal + `mem_search` | design |
 | tasks | spec + design | tasks |
 | apply | tasks + spec + design + apply-progress | apply-progress |
@@ -136,7 +136,7 @@ Each phase has explicit read/write rules. Phases use `mem_search`/`mem_get_obser
 
 When delegating work to a `general` or `explore` sub-agent:
 - Include relevant context from `mem_search` in the prompt.
-- Instruct the sub-agent: "Save important discoveries to engram via `mem_save` before returning."
+- Instruct the sub-agent: "Save important discoveries to BigMem via `mem_save` before returning."
 - Save prompt context via `mem_save_prompt` when the user provides detailed requirements.
 
 ### Output Contract
@@ -160,7 +160,7 @@ Every phase returns to the orchestrator:
 - Skills are at `~/.config/opencode/skills/{phase}/SKILL.md`. Load the skill for each phase before delegating.
 - Use `/sdd-new`, `/sdd-init`, `/sdd-status` etc. to trigger workflows.
 
-### Engram Persistent Memory
+### BigMem Persistent Memory
 
 ### Review-Driven Development (RDD)
 
@@ -172,11 +172,11 @@ Review-driven development is user-owned with a kill switch: `biggz rdd enable|di
 - Delivery under a disabled switch follows ordinary policy and reports `disabled/unmanaged`, never a fabricated approval.
 - Enable with `biggz rdd enable`. Never enable on the user's behalf unless they explicitly ask for it. Re-enabling applies to future candidates only.
 
-### Engram Persistent Memory
+### BigMem Persistent Memory
 
-You have access to Engram via MCP tools (`mem_save`, `mem_search`, etc.).
+You have access to BigMem via MCP tools (`mem_save`, `mem_search`, etc.).
 
-You have access to Engram via MCP tools (`mem_save`, `mem_search`, `mem_get_observation`, `mem_update`, `mem_context`, `mem_review`, `mem_session_summary`, etc.).
+You have access to BigMem via MCP tools (`mem_save`, `mem_search`, `mem_get_observation`, `mem_update`, `mem_context`, `mem_review`, `mem_session_summary`, etc.).
 
 **Self-check after EVERY task**: "Did I make a decision, fix a bug, learn something non-obvious, or establish a convention? If yes, call `mem_save` NOW."
 

@@ -1,5 +1,5 @@
-// Package engram — extended tools for full Engram protocol compatibility.
-package engram
+// Package bigmem — extended tools for full memory protocol compatibility.
+package bigmem
 
 import (
 	"encoding/json"

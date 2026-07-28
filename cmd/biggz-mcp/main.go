@@ -10,14 +10,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/engram"
+	"github.com/biggz-ai/biggz/internal/bigmem"
 )
 
-var store *engram.Store
+var store *bigmem.Store
 
 func main() {
 	var err error
-	store, err = engram.Open("")
+	store, err = bigmem.Open("")
 	if err != nil {
 		log.Fatalf("open engram: %v", err)
 	}
@@ -83,7 +83,7 @@ func main() {
 func handleToolCall(id any, name string, args map[string]any) {
 	switch name {
 	case "mem_save":
-		obs := &engram.Observation{
+		obs := &bigmem.Observation{
 			Title:    getStr(args, "title"),
 			Content:  getStr(args, "content"),
 			Type:     getStr(args, "type"),
@@ -102,7 +102,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 		textResult(id, fmt.Sprintf("Saved: %s (id: %s)", obs.Title, obs.ID))
 
 	case "mem_search":
-		results, err := store.Search(getStr(args, "query"), engram.SearchOptions{
+		results, err := store.Search(getStr(args, "query"), bigmem.SearchOptions{
 			Project: getStr(args, "project"),
 			Type:    getStr(args, "type"),
 			Limit:   getInt(args, "limit", 10),
@@ -261,11 +261,11 @@ func handleToolCall(id any, name string, args map[string]any) {
 		title := getStr(args, "title")
 		content := getStr(args, "content")
 		obsType := getStr(args, "type")
-		key := engram.SuggestTopicKey(title, content, obsType)
+		key := bigmem.SuggestTopicKey(title, content, obsType)
 		textResult(id, key)
 
 	case "mem_timeline":
-		entries, err := store.Timeline(engram.TimelineOptions{
+		entries, err := store.Timeline(bigmem.TimelineOptions{
 			Limit: getInt(args, "limit", 20),
 		})
 		if err != nil {
@@ -330,7 +330,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 		content := getStr(args, "content")
 		project := getStr(args, "project")
 		if content == "" { writeError(id, "content required"); return }
-		obs, err := engram.CapturePassive(content, project)
+		obs, err := bigmem.CapturePassive(content, project)
 		if err != nil { writeError(id, err.Error()); return }
 		saved := 0
 		for _, o := range obs {

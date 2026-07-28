@@ -53,14 +53,14 @@
 | **Skill registry** | `.atl/skill-registry.md` | ✅ Same |
 | **Relative paths** | Absolute (C:\Users\...) | ✅ Relative |
 
-## Memory (Engram)
+## Memory (BigMem)
 
 | Feature | gentle-ai | biggz-ai |
 |---|---|---|
 | **MCP tools** | 22 | ✅ 22 (same) |
-| **Storage** | `~/.engram/` (SQLite) | `~/.biggz/engram/` (JSON) |
+| **Storage** | `~/.BigMem/` (SQLite) | `~/.biggz/BigMem/` (JSON) |
 | **Protocol** | Full with proactive saves, session summaries | ✅ Full |
-| **MCP server** | `engram mcp` (external binary) | `biggz-mcp` (native Go) |
+| **MCP server** | `BigMem mcp` (external binary) | `biggz-mcp` (native Go) |
 
 ## What gentle-ai has that biggz-ai doesn't
 
@@ -70,7 +70,7 @@
 | TUI | Not needed — UI is the agent itself |
 | Self-update | Not needed — agent manages itself |
 | Platform detection | Not needed — agent knows its OS |
-| Store locks | Not needed — in-memory + engram |
+| Store locks | Not needed — in-memory + BigMem |
 | Legacy compatibility | Intentional — no legacy debt |
 
 ## What biggz-ai has that gentle-ai doesn't

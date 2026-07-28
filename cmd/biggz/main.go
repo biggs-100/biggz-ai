@@ -22,7 +22,7 @@ import (
 	"github.com/biggz-ai/biggz/internal/agents/opencode"
 	"github.com/biggz-ai/biggz/internal/agents/qwen"
 	"github.com/biggz-ai/biggz/internal/backup"
-	"github.com/biggz-ai/biggz/internal/engram"
+	"github.com/biggz-ai/biggz/internal/bigmem"
 	"github.com/biggz-ai/biggz/internal/install"
 	"github.com/biggz-ai/biggz/internal/lens/readability"
 	"github.com/biggz-ai/biggz/internal/lens/reliability"
@@ -118,8 +118,8 @@ func main() {
 		os.Exit(sddAttemptRun())
 	case "sdd-continue":
 		os.Exit(sddContinueRun())
-	case "engram":
-		os.Exit(engramRun())
+	case "bigmem":
+		os.Exit(bigmemRun())
 	case "backup":
 		os.Exit(backupRun())
 	case "release":
@@ -477,20 +477,20 @@ func sddContinueRun() int {
 	return 0
 }
 
-// engramRun handles the "biggz engram" subcommand.
-// Usage: biggz engram save <title> <content>
-//        biggz engram search <query>
-//        biggz engram get <id>
-func engramRun() int {
-	store, err := engram.Open("")
+// bigmemRun handles the "biggz bigmem" subcommand.
+// Usage: biggz bigmem save <title> <content>
+//        biggz bigmem search <query>
+//        biggz bigmem get <id>
+func bigmemRun() int {
+	store, err := bigmem.Open("")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: open engram: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: open bigmem: %v\n", err)
 		return 1
 	}
 
 	args := os.Args[2:]
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: biggz engram <save|search|get> ...")
+		fmt.Fprintln(os.Stderr, "Usage: biggz bigmem <save|search|get> ...")
 		fmt.Fprintln(os.Stderr, "  save <title> <type> <content>")
 		fmt.Fprintln(os.Stderr, "  search <query>")
 		fmt.Fprintln(os.Stderr, "  get <id>")
@@ -500,10 +500,10 @@ func engramRun() int {
 	switch args[0] {
 	case "save":
 		if len(args) < 4 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz engram save <title> <type> <content>")
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem save <title> <type> <content>")
 			return 1
 		}
-		obs := &engram.Observation{
+		obs := &bigmem.Observation{
 			Title:   args[1],
 			Type:    args[2],
 			Content: args[3],
@@ -515,7 +515,7 @@ func engramRun() int {
 		fmt.Printf("Saved: %s\n", obs.ID)
 
 	case "search":
-		results, err := store.Search(args[1], engram.SearchOptions{Limit: 10})
+		results, err := store.Search(args[1], bigmem.SearchOptions{Limit: 10})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: search: %v\n", err)
 			return 1

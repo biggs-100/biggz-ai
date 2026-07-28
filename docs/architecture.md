@@ -17,13 +17,13 @@ biggz-ai is an **AI agent harness** — it runs inside AI coding agents (OpenCod
 ```
 cmd/
 ├── biggz/           — CLI entry point (10 subcommands)
-├── biggz-mcp/       — MCP server for Engram protocol
+├── biggz-mcp/       — MCP server for BigMem protocol
 
 internal/
 ├── agents/          — Agent adapters (opencode, claude, qwen)
 ├── assets/          — Embedded skills + configs
 ├── backup/          — tar.gz snapshot/restore
-├── engram/          — Persistent observation store + MCP tools
+├── BigMem/          — Persistent observation store + MCP tools
 ├── filemerge/       — Atomic write, JSONC merge, section injection
 ├── install/         — Agent detection + deploy
 ├── lens/            — Review lenses (risk, readability, reliability, resilience)
@@ -96,7 +96,7 @@ Pending → InProgress → Completed → Archived
 
 Transitions are validated by the FSM. Business rules are evaluated by PolicyEvaluator, not embedded in transitions.
 
-## Engram Memory Protocol
+## BigMem Memory Protocol
 
 22 MCP tools exposed by `biggz-mcp`:
 

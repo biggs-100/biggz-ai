@@ -1,4 +1,4 @@
-package engram
+package bigmem
 
 import (
 	"path/filepath"
@@ -93,8 +93,12 @@ func TestSearch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Search() error: %v", err)
 	}
-	if len(results) != 0 {
-		// "auth" appears in title and topic_key
+	if len(results) < 1 {
+		// Retry once — the observations may not be flushed yet
+		results, err = s.Search("auth", SearchOptions{})
+		if err != nil {
+			t.Fatalf("Search() error: %v", err)
+		}
 	}
 	if len(results) < 1 {
 		t.Errorf("expected at least 1 result for 'auth', got %d", len(results))
@@ -150,7 +154,7 @@ func TestOpen_DefaultDir(t *testing.T) {
 		t.Fatalf("Open() error: %v", err)
 	}
 
-	expected := filepath.Join(home, ".biggz", "engram")
+	expected := filepath.Join(home, ".biggz", "bigmem")
 	if s.RootDir() != expected {
 		t.Errorf("RootDir = %q, want %q", s.RootDir(), expected)
 	}

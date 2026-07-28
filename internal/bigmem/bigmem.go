@@ -1,9 +1,9 @@
-// Package engram provides a lightweight persistent memory store for biggz-ai.
+// Package bigmem provides a lightweight persistent memory store for biggz-ai.
 //
-// It stores observations as JSON files under ~/.biggz/engram/observations/,
+// It stores observations as JSON files under ~/.biggz/bigmem/observations/,
 // organized by topic for efficient retrieval. This gives biggz-ai its own
 // memory system without depending on external MCP servers.
-package engram
+package bigmem
 
 import (
 	"encoding/json"
@@ -43,7 +43,7 @@ func Open(rootDir string) (*Store, error) {
 		if err != nil {
 			return nil, fmt.Errorf("home dir: %w", err)
 		}
-		rootDir = filepath.Join(home, ".biggz", "engram")
+		rootDir = filepath.Join(home, ".biggz", "bigmem")
 	}
 
 	obsDir := filepath.Join(rootDir, "observations")

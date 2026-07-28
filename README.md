@@ -2,7 +2,7 @@
 
 **AI Agent Harness — Review-Driven Development with Human-in-the-Loop**
 
-biggz-ai is a lightweight, self-contained harness for AI coding agents (OpenCode, Claude Code, Qwen). It provides SDD (Spec-Driven Development) workflow orchestration, code review pipelines with 4 lenses (R1-R4), persistent memory (Engram), and full lifecycle management — all with the human always in control.
+biggz-ai is a lightweight, self-contained harness for AI coding agents (OpenCode, Claude Code, Qwen). It provides SDD (Spec-Driven Development) workflow orchestration, code review pipelines with 4 lenses (R1-R4), persistent memory (BigMem), and full lifecycle management — all with the human always in control.
 
 Inspired by gentle-ai, but rebuilt from scratch with 95% less code, a cleaner architecture, and no legacy debt.
 
@@ -29,7 +29,7 @@ echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
 | `biggz sdd-verify-validate` | Validate verify reports |
 | `biggz sdd-attempt` | Manage attempt budgets |
 | `biggz sdd-continue <change>` | Determine next SDD phase |
-| `biggz engram save|search|get` | Persistent memory |
+| `biggz BigMem save|search|get` | Persistent memory |
 | `biggz backup create|list|restore` | Snapshot/restore state |
 | `biggz release status|tag|verify` | Version management |
 | `biggz skill-registry refresh` | Regenerate skill registry |
@@ -43,7 +43,7 @@ CLI (cmd/biggz)
   ├── Orchestrator ──► Pipeline/DAG ──► Lenses (R1-R4)
   ├── Install ──► Agent Detection ──► Skill Deploy ──► Config Merge
   ├── SDD ──► Status, Verify, Attempt, Continue
-  ├── Engram ──► MCP Server ──► 22 memory tools
+  ├── BigMem ──► MCP Server ──► 22 memory tools
   ├── Review ──► Lifecycle, Findings, Corrections, Receipt, Gates, Ledger
   ├── Judgment Day ──► Dual-blind adversarial review
   ├── Backup/Restore ──► tar.gz snapshots
@@ -84,13 +84,13 @@ Input (ReviewSubject)
 
 All 4 lenses run in parallel — they have no dependencies on each other.
 
-## Engram Memory
+## BigMem Memory
 
 biggz-ai includes a full MCP server (`biggz-mcp`) exposing 22 memory tools:
 
 `mem_save`, `mem_search`, `mem_get_observation`, `mem_update`, `mem_delete`, `mem_context`, `mem_session_summary`, `mem_session_start`, `mem_session_end`, `mem_save_prompt`, `mem_current_project`, `mem_suggest_topic_key`, `mem_timeline`, `mem_stats`, `mem_pin`, `mem_unpin`, `mem_doctor`, `mem_compare`, `mem_judge`, `mem_capture_passive`, `mem_merge_projects`, `mem_review`
 
-100% compatible with gentle-ai's Engram protocol.
+100% compatible with gentle-ai's BigMem protocol.
 
 ## RDD (Review-Driven Development)
 
