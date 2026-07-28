@@ -9,6 +9,9 @@ import (
 
 	"github.com/biggz-ai/biggz/internal/agents/opencode"
 	"github.com/biggz-ai/biggz/internal/install"
+	"github.com/biggz-ai/biggz/internal/lens/readability"
+	"github.com/biggz-ai/biggz/internal/lens/reliability"
+	"github.com/biggz-ai/biggz/internal/lens/resilience"
 	"github.com/biggz-ai/biggz/internal/lens/risk"
 	"github.com/biggz-ai/biggz/model"
 	"github.com/biggz-ai/biggz/orchestrator"
@@ -122,10 +125,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Pipeline stages — RiskLens runs first, then DummyLens as fallback
+	readabilityLens := &readability.ReadabilityLens{}
+	if err := reg.RegisterLens(readabilityLens); err != nil {
+		fmt.Fprintf(os.Stderr, "error: registering lens: %v\n", err)
+		os.Exit(1)
+	}
+
+	reliabilityLens := &reliability.ReliabilityLens{}
+	if err := reg.RegisterLens(reliabilityLens); err != nil {
+		fmt.Fprintf(os.Stderr, "error: registering lens: %v\n", err)
+		os.Exit(1)
+	}
+
+	resilienceLens := &resilience.ResilienceLens{}
+	if err := reg.RegisterLens(resilienceLens); err != nil {
+		fmt.Fprintf(os.Stderr, "error: registering lens: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Pipeline stages — lenses run in order, then policy evaluation
 	minEvEval := &minimumEvidenceEvaluator{}
 	stages := []pipeline.Stage{
 		&lensStage{lens: riskLens},
+		&lensStage{lens: readabilityLens},
+		&lensStage{lens: reliabilityLens},
+		&lensStage{lens: resilienceLens},
 		&lensStage{lens: dummyLens},
 		&policyStage{evaluator: minEvEval},
 	}

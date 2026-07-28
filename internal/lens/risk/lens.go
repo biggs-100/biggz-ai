@@ -3,12 +3,10 @@ package risk
 import (
 	"context"
 	"fmt"
-	"os/exec"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
+	"github.com/biggz-ai/biggz/internal/lens/gitdiff"
 	"github.com/biggz-ai/biggz/model"
 	"github.com/biggz-ai/biggz/plugin"
 )
@@ -37,12 +35,12 @@ func (l *RiskLens) Policies() []plugin.Policy { return []plugin.Policy{} }
 // the output, classifies files by risk signal, assigns an overall
 // risk level, and returns a LensResult with per-file findings.
 func (l *RiskLens) Analyze(ctx context.Context, subject model.ReviewSubject) (*plugin.LensResult, error) {
-	files, err := getDiffStat(ctx, subject)
+	files, err := gitdiff.GetDiffStat(ctx, subject)
 	if err != nil {
 		return nil, fmt.Errorf("risk lens: %w", err)
 	}
 
-	execMode, err := hasModeChanges(ctx, subject)
+	execMode, err := gitdiff.HasModeChanges(ctx, subject)
 	if err != nil {
 		return nil, fmt.Errorf("risk lens: %w", err)
 	}
@@ -55,93 +53,6 @@ func (l *RiskLens) Analyze(ctx context.Context, subject model.ReviewSubject) (*p
 		LensID:   l.ID(),
 		Findings: findings,
 	}, nil
-}
-
-// ---- Git Command Execution ----
-
-// diffStatRegex matches git diff --stat output lines.
-// Format: path | N +additions -deletions
-// Example: "main.go | 10 ++++++++---"
-var diffStatRegex = regexp.MustCompile(`^(.+?)\s*\|\s*(\d+)\s*(\++)(\-*)\s*$`)
-
-// getDiffStat runs "git diff --stat HEAD~1..HEAD" in the subject's repository
-// and returns the parsed list of changed files.
-func getDiffStat(ctx context.Context, subject model.ReviewSubject) ([]DiffFile, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--stat", "HEAD~1..HEAD")
-	cmd.Dir = subject.Repository
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("git diff --stat: %w", err)
-	}
-	return parseDiffStat(string(output)), nil
-}
-
-// parseDiffStat parses the output of git diff --stat into a slice of DiffFile.
-// It is a pure function with no side effects, making it directly testable.
-//
-// Input format (one line per file):
-//
-//	path/to/file.go | 42 ++++++++++----------
-//	README.md | 2 +-
-func parseDiffStat(output string) []DiffFile {
-	var files []DiffFile
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		matches := diffStatRegex.FindStringSubmatch(line)
-		if matches == nil {
-			continue
-		}
-		path := strings.TrimSpace(matches[1])
-		total, _ := strconv.Atoi(matches[2])
-		plusCount := len(matches[3])
-		minusCount := len(matches[4])
-
-		additions, deletions := total, 0
-		if plusCount+minusCount > 0 {
-			additions = total * plusCount / (plusCount + minusCount)
-			deletions = total - additions
-		}
-
-		files = append(files, DiffFile{
-			Path:      path,
-			Additions: additions,
-			Deletions: deletions,
-		})
-	}
-	return files
-}
-
-// rawDiffModeRegex matches lines in git diff --raw output that indicate
-// a mode change to executable (100755). Format:
-//
-//	:100644 100755 abc123... def456... M	path/to/file.sh
-var rawDiffModeRegex = regexp.MustCompile(`^:\d+\s+100755\s`)
-
-// hasModeChanges runs "git diff --raw HEAD~1..HEAD" to detect executable
-// mode changes (100644 → 100755) in the diff.
-func hasModeChanges(ctx context.Context, subject model.ReviewSubject) (bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "diff", "--raw", "HEAD~1..HEAD")
-	cmd.Dir = subject.Repository
-	output, err := cmd.Output()
-	if err != nil {
-		return false, fmt.Errorf("git diff --raw: %w", err)
-	}
-	return detectModeChanges(string(output)), nil
-}
-
-// detectModeChanges checks git diff --raw output for executable mode
-// transitions (new mode is 100755). It is a pure function.
-func detectModeChanges(rawOutput string) bool {
-	for _, line := range strings.Split(rawOutput, "\n") {
-		if rawDiffModeRegex.MatchString(line) {
-			return true
-		}
-	}
-	return false
 }
 
 // ---- File Classification ----

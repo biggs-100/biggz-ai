@@ -3,6 +3,8 @@
 // and the scale of changes.
 package risk
 
+import "github.com/biggz-ai/biggz/internal/lens/gitdiff"
+
 // RiskLevel represents the overall assessment of a code change's risk.
 type RiskLevel string
 
@@ -22,19 +24,16 @@ const (
 	SignalExecMode RiskSignal = "executable_mode"
 )
 
-// DiffFile holds the parsed statistics for a single file in a git diff.
-type DiffFile struct {
-	Path      string
-	Additions int
-	Deletions int
-}
+// DiffFile is a type alias for gitdiff.DiffFile, provided for backward
+// compatibility within the risk package.
+type DiffFile = gitdiff.DiffFile
 
 // RiskAssessment is the complete result of analyzing a diff for risk.
 // It contains the aggregated risk level, total changed lines, detected
 // signals, and per-file details.
 type RiskAssessment struct {
-	Level        RiskLevel    `json:"level"`
-	ChangedLines int          `json:"changed_lines"`
-	Signals      []RiskSignal `json:"signals"`
-	Files        []DiffFile   `json:"files"`
+	Level        RiskLevel      `json:"level"`
+	ChangedLines int            `json:"changed_lines"`
+	Signals      []RiskSignal   `json:"signals"`
+	Files        []DiffFile     `json:"files"`
 }
