@@ -2,7 +2,7 @@
 
 ## Purpose
 
-The Plugin System domain defines the plugin interfaces and registry for extending review capabilities. It specifies LensPlugin for analysis, ProviderPlugin for external service integration, the build-time Registry, and the Pipeline execution model with rollback support.
+The Plugin System domain defines the plugin interfaces and registry for extending review capabilities. It specifies LensPlugin for analysis, AgentAdapter for agent discovery and integration, the build-time Registry, and the Pipeline execution model with rollback support.
 
 ## Requirements
 
@@ -24,38 +24,37 @@ The system MUST define a LensPlugin interface with ID() returning string, Name()
 - THEN the plugin MUST return an error
 - AND NOT panic or hang
 
-### Requirement: ProviderPlugin Interface
+### Requirement: AgentAdapter Interface
 
-The system MUST define a ProviderPlugin interface with ID() returning string, Name() returning string, Capabilities() returning []string, and Execute(ctx, req) returning ProviderResponse.
+The system MUST define an AgentAdapter interface with ID() returning string, Name() returning string, Detect(ctx) returning (binaryPath string, err), Capabilities() returning []Capability, and DeployConfig(ctx, cfg) returning error.
 
-#### Scenario: Happy path — provider execution
+#### Scenario: Happy path — agent detected
 
-- GIVEN a ProviderPlugin registered with ID "mock-provider" and a valid request
-- WHEN Execute is called with the request
-- THEN the ProviderResponse MUST contain results
-- AND the provider MUST indicate which capability was used
+- GIVEN an AgentAdapter for an agent that is installed on the system
+- WHEN Detect is called
+- THEN it MUST return the binary path without error
 
-#### Scenario: Unknown capability request
+#### Scenario: Agent not installed
 
-- GIVEN a ProviderPlugin with Capabilities() returning ["code-review"]
-- WHEN Execute is called with a request requiring ["deploy"]
-- THEN the provider SHOULD return an error indicating the capability is not supported
+- GIVEN an AgentAdapter for an agent that is NOT installed
+- WHEN Detect is called
+- THEN it MUST return an error indicating the agent was not found
 
 ### Requirement: Build-Time Registry
 
-The system MUST provide a Registry with RegisterLens(plugin), RegisterProvider(plugin), GetLens(id), and GetProvider(id) methods. Registration MUST happen at build time via explicit wiring. The Registry MUST NOT support dynamic loading.
+The system MUST provide a Registry with RegisterLens(plugin), RegisterAgent(adapter), GetLens(id), and GetAgent(id) methods. Registration MUST happen at build time via explicit wiring. The Registry MUST NOT support dynamic loading.
 
-#### Scenario: Happy path — register and retrieve
+#### Scenario: Happy path — register and retrieve agent
 
 - GIVEN an empty Registry
-- WHEN a LensPlugin with ID "dummy-lens" is registered via RegisterLens
-- THEN GetLens("dummy-lens") MUST return the registered plugin
-- AND GetLens("unknown") MUST return nil
+- WHEN an AgentAdapter with ID "test-agent" is registered via RegisterAgent
+- THEN GetAgent("test-agent") MUST return the registered adapter
+- AND GetAgent("unknown") MUST return nil
 
-#### Scenario: Duplicate registration
+#### Scenario: Duplicate agent registration
 
-- GIVEN a Registry with a registered LensPlugin "dummy-lens"
-- WHEN RegisterLens is called again with the same ID "dummy-lens"
+- GIVEN a Registry with a registered AgentAdapter "test-agent"
+- WHEN RegisterAgent is called again with the same ID "test-agent"
 - THEN the Registry MUST return an error or replace the existing registration
 - AND the behavior MUST be documented and consistent
 
@@ -97,3 +96,37 @@ The system MUST define an Orchestrator with a single Execute(ctx, subject) metho
 - WHEN Execute is called and a stage fails
 - THEN *ReviewState MUST be returned with Status set to Failed
 - AND the error MUST be non-nil
+
+## Added Requirements
+
+### Requirement: AgentAdapter Config Path Methods
+
+The AgentAdapter interface MUST define three config path methods: GlobalConfigDir(homeDir string) returning string, SkillsDir(homeDir string) returning string, and SettingsPath(homeDir string) returning string. These methods MUST resolve platform-appropriate paths using `filepath.Join(homeDir, ...)`. (Previously: AgentAdapter had no config path methods.)
+
+#### Scenario: GlobalConfigDir returns agent config directory
+
+- GIVEN a configured AgentAdapter and a valid homeDir path
+- WHEN GlobalConfigDir(homeDir) is called
+- THEN it MUST return the agent's global configuration directory path
+- AND the path MUST be constructed by joining homeDir with the agent-specific config subpath
+
+#### Scenario: SkillsDir returns agent skills directory
+
+- GIVEN a configured AgentAdapter and a valid homeDir path
+- WHEN SkillsDir(homeDir) is called
+- THEN it MUST return the subdirectory path where the agent stores skills
+- AND the path MUST be a subdirectory of the agent's config directory
+
+#### Scenario: SettingsPath returns agent config file path
+
+- GIVEN a configured AgentAdapter and a valid homeDir path
+- WHEN SettingsPath(homeDir) is called
+- THEN it MUST return the full file path to the agent's settings configuration file
+- AND the path MUST include the agent's config file name (e.g., opencode.jsonc)
+
+#### Scenario: Empty homeDir string
+
+- GIVEN a configured AgentAdapter and an empty homeDir string
+- WHEN any of the three path methods is called
+- THEN the return value MAY be a relative path or have undefined behavior
+- AND the system MUST NOT panic

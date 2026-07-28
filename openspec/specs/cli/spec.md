@@ -26,7 +26,7 @@ The system MUST read a ReviewSubject from standard input. The input MUST be a JS
 
 ### Requirement: Pipeline Execution
 
-The CLI MUST invoke the Orchestrator's Execute method with the parsed ReviewSubject. The CLI MUST use the configured Registry with at least one LensPlugin and one ProviderPlugin.
+The CLI MUST invoke the Orchestrator's Execute method with the parsed ReviewSubject. The CLI MUST use the configured Registry with at least one LensPlugin registered.
 
 #### Scenario: Happy path — successful review
 

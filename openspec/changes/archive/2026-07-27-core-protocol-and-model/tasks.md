@@ -34,24 +34,24 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: Plugin Interfaces
 
-- [ ] 2.1 Create `plugin/interfaces.go` — `LensPlugin` (Analyze, Policies) and `ProviderPlugin` (Execute, Capabilities)
-- [ ] 2.2 Create `policy/evaluator.go` — `Evaluator` interface with `Name()` and `Evaluate(ctx, ReviewState) PolicyVerdict`
-- [ ] 2.3 Create `registry/registry.go` — build-time `Registry` with `RegisterLens`, `RegisterProvider`, `GetLens`, `GetProvider`
+- [x] 2.1 Create `plugin/interfaces.go` — `LensPlugin` (Analyze, Policies) and `ProviderPlugin` (Execute, Capabilities)
+- [x] 2.2 Create `policy/evaluator.go` — `Evaluator` interface with `Name()` and `Evaluate(ctx, ReviewState) PolicyVerdict`
+- [x] 2.3 Create `registry/registry.go` — build-time `Registry` with `RegisterLens`, `RegisterProvider`, `GetLens`, `GetProvider`
 
 ## Phase 3: Pipeline + Orchestrator
 
-- [ ] 3.1 Create `pipeline/pipeline.go` — `Stage` interface + `Pipeline` struct with sequential `Execute` and reverse-order `Rollback`
-- [ ] 3.2 Create `orchestrator/orchestrator.go` — `Orchestrator.Execute()` wrapping pipeline and FSM transitions
+- [x] 3.1 Create `pipeline/pipeline.go` — `Stage` interface + `Pipeline` struct with sequential `Execute` and reverse-order `Rollback`
+- [x] 3.2 Create `orchestrator/orchestrator.go` — `Orchestrator.Execute()` wrapping pipeline and FSM transitions
 
 ## Phase 4: CLI + Wiring
 
-- [ ] 4.1 Create `cmd/biggz/dummylens.go` — `DummyLens` returning static findings
-- [ ] 4.2 Create `cmd/biggz/mockprovider.go` — `MockProvider` returning canned responses
-- [ ] 4.3 Create `cmd/biggz/main.go` — CLI: stdin → parse JSON → execute → stdout JSON or stderr error + exit 1
+- [x] 4.1 Create `cmd/biggz/dummylens.go` — `DummyLens` returning static findings
+- [x] 4.2 Create `cmd/biggz/mockprovider.go` — `MockProvider` returning canned responses
+- [x] 4.3 Create `cmd/biggz/main.go` — CLI: stdin → parse JSON → execute → stdout JSON or stderr error + exit 1
 
 ## Phase 5: Tests
 
 - [x] 5.1 Write `model/hash_test.go` — evidence chain append, PrevHash link integrity, tamper detection (MerkleRoot changes after mutation)
 - [x] 5.2 Write `model/fsm_test.go` — rapid property tests: valid sequence chains succeed, invalid transitions are rejected
-- [ ] 5.3 RED: Write `registry/registry_test.go` — register/get a lens, register/get a provider, duplicate registration handling
-- [ ] 5.4 RED: Write `pipeline/pipeline_test.go` — all stages succeed no rollback, middle stage failure triggers reverse rollback on completed stages only
+- [x] 5.3 RED: Write `registry/registry_test.go` — register/get a lens, register/get a provider, duplicate registration handling
+- [x] 5.4 Write `pipeline/pipeline_test.go` — all stages succeed no rollback, middle stage failure triggers reverse rollback on completed stages and the failed stage

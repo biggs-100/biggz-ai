@@ -1,0 +1,18 @@
+{
+  "skills": {
+    "sdd-init": {
+      "path": "skills/sdd-init/SKILL.md"
+    },
+    "sdd-apply": {
+      "path": "skills/sdd-apply/SKILL.md"
+    }
+  },
+  "commands": {
+    "/sdd-init": {
+      "description": "Initialize SDD context for this project"
+    },
+    "/sdd-apply": {
+      "description": "Apply current SDD tasks"
+    }
+  }
+}
