@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/biggz-ai/biggz/model"
 	"github.com/biggz-ai/biggz/orchestrator"
@@ -123,6 +125,9 @@ func main() {
 		os.Exit(releaseRun())
 	case "skill-registry":
 		os.Exit(skillRegistryRun())
+	case "mcp":
+		// Delegate to biggz-mcp
+		os.Exit(mcpRun())
 	}
 	}
 
@@ -675,5 +680,26 @@ func skillRegistryRun() int {
 
 	fmt.Printf("Skill registry regenerated: %d skills\n", result.SkillCount)
 	fmt.Printf("  Path: %s\n", result.Registry)
+	return 0
+}
+
+// mcpRun starts the biggz-ai MCP server for agent integration.
+func mcpRun() int {
+	// Run the MCP server from the biggz-mcp package
+	// For now, exec the separate binary
+	tools := "--tools=agent"
+	for _, arg := range os.Args[2:] {
+		if strings.HasPrefix(arg, "--tools=") {
+			tools = arg
+		}
+	}
+	cmd := exec.Command("biggz-mcp", tools)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: mcp: %v\n", err)
+		return 1
+	}
 	return 0
 }
