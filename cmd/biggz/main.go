@@ -99,12 +99,14 @@ func (e *minimumEvidenceEvaluator) Evaluate(ctx context.Context, state *model.Re
 
 func main() {
 	if len(os.Args) > 1 {
-		switch os.Args[1] {
-		case "install":
-			os.Exit(installRun())
-		case "sdd-status":
-			os.Exit(sddStatusRun())
-		}
+	switch os.Args[1] {
+	case "install":
+		os.Exit(installRun())
+	case "sdd-status":
+		os.Exit(sddStatusRun())
+	case "sdd-verify-validate":
+		os.Exit(sddVerifyValidateRun())
+	}
 	}
 
 	data, err := io.ReadAll(os.Stdin)
@@ -287,5 +289,48 @@ func sddStatusRun() int {
 	}
 
 	fmt.Print(sdd.FormatStatus(active, archived))
+	return 0
+}
+
+// sddVerifyValidateRun handles the "biggz sdd-verify-validate" subcommand.
+// Validates a verify report against authoritative requirement/scenario counts.
+// Usage: biggz sdd-verify-validate --input <path> [--requirements N] [--scenarios N]
+func sddVerifyValidateRun() int {
+	input := ""
+	req := -1
+	scen := -1
+
+	args := os.Args[2:]
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--input":
+			if i+1 < len(args) {
+				i++
+				input = args[i]
+			}
+		case "--requirements":
+			if i+1 < len(args) {
+				i++
+				fmt.Sscanf(args[i], "%d", &req)
+			}
+		case "--scenarios":
+			if i+1 < len(args) {
+				i++
+				fmt.Sscanf(args[i], "%d", &scen)
+			}
+		}
+	}
+
+	if input == "" {
+		fmt.Fprintln(os.Stderr, "error: --input is required")
+		return 1
+	}
+
+	if err := sdd.ValidateVerifyReport(input, req, scen); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	fmt.Println("Verify report is valid.")
 	return 0
 }
