@@ -118,16 +118,26 @@ ALL sub-agent launch prompts that involve reading, writing, or reviewing code MU
 Sub-agents get a fresh context with NO memory. The orchestrator controls context access.
 
 #### SDD Phases
+
+Each phase has explicit read/write rules. Phases use `mem_search`/`mem_get_observation` for Engram context and `mem_save` for persistence.
+
 | Phase | Reads | Writes |
 |-------|-------|--------|
-| explore | nothing | explore |
-| propose | exploration (optional) | proposal |
-| spec | proposal (required) | spec |
-| design | proposal (required) | design |
-| tasks | spec + design (required) | tasks |
+| explore | nothing (or `mem_search` for context) | explore |
+| propose | exploration (optional) + `mem_search` | proposal |
+| spec | proposal + `mem_search` | spec (or `mem_save` via engram) |
+| design | proposal + `mem_search` | design |
+| tasks | spec + design | tasks |
 | apply | tasks + spec + design + apply-progress | apply-progress |
-| verify | spec + tasks + apply-progress | verify-report |
+| verify | spec + tasks + apply-progress | verify-report (validate with `biggz sdd-verify-validate`) |
 | archive | all artifacts | archive-report |
+
+#### Non-SDD Tasks
+
+When delegating work to a `general` or `explore` sub-agent:
+- Include relevant context from `mem_search` in the prompt.
+- Instruct the sub-agent: "Save important discoveries to engram via `mem_save` before returning."
+- Save prompt context via `mem_save_prompt` when the user provides detailed requirements.
 
 ### Output Contract
 
@@ -149,3 +159,18 @@ Every phase returns to the orchestrator:
 - Archive only after verify passes.
 - Skills are at `~/.config/opencode/skills/{phase}/SKILL.md`. Load the skill for each phase before delegating.
 - Use `/sdd-new`, `/sdd-init`, `/sdd-status` etc. to trigger workflows.
+
+### Engram Persistent Memory
+
+You have access to Engram via MCP tools (`mem_save`, `mem_search`, etc.).
+
+**Proactive save triggers** — call `mem_save` after:
+- Architecture decisions, bug fixes, discoveries, config changes, patterns, user preferences
+
+**Format**: title (verb + short), type (decision|architecture|bugfix|discovery), content with What/Why/Where/Learned, topic_key for evolving topics.
+
+**Search proactively** — use `mem_search` when user references past work.
+
+**Session end** — call `mem_session_summary` with Goal, Discoveries, Accomplished, Next Steps.
+
+**Sub-agents** — MUST call `mem_save` before returning when they make discoveries or fix bugs.
