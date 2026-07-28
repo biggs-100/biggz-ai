@@ -19,6 +19,7 @@ import (
 	"github.com/biggz-ai/biggz/internal/agents/claude"
 	"github.com/biggz-ai/biggz/internal/agents/opencode"
 	"github.com/biggz-ai/biggz/internal/agents/qwen"
+	"github.com/biggz-ai/biggz/internal/engram"
 	"github.com/biggz-ai/biggz/internal/install"
 	"github.com/biggz-ai/biggz/internal/lens/readability"
 	"github.com/biggz-ai/biggz/internal/lens/reliability"
@@ -111,6 +112,8 @@ func main() {
 		os.Exit(sddAttemptRun())
 	case "sdd-continue":
 		os.Exit(sddContinueRun())
+	case "engram":
+		os.Exit(engramRun())
 	}
 	}
 
@@ -445,5 +448,75 @@ func sddContinueRun() int {
 	fmt.Printf("Change: %s\n", change)
 	fmt.Printf("Next phase: %s\n", phase)
 	fmt.Printf("Description: %s\n", sdd.NextPhaseDescription(phase))
+	return 0
+}
+
+// engramRun handles the "biggz engram" subcommand.
+// Usage: biggz engram save <title> <content>
+//        biggz engram search <query>
+//        biggz engram get <id>
+func engramRun() int {
+	store, err := engram.Open("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open engram: %v\n", err)
+		return 1
+	}
+
+	args := os.Args[2:]
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: biggz engram <save|search|get> ...")
+		fmt.Fprintln(os.Stderr, "  save <title> <type> <content>")
+		fmt.Fprintln(os.Stderr, "  search <query>")
+		fmt.Fprintln(os.Stderr, "  get <id>")
+		return 1
+	}
+
+	switch args[0] {
+	case "save":
+		if len(args) < 4 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz engram save <title> <type> <content>")
+			return 1
+		}
+		obs := &engram.Observation{
+			Title:   args[1],
+			Type:    args[2],
+			Content: args[3],
+		}
+		if err := store.Save(obs); err != nil {
+			fmt.Fprintf(os.Stderr, "error: save: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Saved: %s\n", obs.ID)
+
+	case "search":
+		results, err := store.Search(args[1], engram.SearchOptions{Limit: 10})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: search: %v\n", err)
+			return 1
+		}
+		if len(results) == 0 {
+			fmt.Println("No results.")
+			return 0
+		}
+		for _, r := range results {
+			fmt.Printf("  %s [%s] %s\n", r.ID[:20], r.Type, r.Title)
+		}
+
+	case "get":
+		obs, err := store.Get(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: get: %v\n", err)
+			return 1
+		}
+		fmt.Printf("ID: %s\n", obs.ID)
+		fmt.Printf("Title: %s\n", obs.Title)
+		fmt.Printf("Type: %s\n", obs.Type)
+		fmt.Printf("Content: %s\n", obs.Content)
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", args[0])
+		return 1
+	}
+
 	return 0
 }
