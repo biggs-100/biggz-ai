@@ -16,18 +16,29 @@ import (
 	"github.com/biggz-ai/biggz/registry"
 )
 
-// Orchestrator manages the full review lifecycle. It holds a Registry for
-// plugin access and a Pipeline for staged execution.
+// Orchestrator manages the full review lifecycle.
 type Orchestrator struct {
 	registry *registry.Registry
 	pipeline *pipeline.Pipeline
+	graph    *pipeline.Graph // optional DAG graph for parallel execution
 }
 
-// New creates an Orchestrator with the given registry and pipeline stages.
+// New creates an Orchestrator with sequential pipeline stages.
 func New(reg *registry.Registry, stages ...pipeline.Stage) *Orchestrator {
 	return &Orchestrator{
 		registry: reg,
 		pipeline: pipeline.New(stages...),
+	}
+}
+
+// NewWithGraph creates an Orchestrator that uses a DAG graph for parallel execution.
+// Nodes with no dependencies run concurrently. Falls back to sequential pipeline
+// if graph is empty.
+func NewWithGraph(reg *registry.Registry, g *pipeline.Graph) *Orchestrator {
+	return &Orchestrator{
+		registry: reg,
+		pipeline: pipeline.New(g.Stages()...),
+		graph:    g,
 	}
 }
 
@@ -49,13 +60,19 @@ func (o *Orchestrator) Execute(ctx context.Context, subject model.ReviewSubject)
 	state.Status = model.StatusInProgress
 	state.UpdatedAt = time.Now()
 
-	if err := o.pipeline.Execute(ctx, state); err != nil {
-		// On pipeline failure, transition to Failed and return partial
-		// state so the caller can inspect what was completed.
+	// Use Graph (parallel DAG) when available, otherwise sequential Pipeline
+	var execErr error
+	if o.graph != nil && len(o.graph.Stages()) > 0 {
+		execErr = o.graph.Execute(ctx, state)
+	} else {
+		execErr = o.pipeline.Execute(ctx, state)
+	}
+
+	if execErr != nil {
 		_ = model.Transition(state.Status, model.StatusFailed)
 		state.Status = model.StatusFailed
 		state.UpdatedAt = time.Now()
-		return state, fmt.Errorf("pipeline: %w", err)
+		return state, fmt.Errorf("pipeline: %w", execErr)
 	}
 
 	if err := model.Transition(state.Status, model.StatusCompleted); err != nil {

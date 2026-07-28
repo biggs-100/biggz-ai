@@ -176,18 +176,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Pipeline stages — lenses run in order, then policy evaluation
+	// Build execution graph — lenses are independent (run in PARALLEL),
+	// then policy evaluation runs after all lenses complete.
 	minEvEval := &minimumEvidenceEvaluator{}
-	stages := []pipeline.Stage{
-		&lensStage{lens: riskLens},
-		&lensStage{lens: readabilityLens},
-		&lensStage{lens: reliabilityLens},
-		&lensStage{lens: resilienceLens},
-		&lensStage{lens: dummyLens},
-		&policyStage{evaluator: minEvEval},
-	}
+	pGraph := pipeline.NewGraph()
+	pGraph.AddNode(&lensStage{lens: riskLens})
+	pGraph.AddNode(&lensStage{lens: readabilityLens})
+	pGraph.AddNode(&lensStage{lens: reliabilityLens})
+	pGraph.AddNode(&lensStage{lens: resilienceLens})
+	pGraph.AddNode(&lensStage{lens: dummyLens})
+	// Policy depends on all lenses
+	pGraph.AddNode(&policyStage{evaluator: minEvEval},
+		"lens-risk", "lens-readability", "lens-reliability",
+		"lens-resilience", "lens-dummy-lens")
 
-	orch := orchestrator.New(reg, stages...)
+	// Use DAG orchestrator for parallel lens execution
+	orch := orchestrator.NewWithGraph(reg, pGraph)
 	state, err := orch.Execute(context.Background(), subject)
 	if err != nil {
 		// The orchestrator returns partial state on pipeline failure.
