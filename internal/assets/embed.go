@@ -4,5 +4,5 @@ package assets
 
 import "embed"
 
-//go:embed all:skills all:opencode all:biggz
+//go:embed all:skills all:opencode all:biggz all:prompts
 var FS embed.FS

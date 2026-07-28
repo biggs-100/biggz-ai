@@ -74,6 +74,12 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	}
 	result.SkillsDeployed = deployed
 
+	// Deploy SDD prompts (used by OpenCode to delegate to sub-agents)
+	promptsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "prompts", "sdd")
+	if err := deployPrompts(promptsDir, assets.FS); err != nil {
+		return result, fmt.Errorf("deploy prompts: %w", err)
+	}
+
 	settingsPath := adapter.SettingsPath(homeDir)
 	merged, err := mergeConfig(settingsPath, assets.FS)
 	if err != nil {
@@ -197,6 +203,33 @@ func writeCommands(commandsDir string, ffs fs.FS) (int, error) {
 		return nil
 	})
 	return count, err
+}
+
+// deployPrompts copies embedded SDD prompt files (under "prompts/sdd/") into
+// the agent's prompts directory. These prompts tell OpenCode's orchestrator
+// to delegate SDD phases to sub-agents rather than executing them inline.
+func deployPrompts(promptsDir string, ffs fs.FS) error {
+	return fs.WalkDir(ffs, "prompts/sdd", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return os.MkdirAll(filepath.Join(promptsDir, d.Name()), 0755)
+		}
+		data, err := fs.ReadFile(ffs, path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		relPath := strings.TrimPrefix(path, "prompts/sdd/")
+		targetPath := filepath.Join(promptsDir, relPath)
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", filepath.Dir(targetPath), err)
+		}
+		if err := filemerge.WriteFile(targetPath, data, 0644); err != nil {
+			return fmt.Errorf("write %s: %w", targetPath, err)
+		}
+		return nil
+	})
 }
 
 // countDirFiles counts all non-directory entries below dir in ffs.
