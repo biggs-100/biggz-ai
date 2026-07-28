@@ -159,26 +159,169 @@ biggz bigmem get <id-from-search>
 # Expected: SQLite database file exists
 ```
 
-## Test 8: SDD Workflow
+## Test 8: Full SDD Project (Real Go Project)
+
+Create a real Go project from scratch, go through the complete SDD cycle,
+run the review pipeline, and archive the change.
 
 ```bash
-# Create a test project with openspec
-mkdir C:\temp\biggz-sdd-test
-cd C:\temp\biggz-sdd-test
-mkdir openspec\changes\test-change
+# ===== 8.1 Create project from scratch =====
+mkdir C:\temp\biggz-full-test
+cd C:\temp\biggz-full-test
 
-# Check what phase is next
-biggz sdd-continue test-change
-# Expected: proposal (no proposal.md exists)
+# Init Go module
+go mod init example.com/fulldemo
 
-# Test attempt tracking
-biggz sdd-attempt begin test-change --budget 400
-biggz sdd-attempt status test-change
-# Expected: in_progress
+# Init git
+git init
+git add -A
+git commit -m "chore: initial empty project"
 
-biggz sdd-attempt finish test-change --success --lines 50
-biggz sdd-attempt status test-change
-# Expected: completed, 1/3 attempts
+# Init SDD (creates openspec/config.yaml via biggz install or manual)
+mkdir openspec\changes\first-feature
+mkdir openspec\specs
+mkdir openspec\changes\archive
+
+# ===== 8.2 Create a proposal =====
+# Write a minimal proposal
+@"
+# Proposal: First Feature
+
+## Intent
+Add a simple HTTP server with health endpoint.
+
+## Scope
+### In Scope
+- HTTP server on port 8080
+- GET /health endpoint
+
+### Out of Scope
+- Database, auth, tests
+
+## Approach
+Use net/http standard library.
+
+## Success Criteria
+- Server starts and responds to /health with 200
+"@ | Out-File -FilePath openspec\changes\first-feature\proposal.md -Encoding utf8
+
+# Verify SDD recognizes the proposal
+biggz sdd-continue first-feature
+# Expected: spec (proposal exists, needs spec)
+
+# ===== 8.3 Write spec =====
+@"
+# HTTP Server Specification
+
+## Requirements
+
+### Requirement: Health Endpoint
+The system MUST expose GET /health returning 200 with JSON body {"status":"ok"}.
+
+#### Scenario: Health check returns ok
+- GIVEN the server is running
+- WHEN a GET request is sent to /health
+- THEN the response MUST be 200
+- AND the body MUST be {"status":"ok"}
+"@ | Out-File -FilePath openspec\specs\http-server\spec.md -Encoding utf8
+
+# ===== 8.4 Write design =====
+@"
+# Design: HTTP Server
+
+## Architecture
+Single-file main.go using net/http.
+
+## Decisions
+- Standard library only (no frameworks)
+- Port 8080 hardcoded for MVP
+
+## File Changes
+| File | Action | Description |
+|------|--------|-------------|
+| main.go | Create | HTTP server with /health handler |
+"@ | Out-File -FilePath openspec\changes\first-feature\design.md -Encoding utf8
+
+# ===== 8.5 Write tasks =====
+@"
+# Tasks: First Feature
+
+## Phase 1: Implementation
+- [ ] 1.1 Create main.go with HTTP server and /health handler
+
+## Phase 2: Verify
+- [ ] 2.1 Start server and test /health endpoint
+"@ | Out-File -FilePath openspec\changes\first-feature\tasks.md -Encoding utf8
+
+# ===== 8.6 Implement =====
+@"
+package main
+
+import (
+    "encoding/json"
+    "log"
+    "net/http"
+)
+
+func main() {
+    http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+        w.Header().Set("Content-Type", "application/json")
+        json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+    })
+    log.Println("Server starting on :8080")
+    log.Fatal(http.ListenAndServe(":8080", nil))
+}
+"@ | Out-File -FilePath main.go -Encoding utf8
+
+# Build and verify
+go build -o server.exe .
+if ($LASTEXITCODE -eq 0) { echo "BUILD OK" } else { echo "BUILD FAILED" }
+
+# Mark tasks as done
+biggz sdd-attempt begin first-feature --budget 200
+# Write apply-progress
+@"
+# Apply Progress
+
+## Completed
+- [x] 1.1 main.go created, builds successfully
+"@ | Out-File -FilePath openspec\changes\first-feature\apply-progress.md -Encoding utf8
+
+biggz sdd-attempt finish first-feature --success --lines 30
+
+# ===== 8.7 Run review pipeline =====
+git add -A
+git commit -m "feat: add HTTP server with health endpoint"
+
+# Run the full review on this commit
+echo '{"repository":"C:/temp/biggz-full-test","commit_sha":"HEAD"}' | biggz
+# Expected: JSON output with status: completed, evidence entries, merkle_root
+
+# ===== 8.8 Create verify report =====
+@"
+yaml
+schema: gentle-ai.verify-result/v1
+verdict: pass
+blockers: 0
+critical_findings: 0
+requirements: 1/1
+scenarios: 1/1
+test_command: go build ./...
+test_exit_code: 0
+build_command: go vet ./...
+build_exit_code: 0
+
+## Verification Report
+
+**CRITICAL**: None
+"@ | Out-File -FilePath openspec\changes\first-feature\verify-report.md -Encoding utf8
+
+# ===== 8.9 Archive =====
+Move-Item openspec\changes\first-feature openspec\changes\archive\2026-07-28-first-feature -Force
+
+# Verify archive
+biggz sdd-status
+# Expected: No active changes, archived change visible
 ```
 
 ## Test 9: Backup/Restore
@@ -263,7 +406,7 @@ opencode --agent biggz-orchestrator
 
 ## Success Criteria
 
-All 13 tests must pass. Report any test that fails with:
+All 14 tests must pass. Report any test that fails with:
 - Test number and name
 - Actual output vs expected
 - Error message (if any)
