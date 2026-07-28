@@ -19,6 +19,7 @@ import (
 	"github.com/biggz-ai/biggz/internal/agents/claude"
 	"github.com/biggz-ai/biggz/internal/agents/opencode"
 	"github.com/biggz-ai/biggz/internal/agents/qwen"
+	"github.com/biggz-ai/biggz/internal/backup"
 	"github.com/biggz-ai/biggz/internal/engram"
 	"github.com/biggz-ai/biggz/internal/install"
 	"github.com/biggz-ai/biggz/internal/lens/readability"
@@ -114,6 +115,8 @@ func main() {
 		os.Exit(sddContinueRun())
 	case "engram":
 		os.Exit(engramRun())
+	case "backup":
+		os.Exit(backupRun())
 	}
 	}
 
@@ -515,6 +518,65 @@ func engramRun() int {
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", args[0])
+		return 1
+	}
+
+	return 0
+}
+
+// backupRun handles the "biggz backup" subcommand.
+// Usage: biggz backup create <path> [path...]
+//        biggz backup list
+//        biggz backup restore <id> <target>
+func backupRun() int {
+	args := os.Args[2:]
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: biggz backup <create|list|restore> ...")
+		return 1
+	}
+
+	switch args[0] {
+	case "create":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz backup create <path> [path...]")
+			return 1
+		}
+		b, err := backup.Create("", args[1:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Backup created: %s\n", b.ID)
+		fmt.Printf("  Size: %d bytes\n", b.Size)
+		fmt.Printf("  Paths: %v\n", b.Paths)
+
+	case "list":
+		backups, err := backup.List("")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if len(backups) == 0 {
+			fmt.Println("No backups found.")
+			return 0
+		}
+		for _, b := range backups {
+			fmt.Printf("  %s  (%d bytes, %s)\n", b.ID, b.Size, b.CreatedAt.Format("2006-01-02 15:04"))
+		}
+
+	case "restore":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz backup restore <id> <target-dir>")
+			return 1
+		}
+		if err := backup.Restore("", args[1], args[2]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Restored %s to %s\n", args[1], args[2])
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown backup command: %s\n", args[0])
 		return 1
 	}
 
