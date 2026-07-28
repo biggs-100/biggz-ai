@@ -125,7 +125,6 @@ func TestKnownInvalidTransitions(t *testing.T) {
 		{StatusInProgress, StatusPending},
 		{StatusInProgress, StatusArchived},
 		{StatusCompleted, StatusPending},
-		{StatusCompleted, StatusInProgress},
 		{StatusCompleted, StatusFailed},
 		{StatusArchived, StatusPending},
 		{StatusArchived, StatusInProgress},

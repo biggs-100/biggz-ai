@@ -65,6 +65,17 @@ func (r *Registry) GetLens(id string) plugin.LensPlugin {
 	return r.lenses[id]
 }
 
+// LensIDs returns the IDs of all registered lens plugins.
+func (r *Registry) LensIDs() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ids := make([]string, 0, len(r.lenses))
+	for id := range r.lenses {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // GetAgent returns the agent adapter with the given ID, or nil if
 // no agent with that ID is registered.
 func (r *Registry) GetAgent(id string) plugin.AgentAdapter {

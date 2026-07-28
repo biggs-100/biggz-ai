@@ -16,7 +16,8 @@ var transitionMap = map[ReviewStatus]map[ReviewStatus]bool{
 		StatusFailed:    true,
 	},
 	StatusCompleted: {
-		StatusArchived: true,
+		StatusInProgress: true, // correction cycle
+		StatusArchived:   true,
 	},
 	StatusArchived: {},
 	StatusFailed:   {},
