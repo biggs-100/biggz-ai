@@ -29,6 +29,7 @@ import (
 	"github.com/biggz-ai/biggz/internal/lens/resilience"
 	"github.com/biggz-ai/biggz/internal/lens/risk"
 	"github.com/biggz-ai/biggz/internal/release"
+	"github.com/biggz-ai/biggz/internal/review"
 	"github.com/biggz-ai/biggz/internal/sdd"
 	"github.com/biggz-ai/biggz/internal/skillregistry"
 )
@@ -125,6 +126,8 @@ func main() {
 		os.Exit(releaseRun())
 	case "skill-registry":
 		os.Exit(skillRegistryRun())
+	case "rdd":
+		os.Exit(rddRun())
 	case "mcp":
 		// Delegate to biggz-mcp
 		os.Exit(mcpRun())
@@ -684,6 +687,61 @@ func skillRegistryRun() int {
 
 	fmt.Printf("Skill registry regenerated: %d skills\n", result.SkillCount)
 	fmt.Printf("  Path: %s\n", result.Registry)
+	return 0
+}
+
+// rddRun handles the "biggz rdd" subcommand.
+// Usage: biggz rdd enable|disable|status [--scope global|clone]
+func rddRun() int {
+	args := os.Args[2:]
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: biggz rdd <enable|disable|status> [--scope global|clone]")
+		return 1
+	}
+
+	op := args[0]
+	scope := "global"
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--scope" && i+1 < len(args) {
+			scope = args[i+1]
+			i++
+		}
+	}
+
+	// Detect clone git dir
+	var gitDir string
+	if scope == "clone" {
+		out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output()
+		if err == nil {
+			gitDir = strings.TrimSpace(string(out))
+		}
+	}
+
+	var status *review.RDDStatusReport
+	var err error
+
+	switch op {
+	case "status":
+		status, err = review.RDDStatus(gitDir)
+	case "enable":
+		status, err = review.RDDEnable(gitDir)
+	case "disable":
+		status, err = review.RDDDisable(gitDir)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown rdd command: %s\n", op)
+		return 1
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("RDD Status: %s\n", status.EffectiveMode)
+	fmt.Printf("  Global: %s\n", status.GlobalMode)
+	if gitDir != "" {
+		fmt.Printf("  Clone:  %s\n", status.CloneMode)
+	}
 	return 0
 }
 

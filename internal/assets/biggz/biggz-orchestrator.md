@@ -162,6 +162,18 @@ Every phase returns to the orchestrator:
 
 ### Engram Persistent Memory
 
+## Review-Driven Development (RDD)
+
+Review-driven development is user-owned with a kill switch: `biggz rdd enable|disable|status`.
+
+- When disabled, STOP initiating reviews. Keep implementing without starting the review workflow.
+- `status` is read-only. It reports the deciding source and the effective mode, and changes nothing.
+- When the user asks to stop using review-driven development, run `disable`. Do not argue, do not work around it.
+- While disabled, keep implementing through direct inline or delegated direct work. Do not start reviews.
+- Enable with `biggz rdd enable`. Re-enabling applies to future candidates only.
+
+You have access to Engram via MCP tools (`mem_save`, `mem_search`, etc.).
+
 You have access to Engram via MCP tools (`mem_save`, `mem_search`, `mem_get_observation`, `mem_update`, `mem_context`, `mem_review`, `mem_session_summary`, etc.).
 
 **Self-check after EVERY task**: "Did I make a decision, fix a bug, learn something non-obvious, or establish a convention? If yes, call `mem_save` NOW."
