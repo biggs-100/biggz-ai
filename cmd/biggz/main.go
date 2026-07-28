@@ -106,6 +106,8 @@ func main() {
 		os.Exit(sddStatusRun())
 	case "sdd-verify-validate":
 		os.Exit(sddVerifyValidateRun())
+	case "sdd-attempt":
+		os.Exit(sddAttemptRun())
 	}
 	}
 
@@ -332,5 +334,83 @@ func sddVerifyValidateRun() int {
 	}
 
 	fmt.Println("Verify report is valid.")
+	return 0
+}
+
+// sddAttemptRun handles the "biggz sdd-attempt" subcommand.
+// Usage:
+//   biggz sdd-attempt status <change>
+//   biggz sdd-attempt begin <change> [--budget N]
+//   biggz sdd-attempt finish <change> [--success] [--lines N]
+//   biggz sdd-attempt reset <change>
+func sddAttemptRun() int {
+	args := os.Args[2:]
+	if len(args) < 2 {
+		fmt.Fprintln(os.Stderr, "Usage: biggz sdd-attempt <status|begin|finish|reset> <change>")
+		return 1
+	}
+
+	operation := args[0]
+	change := args[1]
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	openspecRoot := filepath.Join(cwd, "openspec")
+
+	// Parse flags
+	budget := 400
+	success := true
+	lines := 0
+	for i := 2; i < len(args); i++ {
+		switch args[i] {
+		case "--budget":
+			if i+1 < len(args) {
+				i++
+				fmt.Sscanf(args[i], "%d", &budget)
+			}
+		case "--no-success":
+			success = false
+		case "--lines":
+			if i+1 < len(args) {
+				i++
+				fmt.Sscanf(args[i], "%d", &lines)
+			}
+		}
+	}
+
+	var result *sdd.AttemptState
+	switch operation {
+	case "status":
+		result, err = sdd.AttemptStatus(openspecRoot, change)
+	case "begin":
+		result, err = sdd.AttemptBegin(openspecRoot, change, budget)
+	case "finish":
+		result, err = sdd.AttemptFinish(openspecRoot, change, success, lines)
+	case "reset":
+		result, err = sdd.AttemptReset(openspecRoot, change)
+	default:
+		fmt.Fprintf(os.Stderr, "unknown operation %q (use: status, begin, finish, reset)\n", operation)
+		return 1
+	}
+
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Change: %s\n", result.ChangeName)
+	fmt.Printf("Status: %s\n", result.Status)
+	if result.TotalAttempts > 0 {
+		fmt.Printf("Attempts: %d/%d\n", result.TotalAttempts, result.MaxAttempts)
+	}
+	if result.ActiveAttempt > 0 {
+		fmt.Printf("Active attempt: %d\n", result.ActiveAttempt)
+	}
+	if result.CorrectionLines > 0 {
+		fmt.Printf("Correction lines: %d\n", result.CorrectionLines)
+	}
 	return 0
 }
