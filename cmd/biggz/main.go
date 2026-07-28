@@ -26,6 +26,7 @@ import (
 	"github.com/biggz-ai/biggz/internal/lens/reliability"
 	"github.com/biggz-ai/biggz/internal/lens/resilience"
 	"github.com/biggz-ai/biggz/internal/lens/risk"
+	"github.com/biggz-ai/biggz/internal/release"
 	"github.com/biggz-ai/biggz/internal/sdd"
 )
 
@@ -117,6 +118,8 @@ func main() {
 		os.Exit(engramRun())
 	case "backup":
 		os.Exit(backupRun())
+	case "release":
+		os.Exit(releaseRun())
 	}
 	}
 
@@ -577,6 +580,63 @@ func backupRun() int {
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown backup command: %s\n", args[0])
+		return 1
+	}
+
+	return 0
+}
+
+// releaseRun handles the "biggz release" subcommand.
+// Usage: biggz release status       — show git state
+//        biggz release tag <version> — create version tag
+//        biggz release verify <version> — verify tag exists
+func releaseRun() int {
+	args := os.Args[2:]
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "Usage: biggz release <status|tag|verify> ...")
+		return 1
+	}
+
+	switch args[0] {
+	case "status":
+		state, err := release.CheckGitState()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Branch: %s\n", state.Branch)
+		fmt.Printf("Commit: %s\n", state.Commit)
+		fmt.Printf("Clean: %v\n", state.Clean)
+		if state.LastTag != "" {
+			fmt.Printf("Last tag: %s\n", state.LastTag)
+		}
+
+	case "tag":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz release tag <version>")
+			return 1
+		}
+		tag, err := release.Tag(args[1], false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Created tag: %s\n", tag)
+
+	case "verify":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz release verify <version>")
+			return 1
+		}
+		commit, err := release.VerifyTag(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Tag %s found at commit %s\n", args[1], commit)
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown release command: %s\n", args[0])
 		return 1
 	}
 
