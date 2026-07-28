@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/biggz-ai/biggz/model"
 	"github.com/biggz-ai/biggz/orchestrator"
@@ -22,6 +23,7 @@ import (
 	"github.com/biggz-ai/biggz/internal/lens/reliability"
 	"github.com/biggz-ai/biggz/internal/lens/resilience"
 	"github.com/biggz-ai/biggz/internal/lens/risk"
+	"github.com/biggz-ai/biggz/internal/sdd"
 )
 
 // ---- Pipeline Stages ----
@@ -96,8 +98,13 @@ func (e *minimumEvidenceEvaluator) Evaluate(ctx context.Context, state *model.Re
 // ---- CLI Entry Point ----
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "install" {
-		os.Exit(installRun())
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "install":
+			os.Exit(installRun())
+		case "sdd-status":
+			os.Exit(sddStatusRun())
+		}
 	}
 
 	data, err := io.ReadAll(os.Stdin)
@@ -188,7 +195,7 @@ func installRun() int {
 
 	// Parse flags
 	dryRun := false
-	var selectedAgent string
+	var selectedAgent, homeDir string
 	args := os.Args[2:]
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -198,6 +205,11 @@ func installRun() int {
 			if i+1 < len(args) {
 				i++
 				selectedAgent = args[i]
+			}
+		case "--home":
+			if i+1 < len(args) {
+				i++
+				homeDir = args[i]
 			}
 		}
 	}
@@ -219,7 +231,7 @@ func installRun() int {
 		toTry = []string{selectedAgent}
 	}
 
-	cfg := install.Config{DryRun: dryRun}
+	cfg := install.Config{DryRun: dryRun, HomeDir: homeDir}
 	var result *install.Result
 
 	for _, name := range toTry {
@@ -249,5 +261,31 @@ func installRun() int {
 		fmt.Printf("  Config merged: %v\n", result.ConfigMerged)
 		fmt.Printf("  Commands written: %d\n", result.CommandsWritten)
 	}
+	return 0
+}
+
+// sddStatusRun handles the "biggz sdd-status" subcommand.
+// It scans the openspec/changes directory and reports active/archived changes.
+func sddStatusRun() int {
+	// Look for openspec/ relative to the current working dir
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	openspecRoot := filepath.Join(cwd, "openspec")
+	if _, err := os.Stat(openspecRoot); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "error: no openspec/ directory found in %s\n", cwd)
+		return 1
+	}
+
+	active, archived, err := sdd.Status(openspecRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	fmt.Print(sdd.FormatStatus(active, archived))
 	return 0
 }
