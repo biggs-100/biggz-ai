@@ -6,8 +6,6 @@ description: Shared SDD references for installed skills. Not invokable.
 # Shared SDD Refs
 
 This directory contains reference documents shared across all SDD skills.
-These files are loaded by skills that need phase-common protocols, persistence
-contracts, or OpenSpec conventions.
 
 ## Included
 
@@ -15,5 +13,13 @@ contracts, or OpenSpec conventions.
 
 ## Usage
 
-Skills reference this directory via relative path `../_shared/<file>.md`
-or by convention in the agent's overlay configuration.
+Skills reference this directory via relative path `../_shared/<file>.md` or by orchestrator injection.
+
+## Conventions
+
+- All artifacts under `openspec/` use Markdown with YAML frontmatter.
+- Change names are kebab-case (`my-change`).
+- Every change has a directory at `openspec/changes/{change-name}/`.
+- Phase artifacts follow the pattern `openspec/changes/{change-name}/{phase}.md`.
+- Spec files live at `openspec/specs/{domain}/spec.md`.
+- The orchestrator reads `openspec/config.yaml` to determine required phases.
