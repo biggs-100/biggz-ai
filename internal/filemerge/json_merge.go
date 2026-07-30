@@ -27,6 +27,7 @@ func MergeJSONC(existing, overlay []byte) ([]byte, error) {
 	}
 
 	deepMerge(base, patch)
+	stripReplaceKeys(base)
 
 	return json.MarshalIndent(base, "", "  ")
 }
@@ -56,6 +57,21 @@ func deepMerge(base, overlay map[string]any) {
 		} else {
 			// Otherwise overlay wins (replace flat value or array)
 			base[k] = v
+		}
+	}
+}
+
+// stripReplaceKeys recursively removes any __replace__ key from the tree.
+// This catches sentinels that were stored verbatim when the base lacked
+// the parent key during deepMerge.
+func stripReplaceKeys(v map[string]any) {
+	for k, val := range v {
+		if k == "__replace__" {
+			delete(v, k)
+			continue
+		}
+		if m, ok := val.(map[string]any); ok {
+			stripReplaceKeys(m)
 		}
 	}
 }

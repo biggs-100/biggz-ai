@@ -102,6 +102,13 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		return result, fmt.Errorf("deploy persona: %w", err)
 	}
 
+	// Inject BigMem protocol into system prompt file (AGENTS.md or equivalent)
+	// Making BigMem instructions available to ALL agents (including sub-agents)
+	// without depending on the orchestrator to forward them at delegation time.
+	if err := DeployBigMemProtocol(adapter, homeDir, cfg.DryRun); err != nil {
+		return result, fmt.Errorf("deploy bigmem protocol: %w", err)
+	}
+
 	// Deploy MCP binary to ~/.biggz/
 	mcpBinPath, err := DeployMCPBinaryToHomeDir(homeDir, cfg.DryRun)
 	if err != nil {
@@ -444,7 +451,7 @@ func DeployPersona(adapter plugin.AgentAdapter, homeDir string, dryRun bool) err
 		}
 	}
 
-	updated := injectByMarker(string(existing), personaContent, "biggz:persona")
+	updated := InjectByMarker(string(existing), personaContent, "biggz:persona")
 
 	if dryRun {
 		return nil
@@ -459,30 +466,228 @@ func DeployPersona(adapter plugin.AgentAdapter, homeDir string, dryRun bool) err
 	return nil
 }
 
-// injectByMarker inserts content into a markdown file using HTML comment markers.
-// If the opening marker <!-- <name> --> exists, content between markers is replaced.
-// Otherwise, content is appended at the end with the marker pair.
-func injectByMarker(existing, content, name string) string {
+// DeployBigMemProtocol injects the BigMem persistent memory protocol into
+// the agent's AGENTS.md (or equivalent system prompt file) as a managed section
+// with <!-- biggz:bigmem-protocol --> markers.
+//
+// This ensures ALL agents (including sub-agents) receive the memory protocol
+// instructions automatically, without depending on the orchestrator to forward
+// them at delegation time.
+func DeployBigMemProtocol(adapter plugin.AgentAdapter, homeDir string, dryRun bool) error {
+	if !adapter.SupportsSystemPrompt() {
+		return nil
+	}
+	promptFile := adapter.SystemPromptFile(homeDir)
+	if promptFile == "" {
+		return nil
+	}
+
+	// Read BigMem protocol content from embedded assets
+	// The file includes <!-- biggz:bigmem-protocol --> markers so InjectByMarker
+	// can update it idempotently on subsequent installs.
+	protocolData, err := fs.ReadFile(assets.FS, "biggz/bigmem-protocol.md")
+	if err != nil {
+		return nil // protocol file not embedded, skip
+	}
+	protocolContent := string(protocolData)
+
+	// Read existing system prompt file
+	var existing []byte
+	if _, err := os.Stat(promptFile); err == nil {
+		existing, err = os.ReadFile(promptFile)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", promptFile, err)
+		}
+	}
+
+	updated := InjectByMarker(string(existing), protocolContent, "biggz:bigmem-protocol")
+
+	if dryRun {
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(promptFile), 0755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(promptFile), err)
+	}
+	if _, err := filemerge.WriteFileAtomic(promptFile, []byte(updated), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", promptFile, err)
+	}
+	return nil
+}
+
+// DeployStrictTDDMode injects or removes the <!-- biggz:strict-tdd-mode --> marker
+// in the agent's system prompt file. When enabled, the marker tells sub-agents
+// that Strict TDD Mode is active. The orchestator reads this marker and forwards
+// the instruction to sdd-apply and sdd-verify.
+func DeployStrictTDDMode(adapter plugin.AgentAdapter, homeDir string, enabled bool, dryRun bool) error {
+	if !adapter.SupportsSystemPrompt() {
+		return nil
+	}
+	promptFile := adapter.SystemPromptFile(homeDir)
+	if promptFile == "" {
+		return nil
+	}
+
+	content := "Strict TDD Mode: enabled\n\nWhen active, sdd-apply writes tests FIRST (RED → GREEN → REFACTOR).\nThe orchestrator MUST forward this to sub-agents via:\n\"STRICT TDD MODE IS ACTIVE. You MUST follow strict-tdd.md.\""
+
+	var existing []byte
+	if _, err := os.Stat(promptFile); err == nil {
+		existing, err = os.ReadFile(promptFile)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", promptFile, err)
+		}
+	}
+
+	var updated string
+	if enabled {
+		updated = InjectByMarker(string(existing), content, "biggz:strict-tdd-mode")
+	} else {
+		// Remove the marker section by replacing it with nothing
+		updated = InjectByMarker(string(existing), "", "biggz:strict-tdd-mode")
+		// If InjectByMarker returns content with empty markers, strip them
+		openMarker := "<!-- biggz:strict-tdd-mode -->"
+		closeMarker := "<!-- /biggz:strict-tdd-mode -->"
+		if strings.Contains(updated, openMarker) {
+			updated = strings.ReplaceAll(updated, openMarker+"\n\n"+closeMarker, "")
+			updated = strings.ReplaceAll(updated, openMarker+closeMarker, "")
+		}
+	}
+
+	if dryRun {
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(promptFile), 0755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(promptFile), err)
+	}
+	if _, err := filemerge.WriteFileAtomic(promptFile, []byte(updated), 0644); err != nil {
+		return fmt.Errorf("write %s: %w", promptFile, err)
+	}
+	return nil
+}
+
+// InjectByMarker inserts or updates managed content in a markdown file using
+// HTML comment markers (<!-- name --> ... <!-- /name -->).
+//
+// Before injection, it runs stripOrphanMarkers to repair files that accumulated
+// orphan or duplicate markers from previous runs (e.g., repeated syncs could
+// leave multiple copies of the same managed block).
+//
+// If content has not changed since the last injection (content fingerprint match),
+// the file is returned unchanged to avoid unnecessary writes.
+func InjectByMarker(existing, content, name string) string {
+	existing = stripOrphanMarkers(existing, name)
+
 	openMarker := "<!-- " + name + " -->"
 	closeMarker := "<!-- /" + name + " -->"
 
 	openIdx := strings.Index(existing, openMarker)
 	if openIdx == -1 {
-		// No marker found — append at end
+		// No marker pair found — append at end with proper markers
 		if existing != "" && !strings.HasSuffix(existing, "\n") {
 			existing += "\n"
 		}
-		return existing + "\n" + content + "\n"
+		return existing + "\n" + openMarker + "\n" + content + "\n" + closeMarker + "\n"
 	}
 
-	closeIdx := strings.Index(existing, closeMarker)
+	closeIdx := strings.Index(existing[openIdx+len(openMarker):], closeMarker)
 	if closeIdx == -1 {
 		// Opening marker found but no closing marker — replace from open to end
-		return existing[:openIdx] + content + "\n"
+		return existing[:openIdx] + openMarker + "\n" + content + "\n" + closeMarker + "\n"
+	}
+	closeIdx += openIdx + len(openMarker)
+
+	// Check if content is unchanged (content fingerprint via marker)
+	existingContent := existing[openIdx+len(openMarker) : closeIdx]
+	if strings.TrimSpace(existingContent) == strings.TrimSpace(content) {
+		return existing
 	}
 
-	// Both markers found — replace content between them
-	return existing[:openIdx] + content + existing[closeIdx+len(closeMarker):]
+	// Replace content between markers
+	return existing[:openIdx] + openMarker + "\n" + content + "\n" + closeMarker + existing[closeIdx+len(closeMarker):]
+}
+
+// stripOrphanMarkers removes orphan and duplicate marker pairs for the given
+// name. It collapses any number of duplicate blocks into a clean state:
+//
+//  1. Removes closing markers that appear before their matching opening marker
+//  2. Removes orphan opening markers without a matching closer
+//  3. Removes orphan closing markers without a matching opener
+//  4. Removes ALL content between the first opener and last closer, keeping
+//     only the FIRST valid pair and discarding subsequent duplicates
+func stripOrphanMarkers(input, name string) string {
+	openMarker := "<!-- " + name + " -->"
+	closeMarker := "<!-- /" + name + " -->"
+
+	// Find ALL occurrences of both markers
+	var openIdxs []int
+	var closeIdxs []int
+
+	for i := 0; i < len(input); {
+		if idx := strings.Index(input[i:], openMarker); idx >= 0 {
+			openIdxs = append(openIdxs, i+idx)
+			i += idx + len(openMarker)
+		} else {
+			break
+		}
+	}
+
+	for i := 0; i < len(input); {
+		if idx := strings.Index(input[i:], closeMarker); idx >= 0 {
+			closeIdxs = append(closeIdxs, i+idx)
+			i += idx + len(closeMarker)
+		} else {
+			break
+		}
+	}
+
+	// If there are 0 or 1 pairs, no cleanup needed
+	if len(openIdxs) <= 1 && len(closeIdxs) <= 1 {
+		// Still need to balance: remove orphans
+		if len(openIdxs) == 1 && len(closeIdxs) == 0 {
+			// Remove the orphan opener
+			return input[:openIdxs[0]] + input[openIdxs[0]+len(openMarker):]
+		}
+		if len(openIdxs) == 0 && len(closeIdxs) == 1 {
+			// Remove the orphan closer
+			return input[:closeIdxs[0]] + input[closeIdxs[0]+len(closeMarker):]
+		}
+		return input
+	}
+
+	// Multiple markers found — collapse to first valid pair, discard the rest.
+
+	// Find first valid pair: first opener followed by a closer
+	firstOpen := -1
+	firstClose := -1
+	for _, oi := range openIdxs {
+		for _, ci := range closeIdxs {
+			if ci > oi {
+				firstOpen = oi
+				firstClose = ci
+				break
+			}
+		}
+		if firstOpen >= 0 {
+			break
+		}
+	}
+
+	if firstOpen < 0 {
+		// No valid pair — remove all markers
+		result := input
+		for _, oi := range openIdxs {
+			result = result[:oi] + result[oi+len(openMarker):]
+		}
+		for _, ci := range closeIdxs {
+			result = result[:ci] + result[ci+len(closeMarker):]
+		}
+		return result
+	}
+
+	// Keep everything before the first opener, and content between first pair.
+	// Discard everything after first closer (removes all duplicate blocks).
+	return input[:firstOpen] + openMarker + input[firstOpen+len(openMarker):firstClose] + closeMarker
 }
 
 // DeployMCPBinaryToHomeDir copies the MCP server binary to ~/.biggz/ so it

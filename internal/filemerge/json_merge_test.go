@@ -1,6 +1,7 @@
 package filemerge
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -203,6 +204,54 @@ func TestMergeJSONC_DeepMergeNested(t *testing.T) {
 	}
 	if settings["font"] != float64(12) {
 		t.Errorf("settings.font = %v, want %v", settings["font"], float64(12))
+	}
+}
+
+func TestMergeJSONC_DeepReplaceSentinel_NewKey(t *testing.T) {
+	existing := []byte(`{"existing": "keep"}`)
+	overlay := []byte(`{"agent": {"biggz": {"tools": {"__replace__": true, "read": true, "write": true}}}}`)
+
+	result, err := MergeJSONC(existing, overlay)
+	if err != nil {
+		t.Fatalf("MergeJSONC() returned error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v\n%s", err, string(result))
+	}
+
+	// existing key must survive
+	if parsed["existing"] != "keep" {
+		t.Errorf("existing key should be preserved")
+	}
+
+	// agent key must be a map
+	agent, ok := parsed["agent"].(map[string]any)
+	if !ok {
+		t.Fatal("agent must be a map")
+	}
+
+	// __replace__ must NOT survive anywhere in the tree
+	data, _ := json.Marshal(result)
+	if bytes.Contains(data, []byte("__replace__")) {
+		t.Errorf("__replace__ should not appear in output:\n%s", string(result))
+	}
+
+	// tools must have the overlay keys
+	biggz, ok := agent["biggz"].(map[string]any)
+	if !ok {
+		t.Fatal("agent.biggz must be a map")
+	}
+	tools, ok := biggz["tools"].(map[string]any)
+	if !ok {
+		t.Fatal("agent.biggz.tools must be a map")
+	}
+	if tools["read"] != true {
+		t.Error("agent.biggz.tools.read should be true")
+	}
+	if tools["write"] != true {
+		t.Error("agent.biggz.tools.write should be true")
 	}
 }
 
