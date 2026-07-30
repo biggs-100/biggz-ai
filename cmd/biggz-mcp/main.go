@@ -14,36 +14,34 @@ import (
 )
 
 var store *bigmem.Store
+var toolPrefix string
+
+func init() {
+	// Auto-detect: default to "biggz" prefix when engram is installed
+	if _, err := os.Stat(os.ExpandEnv("$HOME/AppData/Local/engram/bin/engram.exe")); err == nil {
+		toolPrefix = "biggz"
+	}
+	if _, err := os.Stat(os.ExpandEnv("$HOME/.local/bin/engram")); err == nil {
+		toolPrefix = "biggz"
+	}
+}
 
 func main() {
 	var err error
 	store, err = bigmem.Open("")
 	if err != nil {
-		log.Fatalf("open engram: %v", err)
+		log.Fatalf("open bigmem: %v", err)
 	}
 
 	tools := "agent"
 	for _, arg := range os.Args[1:] {
+		if strings.HasPrefix(arg, "--prefix=") {
+			toolPrefix = strings.TrimPrefix(arg, "--prefix=")
+		}
 		if strings.HasPrefix(arg, "--tools=") {
 			tools = strings.TrimPrefix(arg, "--tools=")
 		}
 	}
-
-	// Send initialize
-	writeJSON(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      "init",
-		"result": map[string]any{
-			"protocolVersion": "2024-11-05",
-			"capabilities": map[string]any{
-				"tools": map[string]any{},
-			},
-			"serverInfo": map[string]string{
-				"name":    "biggz-ai",
-				"version": "1.0.0",
-			},
-		},
-	})
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
@@ -57,12 +55,29 @@ func main() {
 		id := req["id"]
 
 		switch method {
+		case "initialize":
+			writeJSON(map[string]any{
+				"jsonrpc": "2.0", "id": id,
+				"result": map[string]any{
+					"protocolVersion": "2024-11-05",
+					"capabilities":    map[string]any{"tools": map[string]any{}},
+					"serverInfo":      map[string]string{"name": "biggz-ai", "version": "1.0.0"},
+				},
+			})
 		case "ping":
 			writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{}})
 		case "tools/list":
+			toolList := buildToolList(tools)
+			if toolPrefix != "" {
+				for i, t := range toolList {
+					if name, ok := t["name"].(string); ok {
+						toolList[i]["name"] = toolPrefix + "_" + name
+					}
+				}
+			}
 			writeJSON(map[string]any{
 				"jsonrpc": "2.0", "id": id,
-				"result": map[string]any{"tools": buildToolList(tools)},
+				"result": map[string]any{"tools": toolList},
 			})
 		case "tools/call":
 			params, _ := req["params"].(map[string]any)
@@ -81,6 +96,10 @@ func main() {
 }
 
 func handleToolCall(id any, name string, args map[string]any) {
+	// Strip prefix if present (e.g. "biggz_mem_save" → "mem_save")
+	if toolPrefix != "" && strings.HasPrefix(name, toolPrefix+"_") {
+		name = strings.TrimPrefix(name, toolPrefix+"_")
+	}
 	switch name {
 	case "mem_save":
 		obs := &bigmem.Observation{
@@ -385,7 +404,7 @@ func buildToolList(scope string) []map[string]any {
 			"project": map[string]any{"type": "string"},
 			"type":    map[string]any{"type": "string"},
 			"limit":   map[string]any{"type": "number"},
-		}, nil),
+		}, []string{}),
 		toolDef("mem_get_observation", "Get full observation by ID.", map[string]any{
 			"id": map[string]any{"type": "string"},
 		}, []string{"id"}),
@@ -456,10 +475,14 @@ func buildToolList(scope string) []map[string]any {
 
 func toolDef(name, desc string, props map[string]any, required []string) map[string]any {
 	t := map[string]any{"name": name, "description": desc}
+	req := required
+	if req == nil {
+		req = []string{}
+	}
 	if props != nil {
-		t["inputSchema"] = map[string]any{"type": "object", "properties": props, "required": required}
+		t["inputSchema"] = map[string]any{"type": "object", "properties": props, "required": req}
 	} else {
-		t["inputSchema"] = map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}}
+		t["inputSchema"] = map[string]any{"type": "object", "properties": map[string]any{}, "required": req}
 	}
 	return t
 }
