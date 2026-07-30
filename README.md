@@ -126,6 +126,13 @@ Any "off" wins: clone-local override beats global enable.
 | Testing | Golden files (fragile) | Property-based (rapid) |
 | Human in loop | Optional | Always |
 
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Comparison with gentle-ai](docs/comparison-with-gentle.md)
+- [Validation Guide](docs/validation-guide.md)
+- [Contributing](CONTRIBUTING.md)
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
