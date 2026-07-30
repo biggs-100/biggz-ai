@@ -21,7 +21,8 @@ func sddNewRun() int {
 	}
 
 	reader := bufio.NewReader(os.Stdin)
-	fmt.Println("=== SDD New Change Wizard ===\n")
+	fmt.Println("=== SDD New Change Wizard ===")
+	fmt.Println()
 
 	// Step 1: Change name
 	changeName := ""
