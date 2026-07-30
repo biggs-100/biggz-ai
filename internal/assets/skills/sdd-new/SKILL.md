@@ -78,6 +78,26 @@ risks:
 skill_resolution: user_input
 ```
 
+## Domain Templates
+
+When creating a spec, use one of the following templates from
+`openspec/templates/` as a starting point:
+
+| Change type | Template |
+|-------------|----------|
+| API endpoint | `openspec/templates/api-endpoint.md` |
+| CLI command | `openspec/templates/cli-command.md` |
+| Bug fix | `openspec/templates/bug-fix.md` |
+| Refactor | `openspec/templates/refactor.md` |
+| Database migration | `openspec/templates/database-migration.md` |
+
+Each template includes:
+- REQ-N numbered requirements
+- GIVEN/WHEN/THEN scenarios
+- Edge case tables
+- Error handling scenarios
+- Migration or rollback plans
+
 ## References
 
 - `../_shared/sdd-phase-common.md`
@@ -85,4 +105,5 @@ skill_resolution: user_input
 - `../sdd-init/SKILL.md`
 - `../sdd-explore/SKILL.md`
 - `../sdd-propose/SKILL.md`
+- `openspec/templates/` (domain spec templates)
 - `openspec/changes/{change-name}/_meta.yaml`
