@@ -26,3 +26,6 @@ Thumbs.db
 .engram/
 # Local Pi runtime state
 .atl/
+
+.biggz/
+coverage/
