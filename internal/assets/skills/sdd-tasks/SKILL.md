@@ -1,7 +1,10 @@
 ---
 name: sdd-tasks
-description: Break an SDD change into implementation tasks with dependencies, test evidence, and work units.
-trigger: orchestrator launches task planning for a change.
+description: Break an SDD change into implementation tasks with dependencies, test evidence, and work units. Trigger: orchestrator launches task planning for a change.
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # SDD Tasks

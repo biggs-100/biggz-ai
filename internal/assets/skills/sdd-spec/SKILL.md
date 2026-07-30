@@ -1,7 +1,10 @@
 ---
 name: sdd-spec
-description: Write SDD delta specs with functional requirements and GIVEN/WHEN/THEN scenarios.
-trigger: orchestrator launches spec work for a change.
+description: Write SDD delta specs with functional requirements and GIVEN/WHEN/THEN scenarios. Trigger: orchestrator launches spec work for a change.
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # SDD Spec

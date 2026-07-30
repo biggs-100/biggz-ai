@@ -1,6 +1,10 @@
 ---
 name: _shared
 description: Shared SDD references for installed skills. Not invokable.
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # Shared SDD Refs

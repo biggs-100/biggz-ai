@@ -1,7 +1,10 @@
 ---
 name: sdd-init
-description: Initialize SDD context, testing capabilities, registry, and persistence for a project.
-trigger: sdd init, iniciar sdd, openspec init; also called automatically by the orchestrator when no openspec/ directory exists.
+description: Initialize SDD context, testing capabilities, registry, and persistence for a project. Trigger: sdd init, iniciar sdd, openspec init; also called automatically by the orchestrator when no openspec/ directory exists.
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # SDD Init

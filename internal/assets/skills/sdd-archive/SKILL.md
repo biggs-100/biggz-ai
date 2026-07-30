@@ -1,7 +1,10 @@
 ---
 name: sdd-archive
-description: Archive a completed SDD change by syncing delta specs, moving to archive, and producing archive report.
-trigger: orchestrator launches archive after implementation and verification.
+description: Archive a completed SDD change by syncing delta specs, moving to archive, and producing archive report. Trigger: orchestrator launches archive after implementation and verification.
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # SDD Archive

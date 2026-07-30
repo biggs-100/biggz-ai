@@ -1,7 +1,10 @@
 ---
 name: sdd-verify
-description: Verify SDD implementation against specs, design, and tasks. Run tests, validate requirements, check design coherence, and produce verify report.
-trigger: orchestrator launches verification after apply.
+description: Verify SDD implementation against specs, design, and tasks. Run tests, validate requirements, check design coherence, and produce verify report. Trigger: orchestrator launches verification after apply.
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # SDD Verify

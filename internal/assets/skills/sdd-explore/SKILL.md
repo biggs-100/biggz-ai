@@ -1,7 +1,10 @@
 ---
 name: sdd-explore
-description: Explore SDD ideas before committing to a change. Investigate codebase, compare approaches, and provide go/no-go recommendation.
-trigger: orchestrator launches exploration or requirement clarification.
+description: Explore SDD ideas before committing to a change. Investigate codebase, compare approaches, and provide go/no-go recommendation. Trigger: orchestrator launches exploration or requirement clarification.
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # SDD Explore

@@ -1,7 +1,10 @@
 ---
 name: sdd-design
-description: Create the SDD technical design — architecture decisions, data flow, file changes, interfaces, and threat matrix.
-trigger: orchestrator launches design for a change.
+description: Create the SDD technical design — architecture decisions, data flow, file changes, interfaces, and threat matrix. Trigger: orchestrator launches design for a change.
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # SDD Design

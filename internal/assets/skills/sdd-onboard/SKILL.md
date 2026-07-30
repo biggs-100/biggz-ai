@@ -1,7 +1,10 @@
 ---
 name: sdd-onboard
-description: Guide users through the full SDD workflow on their real codebase. Step-by-step walkthrough of all 8 phases with explanations.
-trigger: orchestrator launches onboarding for the full SDD cycle.
+description: Guide users through the full SDD workflow on their real codebase. Step-by-step walkthrough of all 8 phases with explanations. Trigger: orchestrator launches onboarding for the full SDD cycle.
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # SDD Onboard

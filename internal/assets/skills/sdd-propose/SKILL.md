@@ -1,7 +1,10 @@
 ---
 name: sdd-propose
-description: Create an SDD change proposal with intent, scope, approach, and rollback plan.
-trigger: orchestrator launches proposal work for a change.
+description: Create an SDD change proposal with intent, scope, approach, and rollback plan. Trigger: orchestrator launches proposal work for a change.
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # SDD Propose

@@ -1,7 +1,10 @@
 ---
 name: sdd-apply
-description: Implement SDD tasks from specs, design, and task plan. Write code, run tests, and produce apply-progress report.
-trigger: orchestrator launches apply for one or more change tasks.
+description: Implement SDD tasks from specs, design, and task plan. Write code, run tests, and produce apply-progress report. Trigger: orchestrator launches apply for one or more change tasks.
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # SDD Apply

@@ -1,7 +1,10 @@
 ---
 name: sdd-ff
-description: Fast-forward through SDD phases — generate all planning artifacts in sequence and skip to implementation for well-understood changes.
-trigger: sdd ff, fast forward, skip phases
+description: Fast-forward through SDD phases — generate all planning artifacts in sequence and skip to implementation for well-understood changes. Trigger: sdd ff, fast forward, skip phases
+license: MIT
+metadata:
+  author: biggz-ai
+  version: '1.0'
 ---
 
 # SDD Fast-Forward
