@@ -32,6 +32,8 @@ import (
 	"github.com/biggz-ai/biggz/internal/install"
 	"github.com/biggz-ai/biggz/internal/recoverytrace"
 	"github.com/biggz-ai/biggz/internal/update"
+	"github.com/biggz-ai/biggz/internal/lens/dependencies"
+	"github.com/biggz-ai/biggz/internal/lens/performance"
 	"github.com/biggz-ai/biggz/internal/lens/readability"
 	"github.com/biggz-ai/biggz/internal/lens/reliability"
 	"github.com/biggz-ai/biggz/internal/lens/resilience"
@@ -215,6 +217,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "error: registering lens: %v\n", err)
 		os.Exit(1)
 	}
+	performanceLens := &performance.PerformanceLens{}
+	if err := reg.RegisterLens(performanceLens); err != nil {
+		fmt.Fprintf(os.Stderr, "error: registering lens: %v\n", err)
+		os.Exit(1)
+	}
+	dependenciesLens := &dependencies.DependenciesLens{}
+	if err := reg.RegisterLens(dependenciesLens); err != nil {
+		fmt.Fprintf(os.Stderr, "error: registering lens: %v\n", err)
+		os.Exit(1)
+	}
 
 	// Build execution graph — lenses are independent (run in PARALLEL),
 	// then policy evaluation runs after all lenses complete.
@@ -224,11 +236,14 @@ func main() {
 	pGraph.AddNode(&lensStage{lens: readabilityLens})
 	pGraph.AddNode(&lensStage{lens: reliabilityLens})
 	pGraph.AddNode(&lensStage{lens: resilienceLens})
+	pGraph.AddNode(&lensStage{lens: performanceLens})
+	pGraph.AddNode(&lensStage{lens: dependenciesLens})
 	pGraph.AddNode(&lensStage{lens: dummyLens})
 	// Policy depends on all lenses
 	pGraph.AddNode(&policyStage{evaluator: minEvEval},
 		"lens-risk", "lens-readability", "lens-reliability",
-		"lens-resilience", "lens-dummy-lens")
+		"lens-resilience", "lens-performance", "lens-dependencies",
+		"lens-dummy-lens")
 
 	// Use DAG orchestrator for parallel lens execution
 	orch := orchestrator.NewWithGraph(reg, pGraph)
