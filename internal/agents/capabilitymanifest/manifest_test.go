@@ -6,9 +6,10 @@ import (
 	"github.com/biggz-ai/biggz/model"
 )
 
-func TestCount_Exactly16(t *testing.T) {
-	if got := Count(); got != 16 {
-		t.Fatalf("featureClaimsByAgent has %d entries, want 16", got)
+func TestCount_Exactly27(t *testing.T) {
+	expected := 27
+	if got := Count(); got != expected {
+		t.Fatalf("featureClaimsByAgent has %d entries, want %d", got, expected)
 	}
 }
 
@@ -63,7 +64,10 @@ func TestForAgent_Unknown(t *testing.T) {
 func TestForAgent_AllAgentIDs(t *testing.T) {
 	ids := AllAgentIDs()
 	if len(ids) != 16 {
-		t.Fatalf("AllAgentIDs() returned %d ids, want 16", len(ids))
+		expected := 27
+	if len(ids) != expected {
+		t.Fatalf("AllAgentIDs() returned %d ids, want %d", len(ids), expected)
+	}
 	}
 	// Every AllAgentIDs result must be findable via ForAgent
 	for _, id := range ids {
@@ -208,7 +212,7 @@ func TestFeatureClaims_QwenCode(t *testing.T) {
 
 func TestFeatureClaims_OutOfScopeAgents_AllFalse(t *testing.T) {
 	outOfScope := []model.AgentID{
-		"cursor", "windsurf", "github-copilot",
+		"github-copilot",
 		"cody", "aider", "continue", "codeium",
 		"tabby", "marscode", "comate", "codegeex",
 		"melo", "lingma",

@@ -27,6 +27,17 @@ const (
 	AgentCodeGeeX      AgentID = "codegeex"
 	AgentMelo          AgentID = "melo"
 	AgentLingma        AgentID = "lingma"
+	AgentGeminiCLI     AgentID = "gemini-cli"
+	AgentCodexCLI      AgentID = "codex-cli"
+	AgentPi            AgentID = "pi"
+	AgentVSCode        AgentID = "vscode-copilot"
+	AgentKiro          AgentID = "kiro"
+	AgentAntigravity   AgentID = "antigravity"
+	AgentHermes        AgentID = "hermes"
+	AgentKimi          AgentID = "kimi"
+	AgentKiloCode      AgentID = "kilocode"
+	AgentTrae          AgentID = "trae-ide"
+	AgentOpenClaw      AgentID = "openclaw"
 )
 
 // Pre-defined support tier constants for convenience.

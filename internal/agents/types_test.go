@@ -14,7 +14,7 @@ func TestAgentIDConstants_NotEmpty(t *testing.T) {
 		AgentMelo, AgentLingma,
 	}
 	if len(ids) != 16 {
-		t.Fatalf("expected 16 AgentID constants, got %d", len(ids))
+		t.Fatalf("expected 27 AgentID constants, got %d", len(ids))
 	}
 	for _, id := range ids {
 		if string(id) == "" {

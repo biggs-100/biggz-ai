@@ -69,9 +69,27 @@ var featureClaimsByAgent = map[model.AgentID]AgentFeatureClaims{
 		MCP:           true,
 		Workflows:     false,
 	},
-	// Out-of-scope agents — zero-value claims (all false)
-	model.AgentID("cursor"):           {},
-	model.AgentID("windsurf"):         {},
+	// Implemented agents
+	model.AgentID("cursor"): {
+		AutoInstall:   true,
+		OutputStyles:  false,
+		SlashCommands: false,
+		FileSubAgents: true,
+		Skills:        true,
+		SystemPrompt:  true,
+		MCP:           true,
+		Workflows:     false,
+	},
+	model.AgentID("windsurf"): {
+		AutoInstall:   true,
+		OutputStyles:  false,
+		SlashCommands: false,
+		FileSubAgents: false,
+		Skills:        true,
+		SystemPrompt:  true,
+		MCP:           true,
+		Workflows:     true,
+	},
 	model.AgentID("github-copilot"):   {},
 	model.AgentID("cody"):             {},
 	model.AgentID("aider"):            {},
@@ -83,6 +101,41 @@ var featureClaimsByAgent = map[model.AgentID]AgentFeatureClaims{
 	model.AgentID("codegeex"):         {},
 	model.AgentID("melo"):             {},
 	model.AgentID("lingma"):           {},
+	model.AgentID("gemini-cli"): {
+		AutoInstall:   true,
+		Skills:        true,
+		SystemPrompt:  true,
+	},
+	model.AgentID("codex-cli"): {
+		AutoInstall:   true,
+		Skills:        true,
+		SystemPrompt:  true,
+	},
+	model.AgentID("pi"): {
+		AutoInstall:   true,
+		Skills:        true,
+		SystemPrompt:  true,
+		MCP:           true,
+	},
+	model.AgentID("vscode-copilot"): {
+		AutoInstall:   false,
+		Skills:        false,
+		SystemPrompt:  true,
+		MCP:           true,
+	},
+	model.AgentID("kiro"): {
+		AutoInstall:   true,
+		Skills:        true,
+		SystemPrompt:  true,
+		MCP:           true,
+		FileSubAgents: true,
+	},
+	model.AgentID("antigravity"): {Skills: true, SystemPrompt: true},
+	model.AgentID("hermes"):      {Skills: true, SystemPrompt: true},
+	model.AgentID("kimi"):        {Skills: true, SystemPrompt: true},
+	model.AgentID("kilocode"):    {Skills: true, SystemPrompt: true},
+	model.AgentID("trae-ide"):    {SystemPrompt: true},
+	model.AgentID("openclaw"):    {Skills: true, SystemPrompt: true},
 }
 
 // ForAgent returns the canonical capability manifest for the given agent ID.
