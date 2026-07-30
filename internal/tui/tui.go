@@ -27,6 +27,9 @@ const (
 	screenWelcome
 	screenMemSearch
 	screenRecovery
+	screenModelPickers
+	screenAgentBuilder
+	screenCommunity
 	screenCount
 )
 
@@ -43,6 +46,9 @@ type Model struct {
 	backup        screens.BackupModel
 	profile       screens.ProfileModel
 	recovery      screens.RecoveryModel
+	modelPicker   screens.ModelPickerScreen
+	agentBuilder  screens.AgentBuilderScreen
+	community     screens.CommunityScreen
 	upgrade       screens.UpgradeModel
 	uninstall     screens.UninstallModel
 	strictTDD     screens.StrictTDDModel
@@ -65,6 +71,9 @@ func New() Model {
 		backup:        screens.NewBackupModel(),
 		profile:       screens.NewProfileModel(),
 		recovery:      screens.NewRecoveryModel(),
+		modelPicker:   screens.NewModelPickerScreen(),
+		agentBuilder:  screens.NewAgentBuilderScreen(),
+		community:     screens.NewCommunityScreen(),
 		upgrade:       screens.NewUpgradeModel(),
 		uninstall:     screens.NewUninstallModel(),
 		strictTDD:     screens.NewStrictTDDModel(),
@@ -186,6 +195,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		u, cmd := m.recovery.Update(msg)
 		m.recovery = u.(screens.RecoveryModel)
 		return m, cmd
+	case screenModelPickers:
+		u, cmd := m.modelPicker.Update(msg)
+		m.modelPicker = u.(screens.ModelPickerScreen)
+		return m, cmd
+	case screenAgentBuilder:
+		u, cmd := m.agentBuilder.Update(msg)
+		m.agentBuilder = u.(screens.AgentBuilderScreen)
+		return m, cmd
+	case screenCommunity:
+		u, cmd := m.community.Update(msg)
+		m.community = u.(screens.CommunityScreen)
+		return m, cmd
 	case screenSessions:
 		u, cmd := m.sessions.Update(msg)
 		m.sessions = u.(screens.SessionsModel)
@@ -232,6 +253,12 @@ func (m Model) View() string {
 		return m.reviewScr.View()
 	case screenRecovery:
 		return m.recovery.View()
+	case screenModelPickers:
+		return m.modelPicker.View()
+	case screenAgentBuilder:
+		return m.agentBuilder.View()
+	case screenCommunity:
+		return m.community.View()
 	case screenSessions:
 		return m.sessions.View()
 	}
