@@ -3,7 +3,10 @@ package bigmem
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -449,4 +452,147 @@ func (s *Store) ListNeedsReview() ([]int, error) {
 		ids = append(ids, id)
 	}
 	return ids, nil
+}
+
+// ---------------------------------------------------------------------------
+// Sync: export/import observations as JSON chunks
+// ---------------------------------------------------------------------------
+
+// SyncStatus returns sync metadata.
+type SyncStatus struct {
+	ExportDir string `json:"export_dir"`
+	ChunkCount int   `json:"chunk_count"`
+	ObsCount  int   `json:"obs_count"`
+}
+
+// SyncExport exports all observations (optionally filtered by project) as
+// newline-delimited JSON chunks into <projectRoot>/.engram/.
+func (s *Store) SyncExport(project, projectRoot string) error {
+	dir := filepath.Join(projectRoot, ".engram")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	// Create a .gitignore that allows ndjson files through even if .biggz/ is
+	// in a parent .gitignore
+	gitIgnorePath := filepath.Join(dir, ".gitignore")
+	if _, err := os.Stat(gitIgnorePath); os.IsNotExist(err) {
+		os.WriteFile(gitIgnorePath, []byte("# Sync chunks — safe to commit\n*\n!.gitignore\n*.ndjson\n"), 0644)
+	}
+
+	s.mu.RLock()
+	q := "SELECT id, title, type, content, topic_key, project, scope, created_at, updated_at FROM observations"
+	var args []any
+	if project != "" {
+		q += " WHERE project = ?"
+		args = append(args, project)
+	}
+	rows, err := s.db.Query(q, args...)
+	s.mu.RUnlock()
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	name := fmt.Sprintf("sync-%s.ndjson", time.Now().UTC().Format("20060102T150405"))
+	f, err := os.Create(filepath.Join(dir, name))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	enc := json.NewEncoder(f)
+	count := 0
+	for rows.Next() {
+		obs := &Observation{}
+		var ca, ua string
+		if err := rows.Scan(&obs.ID, &obs.Title, &obs.Type, &obs.Content,
+			&obs.TopicKey, &obs.Project, &obs.Scope, &ca, &ua); err != nil {
+			continue
+		}
+		obs.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+		obs.UpdatedAt, _ = time.Parse(time.RFC3339, ua)
+		if err := enc.Encode(obs); err != nil {
+			return err
+		}
+		count++
+	}
+	if count == 0 {
+		os.Remove(filepath.Join(dir, name))
+		return fmt.Errorf("no observations to export")
+	}
+	return nil
+}
+
+// SyncImport reads all .ndjson chunks from <projectRoot>/.engram/ and
+// imports any observation whose ID does not already exist in the store.
+func (s *Store) SyncImport(projectRoot string) (int, error) {
+	dir := filepath.Join(projectRoot, ".engram")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, fmt.Errorf("sync dir: %w", err)
+	}
+
+	total := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ndjson") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		dec := json.NewDecoder(strings.NewReader(string(data)))
+		for dec.More() {
+			var obs Observation
+			if err := dec.Decode(&obs); err != nil {
+				break
+			}
+			// Only import if ID doesn't exist
+			var existing int
+			s.db.QueryRow("SELECT COUNT(*) FROM observations WHERE id = ?", obs.ID).Scan(&existing)
+			if existing > 0 {
+				continue
+			}
+			if obs.ID == "" {
+				obs.ID = fmt.Sprintf("obs-%d", time.Now().UnixNano())
+			}
+			if obs.CreatedAt.IsZero() {
+				obs.CreatedAt = time.Now()
+			}
+			obs.UpdatedAt = time.Now()
+			_, err := s.db.Exec(
+				`INSERT INTO observations (id, title, type, content, topic_key, project, scope, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+				 ON CONFLICT(id) DO NOTHING`,
+				obs.ID, obs.Title, obs.Type, obs.Content, obs.TopicKey,
+				obs.Project, obs.Scope,
+				obs.CreatedAt.Format(time.RFC3339), obs.UpdatedAt.Format(time.RFC3339))
+			if err == nil {
+				total++
+			}
+		}
+	}
+	return total, nil
+}
+
+// SyncStatus returns the number of chunks and observations in the sync dir.
+func (s *Store) SyncStatus(projectRoot string) (*SyncStatus, error) {
+	dir := filepath.Join(projectRoot, ".engram")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return &SyncStatus{ExportDir: dir, ChunkCount: 0, ObsCount: 0}, nil
+	}
+
+	chunks := 0
+	totalObs := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ndjson") {
+			continue
+		}
+		chunks++
+		data, _ := os.ReadFile(filepath.Join(dir, e.Name()))
+		lines := strings.Count(string(data), "\n")
+		totalObs += lines
+	}
+	return &SyncStatus{ExportDir: dir, ChunkCount: chunks, ObsCount: totalObs}, nil
 }

@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -741,24 +742,54 @@ func bigmemRun() int {
 	}
 
 	args := os.Args[2:]
-	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: biggz bigmem <save|search|get> ...")
-		fmt.Fprintln(os.Stderr, "  save <title> <type> <content>")
-		fmt.Fprintln(os.Stderr, "  search <query>")
-		fmt.Fprintln(os.Stderr, "  get <id>")
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz bigmem <command> [args...]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Commands:")
+		fmt.Fprintln(os.Stderr, "  save <title> <msg> [--type T] [--project P] [--scope S]")
+		fmt.Fprintln(os.Stderr, "  search <query> [--type T] [--project P] [--scope S] [--limit N]")
+		fmt.Fprintln(os.Stderr, "  get <id>                        Get an observation by ID")
+		fmt.Fprintln(os.Stderr, "  delete <id>                     Delete an observation")
+		fmt.Fprintln(os.Stderr, "  update <id> [flags]             Update an observation")
+		fmt.Fprintln(os.Stderr, "    --title <t>   New title")
+		fmt.Fprintln(os.Stderr, "    --type <t>    New type")
+		fmt.Fprintln(os.Stderr, "    --content <c> New content")
+		fmt.Fprintln(os.Stderr, "    --topic-key <k> New topic key")
+		fmt.Fprintln(os.Stderr, "    --scope <s>   New scope")
+		fmt.Fprintln(os.Stderr, "  timeline <id>                   Chronological context")
+		fmt.Fprintln(os.Stderr, "    --before <n>  Entries before (default: 5)")
+		fmt.Fprintln(os.Stderr, "    --after <n>   Entries after (default: 5)")
+		fmt.Fprintln(os.Stderr, "  context [project]               Recent session context")
+		fmt.Fprintln(os.Stderr, "  stats                           Show memory statistics")
+		fmt.Fprintln(os.Stderr, "  doctor                          Run store diagnostics")
+		fmt.Fprintln(os.Stderr, "  export [file]                   Export all memories to JSON")
+		fmt.Fprintln(os.Stderr, "  import <file>                   Import memories from JSON")
+		fmt.Fprintln(os.Stderr, "  projects list                   List all projects")
+		fmt.Fprintln(os.Stderr, "  compare <id-a> <id-b>           Compare two observations")
+		fmt.Fprintln(os.Stderr, "  conflicts list                  List pending memory conflicts")
+		fmt.Fprintln(os.Stderr, "  conflicts show <id>             Show a relation with observations")
+		fmt.Fprintln(os.Stderr, "  conflicts judge <id> <verdict>   Judge a conflict")
+		fmt.Fprintln(os.Stderr, "    verdicts: related, compatible, scoped, conflicts_with, supersedes, not_conflict")
+		fmt.Fprintln(os.Stderr, "  conflicts scan [--project P]     Scan for new conflicts")
+		fmt.Fprintln(os.Stderr, "  sync export [--project P]       Export observations as sync chunks")
+		fmt.Fprintln(os.Stderr, "  sync import                     Import sync chunks")
+		fmt.Fprintln(os.Stderr, "  sync status                     Show sync status")
 		return 1
 	}
 
 	switch args[0] {
 	case "save":
-		if len(args) < 4 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem save <title> <type> <content>")
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem save <title> <msg> [--type T] [--project P] [--scope S]")
 			return 1
 		}
-		obs := &bigmem.Observation{
-			Title:   args[1],
-			Type:    args[2],
-			Content: args[3],
+		obs := &bigmem.Observation{Title: args[1], Content: args[2], Type: "manual"}
+		for i := 3; i < len(args)-1; i++ {
+			switch args[i] {
+			case "--type":    obs.Type = args[i+1]; i++
+			case "--project": obs.Project = args[i+1]; i++
+			case "--scope":   obs.Scope = args[i+1]; i++
+			}
 		}
 		if err := store.Save(obs); err != nil {
 			fmt.Fprintf(os.Stderr, "error: save: %v\n", err)
@@ -767,7 +798,21 @@ func bigmemRun() int {
 		fmt.Printf("Saved: %s\n", obs.ID)
 
 	case "search":
-		results, err := store.Search(args[1], bigmem.SearchOptions{Limit: 10})
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem search <query> [--type T] [--project P] [--scope S] [--limit N]")
+			return 1
+		}
+		query := args[1]
+		opts := bigmem.SearchOptions{Limit: 20}
+		for i := 2; i < len(args)-1; i++ {
+			switch args[i] {
+			case "--type":    opts.Type = args[i+1]; i++
+			case "--project": opts.Project = args[i+1]; i++
+			case "--scope":   opts.Scope = args[i+1]; i++
+			case "--limit":   if n, err := strconv.Atoi(args[i+1]); err == nil { opts.Limit = n }; i++
+			}
+		}
+		results, err := store.Search(query, opts)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: search: %v\n", err)
 			return 1
@@ -777,19 +822,369 @@ func bigmemRun() int {
 			return 0
 		}
 		for _, r := range results {
-			fmt.Printf("  %s [%s] %s\n", r.ID[:20], r.Type, r.Title)
+			ago := time.Since(r.CreatedAt).Round(time.Hour)
+			fmt.Printf("  %s [%s] %s (%s)\n", r.ID[:min(20, len(r.ID))], r.Type, r.Title, ago)
 		}
 
 	case "get":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem get <id>")
+			return 1
+		}
 		obs, err := store.Get(args[1])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: get: %v\n", err)
 			return 1
 		}
-		fmt.Printf("ID: %s\n", obs.ID)
-		fmt.Printf("Title: %s\n", obs.Title)
-		fmt.Printf("Type: %s\n", obs.Type)
-		fmt.Printf("Content: %s\n", obs.Content)
+		fmt.Printf("ID:        %s\n", obs.ID)
+		fmt.Printf("Title:     %s\n", obs.Title)
+		fmt.Printf("Type:      %s\n", obs.Type)
+		fmt.Printf("TopicKey:  %s\n", obs.TopicKey)
+		fmt.Printf("Project:   %s\n", obs.Project)
+		fmt.Printf("Scope:     %s\n", obs.Scope)
+		fmt.Printf("Created:   %s\n", obs.CreatedAt.Format(time.RFC3339))
+		fmt.Printf("Updated:   %s\n", obs.UpdatedAt.Format(time.RFC3339))
+		fmt.Printf("Content:   %s\n", obs.Content)
+
+	case "delete":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete <id>")
+			return 1
+		}
+		if err := store.Delete(args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: delete: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Deleted: %s\n", args[1])
+
+	case "update":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem update <id> --title <t> --type <t> --content <c> --topic-key <k> --scope <s>")
+			return 1
+		}
+		id := args[1]
+		updates := map[string]any{}
+		for i := 2; i < len(args)-1; i++ {
+			switch args[i] {
+			case "--title":
+				updates["title"] = args[i+1]; i++
+			case "--type":
+				updates["type"] = args[i+1]; i++
+			case "--content":
+				updates["content"] = args[i+1]; i++
+			case "--topic-key":
+				updates["topic_key"] = args[i+1]; i++
+			case "--scope":
+				updates["scope"] = args[i+1]; i++
+			}
+		}
+		if len(updates) == 0 {
+			fmt.Fprintln(os.Stderr, "no fields to update")
+			return 1
+		}
+		obs, err := store.Update(id, updates)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: update: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Updated: %s\n", obs.ID)
+
+	case "timeline":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem timeline <id> [--before N] [--after N]")
+			return 1
+		}
+		opts := bigmem.TimelineOptions{FocusID: args[1]}
+		for i := 2; i < len(args); i++ {
+			switch args[i] {
+			case "--before":
+				if i+1 < len(args) { opts.Before, _ = strconv.Atoi(args[i+1]); i++ }
+			case "--after":
+				if i+1 < len(args) { opts.After, _ = strconv.Atoi(args[i+1]); i++ }
+			}
+		}
+		entries, err := store.Timeline(opts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: timeline: %v\n", err)
+			return 1
+		}
+		for _, e := range entries {
+			marker := "  "
+			if e.IsFocus { marker = "=>" }
+			if e.IsBefore { marker = "<=" }
+			fmt.Printf("%s %s [%s] %s (%s)\n", marker, e.ID[:min(20, len(e.ID))], e.Type, e.Title, e.CreatedAt.Format(time.RFC3339))
+		}
+
+	case "context":
+		project := ""
+		if len(args) > 1 {
+			project = args[1]
+		}
+		sessions, err := store.SessionContext(10)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: context: %v\n", err)
+			return 1
+		}
+		if len(sessions) == 0 {
+			fmt.Println("No session history.")
+			return 0
+		}
+		for _, s := range sessions {
+			if project != "" && s.Project != project {
+				continue
+			}
+			line := fmt.Sprintf("  %s — %s", s.ID, s.StartTime.Format("2006-01-02 15:04"))
+			if !s.EndTime.IsZero() {
+				line += fmt.Sprintf(" → %s", s.EndTime.Format("15:04"))
+			}
+			if s.Summary != "" {
+				line += fmt.Sprintf(" — %s", truncateStr(s.Summary, 120))
+			}
+			fmt.Println(line)
+		}
+
+	case "stats":
+		stats, err := store.Stats()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: stats: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Total observations: %d\n", stats.TotalObservations)
+		fmt.Printf("By type:\n")
+		for t, c := range stats.ByType {
+			fmt.Printf("  %s: %d\n", t, c)
+		}
+		fmt.Printf("Total sessions: %d\n", stats.TotalSessions)
+		fmt.Printf("Storage: %s\n", stats.StoragePath)
+
+	case "doctor":
+		r, err := store.Doctor()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: doctor: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Store exists: %v\n", r.StoreExists)
+		fmt.Printf("Observations: %d\n", r.Observations)
+		fmt.Printf("Corrupt: %v\n", r.Corrupt)
+		fmt.Printf("Storage: %s\n", r.StoragePath)
+
+	case "export":
+		filePath := "bigmem-export.json"
+		if len(args) > 1 {
+			filePath = args[1]
+		}
+		all, err := store.Search("", bigmem.SearchOptions{Limit: 100000})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: export: %v\n", err)
+			return 1
+		}
+		data, err := json.MarshalIndent(all, "", "  ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: marshal: %v\n", err)
+			return 1
+		}
+		if err := os.WriteFile(filePath, data, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "error: write %s: %v\n", filePath, err)
+			return 1
+		}
+		fmt.Printf("Exported %d observations to %s\n", len(all), filePath)
+
+	case "import":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem import <file>")
+			return 1
+		}
+		data, err := os.ReadFile(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", args[1], err)
+			return 1
+		}
+		var obs []*bigmem.Observation
+		if err := json.Unmarshal(data, &obs); err != nil {
+			fmt.Fprintf(os.Stderr, "error: parse: %v\n", err)
+			return 1
+		}
+		imported := 0
+		for _, o := range obs {
+			if err := store.Save(o); err != nil {
+				fmt.Fprintf(os.Stderr, "warn: save %s: %v\n", o.ID, err)
+				continue
+			}
+			imported++
+		}
+		fmt.Printf("Imported %d/%d observations\n", imported, len(obs))
+
+	case "projects":
+		if len(args) < 2 || args[1] != "list" {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem projects list")
+			return 1
+		}
+		rows, err := store.ListProjects()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: projects: %v\n", err)
+			return 1
+		}
+		if len(rows) == 0 {
+			fmt.Println("No projects.")
+			return 0
+		}
+		for _, p := range rows {
+			fmt.Printf("  %s — %d observations, %d sessions\n", p.Name, p.Observations, p.Sessions)
+		}
+
+	case "compare":
+		if len(args) < 3 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem compare <id-a> <id-b>")
+			return 1
+		}
+		r, err := store.Compare(args[1], args[2])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: compare: %v\n", err)
+			return 1
+		}
+		fmt.Printf("A: %s — %s [%s]\n", r.A.ID[:min(20, len(r.A.ID))], r.A.Title, r.A.Type)
+		fmt.Printf("B: %s — %s [%s]\n", r.B.ID[:min(20, len(r.B.ID))], r.B.Title, r.B.Type)
+		fmt.Printf("Same topic: %v\n", r.SameTopic)
+		fmt.Printf("Same project: %v\n", r.SameProject)
+		fmt.Printf("Time diff: %s\n", r.TimeDiff)
+
+	case "conflicts":
+		if len(args) < 2 || args[1] == "--help" || args[1] == "-h" {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem conflicts <list|show|judge|scan> [...]")
+			return 1
+		}
+		switch args[1] {
+		case "list":
+			status := ""
+			if len(args) > 2 { status = args[2] }
+			rels, err := store.ListRelations(status)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			}
+			if len(rels) == 0 {
+				fmt.Println("No relations found."); return 0
+			}
+			for _, r := range rels {
+				fmt.Printf("  %s [%s] %s → %s (%s)\n",
+					r.ID[:min(24, len(r.ID))], r.JudgmentStatus, r.SourceID[:min(16, len(r.SourceID))],
+					r.TargetID[:min(16, len(r.TargetID))], r.Relation)
+			}
+		case "show":
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem conflicts show <id>"); return 1
+			}
+			rel, err := store.GetRelation(args[2])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			}
+			src, _ := store.Get(rel.SourceID)
+			tgt, _ := store.Get(rel.TargetID)
+			fmt.Printf("Relation: %s\n", rel.ID)
+			fmt.Printf("Status:   %s\n", rel.JudgmentStatus)
+			fmt.Printf("Verdict:  %s\n", rel.Relation)
+			fmt.Printf("Source:\n")
+			if src != nil {
+				fmt.Printf("  %s — %s [%s]\n", src.ID[:min(24, len(src.ID))], src.Title, src.Type)
+			}
+			fmt.Printf("Target:\n")
+			if tgt != nil {
+				fmt.Printf("  %s — %s [%s]\n", tgt.ID[:min(24, len(tgt.ID))], tgt.Title, tgt.Type)
+			}
+			if rel.Reason != "" { fmt.Printf("Reason: %s\n", rel.Reason) }
+			if rel.Evidence != "" { fmt.Printf("Evidence: %s\n", rel.Evidence) }
+			if rel.Confidence > 0 { fmt.Printf("Confidence: %.2f\n", rel.Confidence) }
+			fmt.Printf("Created: %s\n", rel.CreatedAt.Format(time.RFC3339))
+
+		case "judge":
+			if len(args) < 4 {
+				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem conflicts judge <id> <verdict>")
+				fmt.Fprintln(os.Stderr, "  verdicts: related, compatible, scoped, conflicts_with, supersedes, not_conflict")
+				return 1
+			}
+			reason := ""
+			if len(args) > 4 { reason = strings.Join(args[4:], " ") }
+			if err := store.JudgeRelation(args[2], args[3], reason, "", 1.0); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			}
+			fmt.Printf("Judged %s as %s\n", args[2][:min(24, len(args[2]))], args[3])
+
+		case "scan":
+			project := ""
+			for i := 2; i < len(args); i++ {
+				if args[i] == "--project" && i+1 < len(args) {
+					project = args[i+1]; i++
+				}
+			}
+			n, err := store.ScanConflicts(project, false)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			}
+			fmt.Printf("Created %d pending conflict relations\n", n)
+
+		default:
+			fmt.Fprintf(os.Stderr, "unknown: conflicts %s\n", args[1]); return 1
+		}
+
+	case "sync":
+		doImport := false
+		doStatus := false
+		doAll := false
+		project := ""
+		for i := 1; i < len(args); i++ {
+			switch args[i] {
+			case "--help", "-h":
+				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem sync [--import] [--status] [--project P] [--all]")
+				fmt.Fprintln(os.Stderr, "  (no flags)      Export observations to .engram/ in project")
+				fmt.Fprintln(os.Stderr, "  --import        Import observations from .engram/")
+				fmt.Fprintln(os.Stderr, "  --status        Show .engram/ status")
+				fmt.Fprintln(os.Stderr, "  --project NAME  Filter export to a project")
+				fmt.Fprintln(os.Stderr, "  --all           Export ALL projects (ignore cwd filter)")
+				return 1
+			case "--import":
+				doImport = true
+			case "--status":
+				doStatus = true
+			case "--all":
+				doAll = true
+			case "--project":
+				if i+1 < len(args) {
+					project = args[i+1]; i++
+				}
+			}
+		}
+		// Detect project root and project name (like engram does)
+		projectRoot, _ := os.Getwd()
+		if gitRoot, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
+			projectRoot = strings.TrimSpace(string(gitRoot))
+		}
+		if !doAll && project == "" {
+			project = filepath.Base(projectRoot) // auto-detect from dir name
+		}
+		switch {
+		case doStatus:
+			st, err := store.SyncStatus(projectRoot)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			}
+			fmt.Printf("Sync status:\n")
+			fmt.Printf("  Dir:      %s\n", st.ExportDir)
+			fmt.Printf("  Chunks:   %d\n", st.ChunkCount)
+			fmt.Printf("  Entries:  %d\n", st.ObsCount)
+
+		case doImport:
+			n, err := store.SyncImport(projectRoot)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			}
+			fmt.Printf("Imported %d observations\n", n)
+
+		default:
+			// No flags = export (like engram)
+			if err := store.SyncExport(project, projectRoot); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			}
+			fmt.Printf("Exported to %s\n", filepath.Join(projectRoot, ".engram"))
+		}
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", args[0])
@@ -2045,4 +2440,11 @@ func mcpRun() int {
 		return 1
 	}
 	return 0
+}
+
+func truncateStr(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }

@@ -409,6 +409,173 @@ func (s *Store) RelationCount() int {
 	return n
 }
 
+// Relation represents a memory_relations row.
+type Relation struct {
+	ID              string    `json:"id"`
+	SourceID        string    `json:"source_id"`
+	TargetID        string    `json:"target_id"`
+	Relation        string    `json:"relation"`
+	JudgmentStatus  string    `json:"judgment_status"`
+	Reason          string    `json:"reason,omitempty"`
+	Evidence        string    `json:"evidence,omitempty"`
+	Confidence      float64   `json:"confidence,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// ListRelations returns relations filtered by judgment status (empty = all).
+func (s *Store) ListRelations(status string) ([]Relation, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	q := `SELECT id, source_id, target_id, relation, judgment_status,
+		COALESCE(reason,''), COALESCE(evidence,''), COALESCE(confidence,0),
+		created_at, updated_at FROM memory_relations`
+	var args []any
+	if status != "" {
+		q += " WHERE judgment_status = ?"
+		args = append(args, status)
+	}
+	q += " ORDER BY created_at DESC LIMIT 50"
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []Relation
+	for rows.Next() {
+		var r Relation
+		var ca, ua string
+		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Relation,
+			&r.JudgmentStatus, &r.Reason, &r.Evidence, &r.Confidence, &ca, &ua); err != nil {
+			continue
+		}
+		r.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+		r.UpdatedAt, _ = time.Parse(time.RFC3339, ua)
+		result = append(result, r)
+	}
+	return result, nil
+}
+
+// GetRelation returns a single relation by ID.
+func (s *Store) GetRelation(id string) (*Relation, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var r Relation
+	var ca, ua string
+	err := s.db.QueryRow(
+		`SELECT id, source_id, target_id, relation, judgment_status,
+		 COALESCE(reason,''), COALESCE(evidence,''), COALESCE(confidence,0),
+		 created_at, updated_at FROM memory_relations WHERE id = ?`, id).
+		Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Relation,
+			&r.JudgmentStatus, &r.Reason, &r.Evidence, &r.Confidence, &ca, &ua)
+	if err != nil {
+		return nil, fmt.Errorf("relation not found: %w", err)
+	}
+	r.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+	r.UpdatedAt, _ = time.Parse(time.RFC3339, ua)
+	return &r, nil
+}
+
+// ScanConflicts finds all observations that have no relations and creates
+// pending candidates for them. Returns total candidates created.
+func (s *Store) ScanConflicts(project string, dryRun bool) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	q := `SELECT id, title, project, scope FROM observations WHERE 1=1`
+	var args []any
+	if project != "" {
+		q += " AND project = ?"
+		args = append(args, project)
+	}
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+
+	total := 0
+	for rows.Next() {
+		var id, title, proj, scope string
+		if err := rows.Scan(&id, &title, &proj, &scope); err != nil {
+			continue
+		}
+		if title == "" {
+			continue
+		}
+		// Check if this obs already has any relations
+		var cnt int
+		s.db.QueryRow("SELECT COUNT(*) FROM memory_relations WHERE source_id = ? OR target_id = ?", id, id).Scan(&cnt)
+		if cnt > 0 {
+			continue
+		}
+		if dryRun {
+			total++
+			continue
+		}
+		// Scan for candidates via FTS
+		terms := strings.Fields(title)
+		if len(terms) == 0 {
+			continue
+		}
+		for i, t := range terms {
+			terms[i] = "\"" + strings.ReplaceAll(t, "\"", "") + "\""
+		}
+		ftsQ := strings.Join(terms, " OR ")
+
+		candRows, err := s.db.Query(
+			`SELECT o.id FROM observations o
+			 WHERE o.rowid IN (SELECT rowid FROM observations_fts WHERE observations_fts MATCH ?)
+			 AND o.id != ? AND o.project = ? LIMIT 5`, ftsQ, id, proj)
+		if err != nil {
+			continue
+		}
+		for candRows.Next() {
+			var candID string
+			candRows.Scan(&candID)
+			relID := fmt.Sprintf("rel-%d", time.Now().UnixNano())
+			now := time.Now().UTC().Format(time.RFC3339)
+			s.db.Exec(`INSERT OR IGNORE INTO memory_relations (id, source_id, target_id, relation, judgment_status, created_at, updated_at)
+				VALUES (?, ?, ?, 'pending', 'pending', ?, ?)`, relID, id, candID, now, now)
+			total++
+		}
+		candRows.Close()
+	}
+	return total, nil
+}
+
+// ProjectSummary holds project-level statistics.
+type ProjectSummary struct {
+	Name         string `json:"name"`
+	Observations int    `json:"observations"`
+	Sessions     int    `json:"sessions"`
+}
+
+// ListProjects returns all projects with observation and session counts.
+func (s *Store) ListProjects() ([]ProjectSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`
+		SELECT o.project, COUNT(DISTINCT o.id), COUNT(DISTINCT s.id)
+		FROM observations o LEFT JOIN sessions s ON s.project = o.project
+		WHERE o.project != ''
+		GROUP BY o.project
+		ORDER BY o.project`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []ProjectSummary
+	for rows.Next() {
+		var p ProjectSummary
+		if err := rows.Scan(&p.Name, &p.Observations, &p.Sessions); err != nil {
+			continue
+		}
+		result = append(result, p)
+	}
+	return result, nil
+}
+
 // Close shuts down the store.
 func (s *Store) Close() error {
 	return s.db.Close()
