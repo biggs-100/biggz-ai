@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-	"time"
+
+	"github.com/biggz-ai/biggz/internal/sdd"
 )
 
 func sddNewRun() int {
@@ -120,72 +120,23 @@ func sddNewRun() int {
 		return 0
 	}
 
-	// Scaffold
+	// Scaffold using native sdd.NewChange
 	projectRoot := detectProjectRoot()
-	changeDir := filepath.Join(projectRoot, "openspec", "changes", changeName)
-
-	// Create directories
-	dirs := []string{
-		changeDir,
-		filepath.Join(changeDir, "specs"),
-	}
-	for _, d := range dirs {
-		if err := os.MkdirAll(d, 0755); err != nil {
-			fmt.Fprintf(os.Stderr, "error: create %s: %v\n", d, err)
-			return 1
-		}
-	}
-
-	// Write _meta.yaml
-	metaContent := fmt.Sprintf(`change_name: %s
-description: %s
-type: %s
-created_at: %s
-status: draft
-`, changeName, desc, changeType, time.Now().UTC().Format(time.RFC3339))
-	os.WriteFile(filepath.Join(changeDir, "_meta.yaml"), []byte(metaContent), 0644)
-
-	// Write proposal.md
-	proposalContent := fmt.Sprintf(`# Proposal: %s
-
-## Intent
-
-%s
-
-## Scope
-
-**In scope:**
--
-
-**Out of scope:**
--
-
-## Approach
-
-[Describe the technical approach]
-
-## Success Criteria
-
-- [ ]
-
-## Rollback Plan
-
-[How to revert if something goes wrong]
-`, changeName, desc)
-	os.WriteFile(filepath.Join(changeDir, "proposal.md"), []byte(proposalContent), 0644)
-
-	// Copy template if selected
-	if templateID != "none" {
-		tmplSrc := filepath.Join(projectRoot, "openspec", "templates", templateID+".md")
-		tmplDst := filepath.Join(changeDir, "specs", templateID+".md")
-		if data, err := os.ReadFile(tmplSrc); err == nil {
-			os.WriteFile(tmplDst, data, 0644)
-		}
+	result, err := sdd.NewChange(sdd.NewChangeParams{
+		Root:        projectRoot,
+		Name:        changeName,
+		Description: desc,
+		ChangeType:  changeType,
+		Domain:      templateID,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
 	}
 
 	fmt.Printf("\n✓ Change %q created at:\n", changeName)
-	fmt.Printf("  %s\n", changeDir)
-	fmt.Printf("  %s\n", filepath.Join(changeDir, "proposal.md"))
+	fmt.Printf("  %s\n", result.ChangePath)
+	fmt.Printf("  %s\n", result.ProposalPath)
 	fmt.Printf("\nNext: run sdd-propose or edit proposal.md\n")
 	return 0
 }

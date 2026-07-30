@@ -16,7 +16,7 @@ func TestRefresh(t *testing.T) {
 	skillContent := "---\nname: test-skill\ndescription: A test skill for unit testing\n---\n# Test Skill\n"
 	os.WriteFile(filepath.Join(skillsDir, "SKILL.md"), []byte(skillContent), 0644)
 
-	result, err := Refresh(root)
+	result, err := Refresh(root, true) // force = true for test
 	if err != nil {
 		t.Fatalf("Refresh() error: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestRefresh_NoSkills(t *testing.T) {
 		os.Setenv("USERPROFILE", oldProfile)
 	}()
 
-	result, err := Refresh(tmpHome)
+	result, err := Refresh(tmpHome, true) // force = true for test
 	if err != nil {
 		t.Fatalf("Refresh() error: %v", err)
 	}

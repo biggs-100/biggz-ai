@@ -25,34 +25,131 @@ var sddPhases = []string{
 var personaItems = []string{"gentleman", "neutral"}
 var deliveryItems = []string{"ask-on-risk", "auto-chain", "single-pr", "exception-ok"}
 
+// modelPresets defines named model assignment presets.
+// Each preset maps phase → model tier.
+type modelPreset struct {
+	Name        string
+	Description string
+	Models      map[string]string // phase → model tier hint
+}
+
+var modelPresets = []modelPreset{
+	{
+		Name:        "Balanced",
+		Description: "Default — mid-range models for all phases",
+		Models: map[string]string{
+			"biggz-orchestrator": "anthropic:claude-sonnet-4-20250514",
+			"sdd-init":           "anthropic:claude-haiku-4-20250514",
+			"sdd-explore":        "anthropic:claude-haiku-4-20250514",
+			"sdd-propose":        "anthropic:claude-haiku-4-20250514",
+			"sdd-spec":           "anthropic:claude-sonnet-4-20250514",
+			"sdd-design":         "anthropic:claude-sonnet-4-20250514",
+			"sdd-tasks":          "anthropic:claude-haiku-4-20250514",
+			"sdd-apply":          "anthropic:claude-sonnet-4-20250514",
+			"sdd-verify":         "anthropic:claude-sonnet-4-20250514",
+			"sdd-archive":        "anthropic:claude-haiku-4-20250514",
+			"sdd-onboard":        "anthropic:claude-haiku-4-20250514",
+		},
+	},
+	{
+		Name:        "Performance",
+		Description: "Fastest models — speed over capability",
+		Models: map[string]string{
+			"biggz-orchestrator": "anthropic:claude-haiku-4-20250514",
+			"sdd-init":           "openai:gpt-4o-mini",
+			"sdd-explore":        "openai:gpt-4o-mini",
+			"sdd-propose":        "openai:gpt-4o-mini",
+			"sdd-spec":           "anthropic:claude-haiku-4-20250514",
+			"sdd-design":         "anthropic:claude-haiku-4-20250514",
+			"sdd-tasks":          "openai:gpt-4o-mini",
+			"sdd-apply":          "anthropic:claude-sonnet-4-20250514",
+			"sdd-verify":         "anthropic:claude-haiku-4-20250514",
+			"sdd-archive":        "openai:gpt-4o-mini",
+			"sdd-onboard":        "openai:gpt-4o-mini",
+		},
+	},
+	{
+		Name:        "Economy",
+		Description: "Cheapest models — budget-friendly",
+		Models: map[string]string{
+			"biggz-orchestrator": "openai:gpt-4o-mini",
+			"sdd-init":           "google:gemini-2.5-flash",
+			"sdd-explore":        "google:gemini-2.5-flash",
+			"sdd-propose":        "google:gemini-2.5-flash",
+			"sdd-spec":           "openai:gpt-4o-mini",
+			"sdd-design":         "openai:gpt-4o-mini",
+			"sdd-tasks":          "google:gemini-2.5-flash",
+			"sdd-apply":          "openai:gpt-4o",
+			"sdd-verify":         "openai:gpt-4o-mini",
+			"sdd-archive":        "google:gemini-2.5-flash",
+			"sdd-onboard":        "google:gemini-2.5-flash",
+		},
+	},
+	{
+		Name:        "Quality",
+		Description: "Best models — highest quality, highest cost",
+		Models: map[string]string{
+			"biggz-orchestrator": "anthropic:claude-sonnet-4-20250514",
+			"sdd-init":           "anthropic:claude-sonnet-4-20250514",
+			"sdd-explore":        "anthropic:claude-sonnet-4-20250514",
+			"sdd-propose":        "anthropic:claude-sonnet-4-20250514",
+			"sdd-spec":           "anthropic:claude-sonnet-4-20250514",
+			"sdd-design":         "anthropic:claude-sonnet-4-20250514",
+			"sdd-tasks":          "anthropic:claude-sonnet-4-20250514",
+			"sdd-apply":          "anthropic:claude-sonnet-4-20250514",
+			"sdd-verify":         "anthropic:claude-sonnet-4-20250514",
+			"sdd-archive":        "anthropic:claude-sonnet-4-20250514",
+			"sdd-onboard":        "anthropic:claude-sonnet-4-20250514",
+		},
+	},
+	{
+		Name:        "Custom",
+		Description: "Per-phase manual configuration",
+		Models:      map[string]string{},
+	},
+}
+
+// commonModels is the cycle list for per-phase model selection.
+var commonModels = []string{
+	"", // default (no override)
+	"anthropic:claude-sonnet-4-20250514",
+	"anthropic:claude-haiku-4-20250514",
+	"openai:gpt-4o",
+	"openai:gpt-4o-mini",
+	"google:gemini-2.5-flash",
+	"google:gemini-2.5-pro",
+}
+
 type configTab int
 
 const (
-	tabConfigModels configTab = iota
+	tabConfigPreset  configTab = iota // new: preset selection first
+	tabConfigModels                   // per-phase model selection
 	tabConfigPersona
 	tabConfigDelivery
 	tabConfigDone
 )
 
-var configTabLabels = []string{" Models ", " Persona ", " Delivery ", " Save "}
+var configTabLabels = []string{" Preset ", " Models ", " Persona ", " Delivery ", " Save "}
 
 // ConfigModel handles all configuration options with real persistence.
 type ConfigModel struct {
 	tab      configTab
 	cursor   int
+	preset   int          // selected preset index
 	models   map[string]string // phase -> model
 	persona  int
 	delivery int
 	budget   int
 	saved    bool
-	status   string // status message after save
-	err      string // error message
+	status   string
+	err      string
 }
 
 // NewConfigModel creates the config screen.
 func NewConfigModel() ConfigModel {
 	m := ConfigModel{
-		tab:      tabConfigModels,
+		tab:      tabConfigPreset,
 		models:   make(map[string]string),
 		persona:  0,
 		delivery: 0,
@@ -74,7 +171,6 @@ func (m *ConfigModel) loadFromConfig() {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return
 	}
-	// Read model assignments
 	if agents, ok := cfg["agent"].(map[string]any); ok {
 		for _, phase := range sddPhases {
 			if a, ok := agents[phase].(map[string]any); ok {
@@ -84,6 +180,17 @@ func (m *ConfigModel) loadFromConfig() {
 			}
 		}
 	}
+	if d, ok := cfg["delivery_strategy"].(string); ok {
+		for i, item := range deliveryItems {
+			if d == item {
+				m.delivery = i
+				break
+			}
+		}
+	}
+	if b, ok := cfg["review_budget_lines"].(float64); ok {
+		m.budget = int(b)
+	}
 }
 
 func (m ConfigModel) Init() tea.Cmd { return nil }
@@ -92,12 +199,10 @@ func (m ConfigModel) Init() tea.Cmd { return nil }
 func (m *ConfigModel) saveConfig() error {
 	home, _ := os.UserHomeDir()
 	configPath := filepath.Join(home, ".config", "opencode", "opencode.json")
-
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		return fmt.Errorf("read config: %w", err)
 	}
-
 	var cfg map[string]any
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return fmt.Errorf("parse config: %w", err)
@@ -122,10 +227,7 @@ func (m *ConfigModel) saveConfig() error {
 		}
 	}
 
-	// Write delivery strategy
 	cfg["delivery_strategy"] = deliveryItems[m.delivery]
-
-	// Write review budget
 	cfg["review_budget_lines"] = m.budget
 
 	out, err := json.MarshalIndent(cfg, "", "  ")
@@ -149,7 +251,7 @@ func (m ConfigModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "left", "h":
-			if m.tab > tabConfigModels {
+			if m.tab > tabConfigPreset {
 				m.tab--
 				m.cursor = 0
 			}
@@ -169,6 +271,18 @@ func (m ConfigModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter", " ":
 			switch m.tab {
+			case tabConfigPreset:
+				// Apply preset models
+				m.preset = m.cursor
+				if m.cursor < len(modelPresets)-1 {
+					// Non-Custom preset: apply all models
+					preset := modelPresets[m.cursor]
+					for phase, model := range preset.Models {
+						m.models[phase] = model
+					}
+				}
+			case tabConfigModels:
+				m.cycleModel(sddPhases[m.cursor])
 			case tabConfigPersona:
 				m.persona = m.cursor
 			case tabConfigDelivery:
@@ -179,48 +293,35 @@ func (m ConfigModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				m.saved = true
-				m.status = fmt.Sprintf("Saved — persona: %s, delivery: %s, budget: %d",
-					personaItems[m.persona], deliveryItems[m.delivery], m.budget)
-			case tabConfigModels:
-				// Toggle model selection (cycle through common models)
-				m.cycleModel(sddPhases[m.cursor])
+				m.status = fmt.Sprintf("Saved — %d model overrides, persona: %s, delivery: %s",
+					len(m.models), personaItems[m.persona], deliveryItems[m.delivery])
 			}
 		}
-	case SavePersonaMsg:
-		// handled
 	}
 	return m, nil
 }
 
 // cycleModel cycles through common models for a phase.
 func (m *ConfigModel) cycleModel(phase string) {
-	models := []string{
-		"", // default
-		"anthropic:claude-sonnet-4-20250514",
-		"anthropic:claude-haiku-4-20250514",
-		"openai:gpt-4o",
-		"openai:gpt-4o-mini",
-		"google:gemini-2.5-flash",
-		"google:gemini-2.5-pro",
-	}
 	current := m.models[phase]
-	for i, mm := range models {
+	for i, mm := range commonModels {
 		if mm == current {
-			next := (i + 1) % len(models)
+			next := (i + 1) % len(commonModels)
 			if next == 0 {
 				delete(m.models, phase)
 			} else {
-				m.models[phase] = models[next]
+				m.models[phase] = commonModels[next]
 			}
 			return
 		}
 	}
-	// Not found, set first non-empty
-	m.models[phase] = models[1]
+	m.models[phase] = commonModels[1]
 }
 
 func (m ConfigModel) itemsLen() int {
 	switch m.tab {
+	case tabConfigPreset:
+		return len(modelPresets)
 	case tabConfigModels:
 		return len(sddPhases)
 	case tabConfigPersona:
@@ -280,7 +381,6 @@ func (m ConfigModel) View() string {
 	b.WriteString(styles.Title.Render("Configuration"))
 	b.WriteString("\n")
 
-	// Tabs
 	for i, label := range configTabLabels {
 		if i == int(m.tab) {
 			b.WriteString(styles.ButtonActive.Render(label))
@@ -291,7 +391,7 @@ func (m ConfigModel) View() string {
 	b.WriteString("\n\n")
 
 	if m.err != "" {
-		b.WriteString(styles.ErrorBox.Render("Error: "+m.err))
+		b.WriteString(styles.ErrorBox.Render("Error: " + m.err))
 		b.WriteString("\n\n")
 		m.err = ""
 	}
@@ -301,10 +401,33 @@ func (m ConfigModel) View() string {
 	}
 
 	switch m.tab {
-	case tabConfigModels:
-		b.WriteString(styles.Section.Render("Model Assignments"))
+	case tabConfigPreset:
+		b.WriteString(styles.Section.Render("Model Presets"))
 		b.WriteString("\n")
-		b.WriteString(styles.StatusInfo.Render("Select a phase and press ENTER to cycle through models."))
+		b.WriteString(styles.StatusInfo.Render("Choose a preset or select Custom for per-phase configuration."))
+		b.WriteString("\n\n")
+		for i, p := range modelPresets {
+			cur := "  "
+			if i == m.cursor {
+				cur = "▸ "
+			}
+			sel := styles.CheckboxEmpty.String()
+			if i == m.preset {
+				sel = styles.CheckboxSelected.String()
+			}
+			b.WriteString(fmt.Sprintf("%s%s %-12s %s\n", cur, sel, p.Name, p.Description))
+			if i == m.preset && i < len(modelPresets)-1 {
+				// Show what would be applied
+				for phase, model := range p.Models {
+					b.WriteString(fmt.Sprintf("    %-25s → %s\n", phase, model))
+				}
+			}
+		}
+
+	case tabConfigModels:
+		b.WriteString(styles.Section.Render("Per-Phase Model Assignments"))
+		b.WriteString("\n")
+		b.WriteString(styles.StatusInfo.Render("Select a phase and press ENTER to cycle through models. Custom preset only."))
 		b.WriteString("\n\n")
 		for i, phase := range sddPhases {
 			cur := "  "
@@ -321,7 +444,7 @@ func (m ConfigModel) View() string {
 	case tabConfigPersona:
 		b.WriteString(styles.Section.Render("Persona"))
 		b.WriteString("\n")
-		b.WriteString(styles.StatusInfo.Render("Choose the agent's personality. Gentleman is warm and direct, Neutral is professional."))
+		b.WriteString(styles.StatusInfo.Render("Choose the agent's personality."))
 		b.WriteString("\n\n")
 		for i, p := range personaItems {
 			cur := "  "
@@ -354,13 +477,14 @@ func (m ConfigModel) View() string {
 		b.WriteString(fmt.Sprintf("\nReview budget: %d lines\n", m.budget))
 
 	case tabConfigDone:
-		b.WriteString(styles.Section.Render("Save"))
+		b.WriteString(styles.Section.Render("Save & Apply"))
 		b.WriteString("\n")
 		b.WriteString("Press ENTER to save all changes:\n\n")
+		b.WriteString(fmt.Sprintf("  • Preset:          %s\n", modelPresets[m.preset].Name))
+		b.WriteString(fmt.Sprintf("  • Model overrides: %d phases\n", len(m.models)))
 		b.WriteString(fmt.Sprintf("  • Persona:         %s\n", personaItems[m.persona]))
 		b.WriteString(fmt.Sprintf("  • Delivery:        %s\n", deliveryItems[m.delivery]))
 		b.WriteString(fmt.Sprintf("  • Review budget:   %d lines\n", m.budget))
-		b.WriteString(fmt.Sprintf("  • Model overrides: %d phases\n", len(m.models)))
 	}
 
 	b.WriteString("\n\n")

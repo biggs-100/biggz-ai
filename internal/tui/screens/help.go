@@ -143,6 +143,31 @@ var helpData = map[int]HelpContent{
 		},
 		Paragraph: "Browse review lineages stored in the review transaction store. Each lineage represents a complete review lifecycle with events, findings, and corrections.",
 	},
+	18: {
+		Title: "Sync Configuration",
+		Keys: []HelpKey{
+			{"ENTER", "Start sync"},
+			{"C", "Toggle combined upgrade"},
+			{"ESC", "Back"},
+		},
+		Paragraph: "Sync biggz-ai configuration: re-deploy skills, re-apply overlays, re-inject persona. Optionally combined with upgrade check.",
+	},
+	19: {
+		Title: "Update Available",
+		Keys: []HelpKey{
+			{"ENTER / ESC", "Dismiss"},
+		},
+		Paragraph: "A new version of biggz-ai is available. Dismiss to continue, or run 'biggz update' from the terminal.",
+	},
+	20: {
+		Title: "Plugin Uninstall",
+		Keys: []HelpKey{
+			{"↑↓", "Navigate"},
+			{"ENTER", "Uninstall"},
+			{"ESC", "Back"},
+		},
+		Paragraph: "Manage installed OpenCode community plugins. Select a plugin to uninstall with confirmation.",
+	},
 	14: {
 		Title: "Recovery Trace",
 		Keys: []HelpKey{

@@ -1,8 +1,11 @@
 // Package skillregistry scans skill directories and generates the
 // .atl/skill-registry.md index for sub-agent skill resolution.
+// Supports content-fingerprint caching to avoid unnecessary regeneration.
 package skillregistry
 
 import (
+	"crypto/sha1"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +13,11 @@ import (
 	"strings"
 	"time"
 )
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+// RegistrySchema is the schema version for cache invalidation.
+const RegistrySchema = 2
 
 // Entry represents a single skill in the registry.
 type Entry struct {
@@ -23,16 +31,154 @@ type Result struct {
 	Regenerated bool
 	SkillCount  int
 	Registry    string // path to registry file
+	Cached      bool   // true if cache was valid and no regeneration was needed
 }
 
+// cacheFile is the on-disk cache format.
+type cacheFile struct {
+	Schema      int    `json:"schema"`
+	Fingerprint string `json:"fingerprint"`
+	GeneratedAt string `json:"generated_at"`
+}
+
+// ─── Fingerprint ─────────────────────────────────────────────────────────────
+
+// Fingerprint computes a content-aware fingerprint for a set of skill files.
+// Includes: schema version + filename + modtime + size + first 256 bytes of content.
+// This detects content edits even when size and timestamp are unchanged.
+func Fingerprint(projectRoot string) string {
+	home, _ := os.UserHomeDir()
+	var lines []string
+	lines = append(lines, fmt.Sprintf("schema:%d", RegistrySchema))
+
+	// Collect all SKILL.md paths from the same dirs scanAllSkills uses
+	scanDirs := []string{}
+
+	// User-level skills dirs
+	if home != "" {
+		userDirs := []string{
+			filepath.Join(home, ".config", "opencode", "skills"),
+			filepath.Join(home, ".biggz", "skills"),
+			filepath.Join(home, ".claude", "skills"),
+			filepath.Join(home, ".config", "kilo", "skills"),
+		}
+		scanDirs = append(scanDirs, userDirs...)
+	}
+
+	// Project-level skills dirs
+	projectDirs := []string{
+		filepath.Join(projectRoot, "skills"),
+		filepath.Join(projectRoot, ".opencode", "skills"),
+		filepath.Join(projectRoot, ".claude", "skills"),
+		filepath.Join(projectRoot, ".github", "skills"),
+	}
+	scanDirs = append(scanDirs, projectDirs...)
+
+	seen := map[string]bool{}
+	for _, dir := range scanDirs {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if name == "_shared" || name == "skill-registry" || strings.HasPrefix(name, "sdd-") {
+				continue
+			}
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+
+			skillPath := filepath.Join(dir, name, "SKILL.md")
+			info, err := os.Stat(skillPath)
+			if err != nil {
+				continue
+			}
+
+			// Include metadata
+			lines = append(lines, fmt.Sprintf("%s:%d:%d", skillPath, info.ModTime().UnixNano(), info.Size()))
+
+			// Include first 256 bytes of content to detect content-only changes
+			if data, err := os.ReadFile(skillPath); err == nil {
+				contentBytes := data
+				if len(contentBytes) > 256 {
+					contentBytes = contentBytes[:256]
+				}
+				lines = append(lines, fmt.Sprintf("content:%x", sha1.Sum(contentBytes)))
+			}
+		}
+	}
+
+	// Hash all lines
+	sort.Strings(lines)
+	h := sha1.Sum([]byte(strings.Join(lines, "\n")))
+	return fmt.Sprintf("%x", h)
+}
+
+// ─── Cache ───────────────────────────────────────────────────────────────────
+
+func cachePath(projectRoot string) string {
+	return filepath.Join(projectRoot, ".atl", ".skill-registry.cache.json")
+}
+
+func readCache(projectRoot string) (*cacheFile, error) {
+	data, err := os.ReadFile(cachePath(projectRoot))
+	if err != nil {
+		return nil, err
+	}
+	var cf cacheFile
+	if err := json.Unmarshal(data, &cf); err != nil {
+		return nil, err
+	}
+	return &cf, nil
+}
+
+func writeCache(projectRoot, fingerprint string) error {
+	cf := cacheFile{
+		Schema:      RegistrySchema,
+		Fingerprint: fingerprint,
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	data, err := json.MarshalIndent(cf, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(cachePath(projectRoot), data, 0644)
+}
+
+// ─── Refresh ─────────────────────────────────────────────────────────────────
+
 // Refresh scans skill directories and regenerates the registry.
-// It scans both project-level skills and user-level skills.
-func Refresh(projectRoot string) (*Result, error) {
+// Uses content fingerprinting to skip regeneration when nothing changed.
+// Set force=true to bypass cache.
+func Refresh(projectRoot string, force bool) (*Result, error) {
 	atlDir := filepath.Join(projectRoot, ".atl")
 	if err := os.MkdirAll(atlDir, 0755); err != nil {
 		return nil, fmt.Errorf("mkdir .atl: %w", err)
 	}
 
+	// Check cache
+	if !force {
+		if cf, err := readCache(projectRoot); err == nil {
+			if cf.Schema == RegistrySchema {
+				currentFP := Fingerprint(projectRoot)
+				if cf.Fingerprint == currentFP {
+					return &Result{
+						Regenerated: false,
+						SkillCount:  0,
+						Registry:    filepath.Join(atlDir, "skill-registry.md"),
+						Cached:      true,
+					}, nil
+				}
+			}
+		}
+	}
+
+	// Cache miss or force: regenerate
 	entries := scanAllSkills(projectRoot)
 	sort.Slice(entries, func(i, j int) bool {
 		return entries[i].Name < entries[j].Name
@@ -44,6 +190,13 @@ func Refresh(projectRoot string) (*Result, error) {
 		return nil, fmt.Errorf("write registry: %w", err)
 	}
 
+	// Update cache
+	fp := Fingerprint(projectRoot)
+	if err := writeCache(projectRoot, fp); err != nil {
+		// Cache write failure is non-fatal
+		_ = err
+	}
+
 	return &Result{
 		Regenerated: true,
 		SkillCount:  len(entries),
@@ -51,21 +204,14 @@ func Refresh(projectRoot string) (*Result, error) {
 	}, nil
 }
 
+// ─── Scanning ────────────────────────────────────────────────────────────────
+
 func scanAllSkills(projectRoot string) []Entry {
 	home, _ := os.UserHomeDir()
 	seen := map[string]bool{}
 	var entries []Entry
 
-	// Scan dirs in priority order (project-level overrides user-level)
 	scanDirs := []string{}
-
-	// Project-level skills dirs
-	projectDirs := []string{
-		filepath.Join(projectRoot, "skills"),
-		filepath.Join(projectRoot, ".opencode", "skills"),
-		filepath.Join(projectRoot, ".claude", "skills"),
-		filepath.Join(projectRoot, ".github", "skills"),
-	}
 
 	// User-level skills dirs
 	if home != "" {
@@ -76,6 +222,14 @@ func scanAllSkills(projectRoot string) []Entry {
 			filepath.Join(home, ".config", "kilo", "skills"),
 		}
 		scanDirs = append(scanDirs, userDirs...)
+	}
+
+	// Project-level skills dirs
+	projectDirs := []string{
+		filepath.Join(projectRoot, "skills"),
+		filepath.Join(projectRoot, ".opencode", "skills"),
+		filepath.Join(projectRoot, ".claude", "skills"),
+		filepath.Join(projectRoot, ".github", "skills"),
 	}
 	scanDirs = append(scanDirs, projectDirs...)
 
@@ -99,7 +253,6 @@ func scanDir(dir string, seen map[string]bool, projectRoot string) []Entry {
 		}
 		name := entry.Name()
 
-		// Skip excluded
 		if name == "_shared" || name == "skill-registry" {
 			continue
 		}
@@ -107,7 +260,7 @@ func scanDir(dir string, seen map[string]bool, projectRoot string) []Entry {
 			continue
 		}
 		if seen[name] {
-			continue // already found at higher priority
+			continue
 		}
 
 		skillDir := filepath.Join(dir, name)
@@ -118,7 +271,6 @@ func scanDir(dir string, seen map[string]bool, projectRoot string) []Entry {
 
 		desc := extractDescription(skillPath)
 
-		// Try to make path relative to project root
 		rel, err := filepath.Rel(projectRoot, skillPath)
 		path := skillPath
 		if err == nil {
@@ -143,7 +295,6 @@ func extractDescription(skillPath string) string {
 	}
 	content := string(data)
 
-	// Extract frontmatter description
 	if strings.HasPrefix(content, "---") {
 		end := strings.Index(content[3:], "---")
 		if end > 0 {
@@ -159,7 +310,6 @@ func extractDescription(skillPath string) string {
 		}
 	}
 
-	// Fallback: use first non-empty line after #
 	lines := strings.Split(content, "\n")
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
@@ -170,6 +320,8 @@ func extractDescription(skillPath string) string {
 
 	return ""
 }
+
+// ─── Registry generation ─────────────────────────────────────────────────────
 
 func generateRegistry(entries []Entry) string {
 	var b strings.Builder

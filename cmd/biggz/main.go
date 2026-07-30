@@ -23,14 +23,27 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/biggz-ai/biggz/internal/agents/claude"
+	"github.com/biggz-ai/biggz/internal/agents/codex"
+	"github.com/biggz-ai/biggz/internal/agents/cursor"
+	"github.com/biggz-ai/biggz/internal/agents/antigravity"
+	"github.com/biggz-ai/biggz/internal/agents/gemini"
+	"github.com/biggz-ai/biggz/internal/agents/hermes"
+	"github.com/biggz-ai/biggz/internal/agents/kilocode"
+	"github.com/biggz-ai/biggz/internal/agents/kimi"
+	"github.com/biggz-ai/biggz/internal/agents/kiro"
+	"github.com/biggz-ai/biggz/internal/agents/openclaw"
+	"github.com/biggz-ai/biggz/internal/agents/trae"
 	"github.com/biggz-ai/biggz/internal/agents/opencode"
+	"github.com/biggz-ai/biggz/internal/agents/pi"
 	"github.com/biggz-ai/biggz/internal/agents/qwen"
+	"github.com/biggz-ai/biggz/internal/agents/vscode"
+	"github.com/biggz-ai/biggz/internal/agents/windsurf"
 	"github.com/biggz-ai/biggz/internal/backup"
 	"github.com/biggz-ai/biggz/internal/bigmem"
-	"github.com/biggz-ai/biggz/internal/doctor"
 	"github.com/biggz-ai/biggz/internal/assets"
 	"github.com/biggz-ai/biggz/internal/doctor"
 	"github.com/biggz-ai/biggz/internal/install"
+	"github.com/biggz-ai/biggz/internal/opencodeplugin"
 	"github.com/biggz-ai/biggz/internal/recoverytrace"
 	"github.com/biggz-ai/biggz/internal/update"
 	"github.com/biggz-ai/biggz/internal/lens/dependencies"
@@ -42,6 +55,9 @@ import (
 	"github.com/biggz-ai/biggz/internal/release"
 	"github.com/biggz-ai/biggz/internal/review"
 	"github.com/biggz-ai/biggz/internal/sdd"
+	"github.com/biggz-ai/biggz/internal/sddattempt"
+	"github.com/biggz-ai/biggz/internal/state"
+	"github.com/biggz-ai/biggz/internal/sddprofiles"
 	"github.com/biggz-ai/biggz/internal/skillregistry"
 	"github.com/biggz-ai/biggz/internal/tui"
 )
@@ -133,6 +149,10 @@ func main() {
 			os.Exit(sddContinueRun())
 		case "sdd-new":
 			os.Exit(sddNewRun())
+		case "sdd-profile":
+			os.Exit(sddProfileRun())
+		case "sdd-remediate":
+			os.Exit(sddRemediateRun())
 		case "bigmem":
 			os.Exit(bigmemRun())
 		case "backup":
@@ -143,6 +163,8 @@ func main() {
 			os.Exit(skillRegistryRun())
 		case "rdd":
 			os.Exit(rddRun())
+		case "tdd":
+			os.Exit(tddRun())
 		case "review":
 			os.Exit(reviewRun())
 		case "doctor":
@@ -151,6 +173,8 @@ func main() {
 			os.Exit(updateRun())
 		case "sync":
 			os.Exit(syncRun())
+		case "plugin":
+			os.Exit(pluginRun())
 		case "mcp":
 			os.Exit(mcpRun())
 		case "pr":
@@ -343,14 +367,27 @@ func syncRun() int {
 		"opencode": opencode.NewAdapter(),
 		"qwen":     qwen.NewAdapter(),
 		"claude":   claude.NewAdapter(),
+		"cursor":   cursor.NewAdapter(),
+		"windsurf": windsurf.NewAdapter(),
+		"gemini":   gemini.NewAdapter(),
+		"codex":    codex.NewAdapter(),
+		"pi":       pi.NewAdapter(),
+		"vscode":   vscode.NewAdapter(),
+		"kiro":     kiro.NewAdapter(),
+		"antigravity": antigravity.NewAdapter(),
+		"hermes":      hermes.NewAdapter(),
+		"kimi":        kimi.NewAdapter(),
+		"kilocode":    kilocode.NewAdapter(),
+		"trae":        trae.NewAdapter(),
+		"openclaw":    openclaw.NewAdapter(),
 	}
-	priority := []string{"opencode", "claude", "qwen"}
+	priority := []string{"opencode", "claude", "qwen", "cursor", "windsurf", "gemini", "codex", "pi", "vscode", "kiro"}
 
 	// Determine which adapter to use
 	toTry := priority
 	if selectedAgent != "" {
 		if _, ok := adapters[selectedAgent]; !ok {
-			fmt.Fprintf(os.Stderr, "error: unknown agent %q (supported: opencode, claude, qwen)\n", selectedAgent)
+			fmt.Fprintf(os.Stderr, "error: unknown agent %q\n", selectedAgent)
 			return 1
 		}
 		toTry = []string{selectedAgent}
@@ -501,14 +538,27 @@ func installRun() int {
 		"opencode": opencode.NewAdapter(),
 		"qwen":     qwen.NewAdapter(),
 		"claude":   claude.NewAdapter(),
+		"cursor":   cursor.NewAdapter(),
+		"windsurf": windsurf.NewAdapter(),
+		"gemini":   gemini.NewAdapter(),
+		"codex":    codex.NewAdapter(),
+		"pi":       pi.NewAdapter(),
+		"vscode":   vscode.NewAdapter(),
+		"kiro":     kiro.NewAdapter(),
+		"antigravity": antigravity.NewAdapter(),
+		"hermes":      hermes.NewAdapter(),
+		"kimi":        kimi.NewAdapter(),
+		"kilocode":    kilocode.NewAdapter(),
+		"trae":        trae.NewAdapter(),
+		"openclaw":    openclaw.NewAdapter(),
 	}
-	priority := []string{"opencode", "claude", "qwen"}
+	priority := []string{"opencode", "claude", "qwen", "cursor", "windsurf", "gemini", "codex", "pi", "vscode", "kiro"}
 
 	// Determine which adapters to try
 	toTry := priority
 	if selectedAgent != "" {
 		if _, ok := adapters[selectedAgent]; !ok {
-			fmt.Fprintf(os.Stderr, "error: unknown agent %q (supported: opencode, qwen)\n", selectedAgent)
+			fmt.Fprintf(os.Stderr, "error: unknown agent %q\n", selectedAgent)
 			return 1
 		}
 		toTry = []string{selectedAgent}
@@ -643,19 +693,11 @@ func sddVerifyValidateRun() int {
 }
 
 // sddAttemptRun handles the "biggz sdd-attempt" subcommand.
-// Usage:
-//   biggz sdd-attempt status <change>
-//   biggz sdd-attempt begin <change> [--budget N]
-//   biggz sdd-attempt finish <change> [--success] [--lines N]
-//   biggz sdd-attempt reset <change>
+// Native runtime ledger with CAS revision tracking.
 func sddAttemptRun() int {
 	args := os.Args[2:]
 	if len(args) < 2 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "Usage: biggz sdd-attempt <status|begin|finish|reset> <change>")
-		fmt.Fprintln(os.Stderr, "  status  <change>            — show current attempt state")
-		fmt.Fprintln(os.Stderr, "  begin   <change> [--budget N] — start new attempt")
-		fmt.Fprintln(os.Stderr, "  finish  <change> [--success] [--lines N] — end attempt")
-		fmt.Fprintln(os.Stderr, "  reset   <change>            — reset attempt counter")
+		fmt.Fprint(os.Stderr, sddattempt.HelpText)
 		return 0
 	}
 
@@ -667,60 +709,166 @@ func sddAttemptRun() int {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
-	openspecRoot := filepath.Join(cwd, "openspec")
 
-	// Parse flags
-	budget := 400
-	success := true
-	lines := 0
+	// Parse common flags
+	expectedRev := ""
+	objectiveID := ""
+	workUnit := ""
+	evidenceGoal := ""
+	evidenceRev := ""
+	bindingRev := ""
+	bindingLineage := ""
+	maxAttempts := 3
+	maxLines := 400
+	outcome := ""
+	diagnosis := ""
+	reason := ""
+	resetBy := ""
+	harnessDisp := ""
+	cleanupEv := ""
+	processEv := ""
+	remediatesEv := ""
+
 	for i := 2; i < len(args); i++ {
 		switch args[i] {
-		case "--budget":
-			if i+1 < len(args) {
-				i++
-				fmt.Sscanf(args[i], "%d", &budget)
-			}
-		case "--no-success":
-			success = false
-		case "--lines":
-			if i+1 < len(args) {
-				i++
-				fmt.Sscanf(args[i], "%d", &lines)
-			}
+		case "--expected-revision":
+			if i+1 < len(args) { i++; expectedRev = args[i] }
+		case "--expected-binding-revision":
+			if i+1 < len(args) { i++; bindingRev = args[i] }
+		case "--successor-lineage":
+			if i+1 < len(args) { i++; bindingLineage = args[i] }
+		case "--objective-id":
+			if i+1 < len(args) { i++; objectiveID = args[i] }
+		case "--work-unit":
+			if i+1 < len(args) { i++; workUnit = args[i] }
+		case "--evidence-goal":
+			if i+1 < len(args) { i++; evidenceGoal = args[i] }
+		case "--evidence-revision":
+			if i+1 < len(args) { i++; evidenceRev = args[i] }
+		case "--remediates-evidence-revision":
+			if i+1 < len(args) { i++; remediatesEv = args[i] }
+		case "--outcome":
+			if i+1 < len(args) { i++; outcome = args[i] }
+		case "--diagnosis":
+			if i+1 < len(args) { i++; diagnosis = args[i] }
+		case "--reason":
+			if i+1 < len(args) { i++; reason = args[i] }
+		case "--reset-by":
+			if i+1 < len(args) { i++; resetBy = args[i] }
+		case "--harness-disposition":
+			if i+1 < len(args) { i++; harnessDisp = args[i] }
+		case "--cleanup-evidence":
+			if i+1 < len(args) { i++; cleanupEv = args[i] }
+		case "--process-evidence":
+			if i+1 < len(args) { i++; processEv = args[i] }
+		case "--max-attempts":
+			if i+1 < len(args) { i++; fmt.Sscanf(args[i], "%d", &maxAttempts) }
+		case "--max-lines":
+			if i+1 < len(args) { i++; fmt.Sscanf(args[i], "%d", &maxLines) }
 		}
 	}
 
-	var result *sdd.AttemptState
 	switch operation {
 	case "status":
-		result, err = sdd.AttemptStatus(openspecRoot, change)
+		status, err := sddattempt.Status(change, cwd)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Change:           %s\n", status.ChangeName)
+		fmt.Printf("Revision:         %s\n", status.Revision)
+		fmt.Printf("Next action:      %s\n", status.NextAction)
+		fmt.Printf("Active attempt:   %d\n", status.ActiveAttempt)
+		fmt.Printf("Attempts:         %d\n", status.AttemptCount)
+		fmt.Printf("Decision needed:  %v\n", status.DecisionRequired)
+		fmt.Printf("Complete:         %v\n", status.Complete)
+		if status.BindingRevision != "" {
+			fmt.Printf("Binding revision: %s\n", status.BindingRevision)
+		}
+		if status.BindingLineage != "" {
+			fmt.Printf("Binding lineage:  %s\n", status.BindingLineage)
+		}
+
 	case "begin":
-		result, err = sdd.AttemptBegin(openspecRoot, change, budget)
+		result, err := sddattempt.Begin(sddattempt.BeginParams{
+			ChangeName:  change,
+			RepoRoot:    cwd,
+			ExpectedRev: expectedRev,
+			ObjectiveID: objectiveID,
+			WorkUnit:    workUnit,
+			EvidenceGoal: evidenceGoal,
+			MaxAttempts: maxAttempts,
+			MaxLines:    maxLines,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if result.AlreadyActive {
+			fmt.Printf("Already active: attempt %d is still running\n", result.ActiveAttempt)
+		} else {
+			fmt.Printf("Attempt %d started (revision: %s)\n", result.ActiveAttempt, result.Revision)
+		}
+
 	case "finish":
-		result, err = sdd.AttemptFinish(openspecRoot, change, success, lines)
+		result, err := sddattempt.Finish(sddattempt.FinishParams{
+			ChangeName:       change,
+			RepoRoot:         cwd,
+			ExpectedRev:      expectedRev,
+			Outcome:          outcome,
+			EvidenceRevision: evidenceRev,
+			Diagnosis:        diagnosis,
+			HarnessDisposition: harnessDisp,
+			CleanupEvidence:  cleanupEv,
+			ProcessEvidence:  processEv,
+			ExpectedBindingRevision: bindingRev,
+			SuccessorLineageID:      bindingLineage,
+			RemediatesEvidenceRevision: remediatesEv,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Attempt finished (revision: %s)\n", result.Revision)
+		if result.Complete {
+			fmt.Println("Status: COMPLETE")
+		} else if result.DecisionRequired {
+			fmt.Println("Status: DECISION REQUIRED")
+		} else {
+			fmt.Printf("Remaining attempts: %d\n", result.RemainingAttempts)
+		}
+
 	case "reset":
-		result, err = sdd.AttemptReset(openspecRoot, change)
+		if reason == "" {
+			fmt.Fprintln(os.Stderr, "error: --reason is required for reset")
+			return 1
+		}
+		result, err := sddattempt.Reset(sddattempt.ResetParams{
+			ChangeName:  change,
+			RepoRoot:    cwd,
+			ExpectedRev: expectedRev,
+			Reason:      reason,
+			ResetBy:     resetBy,
+			MaxAttempts: maxAttempts,
+			MaxLines:    maxLines,
+			ObjectiveID: objectiveID,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Ledger reset (revision: %s)\n", result.Revision)
+		if result.NewStore {
+			fmt.Println("New store created")
+		} else {
+			fmt.Printf("Previous attempts cleared: %d\n", result.AttemptsReset)
+		}
+
 	default:
 		fmt.Fprintf(os.Stderr, "unknown operation %q (use: status, begin, finish, reset)\n", operation)
 		return 1
 	}
 
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-
-	fmt.Printf("Change: %s\n", result.ChangeName)
-	fmt.Printf("Status: %s\n", result.Status)
-	if result.TotalAttempts > 0 {
-		fmt.Printf("Attempts: %d/%d\n", result.TotalAttempts, result.MaxAttempts)
-	}
-	if result.ActiveAttempt > 0 {
-		fmt.Printf("Active attempt: %d\n", result.ActiveAttempt)
-	}
-	if result.CorrectionLines > 0 {
-		fmt.Printf("Correction lines: %d\n", result.CorrectionLines)
-	}
 	return 0
 }
 
@@ -764,10 +912,135 @@ func sddContinueRun() int {
 	return 0
 }
 
+// sddProfileRun handles the "biggz sdd-profile" subcommand.
+// Usage: biggz sdd-profile list
+//        biggz sdd-profile apply <name>
+//        biggz sdd-profile remove <name>
+func sddProfileRun() int {
+	args := os.Args[2:]
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprint(os.Stderr, sddprofiles.ListProfiles())
+		return 0
+	}
+
+	switch args[0] {
+	case "list":
+		fmt.Print(sddprofiles.ListProfiles())
+
+	case "apply":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz sdd-profile apply <name>")
+			fmt.Fprintln(os.Stderr, "Run 'biggz sdd-profile list' to see available profiles.")
+			return 1
+		}
+		profileName := args[1]
+
+		// Find profile
+		var profile *sddprofiles.Profile
+		for _, p := range sddprofiles.DefaultProfiles() {
+			if p.Name == profileName {
+				profile = &p
+				break
+			}
+		}
+		if profile == nil {
+			fmt.Fprintf(os.Stderr, "unknown profile %q. Run 'biggz sdd-profile list' to see available profiles.\n", profileName)
+			return 1
+		}
+
+		// Find settings file
+		home, _ := os.UserHomeDir()
+		settingsPath := filepath.Join(home, ".config", "opencode", "opencode.json")
+		if _, err := os.Stat(settingsPath); err != nil {
+			// Try opencode.jsonc
+			settingsPath = filepath.Join(home, ".config", "opencode", "opencode.jsonc")
+			if _, err := os.Stat(settingsPath); err != nil {
+				fmt.Fprintln(os.Stderr, "error: could not find opencode config (opencode.json or opencode.jsonc)")
+				return 1
+			}
+		}
+
+		if err := sddprofiles.ApplyProfile(settingsPath, *profile); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Profile %q applied. Agents added:\n", profileName)
+		for _, phase := range sddprofiles.PhaseOrder {
+			if model, ok := profile.Agents[phase]; ok {
+				fmt.Printf("  %s → %s\n", phase, model)
+			}
+		}
+		fmt.Printf("\nConfig: %s\n", settingsPath)
+
+	case "remove":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz sdd-profile remove <name>")
+			return 1
+		}
+		home, _ := os.UserHomeDir()
+		settingsPath := filepath.Join(home, ".config", "opencode", "opencode.json")
+		if _, err := os.Stat(settingsPath); err != nil {
+			settingsPath = filepath.Join(home, ".config", "opencode", "opencode.jsonc")
+			if _, err := os.Stat(settingsPath); err != nil {
+				fmt.Fprintln(os.Stderr, "error: could not find opencode config")
+				return 1
+			}
+		}
+		if err := sddprofiles.RemoveProfile(settingsPath, args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Profile %q removed.\n", args[1])
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown subcommand %q (use: list, apply, remove)\n", args[0])
+		return 1
+	}
+	return 0
+}
+
+// sddRemediateRun handles the "biggz sdd-remediate" subcommand.
+// Usage: biggz sdd-remediate <change> [--verify-report <path>]
+func sddRemediateRun() int {
+	args := os.Args[2:]
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz sdd-remediate <change> [--verify-report <path>]")
+		fmt.Fprintln(os.Stderr, "  Validate remediation result for a verify failure.")
+		fmt.Fprintln(os.Stderr, "  --verify-report <path>     Path to the remediation result file")
+		return 1
+	}
+
+	change := args[0]
+	reportPath := ""
+	for i := 1; i < len(args); i++ {
+		if args[i] == "--verify-report" && i+1 < len(args) {
+			reportPath = args[i+1]
+			i++
+		}
+	}
+
+	if reportPath == "" {
+		fmt.Fprintln(os.Stderr, "error: --verify-report is required")
+		return 1
+	}
+
+	result, err := sdd.ValidateRemediationResult(reportPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: remediation validation failed: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Change: %s\n", change)
+	fmt.Printf("Schema: %s\n", result.Schema)
+	fmt.Printf("Verdict: %s\n", result.Verdict)
+	if result.Blockers > 0 {
+		fmt.Printf("Blockers: %d\n", result.Blockers)
+	}
+	fmt.Println("Remediation validation: PASSED")
+	return 0
+}
+
 // bigmemRun handles the "biggz bigmem" subcommand.
-// Usage: biggz bigmem save <title> <content>
-//        biggz bigmem search <query>
-//        biggz bigmem get <id>
 func bigmemRun() int {
 	store, err := bigmem.Open("")
 	if err != nil {
@@ -1456,13 +1729,20 @@ func releaseRun() int {
 }
 
 // skillRegistryRun handles the "biggz skill-registry" subcommand.
-// Usage: biggz skill-registry refresh   — regenerate skill registry
+// Usage: biggz skill-registry refresh [--force]   — regenerate skill registry
 func skillRegistryRun() int {
 	args := os.Args[2:]
 
 	if len(args) < 1 || args[0] != "refresh" {
-		fmt.Fprintln(os.Stderr, "Usage: biggz skill-registry refresh")
+		fmt.Fprintln(os.Stderr, "Usage: biggz skill-registry refresh [--force]")
 		return 1
+	}
+
+	force := false
+	for _, a := range args[1:] {
+		if a == "--force" {
+			force = true
+		}
 	}
 
 	cwd, err := os.Getwd()
@@ -1471,14 +1751,19 @@ func skillRegistryRun() int {
 		return 1
 	}
 
-	result, err := skillregistry.Refresh(cwd)
+	result, err := skillregistry.Refresh(cwd, force)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 
-	fmt.Printf("Skill registry regenerated: %d skills\n", result.SkillCount)
-	fmt.Printf("  Path: %s\n", result.Registry)
+	if result.Cached {
+		fmt.Println("Skill registry cache valid, no regeneration needed.")
+		fmt.Printf("  Path: %s\n", result.Registry)
+	} else {
+		fmt.Printf("Skill registry regenerated: %d skills\n", result.SkillCount)
+		fmt.Printf("  Path: %s\n", result.Registry)
+	}
 	return 0
 }
 
@@ -1582,6 +1867,147 @@ func rddRun() int {
 	return 0
 }
 
+// tddRun handles "biggz tdd <enable|disable|status>".
+func tddRun() int {
+	args := os.Args[2:]
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz tdd <enable|disable|status>")
+		fmt.Fprintln(os.Stderr, "  enable   — Enable Strict TDD Mode (injects marker into AGENTS.md)")
+		fmt.Fprintln(os.Stderr, "  disable  — Disable Strict TDD Mode (removes marker from AGENTS.md)")
+		fmt.Fprintln(os.Stderr, "  status   — Show current Strict TDD mode")
+		return 0
+	}
+
+	op := args[0]
+	home, _ := os.UserHomeDir()
+
+	// Detect the agent
+	var agent plugin.AgentAdapter
+	for _, a := range []plugin.AgentAdapter{opencode.NewAdapter(), claude.NewAdapter(), qwen.NewAdapter(), cursor.NewAdapter(), windsurf.NewAdapter()} {
+		installed, _, _, _, _ := a.Detect(context.Background(), home)
+		if installed {
+			agent = a
+			break
+		}
+	}
+	if agent == nil {
+		agent = opencode.NewAdapter() // default fallback
+	}
+
+	switch op {
+	case "enable":
+		if err := install.DeployStrictTDDMode(agent, home, true, false); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		state.SetBigMemConfig("strict_tdd", true)
+		fmt.Println("Strict TDD Mode: enabled")
+		fmt.Println("  sdd-apply will now follow RED → GREEN → REFACTOR cycle")
+		fmt.Println("  sdd-verify will validate TDD compliance")
+
+	case "disable":
+		if err := install.DeployStrictTDDMode(agent, home, false, false); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		state.SetBigMemConfig("strict_tdd", false)
+		fmt.Println("Strict TDD Mode: disabled")
+
+	case "status":
+		enabled, _ := state.GetBigMemConfig("strict_tdd")
+		// Also check AGENTS.md marker
+		promptFile := agent.SystemPromptFile(home)
+		if data, err := os.ReadFile(promptFile); err == nil {
+			if strings.Contains(string(data), "<!-- biggz:strict-tdd-mode -->") {
+				enabled = true
+			}
+		}
+		if enabled {
+			fmt.Println("Strict TDD Mode: enabled")
+		} else {
+			fmt.Println("Strict TDD Mode: disabled")
+		}
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown tdd command: %s (use enable, disable, status)\n", op)
+		return 1
+	}
+	return 0
+}
+
+// updateStrictTDDInConfig reads opencode.json, sets strict_tdd, and writes back.
+// pluginRun handles "biggz plugin <install|uninstall|list>".
+func pluginRun() int {
+	args := os.Args[2:]
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprint(os.Stderr, opencodeplugin.FormatPluginList())
+		return 0
+	}
+
+	switch args[0] {
+	case "list":
+		installed, err := opencodeplugin.ListInstalled()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if len(installed) == 0 {
+			fmt.Println("No community plugins installed.")
+			fmt.Println()
+			fmt.Print(opencodeplugin.FormatPluginList())
+		} else {
+			fmt.Println("Installed community plugins:")
+			for _, p := range installed {
+				fmt.Printf("  • %s\n", p)
+			}
+		}
+
+	case "install":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz plugin install <name>")
+			return 1
+		}
+		if err := opencodeplugin.Install(args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Plugin %q installed.\n", args[1])
+
+	case "uninstall":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz plugin uninstall <name>")
+			return 1
+		}
+		if err := opencodeplugin.Uninstall(args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("Plugin %q uninstalled.\n", args[1])
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown plugin command %q (use: install, uninstall, list)\n", args[0])
+		return 1
+	}
+	return 0
+}
+
+func _deprecated_updateStrictTDDInConfig(cfgPath string, enabled bool) {
+	data, err := os.ReadFile(cfgPath)
+	if err != nil {
+		return
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return
+	}
+	cfg["strict_tdd"] = enabled
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return
+	}
+	os.WriteFile(cfgPath, out, 0644)
+}
+
 // ---------------------------------------------------------------------------
 // Review Commands
 // ---------------------------------------------------------------------------
@@ -1610,6 +2036,8 @@ func reviewRun() int {
 		return reviewExportRun()
 	case "import":
 		return reviewImportRun()
+	case "bind-sdd":
+		return reviewBindSDDRun()
 	default:
 		printReviewHelp()
 		return 1
@@ -1642,6 +2070,11 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "    [--output <file>]           Write to file instead of stdout")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  import <file>                  Import a previously exported review")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  bind-sdd <change> <lineage> <revision>  Bind an approved review lineage to an SDD change")
+	fmt.Fprintln(os.Stderr, "    <change>   SDD change name")
+	fmt.Fprintln(os.Stderr, "    <lineage>  Review lineage ID")
+	fmt.Fprintln(os.Stderr, "    <revision> Binding revision (SHA-256 hex)")
 }
 
 // reviewListRun handles "biggz review list".
@@ -2146,6 +2579,38 @@ func reviewImportRun() int {
 	}
 
 	fmt.Printf("Review imported: %s (%d events)\n", exp.LineageID, len(exp.Events))
+	return 0
+}
+
+// reviewBindSDDRun handles "biggz review bind-sdd <change> <lineage> <revision>".
+// Binds an approved review lineage to an SDD change so the runtime ledger
+// records which review governs the change's verification.
+func reviewBindSDDRun() int {
+	args := os.Args[3:]
+	if len(args) < 3 {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review bind-sdd <change> <lineage> <revision>")
+		fmt.Fprintln(os.Stderr, "  <change>   SDD change name")
+		fmt.Fprintln(os.Stderr, "  <lineage>  Review lineage ID")
+		fmt.Fprintln(os.Stderr, "  <revision> Binding revision (SHA-256 hex)")
+		return 1
+	}
+
+	changeName := args[0]
+	lineageID := args[1]
+	bindingRev := args[2]
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	if err := sdd.BindApprovedReview(changeName, cwd, lineageID, bindingRev); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	fmt.Printf("Review %q bound to SDD change %q (revision: %s)\n", lineageID, changeName, bindingRev)
 	return 0
 }
 

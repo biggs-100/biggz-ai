@@ -6,30 +6,35 @@ import (
 	"strings"
 
 	"github.com/biggz-ai/biggz/internal/agents/claude"
+	"github.com/biggz-ai/biggz/internal/agents/cursor"
 	"github.com/biggz-ai/biggz/internal/agents/opencode"
 	"github.com/biggz-ai/biggz/internal/agents/qwen"
+	"github.com/biggz-ai/biggz/internal/agents/windsurf"
 	"github.com/biggz-ai/biggz/internal/install"
 	"github.com/biggz-ai/biggz/internal/tui/styles"
 	"github.com/biggz-ai/biggz/plugin"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// step tracks install progress.
+// installStep tracks the guided installation flow.
 type installStep int
 
 const (
-	stepInstallIdle    installStep = iota
-	stepInstallDetect
-	stepInstallRunning
-	stepInstallDone
-	stepInstallError
+	stepInstallIdle      installStep = iota
+	stepInstallDetect               // scanning for agents
+	stepInstallSelect               // pick from multiple agents
+	stepInstallReview               // review what will be installed
+	stepInstallRunning              // installation in progress
+	stepInstallDone                 // success
+	stepInstallError                // failure
 )
 
-// InstallModel handles agent detection and installation.
+// InstallModel handles the guided installation wizard.
 type InstallModel struct {
 	step     installStep
 	adapters []plugin.AgentAdapter
 	cursor   int
+	selected int            // which adapter is selected (-1 = not yet)
 	result   *install.Result
 	errMsg   string
 	agent    string
@@ -37,12 +42,12 @@ type InstallModel struct {
 
 // NewInstallModel creates the install screen.
 func NewInstallModel() InstallModel {
-	return InstallModel{step: stepInstallIdle}
+	return InstallModel{step: stepInstallIdle, selected: -1}
 }
 
 func (m InstallModel) Init() tea.Cmd { return nil }
 
-// installResultMsg carries the result.
+// installResultMsg carries the async result.
 type installResultMsg struct {
 	result *install.Result
 	err    error
@@ -61,34 +66,43 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "enter", " ":
-			if m.step == stepInstallIdle {
+			switch m.step {
+			case stepInstallIdle:
 				m.step = stepInstallDetect
 				m.adapters = m.detectAdapters()
+				m.cursor = 0
 				if len(m.adapters) == 0 {
 					m.step = stepInstallError
-					m.errMsg = "No AI agent detected (tried opencode, claude, qwen)"
+					m.errMsg = "No AI agent detected (tried opencode, claude, qwen, cursor, windsurf)"
 					return m, nil
 				}
 				if len(m.adapters) == 1 {
-					m.cursor = 0
-					m.step = stepInstallRunning
+					m.selected = 0
+					m.step = stepInstallReview
 					m.agent = m.adapters[0].Name()
-					return m, func() tea.Msg { return doInstall(m.adapters[0]) }
+					return m, nil
 				}
+				m.step = stepInstallSelect
 				return m, nil
-			}
-			if m.step == stepInstallDetect && len(m.adapters) > 1 {
-				adapter := m.adapters[m.cursor]
-				m.step = stepInstallRunning
-				m.agent = adapter.Name()
-				return m, func() tea.Msg { return doInstall(adapter) }
+
+			case stepInstallSelect:
+				m.selected = m.cursor
+				m.step = stepInstallReview
+				m.agent = m.adapters[m.cursor].Name()
+				return m, nil
+
+			case stepInstallReview:
+				if m.selected >= 0 && m.selected < len(m.adapters) {
+					m.step = stepInstallRunning
+					return m, func() tea.Msg { return doInstall(m.adapters[m.selected]) }
+				}
 			}
 		case "up", "k":
-			if m.step == stepInstallDetect && m.cursor > 0 {
+			if m.step == stepInstallSelect && m.cursor > 0 {
 				m.cursor--
 			}
 		case "down", "j":
-			if m.step == stepInstallDetect && m.cursor < len(m.adapters)-1 {
+			if m.step == stepInstallSelect && m.cursor < len(m.adapters)-1 {
 				m.cursor++
 			}
 		case "r":
@@ -96,6 +110,7 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.step = stepInstallIdle
 				m.errMsg = ""
 				m.result = nil
+				m.selected = -1
 			}
 		}
 
@@ -116,7 +131,7 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // detectAdapters tries to detect available AI coding agents.
 func (m InstallModel) detectAdapters() []plugin.AgentAdapter {
 	var found []plugin.AgentAdapter
-	homeDir := "" // use real home
+	homeDir := ""
 	for _, factory := range []struct {
 		name string
 		fn   func() plugin.AgentAdapter
@@ -124,12 +139,11 @@ func (m InstallModel) detectAdapters() []plugin.AgentAdapter {
 		{"opencode", func() plugin.AgentAdapter { return opencode.NewAdapter() }},
 		{"claude", func() plugin.AgentAdapter { return claude.NewAdapter() }},
 		{"qwen", func() plugin.AgentAdapter { return qwen.NewAdapter() }},
+		{"cursor", func() plugin.AgentAdapter { return cursor.NewAdapter() }},
+		{"windsurf", func() plugin.AgentAdapter { return windsurf.NewAdapter() }},
 	} {
-		// Check via the adapter registry
-		// Note: agents.Register is called by each adapter's init()
 		adapter := factory.fn()
-		ctx := context.Background()
-		installed, _, _, _, _ := adapter.Detect(ctx, homeDir)
+		installed, _, _, _, _ := adapter.Detect(context.Background(), homeDir)
 		if installed {
 			found = append(found, adapter)
 		}
@@ -145,45 +159,73 @@ func (m InstallModel) View() string {
 
 	switch m.step {
 	case stepInstallIdle:
-		b.WriteString("This will install biggz-ai in your AI coding agent.\n\n")
-		b.WriteString(styles.StatusInfo.Render("What gets installed:\n"))
+		b.WriteString("Welcome to biggz-ai installation.\n\n")
+		b.WriteString("This wizard will:\n")
+		b.WriteString("  1. Detect your AI coding agent\n")
+		b.WriteString("  2. Review what will be installed\n")
+		b.WriteString("  3. Deploy SDD orchestrator, skills, and BigMem\n\n")
+		b.WriteString(styles.StatusInfo.Render("Components to install:\n"))
 		b.WriteString("  • SDD orchestrator agent + 18 sub-agents\n")
 		b.WriteString("  • 24 SDD skills in ~/.biggz/skills/\n")
 		b.WriteString("  • 12 SDD slash commands\n")
 		b.WriteString("  • BigMem MCP server (persistent memory)\n")
-		b.WriteString("  • RDD kill switch\n")
+		b.WriteString("  • RDD kill switch (Review-Driven Development)\n")
 		b.WriteString("  • biggz persona in AGENTS.md\n")
+		b.WriteString("  • BigMem protocol in AGENTS.md\n")
 		b.WriteString("\n")
-		b.WriteString(styles.Help.Render("Press ENTER to start installation"))
+		b.WriteString(styles.Help.Render("Press ENTER to start"))
 
 	case stepInstallDetect:
-		if len(m.adapters) > 1 {
-			b.WriteString("Multiple agents detected. Choose one:\n\n")
-			for i, a := range m.adapters {
-				cur := "  "
-				if i == m.cursor {
-					cur = "▸ "
-				}
-				b.WriteString(fmt.Sprintf("%s%s\n", cur, a.Name()))
+		b.WriteString(styles.Spinner.Render("Scanning for AI coding agents..."))
+		b.WriteString("\n\n")
+		b.WriteString(styles.StatusInfo.Render("Checking: opencode, claude, qwen, cursor, windsurf"))
+
+	case stepInstallSelect:
+		b.WriteString("Multiple AI coding agents detected.\n")
+		b.WriteString("Choose which one to install biggz-ai into:\n\n")
+		for i, a := range m.adapters {
+			cur := "  "
+			if i == m.cursor {
+				cur = "▸ "
 			}
-			b.WriteString("\n")
-			b.WriteString(styles.Help.Render("↑↓ navigate · ENTER select"))
-		} else {
-			b.WriteString(styles.Spinner.Render("Detecting agents..."))
+			b.WriteString(fmt.Sprintf("%s%s\n", cur, a.Name()))
 		}
+		b.WriteString("\n")
+		b.WriteString(styles.Help.Render("↑↓ navigate · ENTER select"))
+
+	case stepInstallReview:
+		b.WriteString(styles.Section.Render("Installation Summary"))
+		b.WriteString("\n\n")
+		b.WriteString(fmt.Sprintf("Agent: %s\n\n", m.agent))
+		b.WriteString("The following will be installed:\n")
+		b.WriteString("  ✅ SDD orchestrator + 18 sub-agents\n")
+		b.WriteString("  ✅ 24 SDD skills\n")
+		b.WriteString("  ✅ 12 slash commands\n")
+		b.WriteString("  ✅ BigMem MCP server\n")
+		b.WriteString("  ✅ RDD kill switch\n")
+		b.WriteString("  ✅ Persona + BigMem protocol in AGENTS.md\n")
+		b.WriteString("\n")
+		b.WriteString(styles.Help.Render("ENTER to confirm · esc back"))
 
 	case stepInstallRunning:
-		b.WriteString(styles.Spinner.Render(fmt.Sprintf("Installing in %s...\n\n", m.agent)))
-		b.WriteString(styles.StatusInfo.Render("Deploying skills, configuring agents, setting up MCP..."))
+		b.WriteString(styles.Spinner.Render(fmt.Sprintf("Installing biggz-ai in %s...\n\n", m.agent)))
+		b.WriteString(styles.StatusInfo.Render("Deploying skills, configuring agents, setting up MCP...\n"))
+		b.WriteString(styles.StatusInfo.Render("Installing BigMem protocol in AGENTS.md..."))
 
 	case stepInstallDone:
 		r := m.result
 		b.WriteString(styles.SuccessBox.Render(fmt.Sprintf(
-			"✅ biggz-ai installed successfully in %s\n\n"+
-				"  • Skills deployed:  %d\n"+
-				"  • Commands written: %d\n"+
-				"  • Config merged:    %v\n",
-			r.BinaryPath, r.SkillsDeployed, r.CommandsWritten, r.ConfigMerged)))
+			"✅ biggz-ai installed successfully in %s",
+			m.agent)))
+		b.WriteString("\n\n")
+		b.WriteString(fmt.Sprintf("  Skills deployed:  %d\n", r.SkillsDeployed))
+		b.WriteString(fmt.Sprintf("  Commands written: %d\n", r.CommandsWritten))
+		b.WriteString(fmt.Sprintf("  Config merged:    %v\n", r.ConfigMerged))
+		b.WriteString("\n")
+		b.WriteString("Next steps:\n")
+		b.WriteString("  • Run /sdd-new in OpenCode to start a change\n")
+		b.WriteString("  • Run 'biggz sdd-status' to check SDD status\n")
+		b.WriteString("  • Run 'biggz tdd enable' to enable Strict TDD\n")
 		b.WriteString("\n")
 		b.WriteString(styles.Help.Render("Press [R] to reinstall · esc for menu"))
 

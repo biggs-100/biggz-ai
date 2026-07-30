@@ -1,13 +1,10 @@
 package screens
 
 import (
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/filemerge"
+	"github.com/biggz-ai/biggz/internal/state"
 	"github.com/biggz-ai/biggz/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -39,45 +36,25 @@ type tddResultMsg struct {
 	err    string
 }
 
-// loadTDDState reads strict_tdd from opencode.json.
+// loadTDDState reads strict_tdd from ~/.biggz/config.json.
 func loadTDDState() tea.Msg {
-	home, _ := os.UserHomeDir()
-	cfgPath := filepath.Join(home, ".config", "opencode", "opencode.json")
-	data, err := os.ReadFile(cfgPath)
+	enabled, err := state.GetBigMemConfig("strict_tdd")
 	if err != nil {
 		return tddLoadMsg{enabled: false}
 	}
-	var cfg map[string]any
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return tddLoadMsg{enabled: false}
-	}
-	enabled, _ := cfg["strict_tdd"].(bool)
 	return tddLoadMsg{enabled: enabled}
 }
 
-// saveTDDState writes strict_tdd to opencode.json.
+// saveTDDState writes strict_tdd to ~/.biggz/config.json.
 func saveTDDState(enabled bool) tea.Msg {
-	home, _ := os.UserHomeDir()
-	cfgPath := filepath.Join(home, ".config", "opencode", "opencode.json")
-	data, err := os.ReadFile(cfgPath)
-	if err != nil {
-		return tddResultMsg{err: fmt.Sprintf("read config: %v", err)}
+	if err := state.SetBigMemConfig("strict_tdd", enabled); err != nil {
+		return tddResultMsg{err: fmt.Sprintf("save: %v", err)}
 	}
-
-	overlay := fmt.Sprintf(`{"strict_tdd":%v}`, enabled)
-	merged, err := filemerge.MergeJSONC(data, []byte(overlay))
-	if err != nil {
-		return tddResultMsg{err: fmt.Sprintf("merge: %v", err)}
-	}
-	if _, err := filemerge.WriteFileAtomic(cfgPath, merged, 0644); err != nil {
-		return tddResultMsg{err: fmt.Sprintf("write: %v", err)}
-	}
-
-	state := "enabled"
+	s := "enabled"
 	if !enabled {
-		state = "disabled"
+		s = "disabled"
 	}
-	return tddResultMsg{status: fmt.Sprintf("Strict TDD %s", state)}
+	return tddResultMsg{status: fmt.Sprintf("Strict TDD %s", s)}
 }
 
 // Update handles input.

@@ -30,6 +30,9 @@ const (
 	screenModelPickers
 	screenAgentBuilder
 	screenCommunity
+	screenSync
+	screenUpdatePrompt
+	screenPluginUninstall
 	screenCount
 )
 
@@ -54,6 +57,9 @@ type Model struct {
 	strictTDD     screens.StrictTDDModel
 	reviewScr     screens.ReviewModel
 	sessions      screens.SessionsModel
+	syncScr       screens.SyncModel
+	updatePrompt  screens.UpdatePromptModel
+	pluginUninstall screens.PluginUninstallModel
 	width, height int
 	err           error
 }
@@ -79,6 +85,9 @@ func New() Model {
 		strictTDD:     screens.NewStrictTDDModel(),
 		reviewScr:     screens.NewReviewModel(),
 		sessions:      screens.NewSessionsModel(),
+		syncScr:       screens.NewSyncModel(),
+		updatePrompt:  screens.NewUpdatePromptModel(),
+		pluginUninstall: screens.NewPluginUninstallModel(),
 	}
 }
 
@@ -211,6 +220,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		u, cmd := m.sessions.Update(msg)
 		m.sessions = u.(screens.SessionsModel)
 		return m, cmd
+	case screenSync:
+		u, cmd := m.syncScr.Update(msg)
+		m.syncScr = u.(screens.SyncModel)
+		return m, cmd
+	case screenUpdatePrompt:
+		u, cmd := m.updatePrompt.Update(msg)
+		m.updatePrompt = u.(screens.UpdatePromptModel)
+		return m, cmd
+	case screenPluginUninstall:
+		u, cmd := m.pluginUninstall.Update(msg)
+		m.pluginUninstall = u.(screens.PluginUninstallModel)
+		return m, cmd
 	}
 
 	return m, nil
@@ -261,6 +282,12 @@ func (m Model) View() string {
 		return m.community.View()
 	case screenSessions:
 		return m.sessions.View()
+	case screenSync:
+		return m.syncScr.View()
+	case screenUpdatePrompt:
+		return m.updatePrompt.View()
+	case screenPluginUninstall:
+		return m.pluginUninstall.View()
 	}
 	return ""
 }
