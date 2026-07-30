@@ -380,6 +380,30 @@ func (s *Store) SaveRelation(aID, bID, relation, reason string, confidence float
 	return jr, err
 }
 
+// ListPromptsBySession returns all prompts for a given session.
+func (s *Store) ListPromptsBySession(sessionID string) ([]SavedPrompt, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS prompts
+		(id TEXT PRIMARY KEY, content TEXT, session_id TEXT, created_at TEXT)`)
+	rows, err := s.db.Query("SELECT id, content, session_id, created_at FROM prompts WHERE session_id = ? ORDER BY created_at ASC", sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []SavedPrompt
+	for rows.Next() {
+		var p SavedPrompt
+		var ca string
+		if err := rows.Scan(&p.ID, &p.Content, &p.SessionID, &ca); err != nil {
+			continue
+		}
+		p.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+		result = append(result, p)
+	}
+	return result, nil
+}
+
 // CapturePassive extracts learnings from text.
 func CapturePassive(content, project string) ([]*Observation, error) {
 	var results []*Observation
