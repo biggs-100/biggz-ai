@@ -2,25 +2,35 @@ class BiggzAi < Formula
   desc "AI Agent Harness — Review-Driven Development with Human-in-the-Loop"
   homepage "https://github.com/biggs-100/biggz-ai"
   license "MIT"
-  version "dev"
+  version "1.0.0"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/biggs-100/biggz-ai/releases/download/v#{version}/biggz-darwin-arm64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      url "https://github.com/biggs-100/biggz-ai/releases/download/v1.0.0/biggz_darwin_arm64.tar.gz"
+      sha256 "UPDATE_ME_AFTER_GORELEASER_RUNS"
     else
-      url "https://github.com/biggs-100/biggz-ai/releases/download/v#{version}/biggz-darwin-amd64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      url "https://github.com/biggs-100/biggz-ai/releases/download/v1.0.0/biggz_darwin_amd64.tar.gz"
+      sha256 "UPDATE_ME_AFTER_GORELEASER_RUNS"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/biggs-100/biggz-ai/releases/download/v#{version}/biggz-linux-arm64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      url "https://github.com/biggs-100/biggz-ai/releases/download/v1.0.0/biggz_linux_arm64.tar.gz"
+      sha256 "UPDATE_ME_AFTER_GORELEASER_RUNS"
     else
-      url "https://github.com/biggs-100/biggz-ai/releases/download/v#{version}/biggz-linux-amd64.tar.gz"
-      sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      url "https://github.com/biggs-100/biggz-ai/releases/download/v1.0.0/biggz_linux_amd64.tar.gz"
+      sha256 "UPDATE_ME_AFTER_GORELEASER_RUNS"
+    end
+  end
+
+  on_windows do
+    if Hardware::CPU.arm?
+      url "https://github.com/biggs-100/biggz-ai/releases/download/v1.0.0/biggz_windows_arm64.zip"
+      sha256 "UPDATE_ME_AFTER_GORELEASER_RUNS"
+    else
+      url "https://github.com/biggs-100/biggz-ai/releases/download/v1.0.0/biggz_windows_amd64.zip"
+      sha256 "UPDATE_ME_AFTER_GORELEASER_RUNS"
     end
   end
 
