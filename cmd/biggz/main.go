@@ -130,6 +130,8 @@ func main() {
 			os.Exit(sddAttemptRun())
 		case "sdd-continue":
 			os.Exit(sddContinueRun())
+		case "sdd-new":
+			os.Exit(sddNewRun())
 		case "bigmem":
 			os.Exit(bigmemRun())
 		case "backup":
@@ -2167,6 +2169,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "  sdd-verify-validate        Validate verify reports")
 	fmt.Fprintln(os.Stderr, "  sdd-attempt                Manage attempt budgets")
 	fmt.Fprintln(os.Stderr, "  sdd-continue <change>      Determine next SDD phase")
+	fmt.Fprintln(os.Stderr, "  sdd-new [change-name]      Interactive wizard to create new SDD change")
 	fmt.Fprintln(os.Stderr, "  bigmem save|search|get     Persistent memory")
 	fmt.Fprintln(os.Stderr, "  backup create|list|restore Snapshot/restore state")
 	fmt.Fprintln(os.Stderr, "  release status|tag|verify  Version management")
