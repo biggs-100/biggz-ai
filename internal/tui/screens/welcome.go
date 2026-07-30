@@ -20,6 +20,7 @@ var welcomeItems = []MenuItem{
 	{Key: "v", Label: "Re[v]iew", Description: "Review lineage timeline", Screen: 10},
 	{Key: "e", Label: "S[e]ssions", Description: "Browse BigMem sessions", Screen: 11},
 	{Key: "x", Label: "Uninsta[x]", Description: "Remove biggz-ai from your system", Screen: 8},
+	{Key: "d", Label: "[D]ashboard", Description: "Return to dashboard", Screen: 0},
 	{Key: "q", Label: "[Q]uit", Description: "Exit biggz-ai", Screen: -1},
 }
 
@@ -66,6 +67,8 @@ func (m WelcomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return NavigateMsg{Screen: 11} }
 		case "x":
 			return m, func() tea.Msg { return NavigateMsg{Screen: 8} }
+		case "d":
+			return m, func() tea.Msg { return NavigateMsg{Screen: 0} }
 		case "q":
 			return m, func() tea.Msg { return QuitMsg{} }
 		}

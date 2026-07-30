@@ -10,8 +10,8 @@ import (
 // TestNewModel verifies the TUI initialises correctly.
 func TestNewModel(t *testing.T) {
 	m := New()
-	if m.currentScreen != screenWelcome {
-		t.Errorf("expected screen %d (welcome), got %d", screenWelcome, m.currentScreen)
+	if m.currentScreen != screenDashboard {
+		t.Errorf("expected screen %d (dashboard), got %d", screenDashboard, m.currentScreen)
 	}
 	if m.showHelp {
 		t.Error("expected help to be hidden initially")
@@ -52,11 +52,11 @@ func TestHelpToggle(t *testing.T) {
 	}
 }
 
-// TestQuit verifies quit from welcome.
+// TestQuit verifies quit from dashboard.
 func TestQuit(t *testing.T) {
 	m := New()
 
-	// ESC from welcome should quit
+	// q from dashboard should quit
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
 	if cmd == nil {
 		t.Error("expected quit command after q key")

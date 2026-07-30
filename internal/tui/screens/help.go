@@ -18,16 +18,31 @@ type HelpKey struct {
 // helpData maps screen IDs to help content.
 var helpData = map[int]HelpContent{
 	0: {
-		Title: "Welcome / Main Menu",
+		Title: "Dashboard",
+		Keys: []HelpKey{
+			{"↑↓", "Navigate actions"},
+			{"ENTER", "Select action"},
+			{"s", "Search memories"},
+			{"r", "Recent observations"},
+			{"e", "Browse sessions"},
+			{"i", "Install agent plugin"},
+			{"?", "Toggle this help"},
+			{"q / ESC", "Quit"},
+			{"CTRL+C", "Force quit"},
+		},
+		Paragraph: "biggs-ai is a Review-Driven Development harness for AI coding agents. Dashboard shows memory stats, projects, and quick actions.",
+	},
+	12: {
+		Title: "Welcome / System Menu",
 		Keys: []HelpKey{
 			{"↑↓", "Navigate menu items"},
 			{"ENTER", "Select highlighted item"},
-			{"i / c / s / m / q", "Shortcut keys for each screen"},
+			{"d", "Return to dashboard"},
 			{"?", "Toggle this help"},
-			{"ESC", "Go back / quit from main menu"},
+			{"ESC", "Back to dashboard"},
 			{"CTRL+C", "Force quit"},
 		},
-		Paragraph: "biggs-ai is a Review-Driven Development harness for AI coding agents. Use this TUI to install, configure, and monitor biggz-ai.",
+		Paragraph: "Full system management menu. Configure, backup, update, uninstall, and manage biggz-ai settings.",
 	},
 	1: {
 		Title: "Install",

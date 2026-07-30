@@ -12,7 +12,7 @@ import (
 
 // Screen IDs
 const (
-	screenWelcome = iota
+	screenDashboard = iota
 	screenInstall
 	screenConfig
 	screenStatus
@@ -24,6 +24,8 @@ const (
 	screenStrictTDD
 	screenReview
 	screenSessions
+	screenWelcome
+	screenMemSearch
 	screenCount
 )
 
@@ -31,6 +33,7 @@ const (
 type Model struct {
 	currentScreen int
 	showHelp      bool
+	dashboard     screens.DashboardModel
 	welcome       screens.WelcomeModel
 	install       screens.InstallModel
 	config        screens.ConfigModel
@@ -50,7 +53,8 @@ type Model struct {
 // New creates the initial TUI model.
 func New() Model {
 	return Model{
-		currentScreen: screenWelcome,
+		currentScreen: screenDashboard,
+		dashboard:     screens.NewDashboardModel(),
 		welcome:       screens.NewWelcomeModel(),
 		install:       screens.NewInstallModel(),
 		config:        screens.NewConfigModel(),
@@ -68,7 +72,7 @@ func New() Model {
 
 // Init initializes the TUI.
 func (m Model) Init() tea.Cmd {
-	return nil
+	return m.dashboard.Init()
 }
 
 // Update handles messages and user input.
@@ -99,10 +103,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "esc":
-			if m.currentScreen == screenWelcome {
+			if m.currentScreen == screenDashboard {
 				return m, tea.Quit
 			}
-			m.currentScreen = screenWelcome
+			if m.currentScreen == screenWelcome {
+				m.currentScreen = screenDashboard
+				m.showHelp = false
+				return m, nil
+			}
+			m.currentScreen = screenDashboard
 			m.showHelp = false
 			return m, nil
 		}
@@ -122,6 +131,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Route message to current screen
 	switch m.currentScreen {
+	case screenDashboard:
+		u, cmd := m.dashboard.Update(msg)
+		m.dashboard = u.(screens.DashboardModel)
+		return m, cmd
 	case screenWelcome:
 		u, cmd := m.welcome.Update(msg)
 		m.welcome = u.(screens.WelcomeModel)
@@ -138,7 +151,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		u, cmd := m.status.Update(msg)
 		m.status = u.(screens.StatusModel)
 		return m, cmd
-	case screenMemory:
+	case screenMemory, screenMemSearch:
 		u, cmd := m.memory.Update(msg)
 		m.memory = u.(screens.MemoryModel)
 		return m, cmd
@@ -186,6 +199,8 @@ func (m Model) View() string {
 	}
 
 	switch m.currentScreen {
+	case screenDashboard:
+		return m.dashboard.View()
 	case screenWelcome:
 		return m.welcome.View()
 	case screenInstall:
@@ -194,7 +209,7 @@ func (m Model) View() string {
 		return m.config.View()
 	case screenStatus:
 		return m.status.View()
-	case screenMemory:
+	case screenMemory, screenMemSearch:
 		return m.memory.View()
 	case screenBackup:
 		return m.backup.View()
