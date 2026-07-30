@@ -576,6 +576,207 @@ func (s *Store) ListProjects() ([]ProjectSummary, error) {
 	return result, nil
 }
 
+// ---------------------------------------------------------------------------
+// Delete variants
+// ---------------------------------------------------------------------------
+
+// DeleteObservation removes an observation. If hard is true, it's a permanent
+// delete; otherwise it's a soft-delete (clears content, preserves metadata).
+func (s *Store) DeleteObservation(id string, hard bool) error {
+	if hard {
+		return s.Delete(id)
+	}
+	// Soft delete: clear content, mark type as deleted
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(
+		"UPDATE observations SET content='', type='deleted', updated_at=? WHERE id=?", now, id)
+	return err
+}
+
+// DeleteSession removes a session by ID. Returns error if the session has
+// observations (must delete observations first or use --hard).
+func (s *Store) DeleteSession(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Check if any observations reference this session via prompts
+	var cnt int
+	s.db.QueryRow("SELECT COUNT(*) FROM prompts WHERE session_id=?", id).Scan(&cnt)
+	if cnt > 0 {
+		return fmt.Errorf("session %s has %d prompts; delete prompts first", id, cnt)
+	}
+	_, err := s.db.Exec("DELETE FROM sessions WHERE id=?", id)
+	return err
+}
+
+// DeletePrompt removes a prompt by ID (permanent).
+func (s *Store) DeletePrompt(id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec("DELETE FROM prompts WHERE id=?", id)
+	return err
+}
+
+// DeleteProjectResult describes what was deleted.
+type DeleteProjectResult struct {
+	ObservationsDeleted int `json:"observations_deleted"`
+	PromptsDeleted      int `json:"prompts_deleted"`
+	SessionsDeleted     int `json:"sessions_deleted"`
+}
+
+// DeleteProject cascade-deletes a project. If hard is true, sessions are also
+// removed; otherwise sessions are kept (with project reference cleared).
+func (s *Store) DeleteProject(name string, hard bool) (*DeleteProjectResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r := &DeleteProjectResult{}
+
+	res, _ := s.db.Exec("DELETE FROM observations WHERE project=?", name)
+	if n, _ := res.RowsAffected(); n > 0 {
+		r.ObservationsDeleted = int(n)
+	}
+
+	res, _ = s.db.Exec("DELETE FROM prompts WHERE session_id IN (SELECT id FROM sessions WHERE project=?)", name)
+	if n, _ := res.RowsAffected(); n > 0 {
+		r.PromptsDeleted = int(n)
+	}
+
+	if hard {
+		res, _ = s.db.Exec("DELETE FROM sessions WHERE project=?", name)
+	} else {
+		res, _ = s.db.Exec("UPDATE sessions SET project='' WHERE project=?", name)
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		r.SessionsDeleted = int(n)
+	}
+	return r, nil
+}
+
+// ---------------------------------------------------------------------------
+// Conflicts extended
+// ---------------------------------------------------------------------------
+
+// ConflictsStats returns conflict-related stats.
+type ConflictsStats struct {
+	TotalRelations int            `json:"total_relations"`
+	Pending        int            `json:"pending"`
+	Judged         int            `json:"judged"`
+	ByVerdict      map[string]int `json:"by_verdict"`
+}
+
+// ConflictsStats returns statistics about memory relations.
+func (s *Store) ConflictsStats(project string) (*ConflictsStats, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	cs := &ConflictsStats{ByVerdict: make(map[string]int)}
+	s.db.QueryRow("SELECT COUNT(*) FROM memory_relations").Scan(&cs.TotalRelations)
+	s.db.QueryRow("SELECT COUNT(*) FROM memory_relations WHERE judgment_status='pending'").Scan(&cs.Pending)
+	s.db.QueryRow("SELECT COUNT(*) FROM memory_relations WHERE judgment_status='judged'").Scan(&cs.Judged)
+	rows, _ := s.db.Query("SELECT relation, COUNT(*) FROM memory_relations WHERE relation != 'pending' GROUP BY relation")
+	if rows != nil {
+		defer rows.Close()
+		for rows.Next() {
+			var r string
+			var c int
+			rows.Scan(&r, &c)
+			cs.ByVerdict[r] = c
+		}
+	}
+	return cs, nil
+}
+
+// ConflictsDeferred returns relations that were skipped (status=deferred).
+func (s *Store) ConflictsDeferred(status string, limit int) ([]Relation, error) {
+	return s.ListRelations("deferred")
+}
+
+// ---------------------------------------------------------------------------
+// Projects consolidate
+// ---------------------------------------------------------------------------
+
+// ConsolidateResult describes the result of consolidating projects.
+type ConsolidateResult struct {
+	Groups     []ConsolidateGroup `json:"groups,omitempty"`
+	Merged     int                `json:"merged"`
+	NewName    string             `json:"new_name,omitempty"`
+	SourceName string             `json:"source_name,omitempty"`
+}
+
+// ConsolidateGroup is a group of similar project names.
+type ConsolidateGroup struct {
+	Projects []string `json:"projects"`
+	Canonical string  `json:"canonical"`
+}
+
+// ConsolidateProjects merges similar project names. Returns groups when dryRun
+// is true (preview only).
+func (s *Store) ConsolidateProjects(all, dryRun bool) (*ConsolidateResult, error) {
+	rows, err := s.db.Query("SELECT DISTINCT project FROM observations WHERE project != '' ORDER BY project")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var projects []string
+	for rows.Next() {
+		var p string
+		rows.Scan(&p)
+		projects = append(projects, p)
+	}
+
+	// Simple normalization: lowercase, trim, replace similar chars
+	normalize := func(s string) string {
+		s = strings.ToLower(strings.TrimSpace(s))
+		s = strings.ReplaceAll(s, "-", "")
+		s = strings.ReplaceAll(s, "_", "")
+		s = strings.ReplaceAll(s, " ", "")
+		return s
+	}
+
+	var groups []ConsolidateGroup
+	used := map[string]bool{}
+
+	for _, p := range projects {
+		if used[p] {
+			continue
+		}
+		norm := normalize(p)
+		group := ConsolidateGroup{Canonical: p}
+		group.Projects = append(group.Projects, p)
+		used[p] = true
+
+		for _, q := range projects {
+			if used[q] {
+				continue
+			}
+			if normalize(q) == norm {
+				group.Projects = append(group.Projects, q)
+				used[q] = true
+			}
+		}
+
+		if len(group.Projects) > 1 {
+			groups = append(groups, group)
+		}
+	}
+
+	if dryRun {
+		return &ConsolidateResult{Groups: groups}, nil
+	}
+
+	totalMerged := 0
+	for _, g := range groups {
+		for _, p := range g.Projects[1:] {
+			n, err := s.MergeProjects(p, g.Canonical)
+			if err == nil {
+				totalMerged += n
+			}
+		}
+	}
+	return &ConsolidateResult{Merged: totalMerged}, nil
+}
+
 // Close shuts down the store.
 func (s *Store) Close() error {
 	return s.db.Close()

@@ -771,9 +771,8 @@ func bigmemRun() int {
 		fmt.Fprintln(os.Stderr, "  conflicts judge <id> <verdict>   Judge a conflict")
 		fmt.Fprintln(os.Stderr, "    verdicts: related, compatible, scoped, conflicts_with, supersedes, not_conflict")
 		fmt.Fprintln(os.Stderr, "  conflicts scan [--project P]     Scan for new conflicts")
-		fmt.Fprintln(os.Stderr, "  sync export [--project P]       Export observations as sync chunks")
-		fmt.Fprintln(os.Stderr, "  sync import                     Import sync chunks")
-		fmt.Fprintln(os.Stderr, "  sync status                     Show sync status")
+		fmt.Fprintln(os.Stderr, "  version                         Show bigmem version")
+		fmt.Fprintln(os.Stderr, "  help                            Show this help")
 		return 1
 	}
 
@@ -847,15 +846,43 @@ func bigmemRun() int {
 		fmt.Printf("Content:   %s\n", obs.Content)
 
 	case "delete":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete <id>")
+		if len(args) < 2 || args[1] == "--help" || args[1] == "-h" {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete <id> [--hard]")
+			fmt.Fprintln(os.Stderr, "       biggz bigmem delete session <id>")
+			fmt.Fprintln(os.Stderr, "       biggz bigmem delete prompt <id>")
+			fmt.Fprintln(os.Stderr, "       biggz bigmem delete project <name> [--hard]")
 			return 1
 		}
-		if err := store.Delete(args[1]); err != nil {
-			fmt.Fprintf(os.Stderr, "error: delete: %v\n", err)
-			return 1
+		hard := false
+		for _, a := range args {
+			if a == "--hard" { hard = true }
 		}
-		fmt.Printf("Deleted: %s\n", args[1])
+		if args[1] == "session" {
+			if len(args) < 3 { fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete session <id>"); return 1 }
+			if err := store.DeleteSession(args[2]); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			}
+			fmt.Printf("Session deleted: %s\n", args[2])
+		} else if args[1] == "prompt" {
+			if len(args) < 3 { fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete prompt <id>"); return 1 }
+			id, err := strconv.ParseInt(args[2], 10, 64)
+			if err != nil { fmt.Fprintln(os.Stderr, "invalid prompt id"); return 1 }
+			if err := store.DeletePrompt(id); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			}
+			fmt.Printf("Prompt deleted: %s\n", args[2])
+		} else if args[1] == "project" {
+			if len(args) < 3 { fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete project <name> [--hard]"); return 1 }
+			r, err := store.DeleteProject(args[2], hard)
+			if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+			fmt.Printf("Project %q deleted: %d observations, %d prompts, %d sessions\n",
+				args[2], r.ObservationsDeleted, r.PromptsDeleted, r.SessionsDeleted)
+		} else {
+			if err := store.DeleteObservation(args[1], hard); err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			}
+			fmt.Printf("Deleted: %s\n", args[1])
+		}
 
 	case "update":
 		if len(args) < 2 {
@@ -958,10 +985,16 @@ func bigmemRun() int {
 		fmt.Printf("Storage: %s\n", stats.StoragePath)
 
 	case "doctor":
+		useJSON := false
+		for i := 1; i < len(args); i++ {
+			if args[i] == "--json" { useJSON = true }
+		}
 		r, err := store.Doctor()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: doctor: %v\n", err)
-			return 1
+		if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+		if useJSON {
+			data, _ := json.MarshalIndent(r, "", "  ")
+			fmt.Println(string(data))
+			return 0
 		}
 		fmt.Printf("Store exists: %v\n", r.StoreExists)
 		fmt.Printf("Observations: %d\n", r.Observations)
@@ -1015,21 +1048,42 @@ func bigmemRun() int {
 		fmt.Printf("Imported %d/%d observations\n", imported, len(obs))
 
 	case "projects":
-		if len(args) < 2 || args[1] != "list" {
+		if len(args) < 2 || args[1] == "--help" || args[1] == "-h" {
 			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem projects list")
+			fmt.Fprintln(os.Stderr, "       biggz bigmem projects consolidate [--all] [--dry-run]")
 			return 1
 		}
-		rows, err := store.ListProjects()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: projects: %v\n", err)
-			return 1
-		}
-		if len(rows) == 0 {
-			fmt.Println("No projects.")
-			return 0
-		}
-		for _, p := range rows {
-			fmt.Printf("  %s — %d observations, %d sessions\n", p.Name, p.Observations, p.Sessions)
+		if args[1] == "list" {
+			rows, err := store.ListProjects()
+			if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+			if len(rows) == 0 { fmt.Println("No projects."); return 0 }
+			for _, p := range rows {
+				fmt.Printf("  %s — %d observations, %d sessions\n", p.Name, p.Observations, p.Sessions)
+			}
+		} else if args[1] == "consolidate" {
+			all := false
+			dryRun := false
+			for i := 2; i < len(args); i++ {
+				switch args[i] {
+				case "--all": all = true
+				case "--dry-run": dryRun = true
+				}
+			}
+			r, err := store.ConsolidateProjects(all, dryRun)
+			if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+			if dryRun {
+				if len(r.Groups) == 0 { fmt.Println("No similar project groups found."); return 0 }
+				for _, g := range r.Groups {
+					fmt.Printf("Group: %s\n", g.Canonical)
+					for _, p := range g.Projects[1:] {
+						fmt.Printf("  → %s\n", p)
+					}
+				}
+			} else {
+				fmt.Printf("Consolidated %d projects\n", r.Merged)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "unknown: projects %s\n", args[1]); return 1
 		}
 
 	case "compare":
@@ -1110,16 +1164,60 @@ func bigmemRun() int {
 
 		case "scan":
 			project := ""
+			dryRun := false
+			apply := false
 			for i := 2; i < len(args); i++ {
-				if args[i] == "--project" && i+1 < len(args) {
-					project = args[i+1]; i++
+				switch args[i] {
+				case "--project": if i+1 < len(args) { project = args[i+1]; i++ }
+				case "--dry-run": dryRun = true
+				case "--apply":   apply = true
 				}
 			}
-			n, err := store.ScanConflicts(project, false)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			if apply {
+				n, err := store.ScanConflicts(project, false)
+				if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+				fmt.Printf("Created %d pending conflict relations\n", n)
+			} else {
+				n, err := store.ScanConflicts(project, true)
+				if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+				if dryRun {
+					fmt.Printf("Dry-run: %d observations would create new relations\n", n)
+				} else {
+					fmt.Printf("Would create relations for %d observations (use --apply to commit)\n", n)
+				}
 			}
-			fmt.Printf("Created %d pending conflict relations\n", n)
+
+		case "stats":
+			project := ""
+			for i := 2; i < len(args); i++ {
+				if args[i] == "--project" && i+1 < len(args) { project = args[i+1]; i++ }
+			}
+			cs, err := store.ConflictsStats(project)
+			if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+			fmt.Printf("Total relations: %d\n", cs.TotalRelations)
+			fmt.Printf("Pending:         %d\n", cs.Pending)
+			fmt.Printf("Judged:          %d\n", cs.Judged)
+			if len(cs.ByVerdict) > 0 {
+				fmt.Println("By verdict:")
+				for v, c := range cs.ByVerdict { fmt.Printf("  %s: %d\n", v, c) }
+			}
+
+		case "deferred":
+			status := ""
+			limit := 20
+			for i := 2; i < len(args); i++ {
+				switch args[i] {
+				case "--status": if i+1 < len(args) { status = args[i+1]; i++ }
+				case "--limit":  if i+1 < len(args) { limit, _ = strconv.Atoi(args[i+1]); i++ }
+				}
+			}
+			rels, err := store.ConflictsDeferred(status, limit)
+			if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+			if len(rels) == 0 { fmt.Println("No deferred relations."); return 0 }
+			for _, r := range rels {
+				fmt.Printf("  %s %s → %s (%s)\n", r.ID[:min(24, len(r.ID))],
+					r.SourceID[:min(16, len(r.SourceID))], r.TargetID[:min(16, len(r.TargetID))], r.Relation)
+			}
 
 		default:
 			fmt.Fprintf(os.Stderr, "unknown: conflicts %s\n", args[1]); return 1
@@ -1134,9 +1232,9 @@ func bigmemRun() int {
 			switch args[i] {
 			case "--help", "-h":
 				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem sync [--import] [--status] [--project P] [--all]")
-				fmt.Fprintln(os.Stderr, "  (no flags)      Export observations to .engram/ in project")
-				fmt.Fprintln(os.Stderr, "  --import        Import observations from .engram/")
-				fmt.Fprintln(os.Stderr, "  --status        Show .engram/ status")
+				fmt.Fprintln(os.Stderr, "  (no flags)      Export observations to .bigmem/ in project")
+				fmt.Fprintln(os.Stderr, "  --import        Import observations from .bigmem/")
+				fmt.Fprintln(os.Stderr, "  --status        Show .bigmem/ status")
 				fmt.Fprintln(os.Stderr, "  --project NAME  Filter export to a project")
 				fmt.Fprintln(os.Stderr, "  --all           Export ALL projects (ignore cwd filter)")
 				return 1
@@ -1183,8 +1281,15 @@ func bigmemRun() int {
 			if err := store.SyncExport(project, projectRoot); err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
 			}
-			fmt.Printf("Exported to %s\n", filepath.Join(projectRoot, ".engram"))
+			fmt.Printf("Exported to %s\n", filepath.Join(projectRoot, ".bigmem"))
 		}
+
+	case "version", "--version", "-v":
+		fmt.Println("bigmem vdev")
+		return 0
+
+	case "help", "--help", "-h":
+		return bigmemRun() // re-run to show help (args[0] is "help", won't match)
 
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", args[0])

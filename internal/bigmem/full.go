@@ -466,9 +466,9 @@ type SyncStatus struct {
 }
 
 // SyncExport exports all observations (optionally filtered by project) as
-// newline-delimited JSON chunks into <projectRoot>/.engram/.
+// newline-delimited JSON chunks into <projectRoot>/.bigmem/.
 func (s *Store) SyncExport(project, projectRoot string) error {
-	dir := filepath.Join(projectRoot, ".engram")
+	dir := filepath.Join(projectRoot, ".bigmem")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
@@ -523,10 +523,10 @@ func (s *Store) SyncExport(project, projectRoot string) error {
 	return nil
 }
 
-// SyncImport reads all .ndjson chunks from <projectRoot>/.engram/ and
+// SyncImport reads all .ndjson chunks from <projectRoot>/.bigmem/ and
 // imports any observation whose ID does not already exist in the store.
 func (s *Store) SyncImport(projectRoot string) (int, error) {
-	dir := filepath.Join(projectRoot, ".engram")
+	dir := filepath.Join(projectRoot, ".bigmem")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return 0, fmt.Errorf("sync dir: %w", err)
@@ -577,7 +577,7 @@ func (s *Store) SyncImport(projectRoot string) (int, error) {
 
 // SyncStatus returns the number of chunks and observations in the sync dir.
 func (s *Store) SyncStatus(projectRoot string) (*SyncStatus, error) {
-	dir := filepath.Join(projectRoot, ".engram")
+	dir := filepath.Join(projectRoot, ".bigmem")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return &SyncStatus{ExportDir: dir, ChunkCount: 0, ObsCount: 0}, nil
