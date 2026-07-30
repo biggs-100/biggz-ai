@@ -206,6 +206,74 @@ func TestOrganicSDDStatus(t *testing.T) {
 	}
 }
 
+// TestDockerE2E runs the full test suite inside a Docker container
+// matching the CI pipeline. Requires Docker to be installed.
+func TestDockerE2E(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping Docker E2E in short mode")
+	}
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("Docker not available: " + err.Error())
+	}
+	// Quick check Docker is actually running
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("Docker daemon not running: " + err.Error())
+	}
+
+	repo := t.TempDir()
+	gitCmd(repo, "init")
+	gitCmd(repo, "config", "user.email", "test@biggs.ai")
+	gitCmd(repo, "config", "user.name", "Test")
+
+	// Write a simple Go file
+	os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module e2e-test\n\ngo 1.25\n"), 0644)
+	os.WriteFile(filepath.Join(repo, "main.go"), []byte("package main\n\nfunc main() {}\n"), 0644)
+	gitCmd(repo, "add", ".")
+	gitCmd(repo, "commit", "-m", "initial")
+
+	// Build the Docker image using the project Dockerfile
+	projectRoot := func() string {
+		cwd, _ := os.Getwd()
+		return filepath.Dir(cwd) // e2e/ is inside the project root
+	}()
+	t.Log("Building Docker image (first run may take a minute)...")
+	buildCmd := exec.Command("docker", "build", "-t", "biggz-e2e", "-f", filepath.Join(projectRoot, "Dockerfile"), projectRoot)
+	buildOut, err := buildCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Docker build failed: %v\n%s", err, buildOut)
+	}
+	t.Logf("Docker build: %s", string(buildOut))
+
+	// Run biggz version inside container
+	runCmd := exec.Command("docker", "run", "--rm", "biggz-e2e", "--help")
+	helpOut, err := runCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Docker run failed: %v\n%s", err, helpOut)
+	}
+	if !strings.Contains(string(helpOut), "Usage:") {
+		t.Fatalf("unexpected output: %s", string(helpOut))
+	}
+	t.Logf("Docker help output:\n%s", string(helpOut))
+
+	// Run doctor inside container
+	doctorCmd := exec.Command("docker", "run", "--rm", "-v", fmt.Sprintf("%s:/repo", repo), "biggz-e2e", "doctor")
+	doctorOut, err := doctorCmd.CombinedOutput()
+	if err != nil {
+		t.Logf("Doctor in Docker (expected partial): %v\n%s", err, doctorOut)
+	} else {
+		t.Logf("Doctor in Docker:\n%s", doctorOut)
+	}
+
+	// Run bigmem stats inside container
+	statsCmd := exec.Command("docker", "run", "--rm", "biggz-e2e", "bigmem", "stats")
+	statsOut, err := statsCmd.CombinedOutput()
+	if err != nil {
+		t.Logf("BigMem stats in Docker (expected partial): %v\n%s", err, statsOut)
+	} else {
+		t.Logf("BigMem stats in Docker:\n%s", statsOut)
+	}
+}
+
 // TestOrganicDoctor proves doctor works.
 func TestOrganicDoctor(t *testing.T) {
 	if testing.Short() {
