@@ -30,6 +30,7 @@ import (
 	"github.com/biggz-ai/biggz/internal/doctor"
 	"github.com/biggz-ai/biggz/internal/assets"
 	"github.com/biggz-ai/biggz/internal/install"
+	"github.com/biggz-ai/biggz/internal/recoverytrace"
 	"github.com/biggz-ai/biggz/internal/update"
 	"github.com/biggz-ai/biggz/internal/lens/readability"
 	"github.com/biggz-ai/biggz/internal/lens/reliability"
@@ -147,6 +148,8 @@ func main() {
 			os.Exit(syncRun())
 		case "mcp":
 			os.Exit(mcpRun())
+		case "recovery":
+			os.Exit(recoveryRun())
 		}
 	}
 
@@ -2156,6 +2159,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "  update [--dry-run]       Update biggz-ai to latest version")
 	fmt.Fprintln(os.Stderr, "  sync [flags]             Deploy skills, config, prompts, and commands")
 	fmt.Fprintln(os.Stderr, "  rdd enable|disable|status  RDD kill switch")
+	fmt.Fprintln(os.Stderr, "  recovery list|show|generate|validate|export|import|delete  Recovery trace ledger")
 	fmt.Fprintln(os.Stderr, "  mcp                        Start MCP server")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Without arguments: open interactive TUI")
@@ -2543,6 +2547,172 @@ func mcpRun() int {
 	if err := cmd.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: mcp: %v\n", err)
 		return 1
+	}
+	return 0
+}
+
+// recoveryRun handles the "biggz recovery" subcommand.
+func recoveryRun() int {
+	args := os.Args[2:]
+	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz recovery <command> [args...]")
+		fmt.Fprintln(os.Stderr, "")
+		fmt.Fprintln(os.Stderr, "Commands:")
+		fmt.Fprintln(os.Stderr, "  list [--project P]         List recovery ledgers")
+		fmt.Fprintln(os.Stderr, "  show <id>                   Show a recovery ledger")
+		fmt.Fprintln(os.Stderr, "  generate <file> [--name N]  Generate ledger from backlog JSON + rows")
+		fmt.Fprintln(os.Stderr, "  validate <file>             Validate a ledger JSON file")
+		fmt.Fprintln(os.Stderr, "  export <id> [file]          Export a ledger to JSON")
+		fmt.Fprintln(os.Stderr, "  import <file> [--name N]    Import a ledger from JSON")
+		fmt.Fprintln(os.Stderr, "  delete <id>                 Delete a ledger")
+		return 1
+	}
+
+	store, err := recoverytrace.Open("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: open recovery store: %v\n", err)
+		return 1
+	}
+	defer store.Close()
+
+	switch args[0] {
+	case "list":
+		project := ""
+		for i := 1; i < len(args); i++ {
+			if args[i] == "--project" && i+1 < len(args) {
+				project = args[i+1]; i++
+			}
+		}
+		ledgers, err := store.ListLedgers(project)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+		}
+		if len(ledgers) == 0 {
+			fmt.Println("No recovery ledgers found.")
+			return 0
+		}
+		for _, l := range ledgers {
+			fmt.Printf("  %s  %-20s  %s  (%d rows)\n", l.ID[:min(24, len(l.ID))], l.Name, l.CreatedAt[:10], l.RowCount)
+		}
+
+	case "show":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery show <id>"); return 1
+		}
+		ledgers, name, project, err := store.GetLedger(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+		}
+		fmt.Printf("Ledger: %s (%s)\n", name, project)
+		fmt.Printf("Reconciliation:\n")
+		fmt.Printf("  Issues:         %d\n", ledgers.Reconciliation.Issues)
+		fmt.Printf("  Pull Requests:  %d\n", ledgers.Reconciliation.PullRequests)
+		fmt.Printf("  Collision PRs:  %d\n", ledgers.Reconciliation.CollisionPRs)
+		fmt.Printf("  Overlaps:       %d\n", ledgers.Reconciliation.Overlaps)
+		fmt.Printf("  Decompositions: %d\n", ledgers.Reconciliation.Decompositions)
+		fmt.Printf("Rows: %d\n", len(ledgers.Rows))
+		for _, row := range ledgers.Rows {
+			fmt.Printf("  %-40s %-12s %s\n", row.Path, row.Disposition, row.Contributor)
+		}
+
+	case "generate":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery generate <backlog.json> [--name N]"); return 1
+		}
+		name := "recovery-" + time.Now().UTC().Format("20060102")
+		project := ""
+		for i := 2; i < len(args); i++ {
+			switch args[i] {
+			case "--name": if i+1 < len(args) { name = args[i+1]; i++ }
+			case "--project": if i+1 < len(args) { project = args[i+1]; i++ }
+			}
+		}
+		data, err := os.ReadFile(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", args[1], err); return 1
+		}
+		ledgers, err := recoverytrace.Generate(data, nil, recoverytrace.OverlapCounts{})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: generate: %v\n", err); return 1
+		}
+		id, err := store.SaveLedger(name, project, ledgers)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: save: %v\n", err); return 1
+		}
+		fmt.Printf("Generated ledger: %s\n", id)
+
+	case "validate":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery validate <ledger.json>"); return 1
+		}
+		data, err := os.ReadFile(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", args[1], err); return 1
+		}
+		var ledgers recoverytrace.Ledgers
+		if err := json.Unmarshal(data, &ledgers); err != nil {
+			fmt.Fprintf(os.Stderr, "error: parse: %v\n", err); return 1
+		}
+		expected := recoverytrace.Reconciliation{
+			Issues:         ledgers.Reconciliation.Issues,
+			PullRequests:   ledgers.Reconciliation.PullRequests,
+			CollisionPRs:   ledgers.Reconciliation.CollisionPRs,
+			Overlaps:       ledgers.Reconciliation.Overlaps,
+			Decompositions: ledgers.Reconciliation.Decompositions,
+		}
+		if err := recoverytrace.ValidateLedgers(ledgers, expected); err != nil {
+			fmt.Fprintf(os.Stderr, "validation FAILED: %v\n", err); return 1
+		}
+		fmt.Println("Validation PASSED")
+
+	case "export":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery export <id> [file]"); return 1
+		}
+		filePath := fmt.Sprintf("recovery-%s.json", args[1])
+		if len(args) > 2 { filePath = args[2] }
+		data, err := store.ExportLedger(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+		}
+		if err := os.WriteFile(filePath, data, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "error: write %s: %v\n", filePath, err); return 1
+		}
+		fmt.Printf("Exported to %s\n", filePath)
+
+	case "import":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery import <file> [--name N] [--project P]"); return 1
+		}
+		name := "imported-" + time.Now().UTC().Format("20060102")
+		project := ""
+		for i := 2; i < len(args); i++ {
+			switch args[i] {
+			case "--name": if i+1 < len(args) { name = args[i+1]; i++ }
+			case "--project": if i+1 < len(args) { project = args[i+1]; i++ }
+			}
+		}
+		data, err := os.ReadFile(args[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", args[1], err); return 1
+		}
+		id, err := store.ImportLedger(data, name, project)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: import: %v\n", err); return 1
+		}
+		fmt.Printf("Imported ledger: %s\n", id)
+
+	case "delete":
+		if len(args) < 2 {
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery delete <id>"); return 1
+		}
+		if err := store.DeleteLedger(args[1]); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+		}
+		fmt.Printf("Deleted: %s\n", args[1])
+
+	default:
+		fmt.Fprintf(os.Stderr, "unknown: recovery %s\n", args[0]); return 1
 	}
 	return 0
 }
