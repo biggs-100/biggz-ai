@@ -272,6 +272,96 @@ func evaluateGate(kind GateKind, chain ValidatedChain, findings []Finding, recei
 	return result
 }
 
+// EvaluateEnhancedGate runs gate evaluation and returns structured diagnostics.
+// This is the enhanced version that includes GateDiagnostics for better
+// error reporting and debugging.
+func EvaluateEnhancedGate(kind GateKind, chain ValidatedChain, findings []Finding, receipt *Receipt, snapshotTree string, dryRun bool, gitDir string) EnhancedGateResult {
+	disp := ResolveDeliveryDisposition(gitDir)
+	if disp == DispositionDisabledUnmanaged {
+		return EnhancedGateResult{
+			Gate: kind, Passed: true, DryRun: dryRun,
+			Disposition: disp,
+		}
+	}
+
+	result := EnhancedGateResult{
+		Gate:        kind,
+		DryRun:      dryRun,
+		Disposition: disp,
+		Diagnostics: &GateDiagnostics{
+			ChainValid:   chain.Valid,
+			ReceiptValid: receipt == nil || receipt.Verify(chain) == nil,
+		},
+	}
+
+	// Check chain integrity
+	if !chain.Valid {
+		reason := "review chain is invalid (integrity check failed)"
+		result.Reasons = append(result.Reasons, reason)
+		result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{
+			Stage: "chain_integrity", Code: "chain_corrupt", Message: reason,
+		})
+	}
+
+	// Validate receipt
+	if receipt != nil {
+		if err := receipt.Verify(chain); err != nil {
+			msg := fmt.Sprintf("receipt verification failed: %v", err)
+			result.Reasons = append(result.Reasons, msg)
+			result.Diagnostics.ReceiptValid = false
+			result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{
+				Stage: "receipt_validation", Code: "receipt_mismatch", Message: msg,
+			})
+		}
+	} else if chain.Count > 0 {
+		r := NewReceipt(chain)
+		if err := r.Verify(chain); err != nil {
+			msg := fmt.Sprintf("auto-receipt verification failed: %v", err)
+			result.Reasons = append(result.Reasons, msg)
+			result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{
+				Stage: "receipt_validation", Code: "receipt_mismatch", Message: msg,
+			})
+		}
+	}
+
+	// Check for blocking findings
+	for _, f := range findings {
+		if f.Severity == SeverityCritical || f.Severity == SeverityWarning {
+			result.Diagnostics.HasBlockingFindings = true
+			msg := fmt.Sprintf("unresolved finding [%s]: %s", f.Severity, f.Message)
+			if f.File != "" {
+				msg = fmt.Sprintf("%s (file: %s, line: %d)", msg, f.File, f.Line)
+			}
+			result.Reasons = append(result.Reasons, msg)
+		}
+	}
+
+	// Check chain has events
+	if chain.Count == 0 {
+		msg := "review chain is empty (no events)"
+		result.Reasons = append(result.Reasons, msg)
+		result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{
+			Stage: "chain_empty", Code: "no_events", Message: msg,
+		})
+	}
+
+	// Scope change detection
+	if kind == GatePrePush && snapshotTree != "" {
+		scopeChange, err := detectScopeChange(snapshotTree, "HEAD")
+		if err == nil && scopeChange != nil {
+			result.Diagnostics.ScopeChange = scopeChange
+			msg := fmt.Sprintf("unacknowledged scope change detected (%d file(s))", len(scopeChange.ChangedFiles))
+			result.Reasons = append(result.Reasons, msg)
+			result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{
+				Stage: "scope_change", Code: "files_changed", Message: msg,
+			})
+		}
+	}
+
+	result.Passed = len(result.Reasons) == 0 || dryRun
+	return result
+}
+
 // ---------------------------------------------------------------------------
 // Backward-compatible wrappers (kept for existing tests and callers)
 // ---------------------------------------------------------------------------
