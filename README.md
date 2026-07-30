@@ -132,6 +132,16 @@ Any "off" wins: clone-local override beats global enable.
 - [Comparison with gentle-ai](docs/comparison-with-gentle.md)
 - [Validation Guide](docs/validation-guide.md)
 - [Contributing](CONTRIBUTING.md)
+- [Security](SECURITY.md)
+- [Support](SUPPORT.md)
+
+## Code of Conduct
+
+This project follows the [Contributor Covenant](CODE_OF_CONDUCT.md).
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md) for release history.
 
 ## License
 
