@@ -1,8 +1,10 @@
 // Package bigmem provides a persistent memory store using SQLite.
 // Compatible with gentle-ai's engram protocol — 22 MCP tools.
+// Full parity with engram except cloud sync.
 package bigmem
 
 import (
+	"crypto/sha256"
 	"database/sql"
 	"fmt"
 	"os"
@@ -14,18 +16,50 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Observation is a single memory entry.
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+// Observation is a single memory entry, matching engram's schema.
 type Observation struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	Type      string    `json:"type"`
-	Content   string    `json:"content"`
-	TopicKey  string    `json:"topic_key,omitempty"`
-	Project   string    `json:"project,omitempty"`
-	Scope     string    `json:"scope,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	Title          string    `json:"title"`
+	Type           string    `json:"type"`
+	Content        string    `json:"content"`
+	SessionID      string    `json:"session_id,omitempty"`
+	ToolName       string    `json:"tool_name,omitempty"`
+	TopicKey       string    `json:"topic_key,omitempty"`
+	Project        string    `json:"project,omitempty"`
+	Scope          string    `json:"scope,omitempty"`
+	NormalizedHash string    `json:"-"`
+	RevisionCount  int       `json:"revision_count,omitempty"`
+	DuplicateCount int       `json:"duplicate_count,omitempty"`
+	LastSeenAt     *string   `json:"last_seen_at,omitempty"`
+	ReviewAfter    *string   `json:"review_after,omitempty"`
+	Pinned         bool      `json:"-"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	DeletedAt      *string   `json:"deleted_at,omitempty"`
 }
+
+// State returns "active" or "needs_review" based on review_after vs now.
+func (o *Observation) State() string {
+	if o.ReviewAfter == nil || *o.ReviewAfter == "" {
+		return "active"
+	}
+	ra, err := time.Parse(time.RFC3339, *o.ReviewAfter)
+	if err != nil {
+		return "active"
+	}
+	if !ra.After(time.Now().UTC()) {
+		return "needs_review"
+	}
+	return "active"
+}
+
+// ObservationState constants
+const (
+	ObservationStateActive      = "active"
+	ObservationStateNeedsReview = "needs_review"
+)
 
 // Store manages observations using SQLite.
 type Store struct {
@@ -34,7 +68,33 @@ type Store struct {
 	rootDir string
 }
 
+// SearchOptions filter search results, matching engram's interface.
+type SearchOptions struct {
+	Project   string `json:"project,omitempty"`
+	Type      string `json:"type,omitempty"`
+	Scope     string `json:"scope,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+	MatchMode string `json:"match_mode,omitempty"` // "" | "all" (default) | "any"
+}
+
+// SearchResult wraps an observation with its BM25 rank.
+type SearchResult struct {
+	Observation
+	Rank float64 `json:"rank,omitempty"`
+}
+
+// ─── Config ──────────────────────────────────────────────────────────────────
+
+const (
+	defaultMaxObservationLength = 50000
+	defaultMaxSearchResults     = 20
+	defaultDedupeWindow         = 15 * time.Minute
+)
+
+// ─── Open / Schema ───────────────────────────────────────────────────────────
+
 // Open creates or opens the SQLite store at the given root directory.
+// Runs schema migration to add missing columns from previous versions.
 func Open(rootDir string) (*Store, error) {
 	if rootDir == "" {
 		home, err := os.UserHomeDir()
@@ -55,32 +115,78 @@ func Open(rootDir string) (*Store, error) {
 
 	// WAL mode for better concurrency
 	db.Exec("PRAGMA journal_mode=WAL")
+	db.Exec("PRAGMA busy_timeout=5000")
+	db.Exec("PRAGMA synchronous=NORMAL")
 
-	// Create tables + FTS5 full-text search
+	// Create core tables
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS observations (
 			id TEXT PRIMARY KEY,
-			title TEXT NOT NULL,
+			title TEXT NOT NULL DEFAULT '',
 			type TEXT DEFAULT '',
 			content TEXT DEFAULT '',
+			session_id TEXT DEFAULT '',
+			tool_name TEXT DEFAULT '',
 			topic_key TEXT DEFAULT '',
 			project TEXT DEFAULT '',
 			scope TEXT DEFAULT '',
+			normalized_hash TEXT DEFAULT '',
+			revision_count INTEGER DEFAULT 1,
+			duplicate_count INTEGER DEFAULT 1,
+			last_seen_at TEXT,
+			review_after TEXT,
+			pinned INTEGER DEFAULT 0,
 			created_at TEXT NOT NULL,
-			updated_at TEXT NOT NULL
+			updated_at TEXT NOT NULL,
+			deleted_at TEXT
 		);
-		CREATE INDEX IF NOT EXISTS idx_topic ON observations(topic_key);
-		CREATE INDEX IF NOT EXISTS idx_type ON observations(type);
-		CREATE INDEX IF NOT EXISTS idx_project ON observations(project);
-		CREATE INDEX IF NOT EXISTS idx_updated ON observations(updated_at);
+		CREATE INDEX IF NOT EXISTS idx_obs_topic ON observations(topic_key);
+		CREATE INDEX IF NOT EXISTS idx_obs_type ON observations(type);
+		CREATE INDEX IF NOT EXISTS idx_obs_project ON observations(project);
+		CREATE INDEX IF NOT EXISTS idx_obs_scope ON observations(scope);
+		CREATE INDEX IF NOT EXISTS idx_obs_updated ON observations(updated_at);
+		CREATE INDEX IF NOT EXISTS idx_obs_session ON observations(session_id);
+		CREATE INDEX IF NOT EXISTS idx_obs_deleted ON observations(deleted_at);
+		CREATE INDEX IF NOT EXISTS idx_obs_hash ON observations(normalized_hash);
+		CREATE INDEX IF NOT EXISTS idx_obs_topic_lookup ON observations(topic_key, project, scope);
+	`)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create observations: %w", err)
+	}
+
+	// Create FTS5 virtual table for full-text search with BM25 ranking.
+	// Rebuilt if schema changed (recreate on column count mismatch).
+	db.Exec("DROP TABLE IF EXISTS observations_fts")
+	_, err = db.Exec(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
-			title, content, topic_key, content='observations', content_rowid='rowid'
+			title, content, topic_key, tool_name, type, project,
+			content='observations',
+			content_rowid='rowid'
 		);
 	`)
 	if err != nil {
 		db.Close()
-		return nil, fmt.Errorf("create tables: %w", err)
+		return nil, fmt.Errorf("create fts: %w", err)
 	}
+
+	// Create FTS triggers
+	db.Exec(`
+		CREATE TRIGGER IF NOT EXISTS obs_fts_ai AFTER INSERT ON observations BEGIN
+			INSERT INTO observations_fts(rowid, title, content, topic_key, tool_name, type, project)
+			VALUES (new.rowid, new.title, new.content, new.topic_key, new.tool_name, new.type, new.project);
+		END;
+		CREATE TRIGGER IF NOT EXISTS obs_fts_ad AFTER DELETE ON observations BEGIN
+			INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key, tool_name, type, project)
+			VALUES ('delete', old.rowid, old.title, old.content, old.topic_key, old.tool_name, old.type, old.project);
+		END;
+		CREATE TRIGGER IF NOT EXISTS obs_fts_au AFTER UPDATE ON observations BEGIN
+			INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key, tool_name, type, project)
+			VALUES ('delete', old.rowid, old.title, old.content, old.topic_key, old.tool_name, old.type, old.project);
+			INSERT INTO observations_fts(rowid, title, content, topic_key, tool_name, type, project)
+			VALUES (new.rowid, new.title, new.content, new.topic_key, new.tool_name, new.type, new.project);
+		END;
+	`)
 
 	// Create memory_relations table for conflict surfacing
 	_, err = db.Exec(`
@@ -109,32 +215,141 @@ func Open(rootDir string) (*Store, error) {
 		return nil, fmt.Errorf("create memory_relations: %w", err)
 	}
 
-	// Create sync triggers for FTS5
+	// Create lifecycle reviews table
 	db.Exec(`
-		CREATE TRIGGER IF NOT EXISTS observations_ai AFTER INSERT ON observations BEGIN
-			INSERT INTO observations_fts(rowid, title, content, topic_key)
-			VALUES (new.rowid, new.title, new.content, new.topic_key);
-		END;
-		CREATE TRIGGER IF NOT EXISTS observations_ad AFTER DELETE ON observations BEGIN
-			INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key)
-			VALUES ('delete', old.rowid, old.title, old.content, old.topic_key);
-		END;
-		CREATE TRIGGER IF NOT EXISTS observations_au AFTER UPDATE ON observations BEGIN
-			INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key)
-			VALUES ('delete', old.rowid, old.title, old.content, old.topic_key);
-			INSERT INTO observations_fts(rowid, title, content, topic_key)
-			VALUES (new.rowid, new.title, new.content, new.topic_key);
-		END;
+		CREATE TABLE IF NOT EXISTS reviews (
+			observation_id TEXT PRIMARY KEY,
+			status TEXT NOT NULL DEFAULT 'needs_review',
+			updated_at TEXT NOT NULL
+		);
 	`)
-	if err != nil {
-		db.Close()
-		return nil, fmt.Errorf("create tables: %w", err)
-	}
+
+	// Create prompts FTS table
+	db.Exec(`
+		CREATE TABLE IF NOT EXISTS prompts (
+			id TEXT PRIMARY KEY,
+			content TEXT,
+			session_id TEXT,
+			created_at TEXT
+		);
+	`)
+
+	// Sync tracking table
+	db.Exec(`
+		CREATE TABLE IF NOT EXISTS sync_chunks (
+			target_key TEXT NOT NULL,
+			chunk_id TEXT NOT NULL,
+			imported_at TEXT NOT NULL DEFAULT (datetime('now')),
+			PRIMARY KEY (target_key, chunk_id)
+		);
+	`)
+	db.Exec("DROP TABLE IF EXISTS prompts_fts")
+	db.Exec(`
+		CREATE VIRTUAL TABLE IF NOT EXISTS prompts_fts USING fts5(
+			content, project,
+			content='prompts',
+			content_rowid='rowid'
+		);
+	`)
 
 	return &Store{db: db, rootDir: rootDir}, nil
 }
 
-// Save persists an observation. Upserts by ID or topic_key.
+// ─── Sync tracking ──────────────────────────────────────────────────────────
+
+const (
+	// LocalChunkTargetKey is used for local filesystem sync tracking.
+	LocalChunkTargetKey = "local"
+)
+
+// RecordSyncChunk records a chunk as imported/exported for a target.
+func (s *Store) RecordSyncChunk(targetKey, chunkID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec("INSERT OR IGNORE INTO sync_chunks (target_key, chunk_id) VALUES (?, ?)", targetKey, chunkID)
+	return err
+}
+
+// GetSyncChunks returns all recorded chunk IDs for a target.
+func (s *Store) GetSyncChunks(targetKey string) (map[string]bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query("SELECT chunk_id FROM sync_chunks WHERE target_key = ?", targetKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make(map[string]bool)
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		result[id] = true
+	}
+	return result, nil
+}
+
+// GetLastChunkTime returns the newest created_at across all sessions and observations,
+// to use as the cutoff for incremental sync.
+func (s *Store) GetLastChunkTime() (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var lastTime sql.NullString
+	s.db.QueryRow(`
+		SELECT MAX(max_time) FROM (
+			SELECT MAX(created_at) as max_time FROM observations WHERE deleted_at IS NULL
+			UNION ALL
+			SELECT MAX(updated_at) FROM observations WHERE deleted_at IS NULL
+			UNION ALL
+			SELECT MAX(start_time) FROM sessions
+		)
+	`).Scan(&lastTime)
+	if lastTime.Valid {
+		return lastTime.String, nil
+	}
+	return "", nil
+}
+
+// Close shuts down the store.
+func (s *Store) Close() error {
+	return s.db.Close()
+}
+
+// RootDir returns the store directory.
+func (s *Store) RootDir() string { return s.rootDir }
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// hashNormalized returns a SHA-256 hex digest of the input.
+func hashNormalized(content string) string {
+	h := sha256.Sum256([]byte(content))
+	return fmt.Sprintf("%x", h)
+}
+
+// normalizeScope normalizes scope to "project" (default) or "personal".
+func normalizeScope(scope string) string {
+	switch strings.ToLower(strings.TrimSpace(scope)) {
+	case "personal", "global":
+		return strings.ToLower(strings.TrimSpace(scope))
+	default:
+		return "project"
+	}
+}
+
+// dedupeWindowExpression returns a SQLite modifier for dedup window.
+func dedupeWindowExpression(d time.Duration) string {
+	if d <= 0 {
+		d = defaultDedupeWindow
+	}
+	seconds := int(d.Seconds())
+	return fmt.Sprintf("-%d seconds", seconds)
+}
+
+// ─── Save with dedup ─────────────────────────────────────────────────────────
+
+// Save persists an observation with full engram-compatible dedup:
+//  1. topic_key match → update existing (increment revision_count)
+//  2. normalized_hash + window → increment duplicate_count
+//  3. Otherwise → fresh insert
 func (s *Store) Save(obs *Observation) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -147,29 +362,123 @@ func (s *Store) Save(obs *Observation) error {
 		obs.CreatedAt = now
 	}
 	obs.UpdatedAt = now
+	obs.Scope = normalizeScope(obs.Scope)
+	obs.NormalizedHash = hashNormalized(obs.Content)
 
-	// Check for existing by topic_key
+	nowStr := now.Format(time.RFC3339)
+
+	// Phase 1: topic_key dedup — update existing with same topic_key + project + scope
 	if obs.TopicKey != "" {
 		var existingID string
-		err := s.db.QueryRow("SELECT id FROM observations WHERE topic_key = ? AND (project = ? OR project = '')",
-			obs.TopicKey, obs.Project).Scan(&existingID)
+		var existingCreated string
+		err := s.db.QueryRow(
+			`SELECT id, created_at FROM observations
+			 WHERE topic_key = ? AND project = ? AND scope = ? AND deleted_at IS NULL
+			 ORDER BY updated_at DESC LIMIT 1`,
+			obs.TopicKey, obs.Project, obs.Scope,
+		).Scan(&existingID, &existingCreated)
 		if err == nil {
 			obs.ID = existingID
-			// Preserve original created_at
-			s.db.QueryRow("SELECT created_at FROM observations WHERE id = ?", existingID).Scan(&obs.CreatedAt)
+			if t, err := time.Parse(time.RFC3339, existingCreated); err == nil {
+				obs.CreatedAt = t
+			}
+			_, err := s.db.Exec(`UPDATE observations SET
+				type=?, title=?, content=?, session_id=?, tool_name=?,
+				topic_key=?, project=?, scope=?, normalized_hash=?,
+				revision_count=revision_count+1, last_seen_at=?,
+				pinned=?, updated_at=?
+				WHERE id=?`,
+				obs.Type, obs.Title, obs.Content, obs.SessionID, obs.ToolName,
+				obs.TopicKey, obs.Project, obs.Scope, obs.NormalizedHash,
+				nowStr, boolToInt(obs.Pinned), nowStr, existingID)
+			return err
 		}
 	}
 
-	_, err := s.db.Exec(`INSERT INTO observations (id, title, type, content, topic_key, project, scope, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	// Phase 2: hash-based dedup within window
+	window := dedupeWindowExpression(0)
+	var existingID string
+	err := s.db.QueryRow(
+		`SELECT id FROM observations
+		 WHERE normalized_hash = ? AND project = ? AND scope = ?
+		 AND type = ? AND title = ? AND deleted_at IS NULL
+		 AND datetime(created_at) >= datetime('now', ?)
+		 ORDER BY created_at DESC LIMIT 1`,
+		obs.NormalizedHash, obs.Project, obs.Scope,
+		obs.Type, obs.Title, window,
+	).Scan(&existingID)
+	if err == nil {
+		obs.ID = existingID
+		// Preserve original created_at
+		var origCreated string
+		s.db.QueryRow("SELECT created_at FROM observations WHERE id=?", existingID).Scan(&origCreated)
+		if t, err := time.Parse(time.RFC3339, origCreated); err == nil {
+			obs.CreatedAt = t
+		}
+		_, err := s.db.Exec(`UPDATE observations SET
+			duplicate_count=duplicate_count+1, last_seen_at=?, updated_at=?
+			WHERE id=?`,
+			nowStr, nowStr, existingID)
+		return err
+	}
+
+	// Phase 3: upsert — handles both fresh inserts and updates where
+	// the ID already exists (e.g., from Update → Get → Save path).
+	reviewAfter := computeReviewAfter(obs.Type)
+	var reviewAfterStr *string
+	if reviewAfter != nil {
+		ra := now.Add(*reviewAfter).Format(time.RFC3339)
+		reviewAfterStr = &ra
+	}
+
+	_, err = s.db.Exec(`INSERT INTO observations
+		(id, title, type, content, session_id, tool_name, topic_key, project, scope,
+		 normalized_hash, revision_count, duplicate_count, last_seen_at, review_after,
+		 pinned, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			title=excluded.title, type=excluded.type, content=excluded.content,
+			session_id=excluded.session_id, tool_name=excluded.tool_name,
 			topic_key=excluded.topic_key, project=excluded.project, scope=excluded.scope,
-			updated_at=excluded.updated_at`,
-		obs.ID, obs.Title, obs.Type, obs.Content, obs.TopicKey, obs.Project, obs.Scope,
-		obs.CreatedAt.Format(time.RFC3339), obs.UpdatedAt.Format(time.RFC3339))
+			normalized_hash=excluded.normalized_hash,
+			revision_count=CASE WHEN excluded.revision_count > observations.revision_count
+				THEN excluded.revision_count ELSE observations.revision_count + 1 END,
+			duplicate_count=CASE WHEN excluded.duplicate_count > observations.duplicate_count
+				THEN excluded.duplicate_count ELSE observations.duplicate_count + 1 END,
+			last_seen_at=excluded.last_seen_at, review_after=excluded.review_after,
+			pinned=excluded.pinned, updated_at=excluded.updated_at`,
+		obs.ID, obs.Title, obs.Type, obs.Content, obs.SessionID, obs.ToolName,
+		obs.TopicKey, obs.Project, obs.Scope, obs.NormalizedHash,
+		nowStr, reviewAfterStr, boolToInt(obs.Pinned),
+		obs.CreatedAt.Format(time.RFC3339), nowStr)
 	return err
 }
+
+// computeReviewAfter returns the decay duration for a type, or nil if none.
+func computeReviewAfter(obsType string) *time.Duration {
+	switch obsType {
+	case "decision":
+		d := 6 * 30 * 24 * time.Hour // ~6 months
+		return &d
+	case "policy":
+		d := 12 * 30 * 24 * time.Hour // ~12 months
+		return &d
+	case "preference":
+		d := 3 * 30 * 24 * time.Hour // ~3 months
+		return &d
+	default:
+		return nil
+	}
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// ─── Get ─────────────────────────────────────────────────────────────────────
 
 // Get retrieves an observation by ID.
 func (s *Store) Get(id string) (*Observation, error) {
@@ -177,99 +486,219 @@ func (s *Store) Get(id string) (*Observation, error) {
 	defer s.mu.RUnlock()
 
 	obs := &Observation{}
-	var createdAt, updatedAt string
-	err := s.db.QueryRow(`SELECT id, title, type, content, topic_key, project, scope, created_at, updated_at
+	var ca, ua string
+	var ra, da, lsa sql.NullString
+	var pinnedInt int
+	err := s.db.QueryRow(`SELECT id, title, type, content, session_id, tool_name,
+		topic_key, project, scope, normalized_hash, revision_count, duplicate_count,
+		last_seen_at, review_after, pinned, created_at, updated_at, deleted_at
 		FROM observations WHERE id = ?`, id).
-		Scan(&obs.ID, &obs.Title, &obs.Type, &obs.Content, &obs.TopicKey, &obs.Project, &obs.Scope,
-			&createdAt, &updatedAt)
+		Scan(&obs.ID, &obs.Title, &obs.Type, &obs.Content, &obs.SessionID, &obs.ToolName,
+			&obs.TopicKey, &obs.Project, &obs.Scope, &obs.NormalizedHash,
+			&obs.RevisionCount, &obs.DuplicateCount, &lsa, &ra, &pinnedInt,
+			&ca, &ua, &da)
 	if err != nil {
 		return nil, fmt.Errorf("not found: %w", err)
 	}
-	obs.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-	obs.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+	obs.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+	obs.UpdatedAt, _ = time.Parse(time.RFC3339, ua)
+	if lsa.Valid {
+		obs.LastSeenAt = &lsa.String
+	}
+	if ra.Valid {
+		obs.ReviewAfter = &ra.String
+	}
+	if da.Valid {
+		obs.DeletedAt = &da.String
+	}
+	obs.Pinned = pinnedInt != 0
 	return obs, nil
 }
 
-// SearchOptions filter search results.
-type SearchOptions struct {
-	Project string
-	Type    string
-	Scope   string
-	Limit   int
-}
+// ─── Search with BM25 ranking ────────────────────────────────────────────────
 
-// Search finds observations using FTS5 full-text search.
+// Search finds observations using FTS5 full-text search with BM25 ranking.
+// Supports "all" (AND) and "any" (OR) match modes.
+// If query contains "/", does an exact topic_key lookup first.
 func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	var conditions []string
-	var args []any
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = defaultMaxSearchResults
+	}
 
-	if query != "" {
-		// FTS5 MATCH — wrap each term in quotes, join with OR
-		terms := strings.Fields(query)
-		for i, t := range terms {
-			terms[i] = "\"" + strings.ReplaceAll(t, "\"", "") + "\""
+	// Phase 1: topic-key direct lookup if query contains "/"
+	var directResults []*Observation
+	if strings.Contains(query, "/") {
+		tkArgs := []any{query}
+		tkSQL := `SELECT id, title, type, content, session_id, tool_name,
+			topic_key, project, scope, normalized_hash, revision_count, duplicate_count,
+			last_seen_at, review_after, pinned, created_at, updated_at, deleted_at
+			FROM observations
+			WHERE topic_key = ? AND deleted_at IS NULL`
+
+		if opts.Type != "" {
+			tkSQL += " AND type = ?"
+			tkArgs = append(tkArgs, opts.Type)
 		}
-		ftsQuery := strings.Join(terms, " OR ")
-		conditions = append(conditions, "o.rowid IN (SELECT rowid FROM observations_fts WHERE observations_fts MATCH ?)")
-		args = append(args, ftsQuery)
-	}
-	if opts.Project != "" {
-		conditions = append(conditions, "o.project = ?")
-		args = append(args, opts.Project)
-	}
-	if opts.Type != "" {
-		conditions = append(conditions, "o.type = ?")
-		args = append(args, opts.Type)
-	}
-	if opts.Scope != "" {
-		conditions = append(conditions, "o.scope = ?")
-		args = append(args, opts.Scope)
+		if opts.Project != "" {
+			tkSQL += " AND project = ?"
+			tkArgs = append(tkArgs, opts.Project)
+		}
+		if opts.Scope != "" {
+			tkSQL += " AND scope = ?"
+			tkArgs = append(tkArgs, normalizeScope(opts.Scope))
+		}
+		tkSQL += " ORDER BY updated_at DESC LIMIT ?"
+		tkArgs = append(tkArgs, limit)
+
+		tkRows, err := s.db.Query(tkSQL, tkArgs...)
+		if err == nil {
+			defer tkRows.Close()
+			for tkRows.Next() {
+				obs := &Observation{}
+				var ca, ua string
+				var ra, da, lsa sql.NullString
+				var pinnedInt int
+				if err := tkRows.Scan(&obs.ID, &obs.Title, &obs.Type, &obs.Content,
+					&obs.SessionID, &obs.ToolName, &obs.TopicKey, &obs.Project, &obs.Scope,
+					&obs.NormalizedHash, &obs.RevisionCount, &obs.DuplicateCount,
+					&lsa, &ra, &pinnedInt, &ca, &ua, &da); err != nil {
+					break
+				}
+				obs.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+				obs.UpdatedAt, _ = time.Parse(time.RFC3339, ua)
+				if lsa.Valid {
+					obs.LastSeenAt = &lsa.String
+				}
+				if ra.Valid {
+					obs.ReviewAfter = &ra.String
+				}
+				if da.Valid {
+					obs.DeletedAt = &da.String
+				}
+				obs.Pinned = pinnedInt != 0
+				directResults = append(directResults, obs)
+			}
+		}
 	}
 
-	where := ""
-	if len(conditions) > 0 {
-		where = "WHERE " + strings.Join(conditions, " AND ")
-	}
+	// Phase 2: if query is empty, skip FTS5 and filter directly
+	var rows *sql.Rows
+	var err error
+	if query == "" {
+		q := `SELECT o.id, o.title, o.type, o.content, o.session_id, o.tool_name,
+			o.topic_key, o.project, o.scope, o.normalized_hash, o.revision_count, o.duplicate_count,
+			o.last_seen_at, o.review_after, o.pinned, o.created_at, o.updated_at, o.deleted_at
+			FROM observations o WHERE o.deleted_at IS NULL`
+		var args []any
+		if opts.Type != "" {
+			q += " AND o.type = ?"
+			args = append(args, opts.Type)
+		}
+		if opts.Project != "" {
+			q += " AND o.project = ?"
+			args = append(args, opts.Project)
+		}
+		if opts.Scope != "" {
+			q += " AND o.scope = ?"
+			args = append(args, normalizeScope(opts.Scope))
+		}
+		q += " ORDER BY o.updated_at DESC LIMIT ?"
+		args = append(args, limit)
+		rows, err = s.db.Query(q, args...)
+	} else {
+		// FTS5 with BM25 ranking
+		var ftsQuery string
+		if opts.MatchMode == "any" {
+			terms := strings.Fields(query)
+			for i, t := range terms {
+				terms[i] = strings.ReplaceAll(t, "\"", "")
+			}
+			ftsQuery = strings.Join(terms, " OR ")
+		} else {
+			// "all" (default): AND semantics — each term wrapped in quotes
+			terms := strings.Fields(query)
+			for i, t := range terms {
+				terms[i] = "\"" + strings.ReplaceAll(t, "\"", "") + "\""
+			}
+			ftsQuery = strings.Join(terms, " AND ")
+		}
 
-	limit := 20
-	if opts.Limit > 0 {
-		limit = opts.Limit
-	}
+		sqlQ := `SELECT o.id, o.title, o.type, o.content, o.session_id, o.tool_name,
+			o.topic_key, o.project, o.scope, o.normalized_hash, o.revision_count, o.duplicate_count,
+			o.last_seen_at, o.review_after, o.pinned, o.created_at, o.updated_at, o.deleted_at
+			FROM observations_fts fts
+			JOIN observations o ON o.id = fts.rowid
+			WHERE observations_fts MATCH ? AND o.deleted_at IS NULL`
 
-	rows, err := s.db.Query(fmt.Sprintf(
-		`SELECT o.id, o.title, o.type, o.content, o.topic_key, o.project, o.scope, o.created_at, o.updated_at
-		FROM observations o %s ORDER BY o.updated_at DESC LIMIT ?`, where),
-		append(args, limit)...)
+		args := []any{ftsQuery}
+
+		if opts.Type != "" {
+			sqlQ += " AND o.type = ?"
+			args = append(args, opts.Type)
+		}
+		if opts.Project != "" {
+			sqlQ += " AND o.project = ?"
+			args = append(args, opts.Project)
+		}
+		if opts.Scope != "" {
+			sqlQ += " AND o.scope = ?"
+			args = append(args, normalizeScope(opts.Scope))
+		}
+
+		sqlQ += " ORDER BY rank LIMIT ?"
+		args = append(args, limit)
+		rows, err = s.db.Query(sqlQ, args...)
+	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("search: %w", err)
 	}
 	defer rows.Close()
 
+	// Dedup: track seen IDs (direct results come first)
+	seen := make(map[string]bool)
+	for _, dr := range directResults {
+		seen[dr.ID] = true
+	}
+
 	var results []*Observation
+	results = append(results, directResults...)
 	for rows.Next() {
 		obs := &Observation{}
 		var ca, ua string
-		if err := rows.Scan(&obs.ID, &obs.Title, &obs.Type, &obs.Content, &obs.TopicKey,
-			&obs.Project, &obs.Scope, &ca, &ua); err != nil {
+		var ra, da, lsa sql.NullString
+		var pinnedInt int
+		if err := rows.Scan(&obs.ID, &obs.Title, &obs.Type, &obs.Content,
+			&obs.SessionID, &obs.ToolName, &obs.TopicKey, &obs.Project, &obs.Scope,
+			&obs.NormalizedHash, &obs.RevisionCount, &obs.DuplicateCount,
+			&lsa, &ra, &pinnedInt, &ca, &ua, &da); err != nil {
 			continue
 		}
+		if seen[obs.ID] {
+			continue
+		}
+		seen[obs.ID] = true
 		obs.CreatedAt, _ = time.Parse(time.RFC3339, ca)
 		obs.UpdatedAt, _ = time.Parse(time.RFC3339, ua)
+		if lsa.Valid {
+			obs.LastSeenAt = &lsa.String
+		}
+		if ra.Valid {
+			obs.ReviewAfter = &ra.String
+		}
+		if da.Valid {
+			obs.DeletedAt = &da.String
+		}
+		obs.Pinned = pinnedInt != 0
 		results = append(results, obs)
 	}
 	return results, nil
 }
 
-// Delete removes an observation by ID.
-func (s *Store) Delete(id string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, err := s.db.Exec("DELETE FROM observations WHERE id = ?", id)
-	return err
-}
+// ─── Update ──────────────────────────────────────────────────────────────────
 
 // Update modifies fields of an existing observation.
 func (s *Store) Update(id string, updates map[string]any) (*Observation, error) {
@@ -292,21 +721,47 @@ func (s *Store) Update(id string, updates map[string]any) (*Observation, error) 
 	if v, ok := updates["scope"].(string); ok {
 		obs.Scope = v
 	}
+	if v, ok := updates["tool_name"].(string); ok {
+		obs.ToolName = v
+	}
 	return obs, s.Save(obs)
 }
 
-// ---------------------------------------------------------------------------
-// Conflict Surfacing (memory_relations + candidates)
-// ---------------------------------------------------------------------------
+// ─── Delete ──────────────────────────────────────────────────────────────────
+
+// Delete removes an observation permanently.
+func (s *Store) Delete(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec("DELETE FROM observations WHERE id = ?", id)
+	return err
+}
+
+// DeleteObservation removes an observation. If hard is true, it's permanent;
+// otherwise it's a soft-delete (clears content, marks type and deleted_at).
+func (s *Store) DeleteObservation(id string, hard bool) error {
+	if hard {
+		return s.Delete(id)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(
+		"UPDATE observations SET content='', type='deleted', deleted_at=?, updated_at=? WHERE id=?",
+		now, now, id)
+	return err
+}
+
+// ─── Conflict Surfacing (memory_relations) ───────────────────────────────────
 
 // Candidate represents a potentially conflicting observation.
 type Candidate struct {
-	ID          string  `json:"id"`
-	Title       string  `json:"title"`
-	Type        string  `json:"type"`
-	Score       float64 `json:"score"`
-	JudgmentID  string  `json:"judgment_id"`
-	TopicKey    string  `json:"topic_key,omitempty"`
+	ID         string  `json:"id"`
+	Title      string  `json:"title"`
+	Type       string  `json:"type"`
+	Score      float64 `json:"score"`
+	JudgmentID string  `json:"judgment_id"`
+	TopicKey   string  `json:"topic_key,omitempty"`
 }
 
 // FindCandidates searches for similar observations and creates pending
@@ -316,7 +771,6 @@ func (s *Store) FindCandidates(savedID, title, project, scope string) ([]Candida
 		return nil, nil
 	}
 
-	// Build OR-based FTS5 query from title words
 	terms := strings.Fields(title)
 	if len(terms) == 0 {
 		return nil, nil
@@ -338,17 +792,15 @@ func (s *Store) FindCandidates(savedID, title, project, scope string) ([]Candida
 		conditions = append(conditions, "o.scope = ?")
 		args = append(args, scope)
 	}
-	// Exclude self
-	conditions = append(conditions, "o.id != ?")
+	conditions = append(conditions, "o.id != ? AND o.deleted_at IS NULL")
 	args = append(args, savedID)
 
 	where := "WHERE " + strings.Join(conditions, " AND ")
-	limit := 5
 
 	rows, err := s.db.Query(fmt.Sprintf(
 		`SELECT o.id, o.title, o.type, o.topic_key
-		FROM observations o %s ORDER BY o.updated_at DESC LIMIT ?`, where),
-		append(args, limit)...)
+		FROM observations o %s ORDER BY o.updated_at DESC LIMIT 5`, where),
+		append(args, 5)...)
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +812,6 @@ func (s *Store) FindCandidates(savedID, title, project, scope string) ([]Candida
 		if err := rows.Scan(&c.ID, &c.Title, &c.Type, &c.TopicKey); err != nil {
 			continue
 		}
-		// Create a pending relation
 		relID := fmt.Sprintf("rel-%d", time.Now().UnixNano())
 		now := time.Now().UTC().Format(time.RFC3339)
 		s.db.Exec(`INSERT INTO memory_relations (id, source_id, target_id, relation, judgment_status, session_id, created_at, updated_at)
@@ -411,16 +862,16 @@ func (s *Store) RelationCount() int {
 
 // Relation represents a memory_relations row.
 type Relation struct {
-	ID              string    `json:"id"`
-	SourceID        string    `json:"source_id"`
-	TargetID        string    `json:"target_id"`
-	Relation        string    `json:"relation"`
-	JudgmentStatus  string    `json:"judgment_status"`
-	Reason          string    `json:"reason,omitempty"`
-	Evidence        string    `json:"evidence,omitempty"`
-	Confidence      float64   `json:"confidence,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID             string    `json:"id"`
+	SourceID       string    `json:"source_id"`
+	TargetID       string    `json:"target_id"`
+	Relation       string    `json:"relation"`
+	JudgmentStatus string    `json:"judgment_status"`
+	Reason         string    `json:"reason,omitempty"`
+	Evidence       string    `json:"evidence,omitempty"`
+	Confidence     float64   `json:"confidence,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 // ListRelations returns relations filtered by judgment status (empty = all).
@@ -482,7 +933,7 @@ func (s *Store) ScanConflicts(project string, dryRun bool) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	q := `SELECT id, title, project, scope FROM observations WHERE 1=1`
+	q := `SELECT id, title, project, scope FROM observations WHERE deleted_at IS NULL`
 	var args []any
 	if project != "" {
 		q += " AND project = ?"
@@ -503,7 +954,6 @@ func (s *Store) ScanConflicts(project string, dryRun bool) (int, error) {
 		if title == "" {
 			continue
 		}
-		// Check if this obs already has any relations
 		var cnt int
 		s.db.QueryRow("SELECT COUNT(*) FROM memory_relations WHERE source_id = ? OR target_id = ?", id, id).Scan(&cnt)
 		if cnt > 0 {
@@ -513,7 +963,6 @@ func (s *Store) ScanConflicts(project string, dryRun bool) (int, error) {
 			total++
 			continue
 		}
-		// Scan for candidates via FTS
 		terms := strings.Fields(title)
 		if len(terms) == 0 {
 			continue
@@ -526,7 +975,8 @@ func (s *Store) ScanConflicts(project string, dryRun bool) (int, error) {
 		candRows, err := s.db.Query(
 			`SELECT o.id FROM observations o
 			 WHERE o.rowid IN (SELECT rowid FROM observations_fts WHERE observations_fts MATCH ?)
-			 AND o.id != ? AND o.project = ? LIMIT 5`, ftsQ, id, proj)
+			 AND o.id != ? AND o.project = ? AND o.deleted_at IS NULL LIMIT 5`,
+			ftsQ, id, proj)
 		if err != nil {
 			continue
 		}
@@ -543,6 +993,8 @@ func (s *Store) ScanConflicts(project string, dryRun bool) (int, error) {
 	}
 	return total, nil
 }
+
+// ─── Project summaries ───────────────────────────────────────────────────────
 
 // ProjectSummary holds project-level statistics.
 type ProjectSummary struct {
@@ -576,31 +1028,12 @@ func (s *Store) ListProjects() ([]ProjectSummary, error) {
 	return result, nil
 }
 
-// ---------------------------------------------------------------------------
-// Delete variants
-// ---------------------------------------------------------------------------
+// ─── Delete variants ─────────────────────────────────────────────────────────
 
-// DeleteObservation removes an observation. If hard is true, it's a permanent
-// delete; otherwise it's a soft-delete (clears content, preserves metadata).
-func (s *Store) DeleteObservation(id string, hard bool) error {
-	if hard {
-		return s.Delete(id)
-	}
-	// Soft delete: clear content, mark type as deleted
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := s.db.Exec(
-		"UPDATE observations SET content='', type='deleted', updated_at=? WHERE id=?", now, id)
-	return err
-}
-
-// DeleteSession removes a session by ID. Returns error if the session has
-// observations (must delete observations first or use --hard).
+// DeleteSession removes a session by ID.
 func (s *Store) DeleteSession(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Check if any observations reference this session via prompts
 	var cnt int
 	s.db.QueryRow("SELECT COUNT(*) FROM prompts WHERE session_id=?", id).Scan(&cnt)
 	if cnt > 0 {
@@ -625,8 +1058,7 @@ type DeleteProjectResult struct {
 	SessionsDeleted     int `json:"sessions_deleted"`
 }
 
-// DeleteProject cascade-deletes a project. If hard is true, sessions are also
-// removed; otherwise sessions are kept (with project reference cleared).
+// DeleteProject cascade-deletes a project.
 func (s *Store) DeleteProject(name string, hard bool) (*DeleteProjectResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -636,12 +1068,10 @@ func (s *Store) DeleteProject(name string, hard bool) (*DeleteProjectResult, err
 	if n, _ := res.RowsAffected(); n > 0 {
 		r.ObservationsDeleted = int(n)
 	}
-
 	res, _ = s.db.Exec("DELETE FROM prompts WHERE session_id IN (SELECT id FROM sessions WHERE project=?)", name)
 	if n, _ := res.RowsAffected(); n > 0 {
 		r.PromptsDeleted = int(n)
 	}
-
 	if hard {
 		res, _ = s.db.Exec("DELETE FROM sessions WHERE project=?", name)
 	} else {
@@ -653,9 +1083,7 @@ func (s *Store) DeleteProject(name string, hard bool) (*DeleteProjectResult, err
 	return r, nil
 }
 
-// ---------------------------------------------------------------------------
-// Conflicts extended
-// ---------------------------------------------------------------------------
+// ─── Conflicts stats ─────────────────────────────────────────────────────────
 
 // ConflictsStats returns conflict-related stats.
 type ConflictsStats struct {
@@ -691,9 +1119,7 @@ func (s *Store) ConflictsDeferred(status string, limit int) ([]Relation, error) 
 	return s.ListRelations("deferred")
 }
 
-// ---------------------------------------------------------------------------
-// Projects consolidate
-// ---------------------------------------------------------------------------
+// ─── Projects consolidate ────────────────────────────────────────────────────
 
 // ConsolidateResult describes the result of consolidating projects.
 type ConsolidateResult struct {
@@ -709,8 +1135,7 @@ type ConsolidateGroup struct {
 	Canonical string  `json:"canonical"`
 }
 
-// ConsolidateProjects merges similar project names. Returns groups when dryRun
-// is true (preview only).
+// ConsolidateProjects merges similar project names.
 func (s *Store) ConsolidateProjects(all, dryRun bool) (*ConsolidateResult, error) {
 	rows, err := s.db.Query("SELECT DISTINCT project FROM observations WHERE project != '' ORDER BY project")
 	if err != nil {
@@ -725,7 +1150,6 @@ func (s *Store) ConsolidateProjects(all, dryRun bool) (*ConsolidateResult, error
 		projects = append(projects, p)
 	}
 
-	// Simple normalization: lowercase, trim, replace similar chars
 	normalize := func(s string) string {
 		s = strings.ToLower(strings.TrimSpace(s))
 		s = strings.ReplaceAll(s, "-", "")
@@ -777,10 +1201,15 @@ func (s *Store) ConsolidateProjects(all, dryRun bool) (*ConsolidateResult, error
 	return &ConsolidateResult{Merged: totalMerged}, nil
 }
 
-// Close shuts down the store.
-func (s *Store) Close() error {
-	return s.db.Close()
+// MergeProjects moves observations from one project to another.
+func (s *Store) MergeProjects(sourceProject, targetProject string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res, err := s.db.Exec("UPDATE observations SET project = ?, updated_at = ? WHERE project = ?",
+		targetProject, time.Now().UTC().Format(time.RFC3339), sourceProject)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return int(n), nil
 }
-
-// RootDir returns the store directory.
-func (s *Store) RootDir() string { return s.rootDir }

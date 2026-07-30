@@ -2,6 +2,9 @@
 // It provides JSON-based persistence with forward-compatible unknown field
 // preservation: fields the current binary doesn't understand are kept and
 // re-serialized without modification.
+//
+// BigMem config (strict_tdd, etc.) is stored in ~/.biggz/config.json
+// and accessed via the BigMemConfig helpers at the bottom of this file.
 package state
 
 import (
@@ -184,4 +187,57 @@ func (s *InstallState) MarshalJSON() ([]byte, error) {
 		obj[k] = v
 	}
 	return json.MarshalIndent(obj, "", "  ")
+}
+
+// ─── BigMem Config (stored in ~/.biggz/config.json) ─────────────────────────
+
+// bigmemConfigPath returns the path to the biggz config file.
+func bigmemConfigPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".biggz", "config.json")
+}
+
+// GetBigMemConfig retrieves a boolean value from ~/.biggz/config.json.
+func GetBigMemConfig(key string) (bool, error) {
+	path := bigmemConfigPath()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return false, nil
+	}
+	if v, ok := cfg[key].(bool); ok {
+		return v, nil
+	}
+	return false, nil
+}
+
+// SetBigMemConfig sets a boolean value in ~/.biggz/config.json.
+func SetBigMemConfig(key string, value bool) error {
+	path := bigmemConfigPath()
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	var cfg map[string]any
+	data, err := os.ReadFile(path)
+	if err == nil {
+		json.Unmarshal(data, &cfg)
+	}
+	if cfg == nil {
+		cfg = make(map[string]any)
+	}
+	cfg[key] = value
+
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, out, 0644)
 }

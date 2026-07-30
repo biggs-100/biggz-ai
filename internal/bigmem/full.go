@@ -11,21 +11,16 @@ import (
 	"time"
 )
 
-// Session represents a coding session.
+// ─── Session ─────────────────────────────────────────────────────────────────
+
+// Session represents a coding session with directory tracking.
 type Session struct {
 	ID        string    `json:"id"`
 	StartTime time.Time `json:"start_time"`
 	EndTime   time.Time `json:"end_time,omitempty"`
 	Summary   string    `json:"summary,omitempty"`
 	Project   string    `json:"project,omitempty"`
-}
-
-// SavedPrompt records a user prompt.
-type SavedPrompt struct {
-	ID        string    `json:"id"`
-	Content   string    `json:"content"`
-	SessionID string    `json:"session_id"`
-	CreatedAt time.Time `json:"created_at"`
+	Directory string    `json:"directory,omitempty"`
 }
 
 // SessionStart registers a new session.
@@ -34,7 +29,7 @@ func (s *Store) SessionStart(id, project string) (*Session, error) {
 	defer s.mu.Unlock()
 	session := &Session{ID: id, StartTime: time.Now(), Project: project}
 	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS sessions
-		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT)`)
+		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT)`)
 	if err != nil {
 		return nil, err
 	}
@@ -55,16 +50,16 @@ func (s *Store) SessionEnd(id, summary string) (*Session, error) {
 	return &Session{ID: id, Summary: summary}, nil
 }
 
-// SessionContext returns recent sessions.
+// SessionContext returns recent sessions, newest first.
 func (s *Store) SessionContext(limit int) ([]Session, error) {
 	if limit <= 0 {
 		limit = 5
 	}
-	// Ensure sessions table exists
 	s.db.Exec(`CREATE TABLE IF NOT EXISTS sessions
-		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT)`)
+		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT)`)
 
-	rows, err := s.db.Query("SELECT id, start_time, end_time, summary, project FROM sessions ORDER BY start_time DESC LIMIT ?", limit)
+	rows, err := s.db.Query(
+		"SELECT id, start_time, end_time, summary, project, directory FROM sessions ORDER BY start_time DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, fmt.Errorf("session query: %w", err)
 	}
@@ -72,8 +67,8 @@ func (s *Store) SessionContext(limit int) ([]Session, error) {
 	var sessions []Session
 	for rows.Next() {
 		var sess Session
-		var st, et, summary sql.NullString
-		if err := rows.Scan(&sess.ID, &st, &et, &summary, &sess.Project); err != nil {
+		var st, et, summary, dir sql.NullString
+		if err := rows.Scan(&sess.ID, &st, &et, &summary, &sess.Project, &dir); err != nil {
 			continue
 		}
 		if st.Valid {
@@ -85,12 +80,25 @@ func (s *Store) SessionContext(limit int) ([]Session, error) {
 		if summary.Valid {
 			sess.Summary = summary.String
 		}
+		if dir.Valid {
+			sess.Directory = dir.String
+		}
 		sessions = append(sessions, sess)
 	}
 	return sessions, nil
 }
 
-// SavePrompt stores a user prompt.
+// ─── Prompts ─────────────────────────────────────────────────────────────────
+
+// SavedPrompt records a user prompt.
+type SavedPrompt struct {
+	ID        string    `json:"id"`
+	Content   string    `json:"content"`
+	SessionID string    `json:"session_id"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SavePrompt persists a user prompt.
 func (s *Store) SavePrompt(content, sessionID string) (*SavedPrompt, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -106,6 +114,80 @@ func (s *Store) SavePrompt(content, sessionID string) (*SavedPrompt, error) {
 		p.ID, p.Content, p.SessionID, p.CreatedAt.Format(time.RFC3339))
 	return p, err
 }
+
+// SearchPrompts searches prompts using FTS5.
+func (s *Store) SearchPrompts(query, project string, limit int) ([]SavedPrompt, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	// Ensure FTS table exists
+	s.db.Exec(`CREATE VIRTUAL TABLE IF NOT EXISTS prompts_fts USING fts5(
+		content, project, content='prompts', content_rowid='rowid'
+	)`)
+
+	terms := strings.Fields(query)
+	for i, t := range terms {
+		terms[i] = "\"" + strings.ReplaceAll(t, "\"", "") + "\""
+	}
+	ftsQuery := strings.Join(terms, " AND ")
+
+	sqlQ := `SELECT p.id, p.content, p.session_id, p.created_at
+		FROM prompts_fts fts JOIN prompts p ON p.rowid = fts.rowid
+		WHERE prompts_fts MATCH ?`
+	args := []any{ftsQuery}
+
+	if project != "" {
+		sqlQ += " AND prompts_fts.project MATCH ?"
+		args = append(args, project)
+	}
+	sqlQ += " ORDER BY rank LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.Query(sqlQ, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []SavedPrompt
+	for rows.Next() {
+		var p SavedPrompt
+		var ca string
+		if err := rows.Scan(&p.ID, &p.Content, &p.SessionID, &ca); err != nil {
+			continue
+		}
+		p.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+		results = append(results, p)
+	}
+	return results, nil
+}
+
+// ListPromptsBySession returns all prompts for a given session.
+func (s *Store) ListPromptsBySession(sessionID string) ([]SavedPrompt, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS prompts
+		(id TEXT PRIMARY KEY, content TEXT, session_id TEXT, created_at TEXT)`)
+	rows, err := s.db.Query(
+		"SELECT id, content, session_id, created_at FROM prompts WHERE session_id = ? ORDER BY created_at ASC", sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var result []SavedPrompt
+	for rows.Next() {
+		var p SavedPrompt
+		var ca string
+		if err := rows.Scan(&p.ID, &p.Content, &p.SessionID, &ca); err != nil {
+			continue
+		}
+		p.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+		result = append(result, p)
+	}
+	return result, nil
+}
+
+// ─── Suggest Topic Key ───────────────────────────────────────────────────────
 
 // SuggestTopicKey suggests a stable topic key from title/content.
 func SuggestTopicKey(title, content, obsType string) string {
@@ -134,6 +216,8 @@ func SuggestTopicKey(title, content, obsType string) string {
 	return key
 }
 
+// ─── Timeline ────────────────────────────────────────────────────────────────
+
 // TimelineOptions controls timeline queries.
 type TimelineOptions struct {
 	Limit   int
@@ -159,21 +243,19 @@ func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
 	var result []TimelineEntry
 
 	if opts.FocusID != "" {
-		// Get created_at of focus observation
 		var focusTime string
 		err := s.db.QueryRow("SELECT created_at FROM observations WHERE id = ?", opts.FocusID).Scan(&focusTime)
 		if err != nil {
 			return nil, fmt.Errorf("focus not found: %w", err)
 		}
 
-		// Query: observations before focus (same project, older)
 		beforeLimit := 5
 		if opts.Before > 0 {
 			beforeLimit = opts.Before
 		}
 		beforeRows, err := s.db.Query(
 			`SELECT id, title, type, created_at FROM observations
-			 WHERE created_at < ? AND id != ?
+			 WHERE created_at < ? AND id != ? AND deleted_at IS NULL
 			 ORDER BY created_at DESC LIMIT ?`, focusTime, opts.FocusID, beforeLimit)
 		if err == nil {
 			defer beforeRows.Close()
@@ -189,7 +271,6 @@ func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
 			}
 		}
 
-		// Add focus observation
 		var focusEntry TimelineEntry
 		var ca string
 		if err := s.db.QueryRow("SELECT id, title, type, created_at FROM observations WHERE id = ?", opts.FocusID).
@@ -199,14 +280,13 @@ func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
 			result = append(result, focusEntry)
 		}
 
-		// Query: observations after focus
 		afterLimit := 5
 		if opts.After > 0 {
 			afterLimit = opts.After
 		}
 		afterRows, err := s.db.Query(
 			`SELECT id, title, type, created_at FROM observations
-			 WHERE created_at > ? AND id != ?
+			 WHERE created_at > ? AND id != ? AND deleted_at IS NULL
 			 ORDER BY created_at ASC LIMIT ?`, focusTime, opts.FocusID, afterLimit)
 		if err == nil {
 			defer afterRows.Close()
@@ -220,16 +300,15 @@ func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
 				result = append(result, e)
 			}
 		}
-
 		return result, nil
 	}
 
-	// No focus: return most recent
 	limit := 20
 	if opts.Limit > 0 {
 		limit = opts.Limit
 	}
-	rows, err = s.db.Query("SELECT id, title, type, created_at FROM observations ORDER BY created_at DESC LIMIT ?", limit)
+	rows, err = s.db.Query(
+		"SELECT id, title, type, created_at FROM observations WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}
@@ -246,19 +325,22 @@ func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
 	return result, nil
 }
 
+// ─── Stats ───────────────────────────────────────────────────────────────────
+
 // StoreStats returns usage statistics.
 type StoreStats struct {
 	TotalObservations int            `json:"total_observations"`
 	ByType            map[string]int `json:"by_type"`
 	TotalSessions     int            `json:"total_sessions"`
+	TotalPrompts      int            `json:"total_prompts"`
 	StoragePath       string         `json:"storage_path"`
 }
 
 // Stats returns store statistics.
 func (s *Store) Stats() (*StoreStats, error) {
 	stats := &StoreStats{ByType: make(map[string]int), StoragePath: s.rootDir}
-	s.db.QueryRow("SELECT COUNT(*) FROM observations").Scan(&stats.TotalObservations)
-	rows, _ := s.db.Query("SELECT type, COUNT(*) FROM observations WHERE type != '' GROUP BY type")
+	s.db.QueryRow("SELECT COUNT(*) FROM observations WHERE deleted_at IS NULL").Scan(&stats.TotalObservations)
+	rows, _ := s.db.Query("SELECT type, COUNT(*) FROM observations WHERE type != '' AND type != 'deleted' AND deleted_at IS NULL GROUP BY type")
 	if rows != nil {
 		defer rows.Close()
 		for rows.Next() {
@@ -269,18 +351,31 @@ func (s *Store) Stats() (*StoreStats, error) {
 		}
 	}
 	s.db.QueryRow("SELECT COUNT(*) FROM sessions").Scan(&stats.TotalSessions)
+	s.db.QueryRow("SELECT COUNT(*) FROM prompts").Scan(&stats.TotalPrompts)
 	return stats, nil
 }
 
-// Pin marks an observation as pinned (updates updated_at).
+// ─── Pin ─────────────────────────────────────────────────────────────────────
+
+// Pin marks an observation as pinned (sets pinned=1).
 func (s *Store) Pin(id string) error {
-	_, err := s.db.Exec("UPDATE observations SET updated_at = ? WHERE id = ?",
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec("UPDATE observations SET pinned=1, updated_at=? WHERE id=?",
 		time.Now().UTC().Format(time.RFC3339), id)
 	return err
 }
 
-// Unpin removes pin.
-func (s *Store) Unpin(id string) error { return s.Pin(id) }
+// Unpin removes pin (sets pinned=0).
+func (s *Store) Unpin(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.db.Exec("UPDATE observations SET pinned=0, updated_at=? WHERE id=?",
+		time.Now().UTC().Format(time.RFC3339), id)
+	return err
+}
+
+// ─── Doctor ──────────────────────────────────────────────────────────────────
 
 // DoctorResult reports store health.
 type DoctorResult struct {
@@ -291,15 +386,13 @@ type DoctorResult struct {
 	Corrupt      bool   `json:"corrupt"`
 }
 
-// Doctor runs diagnostics on the store, including PRAGMA integrity_check.
+// Doctor runs diagnostics including PRAGMA integrity_check.
 func (s *Store) Doctor() (*DoctorResult, error) {
 	r := &DoctorResult{StoragePath: s.rootDir, StoreExists: true}
 	s.db.QueryRow("SELECT COUNT(*) FROM observations").Scan(&r.Observations)
 
-	// Run PRAGMA integrity_check to detect database corruption.
 	rows, err := s.db.Query("PRAGMA integrity_check")
 	if err != nil {
-		// If we can't even run the check, treat it as corrupt.
 		r.Corrupt = true
 		return r, nil
 	}
@@ -315,11 +408,11 @@ func (s *Store) Doctor() (*DoctorResult, error) {
 			messages = append(messages, msg)
 		}
 	}
-
 	r.Corrupt = len(messages) > 0
-
 	return r, nil
 }
+
+// ─── Compare ─────────────────────────────────────────────────────────────────
 
 // CompareResult compares two observations.
 type CompareResult struct {
@@ -353,13 +446,15 @@ func (s *Store) Compare(idA, idB string) (*CompareResult, error) {
 	return r, nil
 }
 
+// ─── Relations (simple) ──────────────────────────────────────────────────────
+
 // JudgeRelation records a relation between two observations.
 type JudgeRelation struct {
-	ObservationA string  `json:"observation_a"`
-	ObservationB string  `json:"observation_b"`
-	Relation     string  `json:"relation"`
-	Confidence   float64 `json:"confidence"`
-	Reason       string  `json:"reason"`
+	ObservationA string    `json:"observation_a"`
+	ObservationB string    `json:"observation_b"`
+	Relation     string    `json:"relation"`
+	Confidence   float64   `json:"confidence"`
+	Reason       string    `json:"reason"`
 	CreatedAt    time.Time `json:"created_at"`
 }
 
@@ -380,31 +475,9 @@ func (s *Store) SaveRelation(aID, bID, relation, reason string, confidence float
 	return jr, err
 }
 
-// ListPromptsBySession returns all prompts for a given session.
-func (s *Store) ListPromptsBySession(sessionID string) ([]SavedPrompt, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	s.db.Exec(`CREATE TABLE IF NOT EXISTS prompts
-		(id TEXT PRIMARY KEY, content TEXT, session_id TEXT, created_at TEXT)`)
-	rows, err := s.db.Query("SELECT id, content, session_id, created_at FROM prompts WHERE session_id = ? ORDER BY created_at ASC", sessionID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var result []SavedPrompt
-	for rows.Next() {
-		var p SavedPrompt
-		var ca string
-		if err := rows.Scan(&p.ID, &p.Content, &p.SessionID, &ca); err != nil {
-			continue
-		}
-		p.CreatedAt, _ = time.Parse(time.RFC3339, ca)
-		result = append(result, p)
-	}
-	return result, nil
-}
+// ─── Passive Capture ─────────────────────────────────────────────────────────
 
-// CapturePassive extracts learnings from text.
+// CapturePassive extracts learnings from text (## Key Learnings section).
 func CapturePassive(content, project string) ([]*Observation, error) {
 	var results []*Observation
 	markers := []string{"## Key Learnings", "## Aprendizajes Clave", "## Learnings"}
@@ -435,79 +508,68 @@ func CapturePassive(content, project string) ([]*Observation, error) {
 	return results, nil
 }
 
-// MergeProjects moves observations from one project to another.
-func (s *Store) MergeProjects(sourceProject, targetProject string) (int, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	res, err := s.db.Exec("UPDATE observations SET project = ?, updated_at = ? WHERE project = ?",
-		targetProject, time.Now().UTC().Format(time.RFC3339), sourceProject)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	return int(n), nil
-}
+// ─── Review / Lifecycle ──────────────────────────────────────────────────────
 
 // Review marks an observation for review or marks it reviewed.
-func (s *Store) Review(action string, id int) error {
+// Uses the reviews table keyed by observation_id (TEXT matching observation IDs).
+func (s *Store) Review(action string, obsID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.db.Exec(`CREATE TABLE IF NOT EXISTS reviews (observation_id INTEGER PRIMARY KEY, status TEXT, updated_at TEXT)`)
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS reviews
+		(observation_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'needs_review', updated_at TEXT NOT NULL)`)
+
 	if action == "mark_reviewed" {
-		_, err := s.db.Exec("DELETE FROM reviews WHERE observation_id = ?", id)
+		_, err := s.db.Exec("DELETE FROM reviews WHERE observation_id = ?", obsID)
 		return err
 	}
 	_, err := s.db.Exec("INSERT OR REPLACE INTO reviews (observation_id, status, updated_at) VALUES (?, 'needs_review', ?)",
-		id, time.Now().UTC().Format(time.RFC3339))
+		obsID, time.Now().UTC().Format(time.RFC3339))
 	return err
 }
 
 // ListNeedsReview returns observation IDs that need review.
-func (s *Store) ListNeedsReview() ([]int, error) {
+func (s *Store) ListNeedsReview() ([]string, error) {
 	rows, err := s.db.Query("SELECT observation_id FROM reviews WHERE status = 'needs_review'")
 	if err != nil {
 		return nil, nil
 	}
 	defer rows.Close()
-	var ids []int
+	var ids []string
 	for rows.Next() {
-		var id int
+		var id string
 		rows.Scan(&id)
 		ids = append(ids, id)
 	}
 	return ids, nil
 }
 
-// ---------------------------------------------------------------------------
-// Sync: export/import observations as JSON chunks
-// ---------------------------------------------------------------------------
+// ─── Sync: export/import ─────────────────────────────────────────────────────
 
 // SyncStatus returns sync metadata.
 type SyncStatus struct {
-	ExportDir string `json:"export_dir"`
-	ChunkCount int   `json:"chunk_count"`
-	ObsCount  int   `json:"obs_count"`
+	ExportDir  string `json:"export_dir"`
+	ChunkCount int    `json:"chunk_count"`
+	ObsCount   int    `json:"obs_count"`
 }
 
-// SyncExport exports all observations (optionally filtered by project) as
-// newline-delimited JSON chunks into <projectRoot>/.bigmem/.
+// SyncExport exports observations as NDJSON chunks into <projectRoot>/.bigmem/.
 func (s *Store) SyncExport(project, projectRoot string) error {
 	dir := filepath.Join(projectRoot, ".bigmem")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
 	}
-	// Create a .gitignore that allows ndjson files through even if .biggz/ is
-	// in a parent .gitignore
 	gitIgnorePath := filepath.Join(dir, ".gitignore")
 	if _, err := os.Stat(gitIgnorePath); os.IsNotExist(err) {
 		os.WriteFile(gitIgnorePath, []byte("# Sync chunks — safe to commit\n*\n!.gitignore\n*.ndjson\n"), 0644)
 	}
 
 	s.mu.RLock()
-	q := "SELECT id, title, type, content, topic_key, project, scope, created_at, updated_at FROM observations"
+	q := `SELECT id, title, type, content, session_id, tool_name, topic_key, project, scope,
+		normalized_hash, revision_count, duplicate_count, last_seen_at, review_after,
+		pinned, created_at, updated_at, deleted_at FROM observations WHERE deleted_at IS NULL`
 	var args []any
 	if project != "" {
-		q += " WHERE project = ?"
+		q += " AND project = ?"
 		args = append(args, project)
 	}
 	rows, err := s.db.Query(q, args...)
@@ -529,12 +591,26 @@ func (s *Store) SyncExport(project, projectRoot string) error {
 	for rows.Next() {
 		obs := &Observation{}
 		var ca, ua string
+		var ra, da, lsa sql.NullString
+		var pinnedInt int
 		if err := rows.Scan(&obs.ID, &obs.Title, &obs.Type, &obs.Content,
-			&obs.TopicKey, &obs.Project, &obs.Scope, &ca, &ua); err != nil {
+			&obs.SessionID, &obs.ToolName, &obs.TopicKey, &obs.Project, &obs.Scope,
+			&obs.NormalizedHash, &obs.RevisionCount, &obs.DuplicateCount,
+			&lsa, &ra, &pinnedInt, &ca, &ua, &da); err != nil {
 			continue
 		}
 		obs.CreatedAt, _ = time.Parse(time.RFC3339, ca)
 		obs.UpdatedAt, _ = time.Parse(time.RFC3339, ua)
+		if lsa.Valid {
+			obs.LastSeenAt = &lsa.String
+		}
+		if ra.Valid {
+			obs.ReviewAfter = &ra.String
+		}
+		if da.Valid {
+			obs.DeletedAt = &da.String
+		}
+		obs.Pinned = pinnedInt != 0
 		if err := enc.Encode(obs); err != nil {
 			return err
 		}
@@ -547,8 +623,7 @@ func (s *Store) SyncExport(project, projectRoot string) error {
 	return nil
 }
 
-// SyncImport reads all .ndjson chunks from <projectRoot>/.bigmem/ and
-// imports any observation whose ID does not already exist in the store.
+// SyncImport reads NDJSON chunks from <projectRoot>/.bigmem/ and imports.
 func (s *Store) SyncImport(projectRoot string) (int, error) {
 	dir := filepath.Join(projectRoot, ".bigmem")
 	entries, err := os.ReadDir(dir)
@@ -571,7 +646,6 @@ func (s *Store) SyncImport(projectRoot string) (int, error) {
 			if err := dec.Decode(&obs); err != nil {
 				break
 			}
-			// Only import if ID doesn't exist
 			var existing int
 			s.db.QueryRow("SELECT COUNT(*) FROM observations WHERE id = ?", obs.ID).Scan(&existing)
 			if existing > 0 {
@@ -585,11 +659,14 @@ func (s *Store) SyncImport(projectRoot string) (int, error) {
 			}
 			obs.UpdatedAt = time.Now()
 			_, err := s.db.Exec(
-				`INSERT INTO observations (id, title, type, content, topic_key, project, scope, created_at, updated_at)
-				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+				`INSERT INTO observations (id, title, type, content, session_id, tool_name,
+				 topic_key, project, scope, normalized_hash, revision_count, duplicate_count,
+				 last_seen_at, review_after, pinned, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?)
 				 ON CONFLICT(id) DO NOTHING`,
-				obs.ID, obs.Title, obs.Type, obs.Content, obs.TopicKey,
-				obs.Project, obs.Scope,
+				obs.ID, obs.Title, obs.Type, obs.Content, obs.SessionID, obs.ToolName,
+				obs.TopicKey, obs.Project, obs.Scope, obs.NormalizedHash,
+				nil, nil, boolToInt(obs.Pinned), // last_seen_at, review_after = nil
 				obs.CreatedAt.Format(time.RFC3339), obs.UpdatedAt.Format(time.RFC3339))
 			if err == nil {
 				total++
@@ -599,7 +676,7 @@ func (s *Store) SyncImport(projectRoot string) (int, error) {
 	return total, nil
 }
 
-// SyncStatus returns the number of chunks and observations in the sync dir.
+// SyncStatus returns chunk/observation counts in the sync dir.
 func (s *Store) SyncStatus(projectRoot string) (*SyncStatus, error) {
 	dir := filepath.Join(projectRoot, ".bigmem")
 	entries, err := os.ReadDir(dir)

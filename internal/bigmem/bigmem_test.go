@@ -119,7 +119,9 @@ func TestUpdate(t *testing.T) {
 func TestStats(t *testing.T) {
 	s := openTestStore(t)
 	s.Save(&Observation{Title: "D1", Type: "decision"})
+	time.Sleep(time.Millisecond)
 	s.Save(&Observation{Title: "D2", Type: "decision"})
+	time.Sleep(time.Millisecond)
 	s.Save(&Observation{Title: "B1", Type: "bugfix"})
 
 	stats, err := s.Stats()
