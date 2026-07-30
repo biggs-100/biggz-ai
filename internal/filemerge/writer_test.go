@@ -88,6 +88,132 @@ func TestWriteFile_Permissions(t *testing.T) {
 	}
 }
 
+func TestWriteFileAtomic_ContentUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.txt")
+	content := []byte("hello")
+
+	// Create initial file
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatalf("setup: WriteFile() returned error: %v", err)
+	}
+
+	// Call WriteFileAtomic with same content
+	result, err := WriteFileAtomic(path, content, 0644)
+	if err != nil {
+		t.Fatalf("WriteFileAtomic() returned error: %v", err)
+	}
+
+	if result.Changed {
+		t.Error("WriteFileAtomic() Changed = true, want false (content unchanged)")
+	}
+	if result.Created {
+		t.Error("WriteFileAtomic() Created = true, want false (file already exists)")
+	}
+
+	// File content must remain unchanged
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() returned error: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("file content = %q, want %q", string(got), string(content))
+	}
+}
+
+func TestWriteFileAtomic_NewFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "new.txt")
+	content := []byte("new content")
+
+	result, err := WriteFileAtomic(path, content, 0644)
+	if err != nil {
+		t.Fatalf("WriteFileAtomic() returned error: %v", err)
+	}
+
+	if !result.Created {
+		t.Error("WriteFileAtomic() Created = false, want true (new file created)")
+	}
+	if result.Changed {
+		t.Error("WriteFileAtomic() Changed = true, want false (new file, not a change)")
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() returned error: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("file content = %q, want %q", string(got), string(content))
+	}
+}
+
+func TestWriteFileAtomic_ContentDiffers(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "update.txt")
+
+	// Create initial file
+	if err := os.WriteFile(path, []byte("old content"), 0644); err != nil {
+		t.Fatalf("setup: WriteFile() returned error: %v", err)
+	}
+
+	newContent := []byte("new content")
+	result, err := WriteFileAtomic(path, newContent, 0644)
+	if err != nil {
+		t.Fatalf("WriteFileAtomic() returned error: %v", err)
+	}
+
+	if !result.Changed {
+		t.Error("WriteFileAtomic() Changed = false, want true (content differs)")
+	}
+	if result.Created {
+		t.Error("WriteFileAtomic() Created = true, want false (file already existed)")
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() returned error: %v", err)
+	}
+	if string(got) != string(newContent) {
+		t.Errorf("file content = %q, want %q", string(got), string(newContent))
+	}
+}
+
+func TestWriteFileAtomic_NonExistentParentDir(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "nonexistent", "test.txt")
+
+	_, err := WriteFileAtomic(path, []byte("content"), 0644)
+	if err == nil {
+		t.Fatal("WriteFileAtomic() expected error for non-existent parent directory, got nil")
+	}
+}
+
+func TestWriteFileAtomic_OriginalPreservedOnError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "safe.txt")
+	original := []byte("original content")
+
+	// Write initial content
+	if err := os.WriteFile(path, original, 0644); err != nil {
+		t.Fatalf("setup: WriteFile() returned error: %v", err)
+	}
+
+	// Attempt write to non-existent parent (will fail)
+	_, err := WriteFileAtomic(filepath.Join(dir, "missing", "test.txt"), []byte("new"), 0644)
+	if err == nil {
+		t.Fatal("expected error for non-existent parent directory")
+	}
+
+	// Original file must be unchanged
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() returned error: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Errorf("after failed write, content = %q, want %q", string(got), string(original))
+	}
+}
+
 func TestWriteFile_OverwritePreservesContentOnError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "safe.txt")

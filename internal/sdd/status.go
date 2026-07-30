@@ -12,6 +12,11 @@ import (
 	"strings"
 )
 
+// StatusOptions configures status output.
+type StatusOptions struct {
+	ReviewDisabled bool
+}
+
 // ChangeStatus represents the state of an SDD change.
 type ChangeStatus struct {
 	Name       string
@@ -115,8 +120,13 @@ func fileExists(path string) bool {
 }
 
 // FormatStatus returns a human-readable summary of SDD status.
-func FormatStatus(active, archived []ChangeStatus) string {
+// If opts.ReviewDisabled is true, the output includes an RDD status header.
+func FormatStatus(active, archived []ChangeStatus, opts StatusOptions) string {
 	var b strings.Builder
+
+	if opts.ReviewDisabled {
+		b.WriteString("RDD status: disabled (unmanaged)\n\n")
+	}
 
 	if len(active) == 0 {
 		b.WriteString("No active changes.\n")

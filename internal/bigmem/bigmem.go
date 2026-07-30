@@ -56,7 +56,7 @@ func Open(rootDir string) (*Store, error) {
 	// WAL mode for better concurrency
 	db.Exec("PRAGMA journal_mode=WAL")
 
-	// Create tables
+	// Create tables + FTS5 full-text search
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS observations (
 			id TEXT PRIMARY KEY,
@@ -73,6 +73,58 @@ func Open(rootDir string) (*Store, error) {
 		CREATE INDEX IF NOT EXISTS idx_type ON observations(type);
 		CREATE INDEX IF NOT EXISTS idx_project ON observations(project);
 		CREATE INDEX IF NOT EXISTS idx_updated ON observations(updated_at);
+		CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
+			title, content, topic_key, content='observations', content_rowid='rowid'
+		);
+	`)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create tables: %w", err)
+	}
+
+	// Create memory_relations table for conflict surfacing
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS memory_relations (
+			id TEXT PRIMARY KEY,
+			source_id TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			relation TEXT NOT NULL DEFAULT 'pending',
+			reason TEXT DEFAULT '',
+			evidence TEXT DEFAULT '',
+			confidence REAL DEFAULT 0.0,
+			judgment_status TEXT NOT NULL DEFAULT 'pending',
+			marked_by TEXT DEFAULT '',
+			session_id TEXT DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			FOREIGN KEY (source_id) REFERENCES observations(id),
+			FOREIGN KEY (target_id) REFERENCES observations(id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_rel_source ON memory_relations(source_id, judgment_status);
+		CREATE INDEX IF NOT EXISTS idx_rel_target ON memory_relations(target_id, judgment_status);
+		CREATE INDEX IF NOT EXISTS idx_rel_status ON memory_relations(judgment_status);
+	`)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create memory_relations: %w", err)
+	}
+
+	// Create sync triggers for FTS5
+	db.Exec(`
+		CREATE TRIGGER IF NOT EXISTS observations_ai AFTER INSERT ON observations BEGIN
+			INSERT INTO observations_fts(rowid, title, content, topic_key)
+			VALUES (new.rowid, new.title, new.content, new.topic_key);
+		END;
+		CREATE TRIGGER IF NOT EXISTS observations_ad AFTER DELETE ON observations BEGIN
+			INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key)
+			VALUES ('delete', old.rowid, old.title, old.content, old.topic_key);
+		END;
+		CREATE TRIGGER IF NOT EXISTS observations_au AFTER UPDATE ON observations BEGIN
+			INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key)
+			VALUES ('delete', old.rowid, old.title, old.content, old.topic_key);
+			INSERT INTO observations_fts(rowid, title, content, topic_key)
+			VALUES (new.rowid, new.title, new.content, new.topic_key);
+		END;
 	`)
 	if err != nil {
 		db.Close()
@@ -146,7 +198,7 @@ type SearchOptions struct {
 	Limit   int
 }
 
-// Search finds observations matching the query.
+// Search finds observations using FTS5 full-text search.
 func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -155,20 +207,25 @@ func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error)
 	var args []any
 
 	if query != "" {
-		q := "%" + strings.ToLower(query) + "%"
-		conditions = append(conditions, "(LOWER(title) LIKE ? OR LOWER(content) LIKE ? OR LOWER(topic_key) LIKE ?)")
-		args = append(args, q, q, q)
+		// FTS5 MATCH — wrap each term in quotes, join with OR
+		terms := strings.Fields(query)
+		for i, t := range terms {
+			terms[i] = "\"" + strings.ReplaceAll(t, "\"", "") + "\""
+		}
+		ftsQuery := strings.Join(terms, " OR ")
+		conditions = append(conditions, "o.rowid IN (SELECT rowid FROM observations_fts WHERE observations_fts MATCH ?)")
+		args = append(args, ftsQuery)
 	}
 	if opts.Project != "" {
-		conditions = append(conditions, "project = ?")
+		conditions = append(conditions, "o.project = ?")
 		args = append(args, opts.Project)
 	}
 	if opts.Type != "" {
-		conditions = append(conditions, "type = ?")
+		conditions = append(conditions, "o.type = ?")
 		args = append(args, opts.Type)
 	}
 	if opts.Scope != "" {
-		conditions = append(conditions, "scope = ?")
+		conditions = append(conditions, "o.scope = ?")
 		args = append(args, opts.Scope)
 	}
 
@@ -183,8 +240,8 @@ func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error)
 	}
 
 	rows, err := s.db.Query(fmt.Sprintf(
-		`SELECT id, title, type, content, topic_key, project, scope, created_at, updated_at
-		FROM observations %s ORDER BY updated_at DESC LIMIT ?`, where),
+		`SELECT o.id, o.title, o.type, o.content, o.topic_key, o.project, o.scope, o.created_at, o.updated_at
+		FROM observations o %s ORDER BY o.updated_at DESC LIMIT ?`, where),
 		append(args, limit)...)
 	if err != nil {
 		return nil, err
@@ -236,6 +293,120 @@ func (s *Store) Update(id string, updates map[string]any) (*Observation, error) 
 		obs.Scope = v
 	}
 	return obs, s.Save(obs)
+}
+
+// ---------------------------------------------------------------------------
+// Conflict Surfacing (memory_relations + candidates)
+// ---------------------------------------------------------------------------
+
+// Candidate represents a potentially conflicting observation.
+type Candidate struct {
+	ID          string  `json:"id"`
+	Title       string  `json:"title"`
+	Type        string  `json:"type"`
+	Score       float64 `json:"score"`
+	JudgmentID  string  `json:"judgment_id"`
+	TopicKey    string  `json:"topic_key,omitempty"`
+}
+
+// FindCandidates searches for similar observations and creates pending
+// memory_relations entries. Returns candidates for the caller to judge.
+func (s *Store) FindCandidates(savedID, title, project, scope string) ([]Candidate, error) {
+	if title == "" {
+		return nil, nil
+	}
+
+	// Build OR-based FTS5 query from title words
+	terms := strings.Fields(title)
+	if len(terms) == 0 {
+		return nil, nil
+	}
+	for i, t := range terms {
+		terms[i] = "\"" + strings.ReplaceAll(t, "\"", "") + "\""
+	}
+	ftsQuery := strings.Join(terms, " OR ")
+
+	var conditions []string
+	var args []any
+	conditions = append(conditions, "o.rowid IN (SELECT rowid FROM observations_fts WHERE observations_fts MATCH ?)")
+	args = append(args, ftsQuery)
+	if project != "" {
+		conditions = append(conditions, "o.project = ?")
+		args = append(args, project)
+	}
+	if scope != "" {
+		conditions = append(conditions, "o.scope = ?")
+		args = append(args, scope)
+	}
+	// Exclude self
+	conditions = append(conditions, "o.id != ?")
+	args = append(args, savedID)
+
+	where := "WHERE " + strings.Join(conditions, " AND ")
+	limit := 5
+
+	rows, err := s.db.Query(fmt.Sprintf(
+		`SELECT o.id, o.title, o.type, o.topic_key
+		FROM observations o %s ORDER BY o.updated_at DESC LIMIT ?`, where),
+		append(args, limit)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var candidates []Candidate
+	for rows.Next() {
+		c := Candidate{}
+		if err := rows.Scan(&c.ID, &c.Title, &c.Type, &c.TopicKey); err != nil {
+			continue
+		}
+		// Create a pending relation
+		relID := fmt.Sprintf("rel-%d", time.Now().UnixNano())
+		now := time.Now().UTC().Format(time.RFC3339)
+		s.db.Exec(`INSERT INTO memory_relations (id, source_id, target_id, relation, judgment_status, session_id, created_at, updated_at)
+			VALUES (?, ?, ?, 'pending', 'pending', '', ?, ?)
+			ON CONFLICT(id) DO NOTHING`,
+			relID, savedID, c.ID, now, now)
+		c.JudgmentID = relID
+		candidates = append(candidates, c)
+	}
+	return candidates, nil
+}
+
+// JudgeRelation updates a pending memory_relation with a verdict.
+func (s *Store) JudgeRelation(judgmentID, relation, reason, evidence string, confidence float64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	validRelations := map[string]bool{
+		"related": true, "compatible": true, "scoped": true,
+		"conflicts_with": true, "supersedes": true, "not_conflict": true,
+	}
+	if !validRelations[relation] {
+		return fmt.Errorf("invalid relation: %s", relation)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := s.db.Exec(`UPDATE memory_relations SET
+		relation=?, judgment_status='judged', reason=?, evidence=?,
+		confidence=?, updated_at=?
+		WHERE id=? AND judgment_status='pending'`,
+		relation, reason, evidence, confidence, now, judgmentID)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("judgment %s not found or already judged", judgmentID)
+	}
+	return nil
+}
+
+// RelationCount returns the number of pending judgments.
+func (s *Store) RelationCount() int {
+	var n int
+	s.db.QueryRow("SELECT COUNT(*) FROM memory_relations WHERE judgment_status='pending'").Scan(&n)
+	return n
 }
 
 // Close shuts down the store.

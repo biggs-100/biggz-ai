@@ -18,7 +18,7 @@ reading any phase-specific SKILL.md.
 
 ## B. Artifact Retrieval
 
-1. `mem_search` returns 300-char previews. Always call `mem_get_observation(id)`
+1. `biggz_mem_search` returns 300-char previews. Always call `biggz_mem_get_observation(id)`
    for full, untruncated content.
 2. Run searches in parallel, then retrieve the matching observations in parallel.
 3. For file-based artifacts, read from `openspec/` paths directly.
@@ -29,7 +29,7 @@ reading any phase-specific SKILL.md.
 
 | Backend | Mechanism |
 |---------|-----------|
-| **Engram** | `mem_save(title, topic_key, type: "architecture", capture_prompt: false, content: ...)` |
+| **Engram** | `biggz_mem_save(title, topic_key, type: "architecture", capture_prompt: false, content: ...)` |
 | **OpenSpec** | Write to `openspec/changes/{change-name}/{phase}.md` during phase execution |
 | **Hybrid** | Do both — write the file for the orchestrator, save to Engram for cross-session memory |
 | **None** | Return result inline in the return envelope only |

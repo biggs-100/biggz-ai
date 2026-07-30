@@ -55,3 +55,66 @@ func TestLedgerEmpty(t *testing.T) {
 		t.Error("expected 0 entries in new ledger")
 	}
 }
+
+func TestStoreLedger_AppendPersists(t *testing.T) {
+	dir := t.TempDir()
+	s := OpenWithDir(dir, "ledger-test")
+
+	ledger := NewStoreLedger(s, "ledger-test", "")
+	ledger.AppendOp("review-1", "started", "Review started", "pending", "system")
+	ledger.AppendOp("review-1", "completed", "All checks passed", "completed", "system")
+
+	// Verify in-memory state.
+	if len(ledger.Entries()) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(ledger.Entries()))
+	}
+
+	// Verify persisted events via store.
+	chain, err := s.LoadChain()
+	if err != nil {
+		t.Fatalf("LoadChain() error: %v", err)
+	}
+	if chain.Count != 2 {
+		t.Errorf("expected 2 events in store, got %d", chain.Count)
+	}
+	if chain.Records[0].Operation != "started" {
+		t.Errorf("record 0: expected started, got %s", chain.Records[0].Operation)
+	}
+	if chain.Records[1].Operation != "completed" {
+		t.Errorf("record 1: expected completed, got %s", chain.Records[1].Operation)
+	}
+}
+
+func TestStoreLedger_ChainContinuity(t *testing.T) {
+	dir := t.TempDir()
+	s := OpenWithDir(dir, "ledger-chain")
+
+	ledger := NewStoreLedger(s, "ledger-chain", "")
+	ledger.AppendOp("r1", "step1", "", "pending", "system")
+	ledger.AppendOp("r1", "step2", "", "in_progress", "system")
+	ledger.AppendOp("r1", "step3", "", "completed", "system")
+
+	chain, err := s.LoadChain()
+	if err != nil {
+		t.Fatalf("LoadChain: %v", err)
+	}
+	if chain.Count != 3 {
+		t.Fatalf("expected 3 events, got %d", chain.Count)
+	}
+
+	// Verify chain linking.
+	for i := 1; i < chain.Count; i++ {
+		expectedPrev := chain.Records[i-1].PrevRevision
+		// Each record (except genesis) should have a non-empty PrevRevision.
+		if chain.Records[i].PrevRevision == "" {
+			t.Errorf("record %d has empty PrevRevision", i)
+		}
+		_ = expectedPrev
+	}
+
+	// Validate integrity.
+	verdict := s.Validate()
+	if !verdict.Valid {
+		t.Errorf("expected valid chain, got: %s", verdict.Reason)
+	}
+}

@@ -1,0 +1,41 @@
+version: 2
+project_name: biggz
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X github.com/biggz-ai/biggz/internal/doctor.BuildVersion={{ .Version }}
+    main: ./cmd/biggz/
+    binary: biggz
+
+archives:
+  - formats: [tar.gz, zip]
+    files:
+      - README.md
+      - LICENSE
+      - minisign.pub
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+signs:
+  - artifacts: checksum
+    args: ["-Sm", "${artifact}", "-x", "-s", "/tmp/minisign.key"]
+
+release:
+  github:
+    owner: biggz-ai
+    name: biggz

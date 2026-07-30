@@ -1,6 +1,6 @@
 # Engram Artifact Convention (reference documentation)
 
-NOTE: Critical engram calls (`mem_search`, `mem_save`, `mem_get_observation`) are inlined directly in each skill's SKILL.md. This document is supplementary reference — sub-agents do NOT need to read it to function.
+NOTE: Critical engram calls (`biggz_mem_search`, `biggz_mem_save`, `biggz_mem_get_observation`) are inlined directly in each skill's SKILL.md. This document is supplementary reference — sub-agents do NOT need to read it to function.
 
 ## Naming Rules
 
@@ -36,7 +36,7 @@ Set `capture_prompt: false` when the Engram tool schema supports it; if an older
 ### State Artifact
 
 ```
-mem_save(
+biggz_mem_save(
   title: "sdd/{change-name}/state",
   topic_key: "sdd/{change-name}/state",
   type: "architecture",
@@ -46,48 +46,48 @@ mem_save(
 )
 ```
 
-Recovery: `mem_search("sdd/{change-name}/state")` → `mem_get_observation(id)` → parse YAML → restore state.
+Recovery: `biggz_mem_search("sdd/{change-name}/state")` → `biggz_mem_get_observation(id)` → parse YAML → restore state.
 
 ## Recovery Protocol (2 steps)
 
 Memory lifecycle rule (when Engram exposes lifecycle metadata/tooling):
-- At session start or before architecture-sensitive work, call `mem_review` with action `list` for the current project when the tool is available.
-- If `mem_review` is unavailable, do not fail the task. Continue with normal `mem_context`/`mem_search`, and still apply lifecycle metadata from any returned observations when present.
+- At session start or before architecture-sensitive work, call `biggz_mem_review` with action `list` for the current project when the tool is available.
+- If `biggz_mem_review` is unavailable, do not fail the task. Continue with normal `biggz_mem_context`/`biggz_mem_search`, and still apply lifecycle metadata from any returned observations when present.
 - `active` memories may be used normally.
 - `needs_review` memories are stale context, not trusted facts.
 - Surface `needs_review` context and verify it against current evidence before relying on it.
-- Do NOT call `mem_review` with action `mark_reviewed` automatically. Only call `mark_reviewed` after explicit user confirmation or through a dedicated memory maintenance command.
+- Do NOT call `biggz_mem_review` with action `mark_reviewed` automatically. Only call `mark_reviewed` after explicit user confirmation or through a dedicated memory maintenance command.
 
 ```
-Step 1: mem_search(query: "sdd/{change-name}/{artifact-type}", project: "{project}") → truncated preview + ID
-Step 2: mem_get_observation(id: {observation-id}) → complete content
+Step 1: biggz_mem_search(query: "sdd/{change-name}/{artifact-type}", project: "{project}") → truncated preview + ID
+Step 2: biggz_mem_get_observation(id: {observation-id}) → complete content
 ```
 
 When retrieving multiple artifacts, group all searches first, then all retrievals:
 
 ```
 STEP A — SEARCH (get IDs only):
-  mem_search(query: "sdd/{change-name}/proposal", ...) → save ID
-  mem_search(query: "sdd/{change-name}/spec", ...) → save ID
-  mem_search(query: "sdd/{change-name}/design", ...) → save ID
+  biggz_mem_search(query: "sdd/{change-name}/proposal", ...) → save ID
+  biggz_mem_search(query: "sdd/{change-name}/spec", ...) → save ID
+  biggz_mem_search(query: "sdd/{change-name}/design", ...) → save ID
 
 STEP B — RETRIEVE FULL CONTENT (mandatory):
-  mem_get_observation(id: {proposal_id})
-  mem_get_observation(id: {spec_id})
-  mem_get_observation(id: {design_id})
+  biggz_mem_get_observation(id: {proposal_id})
+  biggz_mem_get_observation(id: {spec_id})
+  biggz_mem_get_observation(id: {design_id})
 ```
 
 Loading project context:
 ```
-mem_search(query: "sdd-init/{project}", project: "{project}") → get ID
-mem_get_observation(id) → full project context
+biggz_mem_search(query: "sdd-init/{project}", project: "{project}") → get ID
+biggz_mem_get_observation(id) → full project context
 ```
 
 ## Writing Artifacts
 
 Standard write:
 ```
-mem_save(
+biggz_mem_save(
   title: "sdd/{change-name}/{artifact-type}",
   topic_key: "sdd/{change-name}/{artifact-type}",
   type: "architecture",
@@ -99,7 +99,7 @@ mem_save(
 
 Concrete example — saving a proposal for `add-dark-mode`:
 ```
-mem_save(
+biggz_mem_save(
   title: "sdd/add-dark-mode/proposal",
   topic_key: "sdd/add-dark-mode/proposal",
   type: "architecture",
@@ -113,15 +113,15 @@ mem_save(
 
 Update existing artifact (when you have the observation ID):
 ```
-mem_update(id: {observation-id}, content: "{updated full content}")
+biggz_mem_update(id: {observation-id}, content: "{updated full content}")
 ```
 
-Use `mem_update` when you have the exact ID. Use `mem_save` with same `topic_key` for upserts.
+Use `biggz_mem_update` when you have the exact ID. Use `biggz_mem_save` with same `topic_key` for upserts.
 
 ### Browsing All Artifacts for a Change
 
 ```
-mem_search(query: "sdd/{change-name}/", project: "{project}")
+biggz_mem_search(query: "sdd/{change-name}/", project: "{project}")
 → Returns all artifacts for that change
 ```
 
@@ -129,7 +129,7 @@ mem_search(query: "sdd/{change-name}/", project: "{project}")
 
 Engram auto-detects the project name from the git remote at MCP startup. The `--project` flag and `ENGRAM_PROJECT` env var can override detection. All project names are normalized to lowercase and trimmed.
 
-If the agent saves a memory under a project name that doesn't match existing observations, engram warns about potential name drift. Use `mem_merge_projects` (MCP tool) or `engram projects consolidate` (CLI) to merge variants.
+If the agent saves a memory under a project name that doesn't match existing observations, engram warns about potential name drift. Use `biggz_mem_merge_projects` (MCP tool) or `engram projects consolidate` (CLI) to merge variants.
 
 ## Upsert Behavior
 
@@ -140,5 +140,5 @@ Same `topic_key` + `project` + `scope` → UPDATE (overwrite), not INSERT. Previ
 - Deterministic titles → recovery works by exact match
 - `topic_key` → enables upserts without duplicates
 - `sdd/` prefix → namespaces all SDD artifacts
-- Two-step recovery → search previews are always truncated; `mem_get_observation` is the only way to get full content
+- Two-step recovery → search previews are always truncated; `biggz_mem_get_observation` is the only way to get full content
 - Lineage → archive-report includes all observation IDs for complete traceability

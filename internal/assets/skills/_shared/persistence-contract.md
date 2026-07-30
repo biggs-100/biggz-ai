@@ -45,7 +45,7 @@ Persists every artifact to BOTH Engram and OpenSpec simultaneously:
 - Engram: cross-session recovery, compaction survival, deterministic search
 - OpenSpec: human-readable files, version-controllable artifacts
 
-Write to Engram (per `engram-convention.md`) AND to filesystem (per `openspec-convention.md`) for every artifact.
+Write to Engram (per `bigmem-convention.md`) AND to filesystem (per `openspec-convention.md`) for every artifact.
 
 Read priority: Engram first; fall back to filesystem if Engram returns no results.
 Write behavior: both writes MUST succeed for the operation to be complete.
@@ -57,9 +57,9 @@ The orchestrator persists DAG state after each phase transition to enable SDD re
 
 | Mode | Persist State | Recover State |
 |------|--------------|---------------|
-| `engram` | `mem_save(topic_key: "sdd/{change-name}/state", capture_prompt: false*)` | `mem_search("sdd/*/state")` → `mem_get_observation(id)` |
+| `engram` | `biggz_mem_save(topic_key: "sdd/{change-name}/state", capture_prompt: false*)` | `biggz_mem_search("sdd/*/state")` → `biggz_mem_get_observation(id)` |
 | `openspec` | Write `openspec/changes/{change-name}/state.yaml` | Read `openspec/changes/{change-name}/state.yaml` |
-| `hybrid` | Both: `mem_save` AND write `state.yaml` | Engram first; filesystem fallback |
+| `hybrid` | Both: `biggz_mem_save` AND write `state.yaml` | Engram first; filesystem fallback |
 | `none` | Not possible — warn user | Not possible |
 
 *For state automated artifacts, set `capture_prompt: false` when the Engram tool schema supports it; if an older schema rejects or does not expose the field, omit it rather than failing.
@@ -84,7 +84,7 @@ If admission fails or the validator is unavailable, STOP with zero persistence c
 Sub-agents launch with a fresh context and NO access to the orchestrator's instructions or memory protocol.
 
 Who reads, who writes:
-- Non-SDD (general task): orchestrator searches engram, passes summary in prompt; sub-agent saves discoveries via `mem_save`
+- Non-SDD (general task): orchestrator searches engram, passes summary in prompt; sub-agent saves discoveries via `biggz_mem_save`
 - SDD (phase with dependencies): sub-agent reads artifacts directly from backend; sub-agent saves its artifact
 - SDD (phase without dependencies, e.g. explore): nobody reads; sub-agent saves its artifact
 
@@ -99,7 +99,7 @@ Non-SDD:
 ```
 PERSISTENCE (MANDATORY):
 If you make important discoveries, decisions, or fix bugs, you MUST save them to engram before returning:
-  mem_save(title: "{short description}", type: "{decision|bugfix|discovery|pattern}",
+  biggz_mem_save(title: "{short description}", type: "{decision|bugfix|discovery|pattern}",
            project: "{project}", content: "{What, Why, Where, Learned}")
 Do NOT return without saving what you learned. This is how the team builds persistent knowledge across sessions.
 ```
@@ -108,12 +108,12 @@ SDD (with dependencies):
 ```
 Artifact store mode: {engram|openspec|hybrid|none}
 Read these artifacts before starting (search returns truncated previews):
-  mem_search(query: "sdd/{change-name}/{type}", project: "{project}") → get ID
-  mem_get_observation(id: {id}) → full content (REQUIRED)
+  biggz_mem_search(query: "sdd/{change-name}/{type}", project: "{project}") → get ID
+  biggz_mem_get_observation(id: {id}) → full content (REQUIRED)
 
 PERSISTENCE (MANDATORY — do NOT skip):
 After completing your work, you MUST call:
-  mem_save(
+  biggz_mem_save(
     title: "sdd/{change-name}/{artifact-type}",
     topic_key: "sdd/{change-name}/{artifact-type}",
     type: "architecture",
@@ -121,7 +121,7 @@ After completing your work, you MUST call:
     capture_prompt: false,
     content: "{your full artifact markdown}"
   )
-If you return without calling mem_save, the next phase CANNOT find your artifact and the pipeline BREAKS.
+If you return without calling biggz_mem_save, the next phase CANNOT find your artifact and the pipeline BREAKS.
 ```
 
 SDD (no dependencies):
@@ -130,7 +130,7 @@ Artifact store mode: {engram|openspec|hybrid|none}
 
 PERSISTENCE (MANDATORY — do NOT skip):
 After completing your work, you MUST call:
-  mem_save(
+  biggz_mem_save(
     title: "sdd/{change-name}/{artifact-type}",
     topic_key: "sdd/{change-name}/{artifact-type}",
     type: "architecture",
@@ -138,18 +138,18 @@ After completing your work, you MUST call:
     capture_prompt: false,
     content: "{your full artifact markdown}"
   )
-If you return without calling mem_save, the next phase CANNOT find your artifact and the pipeline BREAKS.
+If you return without calling biggz_mem_save, the next phase CANNOT find your artifact and the pipeline BREAKS.
 ```
 
 For SDD artifacts, `capture_prompt: false` is explicit and mandatory when the Engram tool schema supports it. Engram v1.15.3 defaults `capture_prompt` to true for normal human/proactive saves, but automated pipeline artifacts must not capture the user's prompt. Do not infer this from `type` because SDD artifacts and real human architecture decisions both use `architecture`. If an older schema rejects or does not expose `capture_prompt`, omit it rather than failing.
 
 ## Sub-Agent Response Ordering
 
-When a sub-agent persists artifacts (via `mem_save` or file writes), the persistence call MUST happen BEFORE the final text response. The sub-agent's absolute last output must be text, never a tool call.
+When a sub-agent persists artifacts (via `biggz_mem_save` or file writes), the persistence call MUST happen BEFORE the final text response. The sub-agent's absolute last output must be text, never a tool call.
 
 **Why**: The Task tool returns the sub-agent's final output to the parent. If the sub-agent ends with a tool call, the parent receives only the tool result (e.g., `"Observation saved"`) — the sub-agent's text analysis is lost. Always: do your work → save → respond with text envelope.
 
-Sub-agents must NOT call `mem_session_summary` — that's reserved for top-level agents only.
+Sub-agents must NOT call `biggz_mem_session_summary` — that's reserved for top-level agents only.
 
 ## Skill Registry
 

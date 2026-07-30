@@ -86,6 +86,114 @@ func TestMain_ValidJSONInput(t *testing.T) {
 	}
 }
 
+// TestSync_DryRun verifies that "biggz sync --dry-run" reports expected component
+// names without writing any files and exits with code 0.
+func TestSync_DryRun(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cmd := exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz", "sync", "--dry-run", "--home", tmpDir)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		t.Fatalf("sync --dry-run exited with error: %v (stderr: %s)", err, stderr.String())
+	}
+
+	output := stdout.String()
+	// Should mention expected component names
+	if !strings.Contains(output, "skills") {
+		t.Error("expected output to mention 'skills'")
+	}
+	if !strings.Contains(output, "config") {
+		t.Error("expected output to mention 'config'")
+	}
+	if !strings.Contains(output, "prompts") {
+		t.Error("expected output to mention 'prompts'")
+	}
+	if !strings.Contains(output, "commands") {
+		t.Error("expected output to mention 'commands'")
+	}
+	if !strings.Contains(output, "dry-run") && !strings.Contains(output, "Dry-run") {
+		t.Error("expected output to indicate dry-run mode")
+	}
+
+	// Verify no files were actually written to the temp dir
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("ReadDir: %v", err)
+	}
+	if len(entries) > 0 {
+		t.Errorf("expected no files written in dry-run mode, but found %d entries", len(entries))
+	}
+}
+
+// TestSync_SelectiveFlags verifies that "biggz sync --dry-run --skills --config"
+// reports only the selected categories.
+func TestSync_SelectiveFlags(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cmd := exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz", "sync", "--dry-run", "--skills", "--config", "--home", tmpDir)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		t.Fatalf("sync --dry-run --skills --config exited with error: %v (stderr: %s)", err, stderr.String())
+	}
+
+	output := stdout.String()
+	if !strings.Contains(output, "skills") {
+		t.Error("expected output to mention 'skills'")
+	}
+	if !strings.Contains(output, "config") {
+		t.Error("expected output to mention 'config'")
+	}
+
+	// Should NOT mention prompts or commands
+	if strings.Contains(output, "prompts") && strings.Contains(output, "would") {
+		t.Error("output should not mention prompts (not selected)")
+	}
+	if strings.Contains(output, "commands") && strings.Contains(output, "would") {
+		t.Error("output should not mention commands (not selected)")
+	}
+}
+
+// TestSync_Help verifies that "biggz sync --help" prints usage and exits with 0.
+func TestSync_Help(t *testing.T) {
+	cmd := exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz", "sync", "--help")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		t.Fatalf("sync --help exited with error: %v", err)
+	}
+
+	if !strings.Contains(stderr.String(), "Usage: biggz sync") {
+		t.Errorf("expected help output to contain 'Usage: biggz sync', got: %s", stderr.String())
+	}
+}
+
+// TestSync_UnknownFlag verifies that "biggz sync --unknown" exits with non-zero
+// and prints an error to stderr.
+func TestSync_UnknownFlag(t *testing.T) {
+	cmd := exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz", "sync", "--unknown")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err == nil {
+		t.Fatal("expected non-zero exit code for unknown flag, got exit 0")
+	}
+
+	if !strings.Contains(stderr.String(), "unknown flag") {
+		t.Errorf("expected error message containing 'unknown flag', got: %s", stderr.String())
+	}
+}
+
 // runGit is a helper that runs a git command in the given directory.
 func runGit(t *testing.T, dir string, args ...string) {
 	t.Helper()

@@ -133,29 +133,104 @@ func SuggestTopicKey(title, content, obsType string) string {
 
 // TimelineOptions controls timeline queries.
 type TimelineOptions struct {
-	Limit int
+	Limit   int
+	FocusID string // center observation ID for before/after view
+	Before  int    // max entries before focus
+	After   int    // max entries after focus
 }
 
-// TimelineEntry is a chronological entry.
+// TimelineEntry is a chronological entry with display hints.
 type TimelineEntry struct {
 	ID        string    `json:"id"`
 	Title     string    `json:"title"`
 	Type      string    `json:"type"`
 	CreatedAt time.Time `json:"created_at"`
+	IsFocus   bool      `json:"is_focus,omitempty"`
+	IsBefore  bool      `json:"is_before,omitempty"`
 }
 
 // Timeline returns observations in chronological order.
 func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
+	var rows *sql.Rows
+	var err error
+	var result []TimelineEntry
+
+	if opts.FocusID != "" {
+		// Get created_at of focus observation
+		var focusTime string
+		err := s.db.QueryRow("SELECT created_at FROM observations WHERE id = ?", opts.FocusID).Scan(&focusTime)
+		if err != nil {
+			return nil, fmt.Errorf("focus not found: %w", err)
+		}
+
+		// Query: observations before focus (same project, older)
+		beforeLimit := 5
+		if opts.Before > 0 {
+			beforeLimit = opts.Before
+		}
+		beforeRows, err := s.db.Query(
+			`SELECT id, title, type, created_at FROM observations
+			 WHERE created_at < ? AND id != ?
+			 ORDER BY created_at DESC LIMIT ?`, focusTime, opts.FocusID, beforeLimit)
+		if err == nil {
+			defer beforeRows.Close()
+			for beforeRows.Next() {
+				var e TimelineEntry
+				var ca string
+				if err := beforeRows.Scan(&e.ID, &e.Title, &e.Type, &ca); err != nil {
+					continue
+				}
+				e.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+				e.IsBefore = true
+				result = append(result, e)
+			}
+		}
+
+		// Add focus observation
+		var focusEntry TimelineEntry
+		var ca string
+		if err := s.db.QueryRow("SELECT id, title, type, created_at FROM observations WHERE id = ?", opts.FocusID).
+			Scan(&focusEntry.ID, &focusEntry.Title, &focusEntry.Type, &ca); err == nil {
+			focusEntry.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+			focusEntry.IsFocus = true
+			result = append(result, focusEntry)
+		}
+
+		// Query: observations after focus
+		afterLimit := 5
+		if opts.After > 0 {
+			afterLimit = opts.After
+		}
+		afterRows, err := s.db.Query(
+			`SELECT id, title, type, created_at FROM observations
+			 WHERE created_at > ? AND id != ?
+			 ORDER BY created_at ASC LIMIT ?`, focusTime, opts.FocusID, afterLimit)
+		if err == nil {
+			defer afterRows.Close()
+			for afterRows.Next() {
+				var e TimelineEntry
+				var ca string
+				if err := afterRows.Scan(&e.ID, &e.Title, &e.Type, &ca); err != nil {
+					continue
+				}
+				e.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+				result = append(result, e)
+			}
+		}
+
+		return result, nil
+	}
+
+	// No focus: return most recent
 	limit := 20
 	if opts.Limit > 0 {
 		limit = opts.Limit
 	}
-	rows, err := s.db.Query("SELECT id, title, type, created_at FROM observations ORDER BY created_at ASC LIMIT ?", limit)
+	rows, err = s.db.Query("SELECT id, title, type, created_at FROM observations ORDER BY created_at DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var result []TimelineEntry
 	for rows.Next() {
 		var e TimelineEntry
 		var ca string
@@ -210,12 +285,36 @@ type DoctorResult struct {
 	Observations int    `json:"observations"`
 	CorruptFiles int    `json:"corrupt_files"`
 	StoragePath  string `json:"storage_path"`
+	Corrupt      bool   `json:"corrupt"`
 }
 
-// Doctor runs diagnostics on the store.
+// Doctor runs diagnostics on the store, including PRAGMA integrity_check.
 func (s *Store) Doctor() (*DoctorResult, error) {
 	r := &DoctorResult{StoragePath: s.rootDir, StoreExists: true}
 	s.db.QueryRow("SELECT COUNT(*) FROM observations").Scan(&r.Observations)
+
+	// Run PRAGMA integrity_check to detect database corruption.
+	rows, err := s.db.Query("PRAGMA integrity_check")
+	if err != nil {
+		// If we can't even run the check, treat it as corrupt.
+		r.Corrupt = true
+		return r, nil
+	}
+	defer rows.Close()
+
+	var messages []string
+	for rows.Next() {
+		var msg string
+		if err := rows.Scan(&msg); err != nil {
+			continue
+		}
+		if msg != "ok" {
+			messages = append(messages, msg)
+		}
+	}
+
+	r.Corrupt = len(messages) > 0
+
 	return r, nil
 }
 

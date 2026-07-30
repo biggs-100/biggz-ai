@@ -77,7 +77,7 @@ func TestFormatStatus(t *testing.T) {
 		{Name: "2026-07-27-old-change", IsArchived: true, HasProposal: true, HasVerify: true, TasksTotal: 5, TasksDone: 5},
 	}
 
-	output := FormatStatus(active, archived)
+	output := FormatStatus(active, archived, StatusOptions{})
 	if !strings.Contains(output, "my-change") {
 		t.Error("expected output to contain 'my-change'")
 	}

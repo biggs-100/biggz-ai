@@ -1,14 +1,44 @@
 // Package model defines the core data types for biggz-ai reviews.
 //
 // It contains the ReviewState structure with its Merkle-rooted evidence
-// chain, the 5-state FSM for review lifecycle, and the hash functions
-// that guarantee evidence-chain integrity.
+// chain, the 13-state FSM with role-based guard table for review lifecycle,
+// and the hash functions that guarantee evidence-chain integrity.
 package model
 
 import (
 	"time"
 
 	"github.com/google/uuid"
+)
+
+// LineageID is a unique identifier for a review lineage (UUIDv7).
+type LineageID string
+
+// Role represents the actor's role in the review lifecycle.
+// These determine which transitions a user can perform in the FSM guard table.
+type Role string
+
+const (
+	RoleAuthor   Role = "Author"
+	RoleReviewer Role = "Reviewer"
+	RoleLead     Role = "Lead"
+	RoleAdmin    Role = "Admin"
+)
+
+// BudgetCounters tracks resource usage for correction budget enforcement
+// during a review lineage's lifecycle.
+type BudgetCounters struct {
+	FixRounds         int `json:"fix_rounds"`
+	ScopedValidations int `json:"scoped_validations"`
+}
+
+const (
+	// MaxFixRounds is the maximum number of correction cycles allowed
+	// per lineage. Defined by the review-authority spec scenario.
+	MaxFixRounds = 3
+	// MaxScopedValidations is the maximum number of scoped re-reviews
+	// allowed per lineage. Defined by the core-review spec scenario.
+	MaxScopedValidations = 5
 )
 
 // ReviewStatus represents the current lifecycle state of a review.
@@ -31,18 +61,22 @@ type ReviewSubject struct {
 // ReviewState represents the full state of a review at a point in time.
 // It carries a UUIDv7 identifier, schema version for forward compatibility,
 // the current status, the review subject, an append-only evidence chain
-// with Merkle integrity, corrections applied during the review, and
-// timestamps tracking the review lifecycle.
+// with Merkle integrity, corrections applied during the review, the
+// actor's role, lineage reference, budget counters, and timestamps
+// tracking the review lifecycle.
 type ReviewState struct {
-	ID            string        `json:"id"`
-	SchemaVersion string        `json:"schema_version"`
-	Status        ReviewStatus  `json:"status"`
-	Subject       ReviewSubject `json:"subject"`
-	Evidence      []Evidence    `json:"evidence"`
-	Corrections   []Correction  `json:"corrections"`
-	MerkleRoot    string        `json:"merkle_root"`
-	CreatedAt     time.Time     `json:"created_at"`
-	UpdatedAt     time.Time     `json:"updated_at"`
+	ID             string         `json:"id"`
+	SchemaVersion  string         `json:"schema_version"`
+	Status         ReviewStatus   `json:"status"`
+	Subject        ReviewSubject  `json:"subject"`
+	Evidence       []Evidence     `json:"evidence"`
+	Corrections    []Correction   `json:"corrections"`
+	MerkleRoot     string         `json:"merkle_root"`
+	Role           Role           `json:"role"`
+	LineageID      string         `json:"lineage_id"`
+	BudgetCounters BudgetCounters `json:"budget_counters"`
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
 }
 
 // NewReviewState creates a ReviewState with a UUIDv7 ID, SchemaVersion "1.0",
@@ -50,15 +84,17 @@ type ReviewState struct {
 func NewReviewState(subject ReviewSubject) *ReviewState {
 	now := time.Now()
 	return &ReviewState{
-		ID:            uuid.Must(uuid.NewV7()).String(),
-		SchemaVersion: CurrentSchemaVersion,
-		Status:        StatusPending,
-		Subject:       subject,
-		Evidence:      []Evidence{},
-		Corrections:   []Correction{},
-		MerkleRoot:    "",
-		CreatedAt:     now,
-		UpdatedAt:     now,
+		ID:             uuid.Must(uuid.NewV7()).String(),
+		SchemaVersion:  CurrentSchemaVersion,
+		Status:         StatusPending,
+		Subject:        subject,
+		Evidence:       []Evidence{},
+		Corrections:    []Correction{},
+		MerkleRoot:     "",
+		Role:           RoleAuthor,
+		BudgetCounters: BudgetCounters{},
+		CreatedAt:      now,
+		UpdatedAt:      now,
 	}
 }
 

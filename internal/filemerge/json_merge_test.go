@@ -180,6 +180,155 @@ func TestMergeJSONC_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestMergeJSONC_DeepMergeNested(t *testing.T) {
+	existing := []byte(`{"settings": {"theme": "dark", "font": 12}}`)
+	overlay := []byte(`{"settings": {"theme": "light"}}`)
+
+	result, err := MergeJSONC(existing, overlay)
+	if err != nil {
+		t.Fatalf("MergeJSONC() returned error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v\n%s", err, string(result))
+	}
+
+	settings, ok := parsed["settings"].(map[string]any)
+	if !ok {
+		t.Fatal("settings must be a map")
+	}
+	if settings["theme"] != "light" {
+		t.Errorf("settings.theme = %v, want %v", settings["theme"], "light")
+	}
+	if settings["font"] != float64(12) {
+		t.Errorf("settings.font = %v, want %v", settings["font"], float64(12))
+	}
+}
+
+func TestMergeJSONC_DeepReplaceSentinel(t *testing.T) {
+	existing := []byte(`{"nested": {"a": 1, "b": 2}}`)
+	overlay := []byte(`{"nested": {"__replace__": true, "c": 3}}`)
+
+	result, err := MergeJSONC(existing, overlay)
+	if err != nil {
+		t.Fatalf("MergeJSONC() returned error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v\n%s", err, string(result))
+	}
+
+	nested, ok := parsed["nested"].(map[string]any)
+	if !ok {
+		t.Fatal("nested must be a map")
+	}
+	if nested["c"] != float64(3) {
+		t.Errorf("nested.c = %v, want %v", nested["c"], float64(3))
+	}
+	if _, exists := nested["a"]; exists {
+		t.Error("nested.a should not exist after __replace__")
+	}
+	if _, exists := nested["b"]; exists {
+		t.Error("nested.b should not exist after __replace__")
+	}
+	if _, exists := nested["__replace__"]; exists {
+		t.Error("__replace__ key should be stripped from output")
+	}
+}
+
+func TestMergeJSONC_DeepArrayReplacement(t *testing.T) {
+	existing := []byte(`{"items": [1, 2, 3], "tags": ["old"]}`)
+	overlay := []byte(`{"items": [4, 5]}`)
+
+	result, err := MergeJSONC(existing, overlay)
+	if err != nil {
+		t.Fatalf("MergeJSONC() returned error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v\n%s", err, string(result))
+	}
+
+	items, ok := parsed["items"].([]any)
+	if !ok {
+		t.Fatal("items must be an array")
+	}
+	if len(items) != 2 {
+		t.Errorf("len(items) = %d, want 2", len(items))
+	}
+	if items[0] != float64(4) || items[1] != float64(5) {
+		t.Errorf("items = %v, want [4, 5]", items)
+	}
+
+	// tags should be preserved from existing
+	tags, ok := parsed["tags"].([]any)
+	if !ok {
+		t.Fatal("tags must be an array")
+	}
+	if len(tags) != 1 || tags[0] != "old" {
+		t.Errorf("tags = %v, want [\"old\"]", tags)
+	}
+}
+
+func TestMergeJSONC_DeepMultiLevel(t *testing.T) {
+	existing := []byte(`{"a": {"b": {"c": 1, "d": 2}, "e": 3}, "f": 4}`)
+	overlay := []byte(`{"a": {"b": {"c": 10}, "g": 5}}`)
+
+	result, err := MergeJSONC(existing, overlay)
+	if err != nil {
+		t.Fatalf("MergeJSONC() returned error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v\n%s", err, string(result))
+	}
+
+	a, _ := parsed["a"].(map[string]any)
+	b, _ := a["b"].(map[string]any)
+
+	if b["c"] != float64(10) {
+		t.Errorf("a.b.c = %v, want 10", b["c"])
+	}
+	if b["d"] != float64(2) {
+		t.Errorf("a.b.d = %v, want 2 (preserved from existing)", b["d"])
+	}
+	if a["e"] != float64(3) {
+		t.Errorf("a.e = %v, want 3 (preserved from existing)", a["e"])
+	}
+	if a["g"] != float64(5) {
+		t.Errorf("a.g = %v, want 5 (added from overlay)", a["g"])
+	}
+	if parsed["f"] != float64(4) {
+		t.Errorf("f = %v, want 4 (preserved from existing)", parsed["f"])
+	}
+}
+
+func TestMergeJSONC_DeepFlatKeyReplace(t *testing.T) {
+	existing := []byte(`{"name": "original", "color": "red"}`)
+	overlay := []byte(`{"name": "replaced"}`)
+
+	result, err := MergeJSONC(existing, overlay)
+	if err != nil {
+		t.Fatalf("MergeJSONC() returned error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		t.Fatalf("result is not valid JSON: %v\n%s", err, string(result))
+	}
+
+	if parsed["name"] != "replaced" {
+		t.Errorf("name = %v, want %v", parsed["name"], "replaced")
+	}
+	if parsed["color"] != "red" {
+		t.Errorf("color = %v, want %v (preserved from existing)", parsed["color"], "red")
+	}
+}
+
 func TestMergeJSONC_JSONCWithComments(t *testing.T) {
 	existing := []byte(`{
 		// Agent configuration

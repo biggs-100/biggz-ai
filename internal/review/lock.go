@@ -3,6 +3,8 @@ package review
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 )
@@ -124,4 +126,82 @@ func WithWriteLock(ctx context.Context, lm *LockManager, reviewID string, fn fun
 	}
 	defer lm.Release(reviewID)
 	return fn()
+}
+
+// ---------------------------------------------------------------------------
+// File-based locking (per-lineage)
+// ---------------------------------------------------------------------------
+
+// FileLock provides cross-process exclusive locking via a lock file.
+// The lock file is stored at:
+//
+//	.git/biggz/review-transactions/<lineage>/.lock
+//
+// Acquire creates the .lock file atomically using O_EXCL | O_CREATE.
+// Release removes the .lock file.
+//
+// FileLock is NOT recursive. Calling Acquire twice without Release
+// will deadlock the second caller until the first caller's process
+// releases it or the file is stale.
+type FileLock struct {
+	dir string
+}
+
+// NewFileLock creates a FileLock for the given store directory.
+// The .lock file will be created at <dir>/.lock.
+func NewFileLock(dir string) *FileLock {
+	return &FileLock{dir: dir}
+}
+
+// LockFilePath returns the full path to the .lock file.
+func (fl *FileLock) LockFilePath() string {
+	return filepath.Join(fl.dir, ".lock")
+}
+
+// Acquire acquires the exclusive file lock. It creates the .lock file
+// atomically. If the file already exists, the lock is held by another
+// process and Acquire returns an error.
+//
+// The caller MUST call Release when done, even on error paths, to
+// prevent stale lock files in crash scenarios.
+func (fl *FileLock) Acquire() error {
+	// Ensure the directory exists.
+	if err := os.MkdirAll(fl.dir, 0755); err != nil {
+		return fmt.Errorf("file lock acquire: create dir: %w", err)
+	}
+
+	path := fl.LockFilePath()
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		if os.IsExist(err) {
+			return fmt.Errorf("file lock acquire: lock held at %s", path)
+		}
+		return fmt.Errorf("file lock acquire: %w", err)
+	}
+	f.Close()
+	return nil
+}
+
+// Release releases the file lock by removing the .lock file.
+func (fl *FileLock) Release() error {
+	path := fl.LockFilePath()
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			// Already released — idempotent.
+			return nil
+		}
+		return fmt.Errorf("file lock release: %w", err)
+	}
+	return nil
+}
+
+// WithFileLock executes f with an exclusive file lock held.
+// The lock is released when f returns.
+func WithFileLock(dir string, f func() error) error {
+	fl := NewFileLock(dir)
+	if err := fl.Acquire(); err != nil {
+		return err
+	}
+	defer fl.Release()
+	return f()
 }

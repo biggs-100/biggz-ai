@@ -43,13 +43,13 @@ func (r *Registry) RegisterLens(p plugin.LensPlugin) error {
 	return nil
 }
 
-// RegisterAgent adds an agent adapter to the registry. It returns an error
+// RegisterAdapter adds an agent adapter to the registry. It returns an error
 // if an agent with the same ID is already registered.
-func (r *Registry) RegisterAgent(a plugin.AgentAdapter) error {
+func (r *Registry) RegisterAdapter(a plugin.AgentAdapter) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	id := a.ID()
+	id := string(a.ID())
 	if _, exists := r.agents[id]; exists {
 		return fmt.Errorf("agent %q is already registered", id)
 	}
@@ -76,10 +76,25 @@ func (r *Registry) LensIDs() []string {
 	return ids
 }
 
-// GetAgent returns the agent adapter with the given ID, or nil if
+// GetAdapter returns the agent adapter with the given ID, or nil if
 // no agent with that ID is registered.
-func (r *Registry) GetAgent(id string) plugin.AgentAdapter {
+func (r *Registry) GetAdapter(id string) plugin.AgentAdapter {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.agents[id]
+}
+
+// ListAll returns CatalogEntry values built from each registered adapter.
+func (r *Registry) ListAll() []plugin.CatalogEntry {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	entries := make([]plugin.CatalogEntry, 0, len(r.agents))
+	for _, a := range r.agents {
+		entries = append(entries, plugin.CatalogEntry{
+			ID:   string(a.ID()),
+			Name: a.Name(),
+			Type: "agent",
+		})
+	}
+	return entries
 }

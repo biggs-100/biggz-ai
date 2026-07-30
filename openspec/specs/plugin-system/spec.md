@@ -26,35 +26,67 @@ The system MUST define a LensPlugin interface with ID() returning string, Name()
 
 ### Requirement: AgentAdapter Interface
 
-The system MUST define an AgentAdapter interface with ID() returning string, Name() returning string, Detect(ctx) returning (binaryPath string, err), Capabilities() returning []Capability, and DeployConfig(ctx, cfg) returning error.
+The system MUST define an AgentAdapter interface with these methods: ID() model.AgentID, Name() string, Tier() SupportTier, Detect(ctx, homeDir) (bool, string, string, bool, error), InstallCommand(profile) ([][]string, error), Capabilities() []string, SupportsAutoInstall() bool, SupportsSkills() bool, SupportsSystemPrompt() bool, SupportsMCP() bool, SupportsOutputStyles() bool, SupportsSlashCommands() bool, SupportsSubAgents() bool, GlobalConfigDir(homeDir) string, SystemPromptDir(homeDir) string, SystemPromptFile(homeDir) string, SkillsDir(homeDir) string, CommandsDir(homeDir) string, SubAgentsDir(homeDir) string, EmbeddedSubAgentsDir(homeDir) string, OutputStyleDir(homeDir) string, SettingsPath(homeDir) string, MCPConfigPath(homeDir, serverName) string, SystemPromptStrategy() SystemPromptStrategy, MCPStrategy() model.MCPStrategy, DeployConfig(ctx, cfg) error.
+(Previously: 11 methods with ID() string, Detect(ctx) (binaryPath, err), MCPStrategy() string)
 
-#### Scenario: Happy path — agent detected
+#### Scenario: Happy path — agent detected with full metadata
 
-- GIVEN an AgentAdapter for an agent that is installed on the system
-- WHEN Detect is called
-- THEN it MUST return the binary path without error
+- GIVEN an AgentAdapter for an installed agent
+- WHEN Detect(ctx, homeDir) is called
+- THEN it MUST return (true, binaryPath, configPath, autoInstallCapable, nil)
+- AND ID() MUST return a valid model.AgentID
 
 #### Scenario: Agent not installed
 
-- GIVEN an AgentAdapter for an agent that is NOT installed
-- WHEN Detect is called
-- THEN it MUST return an error indicating the agent was not found
+- GIVEN an AgentAdapter for an agent NOT installed
+- WHEN Detect(ctx, homeDir) is called
+- THEN it MUST return (false, "", "", false, error)
+- AND the error MUST explain the agent was not found
+
+#### Scenario: Guard methods for optional features
+
+- GIVEN any AgentAdapter
+- WHEN SupportsSkills(), SupportsSystemPrompt(), SupportsMCP(), SupportsOutputStyles(), SupportsSlashCommands(), or SupportsSubAgents() is called
+- THEN each MUST return bool
+- AND the adapter MUST NOT panic regardless of support level
+
+#### Scenario: InstallCommand generates setup steps
+
+- GIVEN an AgentAdapter that supports auto-install
+- WHEN InstallCommand(profile) is called
+- THEN it MUST return a non-nil [][]string with executable commands
+- AND each command MUST be a valid shell invocation
+- AND an adapter without auto-install MAY return nil
+
+#### Scenario: Path methods resolve correctly
+
+- GIVEN an AgentAdapter and a valid homeDir
+- WHEN SystemPromptDir, SystemPromptFile, CommandsDir, SubAgentsDir, EmbeddedSubAgentsDir, OutputStyleDir, or MCPConfigPath is called
+- THEN each MUST return a non-empty path joined under homeDir
+- AND MUST NOT panic for valid inputs
+
+#### Scenario: SystemPromptStrategy returns valid strategy
+
+- GIVEN an AgentAdapter
+- WHEN SystemPromptStrategy() is called
+- THEN it MUST return one of the 6 known SystemPromptStrategy values
+- AND the value MUST match the adapter's prompt injection model
 
 ### Requirement: Build-Time Registry
 
-The system MUST provide a Registry with RegisterLens(plugin), RegisterAgent(adapter), GetLens(id), and GetAgent(id) methods. Registration MUST happen at build time via explicit wiring. The Registry MUST NOT support dynamic loading.
+The system MUST provide a Registry with RegisterLens(plugin), RegisterAdapter(adapter), GetLens(id), GetAdapter(id), and ListAll() returning []CatalogEntry methods. Registration MUST happen at build time via explicit wiring. The Registry MUST NOT support dynamic loading.
 
 #### Scenario: Happy path — register and retrieve agent
 
 - GIVEN an empty Registry
-- WHEN an AgentAdapter with ID "test-agent" is registered via RegisterAgent
-- THEN GetAgent("test-agent") MUST return the registered adapter
-- AND GetAgent("unknown") MUST return nil
+- WHEN an AgentAdapter with ID "test-agent" is registered via RegisterAdapter
+- THEN GetAdapter("test-agent") MUST return the registered adapter
+- AND GetAdapter("unknown") MUST return nil
 
 #### Scenario: Duplicate agent registration
 
 - GIVEN a Registry with a registered AgentAdapter "test-agent"
-- WHEN RegisterAgent is called again with the same ID "test-agent"
+- WHEN RegisterAdapter is called again with the same ID "test-agent"
 - THEN the Registry MUST return an error or replace the existing registration
 - AND the behavior MUST be documented and consistent
 
@@ -130,3 +162,69 @@ The AgentAdapter interface MUST define three config path methods: GlobalConfigDi
 - WHEN any of the three path methods is called
 - THEN the return value MAY be a relative path or have undefined behavior
 - AND the system MUST NOT panic
+
+### Requirement: SupportsAutoInstall on AgentAdapter
+
+The AgentAdapter interface MUST add a `SupportsAutoInstall() bool` method. This method MUST return true if the agent supports automatic installation (binary download and setup) without manual intervention.
+
+#### Scenario: Happy path — auto-install supported
+
+- GIVEN an AgentAdapter for an agent that supports binary download
+- WHEN SupportsAutoInstall is called
+- THEN it MUST return true
+
+#### Scenario: Auto-install not supported
+
+- GIVEN an AgentAdapter for an agent that requires manual installation
+- WHEN SupportsAutoInstall is called
+- THEN it MUST return false
+
+### Requirement: MCPStrategy on AgentAdapter
+
+The AgentAdapter interface MUST add an `MCPStrategy() string` method. This method MUST return the MCP (Model Context Protocol) strategy name the adapter uses, such as "stdio", "http", or "disabled".
+
+#### Scenario: Happy path — MCP strategy returned
+
+- GIVEN an AgentAdapter with a configured MCP strategy
+- WHEN MCPStrategy is called
+- THEN it MUST return a non-empty string describing the strategy
+
+#### Scenario: No MCP strategy
+
+- GIVEN an AgentAdapter that does not use MCP
+- WHEN MCPStrategy is called
+- THEN it MAY return "disabled" or an empty string
+- AND the system MUST handle both values without error
+
+### Requirement: AgentAdapter Enriched Capabilities
+
+The AgentAdapter Capabilities() method MUST return `[]string` instead of `[]Capability`. Each string MUST represent a capability name. Existing callers MUST be updated to compare strings instead of structs. (Previously: Capabilities() returned `[]Capability`.)
+
+#### Scenario: Happy path — string capabilities
+
+- GIVEN an AgentAdapter with two capabilities "review" and "install"
+- WHEN Capabilities() is called
+- THEN it MUST return a slice with "review" and "install"
+- AND each entry MUST be a plain string
+
+### Requirement: Registry Integration with Catalog
+
+The Registry MUST expose a `ListAll() []CatalogEntry` method. This method MUST construct CatalogEntry values from each registered adapter's metadata. This bridges the agent registry with the component catalog.
+
+#### Scenario: Happy path — registry returns catalog entries
+
+- GIVEN a Registry with 3 registered adapters
+- WHEN ListAll() is called
+- THEN it MUST return exactly 3 CatalogEntry values
+- AND each entry's ID MUST match the corresponding adapter's ID
+
+### Requirement: Tier on AgentAdapter
+
+The system MUST define Tier() SupportTier on AgentAdapter. This method returns the adapter's support commitment level.
+
+#### Scenario: Tier reflects adapter support
+
+- GIVEN the OpenCodeAgentAdapter
+- WHEN Tier() is called
+- THEN it MUST return SupportTierFirst (or the adapter's appropriate tier)
+- AND the value MUST be one of the 5 known SupportTier constants

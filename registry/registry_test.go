@@ -9,6 +9,12 @@ import (
 	"github.com/biggz-ai/biggz/plugin"
 )
 
+// compile-time check: *mockLens implements plugin.LensPlugin
+var _ plugin.LensPlugin = (*mockLens)(nil)
+
+// compile-time check: *mockAgent implements plugin.AgentAdapter
+var _ plugin.AgentAdapter = (*mockAgent)(nil)
+
 // -- mocks ---------------------------------------------------------------
 
 type mockLens struct {
@@ -28,37 +34,49 @@ func (m *mockLens) Policies() []plugin.Policy {
 }
 
 type mockAgent struct {
-	id   string
-	name string
+	id        string
+	name      string
 	installed bool
 }
 
-func (m *mockAgent) ID() string                            { return m.id }
-func (m *mockAgent) Name() string                          { return m.name }
-func (m *mockAgent) Detect(_ context.Context) (string, error) {
+func (m *mockAgent) ID() model.AgentID                                   { return model.AgentID(m.id) }
+func (m *mockAgent) Name() string                                        { return m.name }
+func (m *mockAgent) Tier() model.SupportTier                             { return model.TierFull }
+func (m *mockAgent) Detect(_ context.Context, _ string) (bool, string, string, bool, error) {
 	if !m.installed {
-		return "", fmt.Errorf("not found")
+		return false, "", "", false, fmt.Errorf("not found")
 	}
-	return "/usr/local/bin/" + m.id, nil
+	return true, "/usr/local/bin/" + m.id, "", false, nil
 }
-func (m *mockAgent) Capabilities() []plugin.Capability {
-	return []plugin.Capability{plugin.CapSkills, plugin.CapMCP}
+func (m *mockAgent) InstallCommand(_ interface{}) ([][]string, error)    { return nil, nil }
+func (m *mockAgent) Capabilities() []string {
+	return []string{plugin.CapSkills, plugin.CapMCP}
 }
+func (m *mockAgent) SupportsAutoInstall() bool                           { return false }
+func (m *mockAgent) SupportsSkills() bool                                { return false }
+func (m *mockAgent) SupportsSystemPrompt() bool                          { return false }
+func (m *mockAgent) SupportsMCP() bool                                   { return false }
+func (m *mockAgent) SupportsOutputStyles() bool                          { return false }
+func (m *mockAgent) SupportsSlashCommands() bool                         { return false }
+func (m *mockAgent) SupportsSubAgents() bool                             { return false }
+func (m *mockAgent) SystemPromptStrategy() model.SystemPromptStrategy    { return 0 }
+func (m *mockAgent) MCPStrategy() model.MCPStrategy                      { return 0 }
 func (m *mockAgent) DeployConfig(_ context.Context, _ plugin.AgentConfig) error {
 	if !m.installed {
 		return fmt.Errorf("cannot deploy, not installed")
 	}
 	return nil
 }
-func (m *mockAgent) GlobalConfigDir(homeDir string) string {
-	return homeDir + "/.config/" + m.id
-}
-func (m *mockAgent) SkillsDir(homeDir string) string {
-	return homeDir + "/.config/" + m.id + "/skills"
-}
-func (m *mockAgent) SettingsPath(homeDir string) string {
-	return homeDir + "/.config/" + m.id + "/" + m.id + ".json"
-}
+func (m *mockAgent) GlobalConfigDir(homeDir string) string               { return homeDir + "/.config/" + m.id }
+func (m *mockAgent) SystemPromptDir(homeDir string) string               { return m.GlobalConfigDir(homeDir) }
+func (m *mockAgent) SystemPromptFile(homeDir string) string              { return m.GlobalConfigDir(homeDir) + "/AGENTS.md" }
+func (m *mockAgent) SkillsDir(homeDir string) string                     { return homeDir + "/.config/" + m.id + "/skills" }
+func (m *mockAgent) CommandsDir(homeDir string) string                   { return homeDir + "/.config/" + m.id + "/commands" }
+func (m *mockAgent) SubAgentsDir(homeDir string) string                  { return "" }
+func (m *mockAgent) EmbeddedSubAgentsDir() string                        { return "" }
+func (m *mockAgent) OutputStyleDir(homeDir string) string                { return "" }
+func (m *mockAgent) SettingsPath(homeDir string) string                  { return homeDir + "/.config/" + m.id + "/" + m.id + ".json" }
+func (m *mockAgent) MCPConfigPath(homeDir string, _ string) string       { return homeDir + "/.config/" + m.id + "/" + m.id + ".json" }
 
 // -- tests ----------------------------------------------------------------
 
@@ -83,24 +101,24 @@ func TestRegisterAndGetLens(t *testing.T) {
 	}
 }
 
-func TestRegisterAndGetAgent(t *testing.T) {
+func TestRegisterAndGetAdapter(t *testing.T) {
 	r := New()
 	agent := &mockAgent{id: "test-agent", name: "Test Agent", installed: true}
 
-	err := r.RegisterAgent(agent)
+	err := r.RegisterAdapter(agent)
 	if err != nil {
-		t.Fatalf("RegisterAgent returned unexpected error: %v", err)
+		t.Fatalf("RegisterAdapter returned unexpected error: %v", err)
 	}
 
-	got := r.GetAgent("test-agent")
+	got := r.GetAdapter("test-agent")
 	if got == nil {
-		t.Fatal("GetAgent returned nil for registered agent")
+		t.Fatal("GetAdapter returned nil for registered agent")
 	}
-	if got.ID() != "test-agent" {
-		t.Errorf("GetAgent ID = %q, want %q", got.ID(), "test-agent")
+	if got.ID() != model.AgentID("test-agent") {
+		t.Errorf("GetAdapter ID = %q, want %q", got.ID(), "test-agent")
 	}
 	if got.Name() != "Test Agent" {
-		t.Errorf("GetAgent Name = %q, want %q", got.Name(), "Test Agent")
+		t.Errorf("GetAdapter Name = %q, want %q", got.Name(), "Test Agent")
 	}
 }
 
@@ -116,15 +134,15 @@ func TestDuplicateLensRegistration(t *testing.T) {
 	}
 }
 
-func TestDuplicateAgentRegistration(t *testing.T) {
+func TestDuplicateAdapterRegistration(t *testing.T) {
 	r := New()
 	agent := &mockAgent{id: "dup-agent", name: "Dup Agent"}
 
-	if err := r.RegisterAgent(agent); err != nil {
-		t.Fatalf("First RegisterAgent returned unexpected error: %v", err)
+	if err := r.RegisterAdapter(agent); err != nil {
+		t.Fatalf("First RegisterAdapter returned unexpected error: %v", err)
 	}
-	if err := r.RegisterAgent(agent); err == nil {
-		t.Fatal("Expected error on duplicate agent registration, got nil")
+	if err := r.RegisterAdapter(agent); err == nil {
+		t.Fatal("Expected error on duplicate adapter registration, got nil")
 	}
 }
 
@@ -136,11 +154,44 @@ func TestGetUnknownLensReturnsNil(t *testing.T) {
 	}
 }
 
-func TestGetUnknownAgentReturnsNil(t *testing.T) {
+func TestGetUnknownAdapterReturnsNil(t *testing.T) {
 	r := New()
-	got := r.GetAgent("nonexistent")
+	got := r.GetAdapter("nonexistent")
 	if got != nil {
-		t.Fatalf("GetAgent for unknown ID should return nil, got %v", got)
+		t.Fatalf("GetAdapter for unknown ID should return nil, got %v", got)
+	}
+}
+
+func TestListAllAdapters(t *testing.T) {
+	r := New()
+	r.RegisterAdapter(&mockAgent{id: "agent-a", name: "Agent A", installed: true})
+	r.RegisterAdapter(&mockAgent{id: "agent-b", name: "Agent B", installed: false})
+
+	entries := r.ListAll()
+	if len(entries) != 2 {
+		t.Fatalf("ListAll() = %d entries, want 2", len(entries))
+	}
+
+	ids := make(map[string]bool)
+	for _, e := range entries {
+		ids[e.ID] = true
+	}
+	if !ids["agent-a"] {
+		t.Error("ListAll() missing agent-a")
+	}
+	if !ids["agent-b"] {
+		t.Error("ListAll() missing agent-b")
+	}
+}
+
+func TestListAllAdapters_Empty(t *testing.T) {
+	r := New()
+	entries := r.ListAll()
+	if entries == nil {
+		t.Error("ListAll() on empty registry returned nil, want empty slice")
+	}
+	if len(entries) != 0 {
+		t.Errorf("ListAll() on empty registry = %d entries, want 0", len(entries))
 	}
 }
 
@@ -149,7 +200,7 @@ func TestEmptyRegistry(t *testing.T) {
 	if got := r.GetLens("anything"); got != nil {
 		t.Error("Expected nil for lens on empty registry")
 	}
-	if got := r.GetAgent("anything"); got != nil {
-		t.Error("Expected nil for agent on empty registry")
+	if got := r.GetAdapter("anything"); got != nil {
+		t.Error("Expected nil for adapter on empty registry")
 	}
 }

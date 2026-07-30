@@ -1,6 +1,7 @@
 package review
 
 import (
+	"encoding/json"
 	"fmt"
 	"time"
 )
@@ -17,22 +18,59 @@ type LedgerEntry struct {
 }
 
 // Ledger is an ordered, append-only audit trail for a review.
+// When backed by a Store, each Append also persists the entry as an
+// event in the content-addressed event store.
 type Ledger struct {
-	entries []LedgerEntry
+	store     *Store
+	lineageID string
+	prevRev   string
+	entries   []LedgerEntry
 }
 
-// NewLedger creates an empty ledger.
+// NewLedger creates an empty in-memory ledger without event store backing.
+// Deprecated: use NewStoreLedger for persistence.
 func NewLedger() *Ledger {
 	return &Ledger{entries: make([]LedgerEntry, 0)}
 }
 
-// Append adds an entry to the ledger.
+// NewStoreLedger creates a ledger backed by the content-addressed event store.
+// Each Append call persists the entry as an event. prevRev is the hash of
+// the previous event in the lineage, or empty for the first event.
+func NewStoreLedger(store *Store, lineageID, prevRev string) *Ledger {
+	return &Ledger{
+		store:     store,
+		lineageID: lineageID,
+		prevRev:   prevRev,
+		entries:   make([]LedgerEntry, 0),
+	}
+}
+
+// Append adds an entry to the ledger. If backed by a store, also persists
+// the entry as a content-addressed event.
 func (l *Ledger) Append(entry LedgerEntry) {
 	entry.ID = fmt.Sprintf("ledger-%d", len(l.entries)+1)
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now()
 	}
 	l.entries = append(l.entries, entry)
+
+	// Persist via event store if available.
+	if l.store != nil {
+		payload, err := json.Marshal(entry)
+		if err != nil {
+			return // marshal failure is non-fatal for in-memory state
+		}
+		rec := Record{
+			Operation:  entry.Operation,
+			Role:       entry.Actor,
+			Timestamp:  entry.Timestamp.Format(time.RFC3339Nano),
+			Payload:    payload,
+		}
+		rev, err := l.store.Append(l.prevRev, rec)
+		if err == nil {
+			l.prevRev = rev
+		}
+	}
 }
 
 // AppendOp is a convenience method to add an operation entry.

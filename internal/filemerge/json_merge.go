@@ -6,8 +6,10 @@ import (
 )
 
 // MergeJSONC strips JSONC non-standard syntax (comments, trailing commas) from
-// both existing and overlay, then merges overlay's top-level keys into existing.
-// Overlay keys replace existing ones; all other keys are preserved.
+// both existing and overlay, then deep-merges overlay into existing. Nested maps
+// are merged recursively. Arrays in overlay replace existing arrays entirely. If
+// a value in overlay contains "__replace__": true, the target value is replaced
+// entirely (the __replace__ key itself is stripped from output).
 func MergeJSONC(existing, overlay []byte) ([]byte, error) {
 	if len(overlay) == 0 {
 		return existing, nil
@@ -24,11 +26,38 @@ func MergeJSONC(existing, overlay []byte) ([]byte, error) {
 		return nil, fmt.Errorf("merge: overlay is not valid JSON: %w", err)
 	}
 
-	for k, v := range patch {
-		base[k] = v
-	}
+	deepMerge(base, patch)
 
 	return json.MarshalIndent(base, "", "  ")
+}
+
+// deepMerge recursively merges overlay into base. Both must be non-nil maps.
+// Arrays in overlay replace existing arrays. Nested maps merge recursively.
+// If an overlay map contains "__replace__": true, the target is replaced entirely
+// and the __replace__ key is stripped from the output.
+func deepMerge(base, overlay map[string]any) {
+	for k, v := range overlay {
+		// Check for __replace__ sentinel: force-replace the entire target
+		if overlayMap, ok := v.(map[string]any); ok {
+			if replace, ok := overlayMap["__replace__"]; ok {
+				if replaceBool, ok := replace.(bool); ok && replaceBool {
+					delete(overlayMap, "__replace__")
+					base[k] = overlayMap
+					continue
+				}
+			}
+		}
+
+		// If both values are maps, recurse
+		baseVal, baseIsMap := base[k].(map[string]any)
+		overlayVal, overlayIsMap := v.(map[string]any)
+		if baseIsMap && overlayIsMap {
+			deepMerge(baseVal, overlayVal)
+		} else {
+			// Otherwise overlay wins (replace flat value or array)
+			base[k] = v
+		}
+	}
 }
 
 // stripComments removes // single-line and /* */ multi-line comments from JSONC data.

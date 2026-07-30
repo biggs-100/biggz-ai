@@ -24,3 +24,5 @@ Thumbs.db
 
 # Local engram cache (not committed)
 .engram/
+# Local Pi runtime state
+.atl/

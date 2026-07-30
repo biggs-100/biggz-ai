@@ -5,15 +5,20 @@ package opencode
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"path/filepath"
 
+	"github.com/biggz-ai/biggz/internal/agents"
+	"github.com/biggz-ai/biggz/model"
 	"github.com/biggz-ai/biggz/plugin"
 )
 
+func init() {
+	agents.Register(agents.AgentOpenCode, func() plugin.AgentAdapter { return NewAdapter() })
+}
+
 // Adapter implements plugin.AgentAdapter for the OpenCode agent.
-// It uses exec.LookPath for binary detection and knows OpenCode's
-// standard config directory layout under the user's home directory.
 type Adapter struct {
 	lookPath func(name string) (string, error)
 }
@@ -26,30 +31,74 @@ func NewAdapter() *Adapter {
 }
 
 // ID returns the unique identifier for this agent adapter.
-func (a *Adapter) ID() string {
-	return "opencode"
-}
+func (a *Adapter) ID() model.AgentID { return agents.AgentOpenCode }
 
 // Name returns a human-readable name for this agent.
-func (a *Adapter) Name() string {
-	return "OpenCode"
-}
+func (a *Adapter) Name() string { return "OpenCode" }
+
+// Tier returns the support commitment tier for OpenCode.
+func (a *Adapter) Tier() model.SupportTier { return agents.TierFull }
 
 // Detect checks whether the OpenCode binary is on the system PATH.
-// Returns the full binary path if found, or an error if not detected.
-func (a *Adapter) Detect(ctx context.Context) (string, error) {
-	return a.lookPath("opencode")
+func (a *Adapter) Detect(ctx context.Context, homeDir string) (bool, string, string, bool, error) {
+	binPath, err := a.lookPath("opencode")
+	if err != nil {
+		return false, "", "", false, fmt.Errorf("opencode: not found: %w", err)
+	}
+	return true, binPath, a.SettingsPath(homeDir), true, nil
+}
+
+// InstallCommand returns the commands to install OpenCode.
+func (a *Adapter) InstallCommand(profile interface{}) ([][]string, error) {
+	return [][]string{
+		{"go", "install", "github.com/opencode-ai/opencode@latest"},
+	}, nil
 }
 
 // Capabilities returns the list of capabilities OpenCode supports.
-func (a *Adapter) Capabilities() []plugin.Capability {
-	return []plugin.Capability{
+func (a *Adapter) Capabilities() []string {
+	return []string{
 		plugin.CapSkills,
 		plugin.CapMCP,
-		plugin.CapSubAgents,
 		plugin.CapSystemPrompt,
 		plugin.CapSlashCommands,
 	}
+}
+
+// SupportsAutoInstall returns true — OpenCode supports binary download.
+func (a *Adapter) SupportsAutoInstall() bool { return true }
+
+// SupportsSkills returns true — OpenCode supports custom skills.
+func (a *Adapter) SupportsSkills() bool { return true }
+
+// SupportsSystemPrompt returns true — OpenCode supports AGENTS.md.
+func (a *Adapter) SupportsSystemPrompt() bool { return true }
+
+// SupportsMCP returns true — OpenCode supports MCP servers.
+func (a *Adapter) SupportsMCP() bool { return true }
+
+// SupportsOutputStyles returns false — OpenCode does not support
+// separate output style configuration.
+func (a *Adapter) SupportsOutputStyles() bool { return false }
+
+// SupportsSlashCommands returns true — OpenCode supports custom
+// slash commands.
+func (a *Adapter) SupportsSlashCommands() bool { return true }
+
+// SupportsSubAgents returns false — OpenCode does not support
+// delegating to sub-agents.
+func (a *Adapter) SupportsSubAgents() bool { return false }
+
+// SystemPromptStrategy returns FileReplace — OpenCode replaces the
+// AGENTS.md file entirely.
+func (a *Adapter) SystemPromptStrategy() model.SystemPromptStrategy {
+	return agents.StrategyFileReplace
+}
+
+// MCPStrategy returns MergeIntoSettings — OpenCode stores MCP config
+// inside opencode.json.
+func (a *Adapter) MCPStrategy() model.MCPStrategy {
+	return agents.StrategyMergeIntoSettings
 }
 
 // GlobalConfigDir returns OpenCode's global configuration directory.
@@ -58,16 +107,56 @@ func (a *Adapter) GlobalConfigDir(homeDir string) string {
 	return filepath.Join(homeDir, ".config", "opencode")
 }
 
+// SystemPromptDir returns the directory where OpenCode's system prompt
+// file lives — same as GlobalConfigDir.
+func (a *Adapter) SystemPromptDir(homeDir string) string {
+	return a.GlobalConfigDir(homeDir)
+}
+
+// SystemPromptFile returns the full path to OpenCode's AGENTS.md.
+func (a *Adapter) SystemPromptFile(homeDir string) string {
+	return filepath.Join(a.GlobalConfigDir(homeDir), "AGENTS.md")
+}
+
 // SkillsDir returns the directory where OpenCode stores skills.
 // Typically ~/.config/opencode/skills/.
 func (a *Adapter) SkillsDir(homeDir string) string {
 	return filepath.Join(homeDir, ".config", "opencode", "skills")
 }
 
+// CommandsDir returns the directory where OpenCode stores slash commands.
+func (a *Adapter) CommandsDir(homeDir string) string {
+	return filepath.Join(homeDir, ".config", "opencode", "commands")
+}
+
+// SubAgentsDir returns an empty string — OpenCode does not support
+// sub-agents.
+func (a *Adapter) SubAgentsDir(homeDir string) string {
+	return ""
+}
+
+// EmbeddedSubAgentsDir returns an empty string — OpenCode does not
+// support sub-agents.
+func (a *Adapter) EmbeddedSubAgentsDir() string {
+	return ""
+}
+
+// OutputStyleDir returns an empty string — OpenCode does not support
+// output styles.
+func (a *Adapter) OutputStyleDir(homeDir string) string {
+	return ""
+}
+
 // SettingsPath returns the path to OpenCode's settings file.
-// Typically ~/.config/opencode/opencode.jsonc.
+// Typically ~/.config/opencode/opencode.json.
 func (a *Adapter) SettingsPath(homeDir string) string {
-	return filepath.Join(homeDir, ".config", "opencode", "opencode.jsonc")
+	return filepath.Join(homeDir, ".config", "opencode", "opencode.json")
+}
+
+// MCPConfigPath returns the path where OpenCode stores MCP config —
+// same as the settings file since it uses MergeIntoSettings.
+func (a *Adapter) MCPConfigPath(homeDir string, serverName string) string {
+	return a.SettingsPath(homeDir)
 }
 
 // DeployConfig installs or updates configuration for OpenCode.

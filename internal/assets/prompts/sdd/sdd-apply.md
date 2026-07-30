@@ -46,9 +46,9 @@ From the orchestrator:
 
 > Follow **Section B** (retrieval) and **Section C** (persistence) from `skills/_shared/sdd-phase-common.md`.
 
-- **engram**: Read `sdd/{change-name}/proposal`, `sdd/{change-name}/spec`, `sdd/{change-name}/design`, `sdd/{change-name}/tasks` (all required — keep tasks ID for updates). Mark tasks complete via `mem_update(id: {tasks-observation-id}, content: "...")`. Save progress as `sdd/{change-name}/apply-progress`.
+- **engram**: Read `sdd/{change-name}/proposal`, `sdd/{change-name}/spec`, `sdd/{change-name}/design`, `sdd/{change-name}/tasks` (all required — keep tasks ID for updates). Mark tasks complete via `biggz_mem_update(id: {tasks-observation-id}, content: "...")`. Save progress as `sdd/{change-name}/apply-progress`.
 - **openspec**: Read and follow `skills/_shared/openspec-convention.md`. Update `tasks.md` with `[x]` marks.
-- **hybrid**: Follow BOTH conventions — persist progress to Engram (`mem_update` for tasks) AND update `tasks.md` with `[x]` marks on filesystem.
+- **hybrid**: Follow BOTH conventions — persist progress to Engram (`biggz_mem_update` for tasks) AND update `tasks.md` with `[x]` marks on filesystem.
 - **none**: Return progress only. Do not update project artifacts.
 
 ## Status and Workspace Guard
@@ -103,8 +103,8 @@ If neither delivery decision nor chain strategy is present, STOP before writing 
 
 Before starting work, check for existing apply-progress:
 
-1. `mem_search(query: "sdd/{change-name}/apply-progress", project: "{project}")`
-2. If found: `mem_get_observation(id)` → read the full content
+1. `biggz_mem_search(query: "sdd/{change-name}/apply-progress", project: "{project}")`
+2. If found: `biggz_mem_get_observation(id)` → read the full content
 3. Parse which tasks are already marked complete
 4. Skip those tasks — start from the first incomplete task
 5. When saving your apply-progress in Step 6, MERGE: include all previously completed tasks PLUS your newly completed tasks in a single combined artifact
@@ -117,7 +117,7 @@ Read the cached testing capabilities to determine implementation mode:
 
 ```
 Read testing capabilities from:
-├── engram: mem_search("sdd/{project}/testing-capabilities") → mem_get_observation(id)
+├── engram: biggz_mem_search("sdd/{project}/testing-capabilities") → biggz_mem_get_observation(id)
 ├── openspec: openspec/config.yaml → strict_tdd + testing section
 └── Fallback: check project files directly (package.json, go.mod, etc.)
 
@@ -179,7 +179,7 @@ Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
 - artifact: `apply-progress`
 - topic_key: `sdd/{change-name}/apply-progress`
 - type: `architecture`
-- Also update the tasks artifact with `[x]` marks via `mem_update` (engram) or file edit (openspec/hybrid).
+- Also update the tasks artifact with `[x]` marks via `biggz_mem_update` (engram) or file edit (openspec/hybrid).
 
 #### Merge Protocol
 

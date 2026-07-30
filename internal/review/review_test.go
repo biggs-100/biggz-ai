@@ -14,8 +14,8 @@ func TestNew(t *testing.T) {
 	if r.State == nil {
 		t.Fatal("New() returned nil state")
 	}
-	if r.State.Status != model.StatusPending {
-		t.Errorf("expected Pending, got %s", r.State.Status)
+	if r.State.Status != model.StatusUnreviewed {
+		t.Errorf("expected Unreviewed, got %s", r.State.Status)
 	}
 	if r.State.Subject.Repository != "test/repo" {
 		t.Errorf("expected repo test/repo, got %s", r.State.Subject.Repository)
@@ -25,12 +25,14 @@ func TestNew(t *testing.T) {
 func TestStartAndComplete(t *testing.T) {
 	ctx := context.Background()
 	r := New(model.ReviewSubject{Repository: "test/repo", CommitSHA: "abc123"})
+	// Lead can perform all transitions including Complete.
+	r.State.Role = model.RoleLead
 
 	if err := r.Start(ctx); err != nil {
 		t.Fatalf("Start() unexpected error: %v", err)
 	}
-	if r.State.Status != model.StatusInProgress {
-		t.Errorf("expected InProgress, got %s", r.State.Status)
+	if r.State.Status != model.StatusInReview {
+		t.Errorf("expected InReview, got %s", r.State.Status)
 	}
 
 	if err := r.Complete(ctx); err != nil {
@@ -44,6 +46,7 @@ func TestStartAndComplete(t *testing.T) {
 func TestFail(t *testing.T) {
 	ctx := context.Background()
 	r := New(model.ReviewSubject{Repository: "test/repo", CommitSHA: "abc123"})
+	r.State.Role = model.RoleReviewer
 
 	r.Start(ctx)
 	r.Fail(ctx, nil)
@@ -56,6 +59,7 @@ func TestFail(t *testing.T) {
 func TestRunPipeline_Success(t *testing.T) {
 	ctx := context.Background()
 	r := New(model.ReviewSubject{Repository: "test/repo", CommitSHA: "abc123"})
+	r.State.Role = model.RoleLead
 
 	p := pipeline.New(&noopStage{})
 	if err := r.RunPipeline(ctx, p); err != nil {
@@ -69,6 +73,7 @@ func TestRunPipeline_Success(t *testing.T) {
 func TestRunPipeline_Fail(t *testing.T) {
 	ctx := context.Background()
 	r := New(model.ReviewSubject{Repository: "test/repo", CommitSHA: "abc123"})
+	r.State.Role = model.RoleReviewer
 
 	p := pipeline.New(&failStage{})
 	err := r.RunPipeline(ctx, p)
@@ -83,12 +88,14 @@ func TestRunPipeline_Fail(t *testing.T) {
 func TestAddCorrection(t *testing.T) {
 	ctx := context.Background()
 	r := New(model.ReviewSubject{Repository: "test/repo", CommitSHA: "abc123"})
+	r.State.Role = model.RoleReviewer
 
-	// Complete the review first
-	r.Start(ctx)
-	r.Complete(ctx)
+	// Start the review (InReview)
+	if err := r.Start(ctx); err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
 
-	// Now add a correction
+	// Now add a correction (InReview → NeedsChanges)
 	corr := Correction{
 		ID:           "corr-1",
 		Files:        []string{"main.go"},
@@ -101,9 +108,9 @@ func TestAddCorrection(t *testing.T) {
 		t.Fatalf("AddCorrection() unexpected error: %v", err)
 	}
 
-	// Should be back InProgress
-	if r.State.Status != model.StatusInProgress {
-		t.Errorf("expected InProgress after correction, got %s", r.State.Status)
+	// Should be NeedsChanges (new FSM path)
+	if r.State.Status != model.StatusNeedsChanges {
+		t.Errorf("expected NeedsChanges after correction, got %s", r.State.Status)
 	}
 
 	// Evidence should have the correction entry
@@ -114,29 +121,92 @@ func TestAddCorrection(t *testing.T) {
 	if last.Kind != "correction" {
 		t.Errorf("expected correction evidence kind, got %s", last.Kind)
 	}
+
+	// Budget should be incremented
+	if r.State.BudgetCounters.FixRounds != 1 {
+		t.Errorf("expected FixRounds=1, got %d", r.State.BudgetCounters.FixRounds)
+	}
 }
 
-func TestAddCorrection_NotCompleted(t *testing.T) {
+func TestAddCorrection_NotInReview(t *testing.T) {
 	r := New(model.ReviewSubject{Repository: "test/repo", CommitSHA: "abc123"})
-	// Don't complete — should fail
+	// State is Unreviewed, not InReview
 	err := r.AddCorrection(Correction{ID: "corr-1", Reason: "test"})
 	if err == nil {
-		t.Fatal("expected error adding correction to non-completed review")
+		t.Fatal("expected error adding correction to non-in-review review")
+	}
+}
+
+func TestAddCorrection_BudgetExhausted(t *testing.T) {
+	ctx := context.Background()
+	r := New(model.ReviewSubject{Repository: "test/repo", CommitSHA: "abc123"})
+	r.State.Role = model.RoleReviewer
+	r.Start(ctx)
+
+	// Exhaust the fix rounds budget.
+	r.State.BudgetCounters = model.BudgetCounters{FixRounds: model.MaxFixRounds}
+
+	err := r.AddCorrection(Correction{ID: "corr-1", Reason: "over budget"})
+	if err == nil {
+		t.Fatal("expected error when correction budget exhausted")
 	}
 }
 
 func TestReceipt(t *testing.T) {
 	ctx := context.Background()
 	r := New(model.ReviewSubject{Repository: "test/repo", CommitSHA: "abc123"})
+	r.State.Role = model.RoleLead
 	r.Start(ctx)
 	r.Complete(ctx)
 
 	receipt := r.Receipt()
-	if receipt.ReviewID != r.State.ID {
-		t.Errorf("receipt ReviewID mismatch: %s vs %s", receipt.ReviewID, r.State.ID)
+	if receipt.LineageID != r.State.LineageID {
+		t.Errorf("receipt LineageID mismatch: %s vs %s", receipt.LineageID, r.State.LineageID)
 	}
-	if receipt.MerkleRoot != r.State.MerkleRoot {
-		t.Errorf("receipt MerkleRoot mismatch")
+	if receipt.HeadRevision != r.State.MerkleRoot {
+		t.Errorf("receipt HeadRevision mismatch: %s vs %s", receipt.HeadRevision, r.State.MerkleRoot)
+	}
+}
+
+func TestStartWithStore(t *testing.T) {
+	dir := t.TempDir()
+	s := OpenWithDir(dir, "review-store")
+
+	ctx := context.Background()
+	r := New(model.ReviewSubject{Repository: "test/repo", CommitSHA: "abc123"})
+	r.State.Role = model.RoleLead
+	r.WithStore(s)
+
+	if err := r.Start(ctx); err != nil {
+		t.Fatalf("Start() with store: %v", err)
+	}
+
+	// Store should now have events.
+	chain, err := s.LoadChain()
+	if err != nil {
+		t.Fatalf("LoadChain: %v", err)
+	}
+	if chain.Count < 1 {
+		t.Error("expected at least 1 event after Start with store")
+	}
+
+	// Complete and verify chain persists.
+	if err := r.Complete(ctx); err != nil {
+		t.Fatalf("Complete() with store: %v", err)
+	}
+
+	chain, err = s.LoadChain()
+	if err != nil {
+		t.Fatalf("LoadChain after Complete: %v", err)
+	}
+	if chain.Count < 2 {
+		t.Errorf("expected at least 2 events, got %d", chain.Count)
+	}
+
+	// Verify chain integrity.
+	verdict := s.Validate()
+	if !verdict.Valid {
+		t.Errorf("chain integrity: %s", verdict.Reason)
 	}
 }
 
@@ -144,7 +214,7 @@ func TestReceipt(t *testing.T) {
 
 type noopStage struct{}
 
-func (s *noopStage) Name() string                          { return "noop" }
+func (s *noopStage) Name() string { return "noop" }
 func (s *noopStage) Execute(ctx context.Context, state *model.ReviewState) error { return nil }
 func (s *noopStage) Rollback(ctx context.Context, state *model.ReviewState) error { return nil }
 

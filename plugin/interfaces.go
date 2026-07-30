@@ -1,7 +1,7 @@
 // Package plugin defines the interfaces for extending biggz-ai capabilities.
 //
 // LensPlugin provides domain-specific code analysis. AgentAdapter enables
-// discovery and integration with AI coding agents (OpenCode, Claude, etc.)
+// discovery and integration with AI coding agents (OpenCode, Claude Code, etc.)
 // that are installed on the system. Both are registered at build time via
 // the registry package.
 package plugin
@@ -62,47 +62,116 @@ type LensPlugin interface {
 // biggz-ai is a harness that discovers what agent is available, what it
 // supports, and configures it.
 type AgentAdapter interface {
-	// ID returns a unique identifier for this agent adapter.
-	ID() string
+	// ID returns the unique typed identifier for this agent adapter.
+	ID() model.AgentID
 
 	// Name returns a human-readable name (e.g. "OpenCode", "Claude Code").
 	Name() string
 
-	// Detect checks whether this agent is installed on the system.
-	// Returns the binary path if found, or an error if not detected.
-	Detect(ctx context.Context) (binaryPath string, err error)
+	// Tier returns the support commitment tier for this adapter.
+	Tier() model.SupportTier
 
-	// Capabilities returns the list of capabilities this agent supports
-	// (e.g. "skills", "mcp", "sub_agents", "system_prompt").
-	Capabilities() []Capability
+	// Detect checks whether this agent is installed on the system.
+	// Returns installation status, binary path, config path, whether
+	// auto-installation is capable, and any error.
+	Detect(ctx context.Context, homeDir string) (installed bool, binaryPath string, configPath string, autoInstallCapable bool, err error)
+
+	// InstallCommand returns the shell commands needed to install or
+	// update this agent. Each element is a command + args slice.
+	// Accepts an optional profile for version/channel customization.
+	InstallCommand(profile interface{}) ([][]string, error)
+
+	// Capabilities returns the list of capability strings this agent
+	// supports (e.g. "skills", "mcp", "sub_agents", "system_prompt").
+	Capabilities() []string
+
+	// SupportsAutoInstall returns true if this agent supports automatic
+	// binary download and setup without manual intervention.
+	SupportsAutoInstall() bool
+
+	// SupportsSkills returns true if this agent supports custom skills.
+	SupportsSkills() bool
+
+	// SupportsSystemPrompt returns true if this agent supports system
+	// prompt injection (AGENTS.md, CLAUDE.md, etc.).
+	SupportsSystemPrompt() bool
+
+	// SupportsMCP returns true if this agent supports the Model Context
+	// Protocol for tool/plugin integration.
+	SupportsMCP() bool
+
+	// SupportsOutputStyles returns true if this agent supports custom
+	// output style/formatting configuration.
+	SupportsOutputStyles() bool
+
+	// SupportsSlashCommands returns true if this agent supports custom
+	// slash commands.
+	SupportsSlashCommands() bool
+
+	// SupportsSubAgents returns true if this agent supports delegating
+	// work to sub-agents.
+	SupportsSubAgents() bool
+
+	// SystemPromptStrategy returns the strategy the agent uses for
+	// system prompt file injection.
+	SystemPromptStrategy() model.SystemPromptStrategy
+
+	// MCPStrategy returns the strategy the agent uses for MCP server
+	// configuration.
+	MCPStrategy() model.MCPStrategy
+
+	// GlobalConfigDir returns the agent's global configuration directory
+	// under the given home directory.
+	GlobalConfigDir(homeDir string) string
+
+	// SystemPromptDir returns the directory where the agent's system
+	// prompt file lives.
+	SystemPromptDir(homeDir string) string
+
+	// SystemPromptFile returns the full path to the agent's system
+	// prompt file (e.g., AGENTS.md, CLAUDE.md).
+	SystemPromptFile(homeDir string) string
+
+	// SkillsDir returns the subdirectory where the agent stores skills.
+	SkillsDir(homeDir string) string
+
+	// CommandsDir returns the subdirectory where the agent stores
+	// custom slash commands.
+	CommandsDir(homeDir string) string
+
+	// SubAgentsDir returns the subdirectory where the agent stores
+	// sub-agent definitions.
+	SubAgentsDir(homeDir string) string
+
+	// EmbeddedSubAgentsDir returns the relative path to embedded
+	// sub-agents shipped with biggz-ai (no homeDir needed).
+	EmbeddedSubAgentsDir() string
+
+	// OutputStyleDir returns the subdirectory where the agent stores
+	// output style definitions.
+	OutputStyleDir(homeDir string) string
+
+	// SettingsPath returns the full path to the agent's settings
+	// configuration file.
+	SettingsPath(homeDir string) string
+
+	// MCPConfigPath returns the path where this agent stores MCP
+	// server configuration for the given server name.
+	MCPConfigPath(homeDir string, serverName string) string
 
 	// DeployConfig installs or updates configuration for this agent.
 	// This may include skills, MCP servers, system prompts, etc.
 	DeployConfig(ctx context.Context, cfg AgentConfig) error
-
-	// GlobalConfigDir returns the agent's global configuration directory
-	// under the given home directory (e.g., ~/.config/opencode/).
-	GlobalConfigDir(homeDir string) string
-
-	// SkillsDir returns the subdirectory where the agent stores skills
-	// (e.g., ~/.config/opencode/skills/).
-	SkillsDir(homeDir string) string
-
-	// SettingsPath returns the full path to the agent's settings
-	// configuration file (e.g., ~/.config/opencode/opencode.jsonc).
-	SettingsPath(homeDir string) string
 }
 
-// Capability represents a feature supported by an AI coding agent.
-type Capability string
-
+// Capability constants — used as string values by Capabilities().
 const (
-	CapSkills       Capability = "skills"
-	CapMCP          Capability = "mcp"
-	CapSubAgents    Capability = "sub_agents"
-	CapSystemPrompt Capability = "system_prompt"
-	CapSlashCommands Capability = "slash_commands"
-	CapWorkflows    Capability = "workflows"
+	CapSkills        = "skills"
+	CapMCP           = "mcp"
+	CapSubAgents     = "sub_agents"
+	CapSystemPrompt  = "system_prompt"
+	CapSlashCommands = "slash_commands"
+	CapWorkflows     = "workflows"
 )
 
 // AgentConfig holds configuration to deploy to an AI coding agent.
