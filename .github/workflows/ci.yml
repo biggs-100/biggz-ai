@@ -5,14 +5,42 @@ on:
     branches: [master, main]
   pull_request:
     branches: [master, main]
+  schedule:
+    - cron: "0 3 * * *"
 
 jobs:
+  format:
+    name: Go Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Check formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+          echo "All files are properly formatted."
+
   test:
+    name: Test (${{ matrix.os }})
+    needs: format
+    if: always()
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
     steps:
+      - name: Require successful format
+        if: needs.format.result != 'success'
+        run: exit 1
+
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -20,12 +48,65 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: stable
+          cache: true
 
       - name: Build
         run: go build ./...
 
-      - name: Test
-        run: go test ./... -v -short -timeout 120s
-
       - name: Vet
         run: go vet ./...
+
+      - name: Test
+        run: go test ./... -count=1 -timeout 180s
+
+  e2e:
+    name: E2E
+    needs: format
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Require successful format
+        if: needs.format.result != 'success'
+        run: exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Build
+        run: go build ./cmd/biggz
+
+      - name: Run E2E tests
+        run: go test ./e2e/... -count=1 -timeout 10m -v
+
+  windows-release-blockers:
+    name: Windows Release Blockers
+    needs: format
+    if: always()
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - name: Require successful format
+        if: needs.format.result != 'success'
+        run: exit 1
+
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Build
+        run: go build ./cmd/biggz
+
+      - name: Run platform-specific tests
+        shell: pwsh
+        run: go test ./... -count=1 -timeout 10m
+        env:
+          BIGGZ_TEST_PLATFORM: "windows"
