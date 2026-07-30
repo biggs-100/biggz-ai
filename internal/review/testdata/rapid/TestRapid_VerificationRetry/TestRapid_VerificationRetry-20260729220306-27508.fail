@@ -1,0 +1,11 @@
+# 2026/07/29 22:03:06.567308 [TestRapid_VerificationRetry] [rapid] draw maxRetries: 1
+# 2026/07/29 22:03:06.567308 [TestRapid_VerificationRetry] [rapid] draw passOnAttempt: 2
+# 2026/07/29 22:03:06.567308 [TestRapid_VerificationRetry] expected pass on attempt 2, got fail after 1 attempts
+# 
+v0.4.8#11093115565730339415
+0x0
+0x0
+0x0
+0x0
+0x0
+0x1

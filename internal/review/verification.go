@@ -83,20 +83,25 @@ func (ve *VerificationEngine) Execute(contractID string, verifyFn func() (bool, 
 		passed, evidence, findings, err := verifyFn()
 		duration := time.Since(start)
 
+		// Retry on: error (any kind), or non-pass without error if attempts remain
+		retryable := false
+		if attempt < maxAttempts {
+			if err != nil {
+				retryable = true
+			} else if !passed && !contract.StrictMode {
+				retryable = true
+			}
+		}
+
 		result := &VerificationResult{
 			ContractID: contractID,
 			Attempt:    attempt,
 			Passed:     passed,
 			Evidence:   evidence,
 			Findings:   findings,
-			Retryable:  err != nil && attempt < maxAttempts,
+			Retryable:  retryable,
 			ExecutedAt: time.Now().UTC(),
 			Duration:   duration.Round(time.Millisecond).String(),
-		}
-
-		// If strict mode, only retry on error, not on failure
-		if contract.StrictMode && !passed && err == nil {
-			result.Retryable = false
 		}
 
 		ve.results = append(ve.results, *result)

@@ -1,0 +1,57 @@
+# 2026/07/29 22:05:26.000766 [TestRapid_ConcurrentLineages] [rapid] draw nLineages: 2
+# 2026/07/29 22:05:26.000766 [TestRapid_ConcurrentLineages] [rapid] draw opsPerLineage: 1
+# 2026/07/29 22:05:26.000766 [TestRapid_ConcurrentLineages] [rapid] draw lineageID: "lineage-0000"
+# 2026/07/29 22:05:26.000766 [TestRapid_ConcurrentLineages] [rapid] draw lineageID: "lineage-0000"
+# 2026/07/29 22:05:26.000766 [TestRapid_ConcurrentLineages] [rapid] draw op: 0
+# 2026/07/29 22:05:26.000766 [TestRapid_ConcurrentLineages] [rapid] draw op: 2
+# 2026/07/29 22:05:26.000766 [TestRapid_ConcurrentLineages] lineage lineage-0000: compact lineage "lineage-0000" state "failed" invalid: non-terminal state in compact record
+# 
+v0.4.8#3802282481882821758
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x38e38e38e38e4
+0x2

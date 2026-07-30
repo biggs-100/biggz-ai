@@ -1,0 +1,65 @@
+# 2026/07/29 22:03:06.506849 [TestRapid_ConcurrentLineages] [rapid] draw nLineages: 2
+# 2026/07/29 22:03:06.506849 [TestRapid_ConcurrentLineages] [rapid] draw opsPerLineage: 2
+# 2026/07/29 22:03:06.506849 [TestRapid_ConcurrentLineages] [rapid] draw lineageID: "lineage-0000"
+# 2026/07/29 22:03:06.506849 [TestRapid_ConcurrentLineages] [rapid] draw lineageID: "lineage-0000"
+# 2026/07/29 22:03:06.506849 [TestRapid_ConcurrentLineages] [rapid] draw op: 0
+# 2026/07/29 22:03:06.506849 [TestRapid_ConcurrentLineages] [rapid] draw op: 0
+# 2026/07/29 22:03:06.506849 [TestRapid_ConcurrentLineages] [rapid] draw op: 1
+# 2026/07/29 22:03:06.506849 [TestRapid_ConcurrentLineages] [rapid] draw op: 0
+# 2026/07/29 22:03:06.506849 [TestRapid_ConcurrentLineages] global reconciliation failed: [lineage-0000: record claims 3 events, log has 4]
+# 
+v0.4.8#13143267154611357248
+0x0
+0x0
+0x0
+0x0
+0x0
+0x1
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x0
+0x1
+0x0
+0x0
+0x0

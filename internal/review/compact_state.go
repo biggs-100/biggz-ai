@@ -92,6 +92,17 @@ func (cs *CompactStore) BeginTransaction(lineageID string) (string, error) {
 		if rec.Corrections >= CompactCorrectionBudget {
 			return "", fmt.Errorf("lineage %s has exhausted its correction budget", lineageID)
 		}
+		if rec.State == "failed" && strings.HasPrefix(rec.LastEvent.Format(time.RFC3339), "quarantine") {
+			// Check if last event was quarantine by looking at events
+		}
+		// Check quarantine via event log
+		if events, ok := cs.events[lineageID]; ok {
+			for _, evt := range events {
+				if strings.HasPrefix(evt.Type, "quarantine:") {
+					return "", fmt.Errorf("lineage %s is quarantined", lineageID)
+				}
+			}
+		}
 	}
 
 	eventID := fmt.Sprintf("evt-%s-%d", lineageID[:min(8, len(lineageID))], time.Now().UnixNano())
@@ -113,6 +124,20 @@ func (cs *CompactStore) BeginTransaction(lineageID string) (string, error) {
 	cs.events[lineageID] = append(cs.events[lineageID], evt)
 	cs.eventLog = append(cs.eventLog, evt)
 
+	// Update record EventCount to match actual events
+	if rec, ok := cs.records[lineageID]; ok {
+		rec.EventCount = len(cs.events[lineageID])
+	} else {
+		cs.records[lineageID] = &CompactRecord{
+			LineageID:  lineageID,
+			Schema:     CompactStateSchema,
+			State:      model.StatusInProgress,
+			EventCount: len(cs.events[lineageID]),
+			FirstEvent: evt.Timestamp,
+			LastEvent:  evt.Timestamp,
+		}
+	}
+
 	return eventID, nil
 }
 
@@ -124,6 +149,12 @@ func (cs *CompactStore) CommitTransaction(lineageID, merkleRoot, receiptHash str
 	events, ok := cs.events[lineageID]
 	if !ok || len(events) == 0 {
 		return fmt.Errorf("no active transaction for lineage %s", lineageID)
+	}
+	// Check quarantine
+	for _, evt := range events {
+		if strings.HasPrefix(evt.Type, "quarantine:") {
+			return fmt.Errorf("lineage %s is quarantined", lineageID)
+		}
 	}
 
 	lastEvent := events[len(events)-1]
@@ -140,21 +171,21 @@ func (cs *CompactStore) CommitTransaction(lineageID, merkleRoot, receiptHash str
 	// Build evidence hash
 	eh := hashEvidence(evidence)
 
+	cs.events[lineageID] = append(cs.events[lineageID], evt)
+	cs.eventLog = append(cs.eventLog, evt)
+
 	rec := &CompactRecord{
 		LineageID:    lineageID,
 		Schema:       CompactStateSchema,
 		State:        model.StatusCompleted,
 		MerkleRoot:   merkleRoot,
 		ReceiptHash:  receiptHash,
-		EventCount:   len(events) + 1,
+		EventCount:   len(cs.events[lineageID]),
 		Corrections:  0,
 		FirstEvent:   events[0].Timestamp,
 		LastEvent:    evt.Timestamp,
 		EvidenceHash: eh,
 	}
-
-	cs.events[lineageID] = append(cs.events[lineageID], evt)
-	cs.eventLog = append(cs.eventLog, evt)
 	cs.records[lineageID] = rec
 	return nil
 }
@@ -182,6 +213,13 @@ func (cs *CompactStore) FailTransaction(lineageID, reason string) error {
 
 	cs.events[lineageID] = append(cs.events[lineageID], evt)
 	cs.eventLog = append(cs.eventLog, evt)
+	cs.records[lineageID] = &CompactRecord{
+		LineageID:  lineageID,
+		Schema:     CompactStateSchema,
+		State:      model.StatusFailed,
+		EventCount: len(cs.events[lineageID]),
+		LastEvent:  evt.Timestamp,
+	}
 	return nil
 }
 
@@ -256,7 +294,7 @@ func ValidateRecord(rec *CompactRecord) error {
 			Problem:   fmt.Sprintf("unexpected schema %q", rec.Schema),
 		}
 	}
-	if rec.State != model.StatusCompleted && rec.State != model.StatusArchived {
+	if rec.State != model.StatusCompleted && rec.State != model.StatusArchived && rec.State != model.StatusFailed {
 		return &CompactStateError{
 			LineageID: rec.LineageID,
 			State:     rec.State,
@@ -475,12 +513,17 @@ func (cs *CompactStore) QuarantineLineage(lineageID, reason string) error {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
 
+	prevHash := ""
+	if events, ok := cs.events[lineageID]; ok && len(events) > 0 {
+		prevHash = events[len(events)-1].Hash
+	}
 	evt := CompactEvent{
 		ID:        fmt.Sprintf("evt-%s-%d", lineageID[:min(8, len(lineageID))], time.Now().UnixNano()),
 		LineageID: lineageID,
 		Type:      "quarantine:" + reason,
 		State:     model.StatusFailed,
 		Timestamp: time.Now().UTC(),
+		PrevHash:  prevHash,
 	}
 	evt.Hash = hashCompactEvent(evt)
 
