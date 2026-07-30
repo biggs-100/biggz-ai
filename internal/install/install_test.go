@@ -18,9 +18,8 @@ func TestInstall_AgentDetected(t *testing.T) {
 		Installed:  true,
 		BinaryPath: "/usr/local/bin/opencode",
 	}
-	agent.SetTempDir(tmpDir)
 
-	result, err := install.Run(ctx, agent, install.Config{})
+	result, err := install.Run(ctx, agent, install.Config{HomeDir: tmpDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -44,27 +43,44 @@ func TestInstall_AgentDetected(t *testing.T) {
 		t.Error("expected DryRun=false")
 	}
 
-	// Verify files were actually written to the temp dir
-	if _, err := os.Stat(filepath.Join(tmpDir, "skills")); os.IsNotExist(err) {
-		t.Error("skills directory was not created on disk")
+	// Skills live in ~/.biggz/skills/ — canonical source, no agent-dir conflict
+	biggzSkillsDir := filepath.Join(tmpDir, ".biggz", "skills")
+	if _, err := os.Stat(biggzSkillsDir); os.IsNotExist(err) {
+		t.Error("biggs skills directory was not created under .biggz/skills/")
 	}
-	if _, err := os.Stat(filepath.Join(tmpDir, "opencode.jsonc")); os.IsNotExist(err) {
-		t.Error("config file was not created on disk")
+
+	// Config goes to agent's settings file via adapter.SettingsPath(homeDir)
+	configFile := filepath.Join(tmpDir, ".config", "opencode", "opencode.jsonc")
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		t.Error("config file was not created under .config/opencode/")
 	}
-	if _, err := os.Stat(filepath.Join(tmpDir, "commands")); os.IsNotExist(err) {
+
+	// Commands still deploy to agent's commands dir
+	commandsDir := filepath.Join(tmpDir, ".config", "opencode", "commands")
+	if _, err := os.Stat(commandsDir); os.IsNotExist(err) {
 		t.Error("commands directory was not created on disk")
 	}
 
-	// Verify at least one skill file exists
-	skillFiles, _ := filepath.Glob(filepath.Join(tmpDir, "skills", "**", "SKILL.md"))
+	// Verify at least one skill file exists under .biggz/skills/
+	skillFiles, _ := filepath.Glob(filepath.Join(biggzSkillsDir, "**", "SKILL.md"))
 	if len(skillFiles) == 0 {
-		t.Error("no SKILL.md files were deployed")
+		t.Error("no SKILL.md files were deployed to .biggz/skills/")
 	}
 
 	// Verify at least one command file exists
-	cmdFiles, _ := filepath.Glob(filepath.Join(tmpDir, "commands", "*.md"))
+	cmdFiles, _ := filepath.Glob(filepath.Join(commandsDir, "*.md"))
 	if len(cmdFiles) == 0 {
 		t.Error("no command .md files were deployed")
+	}
+
+	// Skills are deployed to the agent's skills directory for OpenCode discovery
+	agentSkillsDir := filepath.Join(tmpDir, ".config", "opencode", "skills")
+	if _, err := os.Stat(agentSkillsDir); os.IsNotExist(err) {
+		t.Error("agent skills directory was not created under .config/opencode/skills/")
+	}
+	agentSkillFiles, _ := filepath.Glob(filepath.Join(agentSkillsDir, "**", "SKILL.md"))
+	if len(agentSkillFiles) == 0 {
+		t.Error("no SKILL.md files were deployed to agent skills directory")
 	}
 }
 
@@ -95,9 +111,8 @@ func TestInstall_DryRun(t *testing.T) {
 		Installed:  true,
 		BinaryPath: "/usr/local/bin/opencode",
 	}
-	agent.SetTempDir(tmpDir)
 
-	result, err := install.Run(ctx, agent, install.Config{DryRun: true})
+	result, err := install.Run(ctx, agent, install.Config{DryRun: true, HomeDir: tmpDir})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -116,13 +131,13 @@ func TestInstall_DryRun(t *testing.T) {
 	}
 
 	// Verify NO files were actually written during dry-run
-	if _, err := os.Stat(filepath.Join(tmpDir, "skills")); !os.IsNotExist(err) {
-		t.Error("skills directory should NOT exist after dry-run")
+	if _, err := os.Stat(filepath.Join(tmpDir, ".biggz", "skills")); !os.IsNotExist(err) {
+		t.Error("biggz skills directory should NOT exist after dry-run")
 	}
-	if _, err := os.Stat(filepath.Join(tmpDir, "opencode.jsonc")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(tmpDir, ".config", "opencode", "opencode.jsonc")); !os.IsNotExist(err) {
 		t.Error("config file should NOT exist after dry-run")
 	}
-	if _, err := os.Stat(filepath.Join(tmpDir, "commands")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(tmpDir, ".config", "opencode", "commands")); !os.IsNotExist(err) {
 		t.Error("commands directory should NOT exist after dry-run")
 	}
 }
@@ -135,16 +150,15 @@ func TestInstall_Idempotent(t *testing.T) {
 		Installed:  true,
 		BinaryPath: "/usr/local/bin/opencode",
 	}
-	agent.SetTempDir(tmpDir)
 
 	// First run
-	first, err := install.Run(ctx, agent, install.Config{})
+	first, err := install.Run(ctx, agent, install.Config{HomeDir: tmpDir})
 	if err != nil {
 		t.Fatalf("first run unexpected error: %v", err)
 	}
 
 	// Second run
-	second, err := install.Run(ctx, agent, install.Config{})
+	second, err := install.Run(ctx, agent, install.Config{HomeDir: tmpDir})
 	if err != nil {
 		t.Fatalf("second run unexpected error: %v", err)
 	}
@@ -188,15 +202,31 @@ func TestInstall_CustomHomeDir(t *testing.T) {
 		t.Error("expected CommandsWritten > 0")
 	}
 
-	// Files should be under homeDir/.config/opencode/ since we didn't use SetTempDir
-	configDir := filepath.Join(tmpDir, ".config", "opencode")
-	if _, err := os.Stat(filepath.Join(configDir, "skills")); os.IsNotExist(err) {
-		t.Error("skills directory was not created under homeDir/.config/opencode/")
+	// Skills now live in ~/.biggz/skills/ (canonical source)
+	biggzSkillsDir := filepath.Join(tmpDir, ".biggz", "skills")
+	if _, err := os.Stat(biggzSkillsDir); os.IsNotExist(err) {
+		t.Error("skills directory was not created under .biggz/skills/")
 	}
-	if _, err := os.Stat(filepath.Join(configDir, "opencode.jsonc")); os.IsNotExist(err) {
-		t.Error("config file was not created under homeDir/.config/opencode/")
+
+	// Config goes to agent's settings file via adapter.SettingsPath(homeDir)
+	configFile := filepath.Join(tmpDir, ".config", "opencode", "opencode.jsonc")
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		t.Error("config file was not created under .config/opencode/")
 	}
-	if _, err := os.Stat(filepath.Join(configDir, "commands")); os.IsNotExist(err) {
-		t.Error("commands directory was not created under homeDir/.config/opencode/")
+
+	// Commands still deploy to agent's commands dir
+	commandsDir := filepath.Join(tmpDir, ".config", "opencode", "commands")
+	if _, err := os.Stat(commandsDir); os.IsNotExist(err) {
+		t.Error("commands directory was not created under .config/opencode/")
+	}
+
+	// Skills are deployed to the agent's skills directory for OpenCode discovery
+	agentSkillsDir := filepath.Join(tmpDir, ".config", "opencode", "skills")
+	if _, err := os.Stat(agentSkillsDir); os.IsNotExist(err) {
+		t.Error("agent skills directory was not created under .config/opencode/skills/")
+	}
+	agentSkillFiles, _ := filepath.Glob(filepath.Join(agentSkillsDir, "**", "SKILL.md"))
+	if len(agentSkillFiles) == 0 {
+		t.Error("no SKILL.md files were deployed to agent skills directory")
 	}
 }

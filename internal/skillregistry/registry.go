@@ -71,6 +71,7 @@ func scanAllSkills(projectRoot string) []Entry {
 	if home != "" {
 		userDirs := []string{
 			filepath.Join(home, ".config", "opencode", "skills"),
+			filepath.Join(home, ".biggz", "skills"),
 			filepath.Join(home, ".claude", "skills"),
 			filepath.Join(home, ".config", "kilo", "skills"),
 		}
