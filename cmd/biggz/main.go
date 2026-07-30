@@ -150,6 +150,8 @@ func main() {
 			os.Exit(syncRun())
 		case "mcp":
 			os.Exit(mcpRun())
+		case "pr":
+			os.Exit(prCreate())
 		case "recovery":
 			os.Exit(recoveryRun())
 		}
@@ -2173,6 +2175,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "  doctor [--json] [--fix]   Run system health checks")
 	fmt.Fprintln(os.Stderr, "  update [--dry-run]       Update biggz-ai to latest version")
 	fmt.Fprintln(os.Stderr, "  sync [flags]             Deploy skills, config, prompts, and commands")
+	fmt.Fprintln(os.Stderr, "  pr create <change>       Auto-generate branch and PR from SDD apply")
 	fmt.Fprintln(os.Stderr, "  rdd enable|disable|status  RDD kill switch")
 	fmt.Fprintln(os.Stderr, "  recovery list|show|generate|validate|export|import|delete  Recovery trace ledger")
 	fmt.Fprintln(os.Stderr, "  mcp                        Start MCP server")

@@ -85,8 +85,34 @@ risks:
 skill_resolution: auto
 ```
 
+## PR Auto-Generation
+
+When apply completes and all tasks are done, the orchestrator MAY create a PR:
+
+```bash
+biggz pr create <change-name> --title "feat: implemented X" --label "type:feature"
+```
+
+This:
+1. Creates a branch named `type/change-name` (auto-detected from change name)
+2. Stages and commits changes with a conventional commit message
+3. Pushes to origin
+4. Creates a PR with file list, test plan checklist, and `Closes #` placeholder
+5. Adds specified labels
+
+Branch type auto-detection:
+
+| Change prefix | Branch type |
+|---|---|
+| fix, bug, hotfix | `fix/` |
+| docs, doc, readme | `docs/` |
+| refactor, cleanup | `refactor/` |
+| chore, ci, build, test | `chore/` |
+| (everything else) | `feat/` |
+
 ## References
 
+- `../branch-pr/SKILL.md`
 - `../_shared/sdd-phase-common.md`
 - `openspec/changes/{change-name}/spec.md`
 - `openspec/changes/{change-name}/design.md`
