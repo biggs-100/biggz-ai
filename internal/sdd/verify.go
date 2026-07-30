@@ -58,6 +58,68 @@ func parseYAMLEnvelope(yamlContent string) (*VerifyReport, error) {
 	return r, nil
 }
 
+// ─── Remediation Result ──────────────────────────────────────────────────────
+
+// RemediationResultSchema is the schema identifier for remediation results.
+const RemediationResultSchema = "gentle-ai.remediation-result/v1"
+
+// RemediationResult represents a parsed remediation result.
+type RemediationResult struct {
+	Schema    string `json:"schema"`
+	Verdict   string `json:"verdict"` // "resolved", "partial", "unresolved"
+	Evidence  string `json:"evidence,omitempty"`
+	Blockers  int    `json:"blockers,omitempty"`
+	Diagnosis string `json:"diagnosis,omitempty"`
+}
+
+// ValidateRemediationResult validates a remediation result file.
+func ValidateRemediationResult(path string) (*RemediationResult, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read remediation result: %w", err)
+	}
+
+	content := string(data)
+
+	// Extract YAML envelope
+	yamlRe := regexp.MustCompile("(?s)```yaml\\s+(.*?)```")
+	matches := yamlRe.FindStringSubmatch(content)
+	if len(matches) < 2 {
+		return nil, fmt.Errorf("remediation result: missing YAML envelope")
+	}
+
+	report, err := parseYAMLEnvelope(matches[1])
+	if err != nil {
+		return nil, fmt.Errorf("parse remediation: %w", err)
+	}
+
+	// Map fields to RemediationResult
+	result := &RemediationResult{
+		Schema:  report.Schema,
+		Verdict: report.Verdict,
+		Blockers: report.Blockers,
+	}
+
+	// Validate schema
+	if result.Schema != RemediationResultSchema {
+		return nil, fmt.Errorf("remediation result: unknown schema %q", result.Schema)
+	}
+
+	// Validate verdict
+	switch result.Verdict {
+	case "resolved":
+		// OK
+	case "partial":
+		return nil, fmt.Errorf("remediation result: partial — remaining blockers: %d", result.Blockers)
+	case "unresolved":
+		return nil, fmt.Errorf("remediation result: unresolved — remediation failed, diagnosis required")
+	default:
+		return nil, fmt.Errorf("remediation result: unknown verdict %q", result.Verdict)
+	}
+
+	return result, nil
+}
+
 // ValidateVerifyReport reads a verify report, checks its format,
 // and validates requirement/scenario counts against authoritative values.
 func ValidateVerifyReport(path string, reqRequirements, reqScenarios int) error {
