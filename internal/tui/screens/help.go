@@ -143,6 +143,16 @@ var helpData = map[int]HelpContent{
 		},
 		Paragraph: "Browse review lineages stored in the review transaction store. Each lineage represents a complete review lifecycle with events, findings, and corrections.",
 	},
+	14: {
+		Title: "Recovery Trace",
+		Keys: []HelpKey{
+			{"ENTER", "Load ledgers / view detail"},
+			{"R", "Refresh list"},
+			{"↑↓", "Navigate / scroll rows"},
+			{"ESC", "Back to list / dashboard"},
+		},
+		Paragraph: "Browse recovery trace ledgers. Each ledger documents file disposition decisions across releases — KEEP, TRANSPLANT, REWRITE, DELETE, REGENERATE, or DEFER — with contributor credit and invariant proof.",
+	},
 	11: {
 		Title: "Sessions",
 		Keys: []HelpKey{

@@ -18,6 +18,7 @@ var welcomeItems = []MenuItem{
 	{Key: "u", Label: "[U]pdate", Description: "Check for and install updates", Screen: 7},
 	{Key: "t", Label: "Stric[t] TDD", Description: "Toggle strict TDD mode", Screen: 9},
 	{Key: "v", Label: "Re[v]iew", Description: "Review lineage timeline", Screen: 10},
+	{Key: "r", Label: "[R]ecovery", Description: "Browse recovery trace ledgers", Screen: 14},
 	{Key: "e", Label: "S[e]ssions", Description: "Browse BigMem sessions", Screen: 11},
 	{Key: "x", Label: "Uninsta[x]", Description: "Remove biggz-ai from your system", Screen: 8},
 	{Key: "d", Label: "[D]ashboard", Description: "Return to dashboard", Screen: 0},
@@ -63,6 +64,8 @@ func (m WelcomeModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return NavigateMsg{Screen: 9} }
 		case "v":
 			return m, func() tea.Msg { return NavigateMsg{Screen: 10} }
+		case "r":
+			return m, func() tea.Msg { return NavigateMsg{Screen: 14} }
 		case "e":
 			return m, func() tea.Msg { return NavigateMsg{Screen: 11} }
 		case "x":

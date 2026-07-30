@@ -26,6 +26,7 @@ const (
 	screenSessions
 	screenWelcome
 	screenMemSearch
+	screenRecovery
 	screenCount
 )
 
@@ -41,6 +42,7 @@ type Model struct {
 	memory        screens.MemoryModel
 	backup        screens.BackupModel
 	profile       screens.ProfileModel
+	recovery      screens.RecoveryModel
 	upgrade       screens.UpgradeModel
 	uninstall     screens.UninstallModel
 	strictTDD     screens.StrictTDDModel
@@ -62,6 +64,7 @@ func New() Model {
 		memory:        screens.NewMemoryModel(),
 		backup:        screens.NewBackupModel(),
 		profile:       screens.NewProfileModel(),
+		recovery:      screens.NewRecoveryModel(),
 		upgrade:       screens.NewUpgradeModel(),
 		uninstall:     screens.NewUninstallModel(),
 		strictTDD:     screens.NewStrictTDDModel(),
@@ -179,6 +182,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		u, cmd := m.reviewScr.Update(msg)
 		m.reviewScr = u.(screens.ReviewModel)
 		return m, cmd
+	case screenRecovery:
+		u, cmd := m.recovery.Update(msg)
+		m.recovery = u.(screens.RecoveryModel)
+		return m, cmd
 	case screenSessions:
 		u, cmd := m.sessions.Update(msg)
 		m.sessions = u.(screens.SessionsModel)
@@ -223,6 +230,8 @@ func (m Model) View() string {
 		return m.strictTDD.View()
 	case screenReview:
 		return m.reviewScr.View()
+	case screenRecovery:
+		return m.recovery.View()
 	case screenSessions:
 		return m.sessions.View()
 	}
