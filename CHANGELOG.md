@@ -5,7 +5,7 @@ All notable changes to biggz-ai are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.0] — 2026-07-29
 
 ### Added
 - Recovery trace system: CLI (`biggz recovery list/show/generate/validate/export/import/delete`) + SQLite store + TUI screen

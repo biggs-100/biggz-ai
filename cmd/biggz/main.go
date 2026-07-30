@@ -29,6 +29,7 @@ import (
 	"github.com/biggz-ai/biggz/internal/bigmem"
 	"github.com/biggz-ai/biggz/internal/doctor"
 	"github.com/biggz-ai/biggz/internal/assets"
+	"github.com/biggz-ai/biggz/internal/doctor"
 	"github.com/biggz-ai/biggz/internal/install"
 	"github.com/biggz-ai/biggz/internal/recoverytrace"
 	"github.com/biggz-ai/biggz/internal/update"
@@ -154,8 +155,19 @@ func main() {
 			os.Exit(mcpRun())
 		case "pr":
 			os.Exit(prCreate())
+		case "export":
+			os.Exit(exportRun())
+		case "hooks":
+			os.Exit(hooksRun())
 		case "recovery":
 			os.Exit(recoveryRun())
+		case "version", "--version", "-v":
+			v := doctor.BuildVersion
+			if v == "" {
+				v = "dev"
+			}
+			fmt.Printf("biggs-ai %s\n", v)
+			return
 		}
 	}
 
