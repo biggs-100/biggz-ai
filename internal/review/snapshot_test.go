@@ -5,7 +5,7 @@ import (
 )
 
 func TestSnapshotRecord(t *testing.T) {
-	sm := NewSnapshotManager()
+	sm := NewSnapshotManager(nil)
 	s := sm.Record("review-1", "base123", "cand456", []string{"main.go", "test.go"}, 50)
 
 	if s.ReviewID != "review-1" {
@@ -20,7 +20,7 @@ func TestSnapshotRecord(t *testing.T) {
 }
 
 func TestSnapshotLatest(t *testing.T) {
-	sm := NewSnapshotManager()
+	sm := NewSnapshotManager(nil)
 	if sm.Latest() != nil {
 		t.Error("expected nil for empty manager")
 	}
@@ -38,7 +38,7 @@ func TestSnapshotLatest(t *testing.T) {
 }
 
 func TestSnapshotAll(t *testing.T) {
-	sm := NewSnapshotManager()
+	sm := NewSnapshotManager(nil)
 	all := sm.All()
 	if len(all) != 0 {
 		t.Error("expected empty")
