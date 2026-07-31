@@ -33,7 +33,7 @@ From the orchestrator:
 Before reading implementation files or writing code, consume the structured status provided by the orchestrator or build the equivalent status from artifacts.
 
 - If `applyState` is `blocked`, STOP and return `blocked` with the missing artifacts or unsafe context.
-- If `applyState` is `all_done`, do not edit. Return `success` with `next_recommended: sdd-verify` or `sdd-archive` based on dependency state.
+- If `applyState` is `all_done`, do not edit. Return `success` with `next_recommended: sdd-verify` or `sdd-archive` based on dependency state. Focused remediation is the sole exception (see Work Unit Evidence gate below).
 - If `applyState` is `ready`, proceed only on the assigned pending tasks.
 - Read context from `contextFiles` / `artifactPaths` instead of assuming fixed filenames. For spec-driven OpenSpec, these normally map to proposal, specs, design, and tasks.
 - If `actionContext.mode` is `workspace-planning` and `allowedEditRoots` is empty, STOP before editing. Treat linked repos and folders as read-only planning context.
@@ -136,6 +136,8 @@ Every assigned work unit, including standard mode, MUST produce a **Work Unit Ev
 If design/tasks contain applicable threat-matrix cases, write and run each mapped RED test before the corresponding production change even in standard mode. Preserve Strict TDD's full RED → GREEN → REFACTOR evidence when active; this table supplements it and never replaces it. Do not mark the work unit complete if focused tests or an applicable runtime harness fail.
 
 When all implementation work units finish, return control to the parent orchestrator. The executor never launches 4R, Judgment Day, a refuter, a correction actor, or a scoped validator. Only the parent may explicitly start an ordinary review after apply, and only when no valid content-bound receipt exists.
+
+Focused remediation is the sole `applyState: all_done` exception. It requires the persisted transaction's exact `lineage_id`, `generation`, mode-specific `fix_batch`, and `failed_evidence_revision` from native status. Record those values in both the `gentle-ai.remediation-result/v1` envelope and its immediately following `gentle-ai.remediation-evidence/v1` JSON, then run the corrected candidate through `biggz sdd-remediate <change> --verify-report <path>`. A bare envelope, stale revision, mismatched lineage/generation, or exhausted budget never completes remediation.
 
 ### Step 4: Implement Tasks (Standard Workflow)
 
@@ -241,6 +243,7 @@ If none, say "None."}
 - If workload forecast requires a decision and none was provided, STOP before writing code
 - When applying a chained/stacked PR slice, keep the batch autonomous: one deliverable scope, verification included, and clear rollback boundary
 - When applying `size:exception`, state it explicitly in apply-progress and the return summary
+- Focused remediation is the sole `all_done` exception and must bind both evidence blocks to the exact lineage_id, generation, fix_batch, and failed_evidence_revision from native status
 - NEVER implement tasks that weren't assigned to you
 - Skill loading is handled in Step 1 — follow any loaded skills strictly when writing code
 - Apply any `rules.apply` from `openspec/config.yaml`
