@@ -103,12 +103,14 @@ func handleToolCall(id any, name string, args map[string]any) {
 	switch name {
 	case "mem_save":
 		obs := &bigmem.Observation{
-			Title:    getStr(args, "title"),
-			Content:  getStr(args, "content"),
-			Type:     getStr(args, "type"),
-			TopicKey: getStr(args, "topic_key"),
-			Project:  getStr(args, "project"),
-			Scope:    getStr(args, "scope"),
+			Title:     getStr(args, "title"),
+			Content:   getStr(args, "content"),
+			Type:      getStr(args, "type"),
+			TopicKey:  getStr(args, "topic_key"),
+			Project:   getStr(args, "project"),
+			Scope:     getStr(args, "scope"),
+			SessionID: getStr(args, "session_id"),
+			ToolName:  getStr(args, "tool_name"),
 		}
 		if obs.Title == "" {
 			writeError(id, "title is required")
@@ -122,9 +124,11 @@ func handleToolCall(id any, name string, args map[string]any) {
 
 	case "mem_search":
 		results, err := store.Search(getStr(args, "query"), bigmem.SearchOptions{
-			Project: getStr(args, "project"),
-			Type:    getStr(args, "type"),
-			Limit:   getInt(args, "limit", 10),
+			Project:   getStr(args, "project"),
+			Type:      getStr(args, "type"),
+			Scope:     getStr(args, "scope"),
+			Limit:     getInt(args, "limit", 10),
+			MatchMode: getStr(args, "match_mode"),
 		})
 		if err != nil {
 			writeError(id, err.Error())
@@ -132,11 +136,20 @@ func handleToolCall(id any, name string, args map[string]any) {
 		}
 		entries := make([]map[string]any, 0, len(results))
 		for _, r := range results {
-			entries = append(entries, map[string]any{
+			entry := map[string]any{
 				"id": r.ID, "title": r.Title, "type": r.Type,
 				"content": truncate(r.Content, 300),
-				"topic_key": r.TopicKey, "created": r.CreatedAt,
-			})
+				"session_id": r.SessionID, "tool_name": r.ToolName,
+				"topic_key": r.TopicKey, "project": r.Project,
+				"scope": r.Scope, "revision_count": r.RevisionCount,
+				"duplicate_count": r.DuplicateCount,
+				"state": r.State(),
+				"created": r.CreatedAt,
+			}
+			if r.ReviewAfter != nil {
+				entry["review_after"] = *r.ReviewAfter
+			}
+			entries = append(entries, entry)
 		}
 		jsonResult(id, entries)
 
@@ -153,8 +166,15 @@ func handleToolCall(id any, name string, args map[string]any) {
 		}
 		jsonResult(id, map[string]any{
 			"id": obs.ID, "title": obs.Title, "type": obs.Type,
-			"content": obs.Content, "topic_key": obs.TopicKey,
+			"content": obs.Content, "session_id": obs.SessionID,
+			"tool_name": obs.ToolName, "topic_key": obs.TopicKey,
 			"project": obs.Project, "scope": obs.Scope,
+			"revision_count": obs.RevisionCount,
+			"duplicate_count": obs.DuplicateCount,
+			"last_seen_at": obs.LastSeenAt,
+			"review_after": obs.ReviewAfter,
+			"pinned": obs.Pinned,
+			"state": obs.State(),
 			"created": obs.CreatedAt, "updated": obs.UpdatedAt,
 		})
 
@@ -370,14 +390,14 @@ func handleToolCall(id any, name string, args map[string]any) {
 
 	case "mem_review":
 		action := getStr(args, "action")
-		obsID := getInt(args, "observation_id", 0)
+		obsID := getStr(args, "observation_id")
 
 		if action == "list" {
 			ids, err := store.ListNeedsReview()
 			if err != nil { writeError(id, err.Error()); return }
 			jsonResult(id, map[string]any{"need_review": ids})
 		} else if action == "mark_reviewed" {
-			if obsID == 0 { writeError(id, "observation_id required"); return }
+			if obsID == "" { writeError(id, "observation_id required"); return }
 			if err := store.Review("mark_reviewed", obsID); err != nil { writeError(id, err.Error()); return }
 			textResult(id, "Marked reviewed")
 		} else {
@@ -392,18 +412,23 @@ func handleToolCall(id any, name string, args map[string]any) {
 func buildToolList(scope string) []map[string]any {
 	tools := []map[string]any{
 		toolDef("mem_save", "Save an observation to persistent memory.", map[string]any{
-			"title":     map[string]any{"type": "string", "description": "Short searchable title"},
-			"content":   map[string]any{"type": "string"},
-			"type":      map[string]any{"type": "string", "description": "decision|architecture|bugfix|discovery|config|preference"},
-			"topic_key": map[string]any{"type": "string"},
-			"project":   map[string]any{"type": "string"},
-			"scope":     map[string]any{"type": "string"},
+			"title":      map[string]any{"type": "string", "description": "Short searchable title"},
+			"content":    map[string]any{"type": "string"},
+			"type":       map[string]any{"type": "string", "description": "decision|architecture|bugfix|discovery|config|preference"},
+			"topic_key":  map[string]any{"type": "string"},
+			"project":    map[string]any{"type": "string"},
+			"scope":      map[string]any{"type": "string"},
+			"session_id": map[string]any{"type": "string"},
+			"tool_name":  map[string]any{"type": "string"},
+			"pinned":     map[string]any{"type": "boolean"},
 		}, []string{"title"}),
 		toolDef("mem_search", "Search memory by keywords.", map[string]any{
-			"query":   map[string]any{"type": "string"},
-			"project": map[string]any{"type": "string"},
-			"type":    map[string]any{"type": "string"},
-			"limit":   map[string]any{"type": "number"},
+			"query":      map[string]any{"type": "string"},
+			"project":    map[string]any{"type": "string"},
+			"type":       map[string]any{"type": "string"},
+			"scope":      map[string]any{"type": "string"},
+			"limit":      map[string]any{"type": "number"},
+			"match_mode": map[string]any{"type": "string", "description": "\"all\" (AND, default) or \"any\" (OR)"},
 		}, []string{}),
 		toolDef("mem_get_observation", "Get full observation by ID.", map[string]any{
 			"id": map[string]any{"type": "string"},
@@ -466,8 +491,8 @@ func buildToolList(scope string) []map[string]any {
 			"target_project": map[string]any{"type": "string"},
 		}, []string{"source_project", "target_project"}),
 		toolDef("mem_review", "Manage observation lifecycle review state.", map[string]any{
-			"action": map[string]any{"type": "string", "description": "list|mark_reviewed"},
-			"observation_id": map[string]any{"type": "number"},
+			"action":         map[string]any{"type": "string", "description": "list|mark_reviewed"},
+			"observation_id": map[string]any{"type": "string", "description": "Observation ID (required for mark_reviewed)"},
 		}, []string{"action"}),
 	}
 	return tools

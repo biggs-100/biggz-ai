@@ -980,10 +980,10 @@ func TestHandleToolCall_mem_review(t *testing.T) {
 		}
 	})
 
-	t.Run("mark_reviewed", func(t *testing.T) {
+		t.Run("mark_reviewed", func(t *testing.T) {
 		raw := captureStdout(t, func() {
 			handleToolCall("rv2", "mem_review", map[string]any{
-				"action": "mark_reviewed", "observation_id": 1.0,
+				"action": "mark_reviewed", "observation_id": "1",
 			})
 		})
 		r := parseRPC(t, raw)
