@@ -1,9 +1,13 @@
 package bigmem
 
 import (
+	"database/sql"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	_ "modernc.org/sqlite"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -15,6 +19,84 @@ func openTestStore(t *testing.T) *Store {
 	}
 	t.Cleanup(func() { s.Close() })
 	return s
+}
+
+// TestOpen_MigratesLegacySchema proves that a database created by an older
+// release (without provenance/lifecycle columns) is migrated on Open so that
+// index creation and inserts do not fail with "no such column".
+func TestOpen_MigratesLegacySchema(t *testing.T) {
+	dir := t.TempDir()
+
+	// Simulate a legacy database: observations without the newer columns.
+	db, err := sql.Open("sqlite", filepath.Join(dir, "bigmem.db"))
+	if err != nil {
+		t.Fatalf("open legacy db: %v", err)
+	}
+	_, err = db.Exec(`
+		CREATE TABLE observations (
+			id TEXT PRIMARY KEY,
+			title TEXT NOT NULL DEFAULT '',
+			type TEXT DEFAULT '',
+			content TEXT DEFAULT '',
+			topic_key TEXT DEFAULT '',
+			project TEXT DEFAULT '',
+			scope TEXT DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			deleted_at TEXT
+		);
+		CREATE TABLE memory_relations (
+			id TEXT PRIMARY KEY,
+			source_id TEXT NOT NULL,
+			target_id TEXT NOT NULL,
+			relation TEXT NOT NULL DEFAULT 'pending',
+			reason TEXT DEFAULT '',
+			evidence TEXT DEFAULT '',
+			confidence REAL DEFAULT 0.0,
+			judgment_status TEXT NOT NULL DEFAULT 'pending',
+			marked_by TEXT DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);
+		INSERT INTO observations (id, title, type, content, project, created_at, updated_at)
+		VALUES ('legacy-1', 'Old note', 'discovery', 'legacy content', 'legacy', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+	`)
+	if err != nil {
+		t.Fatalf("create legacy schema: %v", err)
+	}
+	db.Close()
+
+	// Open must migrate the legacy schema instead of failing.
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatalf("Open() on legacy db: %v", err)
+	}
+	defer s.Close()
+
+	// The legacy row is still readable with migrated defaults.
+	got, err := s.Get("legacy-1")
+	if err != nil {
+		t.Fatalf("Get(legacy row) error: %v", err)
+	}
+	if got.Title != "Old note" {
+		t.Errorf("legacy Title = %q, want %q", got.Title, "Old note")
+	}
+	if got.SessionID != "" {
+		t.Errorf("legacy SessionID = %q, want empty default", got.SessionID)
+	}
+
+	// New writes with the new columns work after migration.
+	obs := &Observation{Title: "New note", Type: "decision", Content: "fresh", Project: "test", SessionID: "sess-1", ToolName: "cli"}
+	if err := s.Save(obs); err != nil {
+		t.Fatalf("Save() with new columns: %v", err)
+	}
+	saved, err := s.Get(obs.ID)
+	if err != nil {
+		t.Fatalf("Get(new row) error: %v", err)
+	}
+	if saved.SessionID != "sess-1" || saved.ToolName != "cli" {
+		t.Errorf("SessionID/ToolName = %q/%q, want sess-1/cli", saved.SessionID, saved.ToolName)
+	}
 }
 
 func TestSaveAndGet(t *testing.T) {

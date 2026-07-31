@@ -118,6 +118,14 @@ func Open(rootDir string) (*Store, error) {
 	db.Exec("PRAGMA busy_timeout=5000")
 	db.Exec("PRAGMA synchronous=NORMAL")
 
+	// Migrate legacy databases before creating indexes: CREATE TABLE IF NOT
+	// EXISTS cannot alter existing tables, so columns added in later versions
+	// must be added explicitly or the index/insert statements fail.
+	if err := migrateSchema(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+
 	// Create core tables
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS observations (
@@ -253,6 +261,78 @@ func Open(rootDir string) (*Store, error) {
 	`)
 
 	return &Store{db: db, rootDir: rootDir}, nil
+}
+
+// ─── Schema migration ────────────────────────────────────────────────────────
+
+// columnDef describes a column that may need to be added to an existing table.
+type columnDef struct {
+	name string
+	ddl  string
+}
+
+// migrateSchema adds columns introduced in later versions to databases created
+// by older releases. CREATE TABLE IF NOT EXISTS is a no-op for existing
+// tables, so without this step inserts and index creation fail with
+// "no such column".
+func migrateSchema(db *sql.DB) error {
+	// observations grew provenance and lifecycle columns over versions.
+	if err := ensureColumns(db, "observations", []columnDef{
+		{name: "session_id", ddl: "TEXT DEFAULT ''"},
+		{name: "tool_name", ddl: "TEXT DEFAULT ''"},
+		{name: "normalized_hash", ddl: "TEXT DEFAULT ''"},
+		{name: "revision_count", ddl: "INTEGER DEFAULT 1"},
+		{name: "duplicate_count", ddl: "INTEGER DEFAULT 1"},
+		{name: "last_seen_at", ddl: "TEXT"},
+		{name: "review_after", ddl: "TEXT"},
+		{name: "pinned", ddl: "INTEGER DEFAULT 0"},
+		{name: "deleted_at", ddl: "TEXT"},
+	}); err != nil {
+		return err
+	}
+	// memory_relations gained session provenance after initial release.
+	return ensureColumns(db, "memory_relations", []columnDef{
+		{name: "session_id", ddl: "TEXT DEFAULT ''"},
+	})
+}
+
+// ensureColumns inspects an existing table and adds any missing column.
+// Tables that do not exist yet are skipped: the subsequent CREATE TABLE IF
+// NOT EXISTS creates them with the full current schema.
+func ensureColumns(db *sql.DB, table string, cols []columnDef) error {
+	var exists int
+	if err := db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&exists); err != nil {
+		return fmt.Errorf("check %s: %w", table, err)
+	}
+	if exists == 0 {
+		return nil
+	}
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return fmt.Errorf("inspect %s: %w", table, err)
+	}
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt any
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan %s columns: %w", table, err)
+		}
+		existing[name] = true
+	}
+	rows.Close()
+	for _, c := range cols {
+		if existing[c.name] {
+			continue
+		}
+		if _, err := db.Exec("ALTER TABLE " + table + " ADD COLUMN " + c.name + " " + c.ddl); err != nil {
+			return fmt.Errorf("migrate %s.%s: %w", table, c.name, err)
+		}
+	}
+	return nil
 }
 
 // ─── Sync tracking ──────────────────────────────────────────────────────────
