@@ -1,25 +1,3 @@
----
-name: sdd-init
-description: "Trigger: sdd init, iniciar sdd, openspec init. Initialize SDD context, testing capabilities, registry, and persistence."
-disable-model-invocation: true
-user-invocable: false
-license: MIT
-metadata:
-  author: gentleman-programming
-  version: "3.0"
-  delegate_only: true
----
-
-> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are
-> the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Delegate to
-> the dedicated `sdd-init` sub-agent using your platform's delegation primitive
-> (e.g., `task(...)`, sub-agent invocation, etc.). This skill is for EXECUTORS
-> only.
-
-## Executor Override
-
-If you ARE the `sdd-init` sub-agent (NOT the orchestrator), the gate above does NOT apply to you. Continue with the phase work below. Do NOT delegate. Do NOT call the Skill tool. You are the executor — execute.
-
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -35,10 +13,10 @@ Run this phase when the orchestrator/user asks to initialize SDD in a project. Y
 ## Hard Rules
 
 - Detect the real stack, conventions, architecture, testing tools, and persistence mode; never guess.
-- In `engram` mode, do **not** create `openspec/`.
+- In `engram` mode, do **not** create `openspec/` or `openspec/config.yaml`.
 - In `openspec` mode, follow `../_shared/openspec-convention.md` and write file artifacts.
 - In `hybrid` mode, write both openspec files and Engram observations.
-- Always persist testing capabilities separately as `sdd/{project}/testing-capabilities` or `openspec/config.yaml` `testing:`.
+- Always persist testing capabilities separately as `sdd/{project}/testing-capabilities` via `biggz_mem_save` (or `openspec/config.yaml` `testing:`).
 - Always build `.atl/skill-registry.md`; also save `skill-registry` to Engram when available.
 - Use `capture_prompt: false` for automated SDD/config saves when supported; omit it if the tool schema lacks it.
 - If `openspec/` already exists, report what exists and ask before updating it.
@@ -50,7 +28,7 @@ Run this phase when the orchestrator/user asks to initialize SDD in a project. Y
 | `mode=engram` | Save context and capabilities to Engram only. |
 | `mode=openspec` | Create/update openspec bootstrap files only. |
 | `mode=hybrid` | Do both Engram and openspec persistence. |
-| `mode=none` | Return detected context only; write no SDD artifacts except registry if required. |
+| `mode=none` | Return results inline only; write no SDD artifacts except registry if required. |
 | strict TDD marker/config found | Use that value. |
 | no marker/config but test runner exists | Default `strict_tdd: true`. |
 | no test runner | Set `strict_tdd: false` and explain unavailable. |
@@ -71,6 +49,6 @@ Return `status`, `executive_summary`, `artifacts`, `next_recommended`, and `risk
 
 ## References
 
-- [references/init-details.md](references/init-details.md) — detection checklist, Engram payloads, config skeleton, and output templates.
+- [skills/sdd-init/references/init-details.md](skills/sdd-init/references/init-details.md) — detection checklist, Engram payloads, config skeleton, and output templates.
 - `../_shared/bigmem-convention.md` — Engram artifact naming.
 - `../_shared/openspec-convention.md` — openspec layout and rules.

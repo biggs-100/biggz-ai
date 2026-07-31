@@ -1,26 +1,3 @@
----
-name: sdd-apply
-description: "Implement SDD tasks from specs and design. Trigger: orchestrator launches apply for one or more change tasks."
-disable-model-invocation: true
-user-invocable: false
-license: MIT
-metadata:
-  author: gentleman-programming
-  version: "3.0"
-  delegate_only: true
----
-
-> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are
-> the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Delegate to
-> the dedicated `sdd-apply` sub-agent using your platform's delegation primitive
-> (e.g., `task(...)`, sub-agent invocation, etc.). This skill is for EXECUTORS
-> only.
-
-## Executor Override
-
-If you ARE the `sdd-apply` sub-agent (NOT the orchestrator), the gate above does NOT apply to you. Continue with the phase work below. Do NOT delegate. Do NOT call the Skill tool. You are the executor — execute.
-
-
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -117,7 +94,7 @@ Read the cached testing capabilities to determine implementation mode:
 
 ```
 Read testing capabilities from:
-├── engram: biggz_mem_search("sdd/{project}/testing-capabilities") → biggz_mem_get_observation(id)
+├── engram: biggz_mem_search(query: "sdd/{project}/testing-capabilities", project: "{project}") → biggz_mem_get_observation(id)
 ├── openspec: openspec/config.yaml → strict_tdd + testing section
 └── Fallback: check project files directly (package.json, go.mod, etc.)
 
@@ -125,6 +102,8 @@ Resolve mode:
 ├── IF strict_tdd: true AND test runner exists
 │   └── STRICT TDD MODE → Load and follow strict-tdd.md module
 │       (read the file: skills/sdd-apply/strict-tdd.md)
+│       Run the RED → GREEN → REFACTOR cycle and state the test runner
+│       in your apply-progress artifact and return summary
 │
 ├── IF strict_tdd: false OR no test runner
 │   └── STANDARD MODE → use Step 4 below (no TDD module loaded)
@@ -143,6 +122,20 @@ If Strict TDD Mode is active (either from orchestrator injection or self-discove
 - The verify phase WILL reject your work if the TDD Evidence table is missing or incomplete
 
 **There is no silent fallback.** If you resolved Strict TDD as active, you follow it or you report failure. You do NOT quietly switch to Standard Mode.
+
+#### Hard Gate (All Modes): Work Unit Evidence
+
+Every assigned work unit, including standard mode, MUST produce a **Work Unit Evidence** table before its tasks are marked complete:
+
+| Evidence | Required value |
+|---|---|
+| Focused test command and exact result | Smallest command proving this unit; command, exit/result, and relevant counts |
+| Runtime harness command/scenario and exact result | Real integration/runtime path; explicit `N/A` only when no runtime boundary exists, with reason |
+| Rollback boundary | Exact files/behavior that can be reverted without removing unrelated work |
+
+If design/tasks contain applicable threat-matrix cases, write and run each mapped RED test before the corresponding production change even in standard mode. Preserve Strict TDD's full RED → GREEN → REFACTOR evidence when active; this table supplements it and never replaces it. Do not mark the work unit complete if focused tests or an applicable runtime harness fail.
+
+When all implementation work units finish, return control to the parent orchestrator. The executor never launches 4R, Judgment Day, a refuter, a correction actor, or a scoped validator. Only the parent may explicitly start an ordinary review after apply, and only when no valid content-bound receipt exists.
 
 ### Step 4: Implement Tasks (Standard Workflow)
 
