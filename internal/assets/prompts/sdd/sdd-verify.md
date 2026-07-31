@@ -22,8 +22,8 @@ The orchestrator should provide structured status from `skills/_shared/sdd-statu
 - Do not fix issues; report them for the orchestrator/user.
 - Build the complete report as exact candidate bytes, then run `biggz sdd-verify-validate` with authoritative spec counts before any OpenSpec or Engram write. If the validator is unavailable or denies admission, make zero writes and leave the prior report untouched; otherwise persist the same bytes, including a valid `fail`.
 - Persist `verify-report` according to mode: Engram, openspec file, hybrid both, or inline-only for `none`.
-- If Strict TDD is active, load `strict-tdd-verify.md` from this skill directory; if inactive, never load it.
-- Return the Section D envelope from `../_shared/sdd-phase-common.md`.
+- If Strict TDD is active, load `skills/sdd-verify/strict-tdd-verify.md`; if inactive, never load it.
+- Return the Section D envelope from `skills/_shared/sdd-phase-common.md`.
 - Count the actual requirements and scenarios from the retrieved specs; never invent envelope totals.
 - Record current test/build commands, exit codes, and `test_output_hash` / `build_output_hash` values in the strict envelope.
 - Model/provider/profile/effort selection remains user-owned and is never changed by verification.
@@ -66,7 +66,7 @@ build_exit_code: 125
 4. Count completed and incomplete tasks. Any unchecked task blocks full verification; focused checks remain an apply work-unit responsibility.
 5. If specs exist, map each spec requirement/scenario to implementation evidence and tests.
 6. If design exists, check design decisions against changed code. If design is missing, skip design coherence and record why.
-7. Run test, build/type-check, and coverage commands when available. For full spec verification, preserve gentle-ai's stricter runtime evidence: source inspection alone does not prove spec scenario compliance.
+7. Run test, build/type-check, and coverage commands when available. For full spec verification, preserve stricter runtime evidence: source inspection alone does not prove spec scenario compliance.
 8. Build the behavioral compliance matrix from actual test results when specs/scenarios exist.
 9. Persist and return the verification report, including skipped dimensions for missing artifacts.
 
@@ -84,5 +84,5 @@ Return `## Verification Report` with change, mode, completeness table, build/tes
 ## References
 
 - [skills/sdd-verify/references/report-format.md](skills/sdd-verify/references/report-format.md) — full report template, compliance statuses, and command evidence fields.
-- [strict-tdd-verify.md](strict-tdd-verify.md) — load only when Strict TDD is active.
-- `../_shared/sdd-phase-common.md` — skill loading, retrieval, persistence, and return envelope.
+- [skills/sdd-verify/strict-tdd-verify.md](skills/sdd-verify/strict-tdd-verify.md) — load only when Strict TDD is active.
+- `skills/_shared/sdd-phase-common.md` — skill loading, retrieval, persistence, and return envelope.

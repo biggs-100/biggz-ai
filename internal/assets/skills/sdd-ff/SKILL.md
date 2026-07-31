@@ -88,7 +88,7 @@ next_recommended: apply
 risks:
   - description: "Auto-generated artifacts may miss edge cases — rely on verify phase to catch them"
     severity: medium
-skill_resolution: user_input
+skill_resolution: fallback-path
 ```
 
 ## References

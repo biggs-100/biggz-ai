@@ -1,84 +1,58 @@
 ---
 name: sdd-init
 description: Initialize SDD context, testing capabilities, registry, and persistence for a project. Trigger: sdd init, iniciar sdd, openspec init; also called automatically by the orchestrator when no openspec/ directory exists.
-license: MIT
-metadata:
-  author: biggz-ai
-  version: '1.0'
 ---
+## Language Domain Contract
 
-# SDD Init
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
 
-Initialize SDD workspace for the current project. Detects stack, configures testing capabilities, and creates the openspec/ artifact store.
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
 
 ## Activation Contract
 
-1. Detect project language and testing framework.
-2. Initialize OpenSpec artifact store.
-3. Cache testing capabilities in config.
-4. Set up SDD registry.
-5. Must be idempotent — safe to re-run without data loss.
+Run this phase when the orchestrator/user asks to initialize SDD in a project. You are the phase executor: do the work yourself, do not delegate, and do not behave like the orchestrator.
 
 ## Hard Rules
 
-- Never overwrite an existing `openspec/config.yaml` without explicit user confirmation.
-- `biggz sdd-status` must report a valid state before and after init.
-- All paths created under `openspec/` must be relative and portable (no absolute paths).
-- If the project has no detectable test framework, still initialize — flag as warning, not error.
-- The skill registry must be rebuilt from the embedded filesystem, not from a cache.
+- Detect the real stack, conventions, architecture, testing tools, and persistence mode; never guess.
+- In `engram` mode, do **not** create `openspec/` or `openspec/config.yaml`.
+- In `openspec` mode, follow `_shared/openspec-convention.md` and write file artifacts.
+- In `hybrid` mode, write both openspec files and Engram observations.
+- Always persist testing capabilities separately as `sdd/{project}/testing-capabilities` via `biggz_mem_save` (or `openspec/config.yaml` `testing:`).
+- Always build `.atl/skill-registry.md`; also save `skill-registry` to Engram when available.
+- Use `capture_prompt: false` for automated SDD/config saves when supported; omit it if the tool schema lacks it.
+- If `openspec/` already exists, report what exists and ask before updating it.
 
 ## Decision Gates
 
-| Gate | Condition | Action |
-|------|-----------|--------|
-| Already initialized | `openspec/config.yaml` exists | Show status, skip. Ask before re-init with `--force`. |
-| Unknown stack | No `go.mod`, `package.json`, `Cargo.toml`, `pyproject.toml` | Default to generic config, flag for user to update manually. |
-| No test framework | `go.mod` exists but no `*_test.go` files found | Set `runner: none` with warning in config. |
-| Multiple stacks | Both `go.mod` and `package.json` (monorepo) | Detect primary stack from current directory context, note secondary. |
+| Input | Action |
+|---|---|
+| `mode=engram` | Save context and capabilities to Engram only. |
+| `mode=openspec` | Create/update openspec bootstrap files only. |
+| `mode=hybrid` | Do both Engram and openspec persistence. |
+| `mode=none` | Return results inline only; write no SDD artifacts except registry if required. |
+| strict TDD marker/config found | Use that value. |
+| no marker/config but test runner exists | Default `strict_tdd: true`. |
+| no test runner | Set `strict_tdd: false` and explain unavailable. |
 
 ## Execution Steps
 
-1. **Load shared protocol** — read `../_shared/sdd-phase-common.md`.
-2. **Check current state** — run `biggz sdd-status` to see if already initialized. If yes and config exists, print status output and exit unless `--force` flag is provided.
-3. **Detect language stack** — scan project root for markers: `go.mod` → Go, `package.json` → Node.js/TypeScript, `Cargo.toml` → Rust, `pyproject.toml` → Python. Set `language` field in config. If multiple detected, use the most relevant based on directory context.
-4. **Detect testing framework** — for Go: check `*_test.go` files exist and probes for `pgregory.net/rapid` (property-based) or standard `testing` package. For Node: check `vitest`, `jest`, `mocha` in devDependencies. For Rust: check `cargo test` works.
-5. **Set testing capabilities** — probe for each capability and set boolean in config:
-   - `runner`: test framework detected and working
-   - `linter`: golangci-lint, eslint, clippy, etc.
-   - `type_checker`: TypeScript compiler, mypy, etc.
-   - `formatter`: gofmt, prettier, rustfmt, etc.
-   - `coverage`: go test -cover, vitest --coverage, etc.
-6. **Create directory structure** — create these paths:
-   - `openspec/` — root
-   - `openspec/changes/` — change directories
-   - `openspec/specs/` — domain specification files
-   - `openspec/archive/` — archived completed changes
-7. **Write config** — create `openspec/config.yaml` with detected capabilities, phase requirements (all true by default), and project context.
-8. **Set up skill registry** — walk `internal/assets/skills/` (embedded FS) and build a registry mapping each skill name to its SKILL.md path. Write to Engram for cross-session availability.
-9. **Verify** — run `biggz sdd-status` to confirm clean init state. Capture any warnings about missing capabilities.
-10. **Persist** — save Engram observation with: detected stack, config path, test runner, warnings list.
+1. Inspect project files (`package.json`, `go.mod`, `pyproject.toml`, CI, lint/test config) and summarize stack/conventions.
+2. Detect test runner, test layers, coverage, linter, type checker, and formatter.
+3. Resolve Strict TDD from agent marker, `openspec/config.yaml`, detected runner fallback, or no-runner fallback.
+4. Initialize persistence for the resolved mode.
+5. Build `.atl/skill-registry.md` using the skill-registry scan rules.
+6. Persist testing capabilities and project context.
+7. Return the structured initialization envelope.
 
 ## Output Contract
 
-```yaml
-status: success | skipped | blocked
-executive_summary: "Initialized SDD for Go project at openspec/config.yaml. Testing: go test."
-artifacts:
-  - path: openspec/config.yaml
-    type: config
-    summary: "SDD configuration with testing capabilities"
-next_recommended: new
-risks:
-  - description: "Testing capabilities auto-detected — verify with biggz sdd-status"
-    severity: low
-skill_resolution: auto
-```
+Return `status`, `executive_summary`, `artifacts`, `next_recommended`, and `risks`. Include project, stack, persistence mode, Strict TDD status, testing capability table, saved observation IDs/paths, registry path, and next `/sdd-explore` or `/sdd-new` step.
 
 ## References
 
-- `../_shared/sdd-phase-common.md`
-- `../../opencode/commands/sdd-init.md`
-- `../../opencode/commands/sdd-status.md`
-- `openspec/config.yaml`
-- `openspec/changes/`
-- `openspec/specs/`
+- [references/init-details.md](references/init-details.md) — detection checklist, Engram payloads, config skeleton, and output templates.
+- `_shared/bigmem-convention.md` — Engram artifact naming.
+- `_shared/openspec-convention.md` — openspec layout and rules.

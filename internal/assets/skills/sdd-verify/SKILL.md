@@ -1,114 +1,92 @@
 ---
 name: sdd-verify
 description: Verify SDD implementation against specs, design, and tasks. Run tests, validate requirements, check design coherence, and produce verify report. Trigger: orchestrator launches verification after apply.
-license: MIT
-metadata:
-  author: biggz-ai
-  version: '1.0'
 ---
+## Language Domain Contract
 
-# SDD Verify
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
 
-Prove that the implementation satisfies the spec requirements, follows the design, and completes all tasks. Produces a verify report with pass/fail evidence per requirement.
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
 
 ## Activation Contract
 
-1. Run all tests — report pass/fail counts.
-2. Validate every requirement (REQ-N) against the implementation.
-3. Check design decisions against actual code.
-4. Verify every task is marked done with evidence.
-5. Run linters and static analysis if configured.
-6. Use `biggz sdd-verify-validate` for structured validation.
-7. Produce verify report.
+Run when the orchestrator launches verification for an SDD change. You are the quality gate: prove completion with source inspection plus real execution evidence.
+
+The orchestrator should provide structured status from `_shared/sdd-status-contract.md`. Use its `schemaName`, `planningHome`, `changeRoot`, `artifactPaths`, `contextFiles`, task progress, dependency states, and `actionContext` before judging artifacts.
 
 ## Hard Rules
 
-- Every REQ-N from the spec must have an explicit verification result (pass/fail/skip).
-- Verification must be observable — not "I checked the code" but "test X passes" or "output Y matches".
-- Never declare verification complete without running the test suite.
-- If `biggz sdd-verify-validate` is available, use it as the final validation gate.
-- If verification fails, be specific about what failed and why.
+- Read all available status `contextFiles` before judging implementation. Full spec-driven verification reads proposal, specs, design, and tasks; partial artifact sets degrade as described below.
+- Run full verification only after all tasks are complete. If any task is pending, return `blocked` without running the full suite.
+- Execute relevant tests; static analysis alone is never verification.
+- A spec scenario is compliant only when a covering test passed at runtime.
+- Compare specs first, design second, task completion third.
+- Do not fix issues; report them for the orchestrator/user.
+- Build the complete report as exact candidate bytes, then run `biggz sdd-verify-validate` with authoritative spec counts before any OpenSpec or Engram write. If the validator is unavailable or denies admission, make zero writes and leave the prior report untouched; otherwise persist the same bytes, including a valid `fail`.
+- Persist `verify-report` according to mode: Engram, openspec file, hybrid both, or inline-only for `none`.
+- If Strict TDD is active, load `strict-tdd-verify.md`; if inactive, never load it.
+- Return the Section D envelope from `_shared/sdd-phase-common.md`.
+- Count the actual requirements and scenarios from the retrieved specs; never invent envelope totals.
+- Record current test/build commands, exit codes, and `test_output_hash` / `build_output_hash` values in the strict envelope.
+- Model/provider/profile/effort selection remains user-owned and is never changed by verification.
+- This is the one independent requirements/runtime final verification. A contradiction or new failing check returns FAIL/escalation; it never starts 4R, Judgment Day, a refuter, another correction, or scoped validation.
+- For native final verification, consume only the authoritative preterminal transaction plus the preserved policy and canonical ledger preimages. Do not require `receipt.json`, `chain-bundle.json`, `gate-context.json`, or any terminal-only artifact: final verification must complete before those artifacts can exist.
+- Return and preserve the exact canonical verification-evidence bytes, not only their hash. The parent hashes that preimage for the final-verification completion step and retains the same bytes for the later gate request; hashes cannot reconstruct artifact content.
+- If authoritative preflight alone denies verification because review authority is missing, persist a failed strict envelope with the fields below. Both declared commands must not be executed: record exit `125` for each, hash their exact empty output, and bind the observed authority revision from that preflight. Do not use this envelope for substantive failures or command failures.
+
+```yaml
+authority_only_failure: true
+missing_review_authority: true
+substantive_failure: false
+command_failed: false
+observed_authority_revision: sha256:{observed-authority-revision}
+test_exit_code: 125
+build_exit_code: 125
+```
 
 ## Decision Gates
 
-| Gate | Condition | Action |
-|------|-----------|--------|
-| All pass | All tests pass, all requirements verified | Verify report = pass, recommend archive |
-| Partial fail | Some tests fail or requirements unmet | Report specifics, recommend fixes |
-| Test gap | Requirement has no automated test | Flag as verification gap, manual test evidence acceptable |
-| Validation tool | `biggz sdd-verify-validate` available | Run it as final gate |
+| Condition | Action |
+|---|---|
+| Orchestrator says `STRICT TDD MODE IS ACTIVE` | Treat as authoritative. |
+| Cached/config `strict_tdd: true` and runner exists | Strict TDD verify; load module. |
+| Strict TDD false or no runner | Standard verify; skip TDD checks. |
+| `actionContext.mode: workspace-planning` | STOP; full workspace implementation verification is not supported in this slice. |
+| Only tasks artifact exists | Verify task completion only; skip spec/design correctness and record skipped checks. |
+| Tasks + specs exist | Verify completeness and correctness; skip design coherence and record skipped checks. |
+| Proposal/specs/design/tasks exist | Verify all dimensions. |
+| Task incomplete | CRITICAL for core task, WARNING for cleanup task. |
+| Test command exits non-zero | CRITICAL. |
+| Spec scenario has no passing covering test | CRITICAL `UNTESTED` or `FAILING`. |
+| Design deviation exists | WARNING unless it breaks a spec. |
 
 ## Execution Steps
 
-1. **Load shared protocol** — read `../_shared/sdd-phase-common.md`.
-2. **Load all artifacts** — read spec (requirements), design (decisions), tasks (completion), apply-progress (evidence).
-3. **Run test suite** — execute `go test ./...` (or project test command). Capture output: pass count, fail count, duration.
-4. **Verify each requirement** — for each REQ-N in the spec:
-   - Find the corresponding test(s) from apply-progress or tasks.
-   - If test exists and passes: mark REQ as PASS with evidence.
-   - If test exists and fails: mark REQ as FAIL with error details.
-   - If no test exists: mark REQ as SKIP with reason.
-5. **Check design coherence** — verify architecture decisions from design.md are reflected in the code. Check interfaces match, file changes match.
-6. **Run validation tool** — if `biggz sdd-verify-validate` is installed, run:
-   ```
-   biggz sdd-verify-validate --input <verify-report> --requirements N --scenarios N
-   ```
-7. **Write verify report** — create `openspec/changes/{change-name}/verify-report.md`:
-   ```yaml
-   ---
-   phase: verify
-   tests_run: N
-   tests_passed: N
-   tests_failed: N
-   requirements_total: N
-   requirements_passed: N
-   requirements_failed: N
-   requirements_skipped: N
-   design_checks: pass | fail | warn
-   validation_tool: pass | fail | not-run
-   ---
-   ## Test Results
-   {summary of test run}
-
-   ## Requirement Verification
-   | REQ | Status | Evidence |
-   |-----|--------|----------|
-   | REQ-1 | PASS | TestCreateUser passes ✅ |
-   | REQ-2 | PASS | TestAuthenticateUser passes ✅ |
-   | REQ-3 | FAIL | TestAuthorizeAdmin fails — wrong permission check |
-
-   ## Design Coherence
-   - Decision AD-1 (middleware chain): implemented as designed ✅
-   - Decision AD-2 (error wrapping): error wrapping not found ❌
-
-   ## Recommendations
-   - Fix REQ-3 authorization check
-   - Add error wrapping per AD-2
-   ```
-8. **Persist** — write verify report and Engram entry. Update `_meta.yaml` with `phase: verify`.
-9. **Recommend next phase** — if all pass: archive. If failures: fix and re-verify.
+1. Load relevant skills via shared SDD Section A.
+2. Retrieve artifacts via shared Section B for the active persistence mode, or read the concrete `contextFiles` from structured status.
+3. Resolve testing/TDD mode from cached capabilities, config, or project files.
+4. Count completed and incomplete tasks. Any unchecked task blocks full verification; focused checks remain an apply work-unit responsibility.
+5. If specs exist, map each spec requirement/scenario to implementation evidence and tests.
+6. If design exists, check design decisions against changed code. If design is missing, skip design coherence and record why.
+7. Run test, build/type-check, and coverage commands when available. For full spec verification, preserve stricter runtime evidence: source inspection alone does not prove spec scenario compliance.
+8. Build the behavioral compliance matrix from actual test results when specs/scenarios exist.
+9. Persist and return the verification report, including skipped dimensions for missing artifacts.
 
 ## Output Contract
 
-```yaml
-status: pass | fail | partial
-executive_summary: "5/5 tests pass, 5/5 requirements verified. Validation tool: pass. Recommend archive."
-artifacts:
-  - path: openspec/changes/{change-name}/verify-report.md
-    type: verify-report
-    summary: "Pass/fail evidence per requirement + test results + design coherence"
-next_recommended: archive | apply
-risks:
-  - description: "Verification gaps for REQ-5 — manual testing only"
-    severity: low
-skill_resolution: auto
-```
+Return `## Verification Report` with change, mode, completeness table, build/tests/coverage evidence, spec compliance matrix, correctness table, design coherence table, issues grouped as CRITICAL/WARNING/SUGGESTION, and final verdict `PASS`, `PASS WITH WARNINGS`, or `FAIL`.
+
+## Graceful Artifact Handling
+
+- **Tasks only**: verify objective task completion only. Do not claim spec correctness or design coherence. If all tasks are checked and no runtime evidence is available, verdict may be `PASS WITH WARNINGS` for task completion only.
+- **Tasks + specs**: verify task completeness and requirement/scenario correctness. Runtime test evidence is still required for full spec scenario compliance; missing covering tests are CRITICAL for required scenarios unless project config explicitly allows manual verification.
+- **Full artifacts**: verify completeness, correctness, and coherence.
+- **Unchecked tasks**: always remain CRITICAL, even when other artifacts are missing or warnings-only.
 
 ## References
 
-- `../_shared/sdd-phase-common.md`
-- `../../opencode/commands/sdd-verify.md`
-- `openspec/changes/{change-name}/spec.md`
-- `openspec/changes/{change-name}/design.md`
-- `openspec/changes/{change-name}/apply-progress.md`
-- `openspec/changes/{change-name}/verify-report.md`
+- [references/report-format.md](references/report-format.md) — full report template, compliance statuses, and command evidence fields.
+- [strict-tdd-verify.md](strict-tdd-verify.md) — load only when Strict TDD is active.
+- `_shared/sdd-phase-common.md` — skill loading, retrieval, persistence, and return envelope.

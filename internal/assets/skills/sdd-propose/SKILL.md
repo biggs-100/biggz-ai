@@ -1,102 +1,187 @@
 ---
 name: sdd-propose
 description: Create an SDD change proposal with intent, scope, approach, and rollback plan. Trigger: orchestrator launches proposal work for a change.
-license: MIT
-metadata:
-  author: biggz-ai
-  version: '1.0'
 ---
+## Language Domain Contract
 
-# SDD Propose
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
 
-Create a structured change proposal defining what will be built, why, and how. This is the foundation for all subsequent phases.
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
 
-## Activation Contract
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
 
-1. Read exploration output (if any) or user description.
-2. Read existing specs relevant to the change domain.
-3. Define intent, success criteria, scope, approach, and rollback plan.
-4. Persist proposal artifact.
-5. Recommend next phase (spec or design).
+## Purpose
 
-## Hard Rules
+You are a sub-agent responsible for creating PROPOSALS. You take the exploration analysis (or direct user input) and produce a structured `proposal.md` document inside the change folder.
 
-- The proposal must define explicit **success criteria** — measurable, testable outcomes.
-- The proposal must define a **rollback plan** — how to undo the change if it fails.
-- The proposal must call out **what is NOT in scope** (anti-scope).
-- Never skip writing the rollback plan, even for trivial changes.
-- If the change involves a new capability, check `openspec/specs/` for relevant domain specs.
+## What You Receive
 
-## Decision Gates
+From the orchestrator:
+- Change name (e.g., "add-dark-mode")
+- Exploration analysis (from sdd-explore) OR direct user description
+- Artifact store mode (`engram | openspec | hybrid | none`)
 
-| Gate | Condition | Action |
-|------|-----------|--------|
-| Already proposed | `proposal.md` exists and is complete | Show it, ask if updates needed |
-| Depends on spec | Change adds a new capability domain | Recommend spec phase first |
-| Pure implementation | Change implements existing spec | Recommend design phase directly |
-| Too large | Scope spans multiple domains or >400 lines estimated | Recommend splitting into multiple changes |
+## Execution and Persistence Contract
 
-## Execution Steps
+> Follow **Section B** (retrieval) and **Section C** (persistence) from `_shared/sdd-phase-common.md`.
 
-1. **Load shared protocol** — read `../_shared/sdd-phase-common.md`.
-2. **Load change context** — read `_meta.yaml` and `exploration.md` (if exists). Search Engram for prior decisions on this change.
-3. **Read relevant specs** — search `openspec/specs/` for domain specs that intersect with this change. Use `mem_search` if on another session.
-4. **Define proposal sections** — write `openspec/changes/{change-name}/proposal.md`:
-   ```yaml
-   ---
-   title: "{change-name}"
-   description: "1-2 sentence summary"
-   status: draft | accepted
-   ---
-   ## Intent
-   Why this change matters. What problem it solves.
+- **engram**: Read `sdd/{change-name}/explore` (optional) and `sdd-init/{project}` (optional). Save artifact as `sdd/{change-name}/proposal`.
+- **openspec**: Read and follow `_shared/openspec-convention.md`.
+- **hybrid**: Follow BOTH conventions — persist to Engram AND write to filesystem. Retrieve dependencies from Engram (primary) with filesystem fallback.
+- **none**: Return result only. Never create or modify project files.
+- Never force `openspec/` creation unless user requested file-based persistence or mode is `hybrid`.
 
-   ## Success Criteria
-   - Measurable outcome 1
-   - Measurable outcome 2
+## What to Do
 
-   ## Scope
-   ### In Scope
-   - What will be built/changed
-   ### Out of Scope (Anti-Scope)
-   - What will NOT be built
+### Step 0: Shape the Proposal in Interactive Mode
 
-   ## Approach
-   High-level technical approach. Key decisions and rationale.
+- In interactive SDD mode, do not make the executor decide silently whether the proposal is "clear enough". Offer the user a proposal question round before finalizing the proposal: explain that the questions are meant to improve the PRD/proposal by uncovering business rules, implications, impact, edge cases, and product tradeoffs. Let the user answer, skip, correct the framing, or ask for a second question round.
+- Proposal-shaping questions should uncover business/product/PRD understanding, not harness mechanics. Cover the smallest useful subset of:
+  1. business problem: what pain, opportunity, user confusion, or operational cost makes this change worth doing now;
+  2. target users and situations: who is affected, in which workflow, at what moment, and with what level of urgency;
+  3. business rules: policies, permissions, thresholds, lifecycle rules, compliance/security expectations, or domain invariants the proposal must respect;
+  4. product outcome: what should feel, work, or become possible after the change;
+  5. current-state gap: what is wrong, inconsistent, missing, ad hoc, or hard to explain today;
+  6. implications and impact: which teams, workflows, data, UX expectations, support burden, or operational processes may be affected;
+  7. edge cases: empty states, partial data, failures, permissions, slow paths, unusual customers, migration states, or conflicting user needs;
+  8. decision gaps: which product unknowns would make the proposal ambiguous, risky, or easy to overbuild;
+  9. scope boundaries and non-goals: what belongs in the first product slice, what is later refinement, and what must stay unchanged even if related;
+  10. business risk or tradeoff: what downside matters most if the proposal chooses the wrong direction.
+- Prefer 3–5 concrete product questions per round. After the first answers, summarize the resulting proposal assumptions and ask whether the user wants to correct anything or run a second question round. Do not ask about test commands, PR shape, changed-line budget, or other harness decisions unless the user explicitly asks to discuss delivery. If blocked from asking directly, write a `## Proposal question round` section in the proposal result with the proposed questions and assumptions needing user review.
 
-   ## Dependencies
-   - Any blocking changes, specs, or external deps
+### Step 1: Load Skills
+Follow **Section A** from `_shared/sdd-phase-common.md`.
 
-   ## Rollback Plan
-   - How to revert: code revert, data migration revert, config revert
+### Step 2: Create Change Directory
 
-   ## Effort Estimate
-   - Files changed: N
-   - Estimated lines: N
-   ```
-5. **Review threshold** — check against Section E (Review Workload Guard). If over 400 lines, flag and recommend split.
-6. **Persist** — write proposal to file and Engram. Update `_meta.yaml` with `phase: propose`.
-7. **Recommend next phase** — if new spec domain: `spec`. If existing spec covers it: `design`.
+**IF mode is `openspec` or `hybrid`:** create the change folder structure:
 
-## Output Contract
-
-```yaml
-status: success | blocked
-executive_summary: "Proposal for 'add-auth' written. Recommending design phase — spec already exists."
-artifacts:
-  - path: openspec/changes/{change-name}/proposal.md
-    type: proposal
-    summary: "Change proposal with scope, approach, and rollback plan"
-next_recommended: spec | design
-risks:
-  - description: "Overscope: verify anti-scope boundaries during design"
-    severity: low
-skill_resolution: auto | user_input
+```
+openspec/changes/{change-name}/
+└── proposal.md
 ```
 
-## References
+**IF mode is `engram` or `none`:** Do NOT create any `openspec/` directories. Skip this step.
 
-- `../_shared/sdd-phase-common.md`
-- `openspec/changes/{change-name}/_meta.yaml`
-- `openspec/changes/{change-name}/proposal.md`
-- `openspec/specs/`
+### Step 3: Read Existing Specs
+
+**IF mode is `openspec` or `hybrid`:** If `openspec/specs/` has relevant specs, read them to understand current behavior that this change might affect.
+
+**IF mode is `engram`:** Existing context was already retrieved from Engram in the Persistence Contract. Skip filesystem reads.
+
+**IF mode is `none`:** Skip — no existing specs to read.
+
+### Step 4: Write proposal.md
+
+```markdown
+# Proposal: {Change Title}
+
+## Intent
+
+{What problem are we solving? Why does this change need to happen?
+Be specific about the user need or technical debt being addressed.}
+
+## Scope
+
+### In Scope
+- {Concrete deliverable 1}
+- {Concrete deliverable 2}
+- {Concrete deliverable 3}
+
+### Out of Scope
+- {What we're explicitly NOT doing}
+- {Future work that's related but deferred}
+
+## Capabilities
+
+> This section is the CONTRACT between proposal and specs phases.
+> The sdd-spec agent reads this to know exactly which spec files to create or update.
+> Research `openspec/specs/` before filling this in.
+
+### New Capabilities
+<!-- Capabilities being introduced. Each becomes a new `openspec/specs/<name>/spec.md`.
+     Use kebab-case names (e.g., user-auth, data-export, api-rate-limiting).
+     Leave empty if no new capabilities. -->
+- `<capability-name>`: <brief description of what this capability covers>
+
+### Modified Capabilities
+<!-- Existing capabilities whose REQUIREMENTS are changing (not just implementation).
+     Only list here if spec-level behavior changes. Each needs a delta spec.
+     Use existing spec names from openspec/specs/. Leave empty if none. -->
+- `<existing-capability-name>`: <what requirement is changing>
+
+## Approach
+
+{High-level technical approach. How will we solve this?
+Reference the recommended approach from exploration if available.}
+
+## Affected Areas
+
+| Area | Impact | Description |
+|------|--------|-------------|
+| `path/to/area` | New/Modified/Removed | {What changes} |
+
+## Risks
+
+| Risk | Likelihood | Mitigation |
+|------|------------|------------|
+| {Risk description} | Low/Med/High | {How we mitigate} |
+
+## Rollback Plan
+
+{How to revert if something goes wrong. Be specific.}
+
+## Dependencies
+
+- {External dependency or prerequisite, if any}
+
+## Success Criteria
+
+- [ ] {How do we know this change succeeded?}
+- [ ] {Measurable outcome}
+```
+
+### Step 5: Persist Artifact
+
+**This step is MANDATORY — do NOT skip it.**
+
+Follow **Section C** from `_shared/sdd-phase-common.md`.
+- artifact: `proposal`
+- topic_key: `sdd/{change-name}/proposal`
+- type: `architecture`
+
+### Step 6: Return Summary
+
+Return to the orchestrator:
+
+```markdown
+## Proposal Created
+
+**Change**: {change-name}
+**Location**: `openspec/changes/{change-name}/proposal.md` (openspec/hybrid) | Engram `sdd/{change-name}/proposal` (engram) | inline (none)
+
+### Summary
+- **Intent**: {one-line summary}
+- **Scope**: {N deliverables in, M items deferred}
+- **Approach**: {one-line approach}
+- **Risk Level**: {Low/Medium/High}
+
+### Next Step
+Ready for specs (sdd-spec) or design (sdd-design).
+```
+
+## Rules
+
+- In `openspec` mode, ALWAYS create the `proposal.md` file
+- If the change directory already exists with a proposal, READ it first and UPDATE it
+- Keep the proposal CONCISE - it's a thinking tool, not a novel
+- Every proposal MUST have a rollback plan
+- Every proposal MUST have success criteria
+- Use concrete file paths in "Affected Areas" when possible
+- Apply any `rules.proposal` from `openspec/config.yaml`
+- **ALWAYS fill in the Capabilities section** — this is the contract with sdd-spec. Research `openspec/specs/` first to use correct existing capability names.
+- New Capabilities → each will become `openspec/specs/<name>/spec.md` (new full spec)
+- Modified Capabilities → each will become a delta spec in the change folder
+- If nothing changes at the spec level (pure refactor, config change), explicitly write "None" under both sub-sections — don't leave them as template placeholders
+- **Size budget**: Proposal artifact MUST be under 450 words. Use bullet points and tables over prose. Headers organize, not explain.
+- Return envelope per **Section D** from `_shared/sdd-phase-common.md`.

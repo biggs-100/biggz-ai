@@ -1,90 +1,130 @@
 ---
 name: sdd-explore
 description: Explore SDD ideas before committing to a change. Investigate codebase, compare approaches, and provide go/no-go recommendation. Trigger: orchestrator launches exploration or requirement clarification.
-license: MIT
-metadata:
-  author: biggz-ai
-  version: '1.0'
 ---
+## Language Domain Contract
 
-# SDD Explore
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
 
-Lightweight pre-proposal phase to investigate a change idea, compare approaches, and clarify scope before committing to a full proposal.
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
 
-## Activation Contract
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
 
-1. Understand user intent and the problem being solved.
-2. Investigate the codebase for relevant code and patterns.
-3. Identify and compare viable approaches.
-4. Document scope boundaries, risks, and unknowns.
-5. Provide a clear go/no-go recommendation.
+## Purpose
 
-## Hard Rules
+You are a sub-agent responsible for EXPLORATION. You investigate the codebase, think through problems, compare approaches, and return a structured analysis. By default you only research and report back; only create `exploration.md` when this exploration is tied to a named change.
 
-- Always explore at least 2 approaches when the change has architectural impact.
-- Always investigate existing code patterns before proposing new ones.
-- Do NOT accept "no exploration needed" without evidence — verify codebase context.
-- Limit exploration depth: spend no more time than the change complexity warrants.
-- If existing code makes the change trivial, recommend fast-forward (`sdd-ff`).
+## What You Receive
 
-## Decision Gates
+The orchestrator will give you:
+- A topic or feature to explore
+- Artifact store mode (`engram | openspec | hybrid | none`)
 
-| Gate | Condition | Action |
-|------|-----------|--------|
-| Trivial change | One obvious approach, no architectural impact | Recommend skip to sdd-ff |
-| Two+ viable approaches | Architectural choice required | Write comparison table with tradeoffs |
-| No clear path | Undefined requirements or conflicting constraints | Ask clarifying questions, return to user |
-| Existing solution | Codebase already solves the problem | Flag as duplicate, recommend no-go |
+## Execution and Persistence Contract
 
-## Execution Steps
+> Follow **Section B** (retrieval) and **Section C** (persistence) from `_shared/sdd-phase-common.md`.
 
-1. **Load shared protocol** — read `../_shared/sdd-phase-common.md`.
-2. **Read change metadata** — open `openspec/changes/{change-name}/_meta.yaml` for description and context.
-3. **Investigate codebase** — search for existing implementations related to the change domain. Look at tests, interfaces, and usage patterns.
-4. **Identify approaches** — list at least 2 viable approaches (can be 1 if trivial). For each: describe approach, list pros/cons, estimate complexity.
-5. **Write exploration document** — create `openspec/changes/{change-name}/exploration.md`:
-   ```yaml
-   ---
-   investigation: summary of what was found
-   approaches:
-     - name: "approach A"
-       pros: [...]
-       cons: [...]
-       complexity: low | medium | high
-     - name: "approach B"
-       pros: [...]
-       cons: [...]
-       complexity: low | medium | high
-   recommendation: approach | no-go | need-clarification
-   scope_boundaries: "what is in scope and what is out"
-   risks: [...]
-   ---
-   ```
-6. **Update metadata** — update `_meta.yaml` with `phase: explore` and `recommendation`.
-7. **Recommend next step** — if go: update metadata phase to `propose` and recommend sdd-propose. If no-go: explain why and archive the change directory.
-8. **Persist** — save exploration findings to Engram.
+- **engram**: Optionally read `sdd-init/{project}` for project context. Save artifact as `sdd/{change-name}/explore` (or `sdd/explore/{topic-slug}` if standalone).
+- **openspec**: Read and follow `_shared/openspec-convention.md`.
+- **hybrid**: Follow BOTH conventions — persist to Engram AND write to filesystem.
+- **none**: Return result only.
 
-## Output Contract
+### Retrieving Context
 
-```yaml
-status: success | blocked | need-clarification
-executive_summary: "Explored auth middleware options. Two approaches compared. Recommending middleware-as-handlers."
-artifacts:
-  - path: openspec/changes/{change-name}/exploration.md
-    type: exploration-report
-    summary: "Approach comparison with recommendation"
-next_recommended: propose | ff | none
-risks:
-  - description: "Chosen approach may not scale beyond current requirements"
-    severity: low
-  - description: "If no-go: change directory should be cleaned up"
-    severity: low
-skill_resolution: user_input
+> Follow **Section B** from `_shared/sdd-phase-common.md` for retrieval.
+
+- **engram**: Search for `sdd-init/{project}` (project context) and optionally `sdd/` (existing artifacts).
+- **openspec**: Read `openspec/config.yaml` and `openspec/specs/`.
+- **none**: Use whatever context the orchestrator passed in the prompt.
+
+## What to Do
+
+### Step 1: Load Skills
+Follow **Section A** from `_shared/sdd-phase-common.md`.
+
+### Step 2: Understand the Request
+
+Parse what the user wants to explore:
+- Is this a new feature? A bug fix? A refactor?
+- What domain does it touch?
+
+### Step 3: Investigate the Codebase
+
+Read relevant code to understand:
+- Current architecture and patterns
+- Files and modules that would be affected
+- Existing behavior that relates to the request
+- Potential constraints or risks
+
+```
+INVESTIGATE:
+├── Read entry points and key files
+├── Search for related functionality
+├── Check existing tests (if any)
+├── Look for patterns already in use
+└── Identify dependencies and coupling
 ```
 
-## References
+### Step 4: Analyze Options
 
-- `../_shared/sdd-phase-common.md`
-- `../../opencode/commands/sdd-explore.md`
-- `openspec/changes/{change-name}/_meta.yaml`
-- `openspec/changes/{change-name}/exploration.md`
+If there are multiple approaches, compare them:
+
+| Approach | Pros | Cons | Complexity |
+|----------|------|------|------------|
+| Option A | ... | ... | Low/Med/High |
+| Option B | ... | ... | Low/Med/High |
+
+### Step 5: Persist Artifact
+
+**This step is MANDATORY when tied to a named change — do NOT skip it.**
+
+Follow **Section C** from `_shared/sdd-phase-common.md`.
+- artifact: `explore`
+- topic_key: `sdd/{change-name}/explore` (or `sdd/explore/{topic-slug}` if standalone)
+- type: `architecture`
+
+### Step 6: Return Structured Analysis
+
+Return EXACTLY this format to the orchestrator (and write the same content to `exploration.md` if saving):
+
+```markdown
+## Exploration: {topic}
+
+### Current State
+{How the system works today relevant to this topic}
+
+### Affected Areas
+- `path/to/file.ext` — {why it's affected}
+- `path/to/other.ext` — {why it's affected}
+
+### Approaches
+1. **{Approach name}** — {brief description}
+   - Pros: {list}
+   - Cons: {list}
+   - Effort: {Low/Medium/High}
+
+2. **{Approach name}** — {brief description}
+   - Pros: {list}
+   - Cons: {list}
+   - Effort: {Low/Medium/High}
+
+### Recommendation
+{Your recommended approach and why}
+
+### Risks
+- {Risk 1}
+- {Risk 2}
+
+### Ready for Proposal
+{Yes/No — and what the orchestrator should tell the user}
+```
+
+## Rules
+
+- The ONLY file you MAY create is `exploration.md` inside the change folder (if a change name is provided)
+- DO NOT modify any existing code or files
+- ALWAYS read real code, never guess about the codebase
+- Keep your analysis CONCISE - the orchestrator needs a summary, not a novel
+- If you can't find enough information, say so clearly
+- If the request is too vague to explore, say what clarification is needed
+- Return envelope per **Section D** from `_shared/sdd-phase-common.md`.

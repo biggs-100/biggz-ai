@@ -75,7 +75,7 @@ next_recommended: explore | propose
 risks:
   - description: "If intent was unclear, explore phase may reveal scope changes"
     severity: low
-skill_resolution: user_input
+skill_resolution: fallback-path
 ```
 
 ## Domain Templates
