@@ -232,11 +232,11 @@ The gatekeeper runs in addition to the Review Workload Guard and the Mandatory D
 
 Use the provider-owned Git-common-dir runtime ledger for every runtime-bearing `sdd-apply`, `sdd-verify`, or remediation continuation. It is the single attempt/budget authority for both OpenSpec and BigMem; never persist caller-authored counters in OpenSpec files, BigMem topics, prompts, or Pi state.
 
-1. Before any actor or harness launch, read `biggz sdd-attempt status <change> --cwd <repo>`. Treat its exact `revision`, `active_attempt`, `decision_required`, and `next_action` as authoritative.
-2. If `active_attempt` is populated, do not launch again. Finish that charged ordinal with `biggz sdd-attempt finish <change> --cwd <repo> --expected-revision <revision>`, recording passed, failed, or interrupted outcome plus evidence revision, diagnosis, harness disposition, cleanup evidence, and process evidence.
-3. If `decision_required` is true, stop execution and report the native diagnosis/budget state. Only an explicit maintainer scope decision may call `biggz sdd-attempt reset <change> --cwd <repo> --expected-revision <revision>`; a renamed work unit or new process never resets cumulative budgets.
-4. When `next_action` is `begin`, consume the ordinal before launch with `biggz sdd-attempt begin <change> --cwd <repo> --expected-revision <revision>`. After `next_action: complete`, never rerun the same objective; a genuinely distinct objective requires an explicit reset.
-5. A passing bound remediation MUST add `--expected-binding-revision`, `--successor-lineage`, and `--remediates-evidence-revision` to `biggz sdd-attempt finish <change> --cwd <repo> --expected-revision <revision>`; read their values from `biggz sdd-attempt status <change> --cwd <repo>` as `binding_revision`, `binding.lineage`, and `evidence_revision`. When the corrected candidate is already approved on the bound lineage, the lineage the binding already names is itself the successor — do not run `review recover` to mint a distinct one, which is correctly refused for an unchanged approved scope and for a same-lineage successor. The native command charges the attempt, persists evidence, and binds the approved successor in one HEAD CAS; do not publish those steps separately.
+1. Before any actor or harness launch, read `biggz sdd-attempt status <change>`. Treat its exact `revision`, `active_attempt`, `decision_required`, and `next_action` as authoritative.
+2. If `active_attempt` is populated, do not launch again. Finish that charged ordinal with `biggz sdd-attempt finish <change> --expected-revision <revision>`, recording passed, failed, or interrupted outcome plus evidence revision, diagnosis, harness disposition, cleanup evidence, and process evidence.
+3. If `decision_required` is true, stop execution and report the native diagnosis/budget state. Only an explicit maintainer scope decision may call `biggz sdd-attempt reset <change> --expected-revision <revision>`; a renamed work unit or new process never resets cumulative budgets.
+4. When `next_action` is `begin`, consume the ordinal before launch with `biggz sdd-attempt begin <change> --expected-revision <revision>`. After `next_action: complete`, never rerun the same objective; a genuinely distinct objective requires an explicit reset.
+5. A passing bound remediation MUST add `--expected-binding-revision`, `--successor-lineage`, and `--remediates-evidence-revision` to `biggz sdd-attempt finish <change> --expected-revision <revision>`; read their values from `biggz sdd-attempt status <change>` as `binding_revision`, `binding.lineage`, and `evidence_revision`. When the corrected candidate is already approved on the bound lineage, the lineage the binding already names is itself the successor — do not run `review recover` to mint a distinct one, which is correctly refused for an unchanged approved scope and for a same-lineage successor. The native command charges the attempt, persists evidence, and binds the approved successor in one HEAD CAS; do not publish those steps separately.
 
 ### Artifact Store Mode
 
@@ -444,7 +444,7 @@ Every phase returns to the orchestrator:
 - Before apply, run workload forecast; if >400 lines, split into chained PRs.
 - Verify reports MUST be validated with `biggz sdd-verify-validate`.
 - Archive only after verify passes.
-- Skills are at `~/.config/opencode/skills/{phase}/SKILL.md`. Load the skill for each phase before delegating.
+- Phase contracts live in the agent's `prompts/sdd/` directory (runtime overlay-bound prompts); the matching skills are in the agent's `skills/` directory with the same phase names. The skill body and the prompt body are the same contract. Load the skill for each phase before delegating, or delegate the prompt directly when the sub-agent launch uses prompts.
 
 ### Review-Driven Development (RDD)
 
@@ -505,8 +505,8 @@ Format for `biggz_mem_save`:
 Prompt capture behavior:
 - `biggz_mem_save` captures the user prompt best-effort when the MCP process already has prompt context for the same `project + session_id`.
 - `biggz_mem_save` never invents prompt text. If no prompt context exists, the save still succeeds without prompt capture.
-- `biggz_biggz_mem_save_prompt` records the prompt and feeds SessionActivity so later `biggz_mem_save` calls can capture and dedupe it.
-- If an agent/plugin hook can observe the user's prompt before derived memory saves happen, it should call `biggz_biggz_mem_save_prompt` first.
+- `biggz_mem_save_prompt` records the prompt and feeds SessionActivity so later `biggz_mem_save` calls can capture and dedupe it.
+- If an agent/plugin hook can observe the user's prompt before derived memory saves happen, it should call `biggz_mem_save_prompt` first.
 - Do not decide prompt capture by `type`; SDD artifacts also use `architecture`, and human decisions can too. Use explicit `capture_prompt: false` for automated artifacts.
 - If an older BigMem tool schema does not expose `capture_prompt`, omit the field rather than failing.
 

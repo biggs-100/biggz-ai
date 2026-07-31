@@ -1,10 +1,10 @@
-# Engram Artifact Convention (reference documentation)
+# BigMem Artifact Convention (reference documentation)
 
-NOTE: Critical engram calls (`biggz_mem_search`, `biggz_mem_save`, `biggz_mem_get_observation`) are inlined directly in each skill's SKILL.md. This document is supplementary reference — sub-agents do NOT need to read it to function.
+NOTE: Critical BigMem calls (`biggz_mem_search`, `biggz_mem_save`, `biggz_mem_get_observation`) are inlined directly in each skill's SKILL.md. This document is supplementary reference — sub-agents do NOT need to read it to function.
 
 ## Naming Rules
 
-ALL SDD artifacts persisted to Engram MUST follow this deterministic naming:
+ALL SDD artifacts persisted to BigMem MUST follow this deterministic naming:
 
 ```
 title:     sdd/{change-name}/{artifact-type}
@@ -15,7 +15,7 @@ scope:     project
 capture_prompt: false
 ```
 
-Set `capture_prompt: false` when the Engram tool schema supports it; if an older schema rejects or does not expose the field, omit it rather than failing.
+Set `capture_prompt: false` when the BigMem tool schema supports it; if an older schema rejects or does not expose the field, omit it rather than failing.
 
 ### Artifact Types
 
@@ -50,7 +50,7 @@ Recovery: `biggz_mem_search("sdd/{change-name}/state")` → `biggz_mem_get_obser
 
 ## Recovery Protocol (2 steps)
 
-Memory lifecycle rule (when Engram exposes lifecycle metadata/tooling):
+Memory lifecycle rule (when BigMem exposes lifecycle metadata/tooling):
 - At session start or before architecture-sensitive work, call `biggz_mem_review` with action `list` for the current project when the tool is available.
 - If `biggz_mem_review` is unavailable, do not fail the task. Continue with normal `biggz_mem_context`/`biggz_mem_search`, and still apply lifecycle metadata from any returned observations when present.
 - `active` memories may be used normally.
@@ -109,7 +109,7 @@ biggz_mem_save(
 )
 ```
 
-`capture_prompt: false` is REQUIRED for SDD artifacts when the Engram tool schema supports it. Engram v1.15.3 captures user prompts by default for human/proactive saves, but SDD artifacts are automated pipeline outputs. Do not infer this from `type` because both SDD artifacts and human architecture decisions use `architecture`. If an older schema rejects or does not expose `capture_prompt`, omit it rather than failing.
+`capture_prompt: false` is REQUIRED for SDD artifacts when the BigMem tool schema supports it. BigMem captures user prompts by default for human/proactive saves, but SDD artifacts are automated pipeline outputs. Do not infer this from `type` because both SDD artifacts and human architecture decisions use `architecture`. If an older schema rejects or does not expose `capture_prompt`, omit it rather than failing.
 
 Update existing artifact (when you have the observation ID):
 ```
@@ -125,15 +125,15 @@ biggz_mem_search(query: "sdd/{change-name}/", project: "{project}")
 → Returns all artifacts for that change
 ```
 
-## Project Name Resolution (engram v1.11.0+)
+## Project Name Resolution
 
-Engram auto-detects the project name from the git remote at MCP startup. The `--project` flag and `ENGRAM_PROJECT` env var can override detection. All project names are normalized to lowercase and trimmed.
+BigMem auto-detects the project name from the git remote at MCP startup. All project names are normalized to lowercase and trimmed.
 
-If the agent saves a memory under a project name that doesn't match existing observations, engram warns about potential name drift. Use `biggz_mem_merge_projects` (MCP tool) or `engram projects consolidate` (CLI) to merge variants.
+If an agent saves a memory under a project name that doesn't match existing observations, BigMem warns about potential name drift. Use `biggz_mem_merge_projects` (MCP tool) to merge variants.
 
 ## Upsert Behavior
 
-Same `topic_key` + `project` + `scope` → UPDATE (overwrite), not INSERT. Previous content is lost — `revision_count` increments but old content is NOT saved. This is by design — engram is working memory, not an audit trail. For iteration history or team collaboration, use `openspec` or `hybrid` mode.
+Same `topic_key` + `project` + `scope` → UPDATE (overwrite), not INSERT. Previous content is lost — `revision_count` increments but old content is NOT saved. This is by design — BigMem is working memory, not an audit trail. For iteration history or team collaboration, use `openspec` or `hybrid` mode.
 
 ## Why This Convention
 
