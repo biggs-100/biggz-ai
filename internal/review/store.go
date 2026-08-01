@@ -102,6 +102,19 @@ func OpenWithDir(dir, lineageID string) *Store {
 //
 // The store directory is created on the first Append call.
 func (s *Store) Append(prevRevision string, rec Record) (revision string, err error) {
+	err = WithFileLock(s.Dir, func() error {
+		var appendErr error
+		revision, appendErr = s.appendLocked(prevRevision, rec)
+		return appendErr
+	})
+	return revision, err
+}
+
+// appendLocked appends an event while the caller already holds the lineage
+// file lock. It is the body of Append without lock acquisition, so callers
+// that need multiple store operations to be atomic can run them under one
+// WithFileLock without deadlocking.
+func (s *Store) appendLocked(prevRevision string, rec Record) (revision string, err error) {
 	rec.Schema = recordSchemaVersion
 	rec.PrevRevision = prevRevision
 
@@ -113,42 +126,36 @@ func (s *Store) Append(prevRevision string, rec Record) (revision string, err er
 	revision = sha256Hex(data)
 	path := filepath.Join(s.Dir, revision)
 
-	if err := WithFileLock(s.Dir, func() error {
-		// Create directory on first append (task 1.4).
-		if err := os.MkdirAll(s.Dir, 0755); err != nil {
-			return fmt.Errorf("create store dir: %w", err)
-		}
+	// Create directory on first append (task 1.4).
+	if err := os.MkdirAll(s.Dir, 0755); err != nil {
+		return "", fmt.Errorf("create store dir: %w", err)
+	}
 
-		// publishNoReplace: check if file already exists.
-		existing, err := os.ReadFile(path)
-		if err == nil {
-			if !bytes.Equal(existing, data) {
-				return fmt.Errorf("hash collision: %s exists with different content", revision)
-			}
-			// Same content — idempotent. HEAD is still updated below.
-		} else if os.IsNotExist(err) {
-			// Write to temp file and rename for atomicity.
-			tmpPath := path + ".tmp"
-			if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-				return fmt.Errorf("write temp: %w", err)
-			}
-			if err := os.Rename(tmpPath, path); err != nil {
-				os.Remove(tmpPath) // best-effort cleanup
-				return fmt.Errorf("rename: %w", err)
-			}
-		} else {
-			return fmt.Errorf("stat: %w", err)
+	// publishNoReplace: check if file already exists.
+	existing, err := os.ReadFile(path)
+	if err == nil {
+		if !bytes.Equal(existing, data) {
+			return "", fmt.Errorf("hash collision: %s exists with different content", revision)
 		}
-
-		// Update HEAD.
-		headPath := filepath.Join(s.Dir, "HEAD")
-		if err := os.WriteFile(headPath, []byte(revision+"\n"), 0644); err != nil {
-			return fmt.Errorf("write HEAD: %w", err)
+		// Same content — idempotent. HEAD is still updated below.
+	} else if os.IsNotExist(err) {
+		// Write to temp file and rename for atomicity.
+		tmpPath := path + ".tmp"
+		if err := os.WriteFile(tmpPath, data, 0644); err != nil {
+			return "", fmt.Errorf("write temp: %w", err)
 		}
+		if err := os.Rename(tmpPath, path); err != nil {
+			os.Remove(tmpPath) // best-effort cleanup
+			return "", fmt.Errorf("rename: %w", err)
+		}
+	} else {
+		return "", fmt.Errorf("stat: %w", err)
+	}
 
-		return nil
-	}); err != nil {
-		return "", err
+	// Update HEAD.
+	headPath := filepath.Join(s.Dir, "HEAD")
+	if err := os.WriteFile(headPath, []byte(revision+"\n"), 0644); err != nil {
+		return "", fmt.Errorf("write HEAD: %w", err)
 	}
 
 	return revision, nil

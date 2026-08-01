@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -269,7 +270,10 @@ func TestRDDDisable_GenerationRevisions(t *testing.T) {
 	}
 
 	genDir := filepath.Join(gitDir, rddGenerationsDir)
-	gen := readLatestGeneration(genDir)
+	gen, genErr := readLatestGeneration(genDir)
+	if genErr != nil {
+		t.Fatalf("readLatestGeneration: %v", genErr)
+	}
 	if gen == nil {
 		t.Fatal("expected generation after disable")
 	}
@@ -293,7 +297,10 @@ func TestRDDDisable_GenerationRevisions(t *testing.T) {
 	RDDEnable("", "")
 	RDDDisable(gitDir, gitDir, "clone")
 
-	gen = readLatestGeneration(genDir)
+	gen, genErr = readLatestGeneration(genDir)
+	if genErr != nil {
+		t.Fatalf("readLatestGeneration: %v", genErr)
+	}
 	if gen == nil {
 		t.Fatal("expected generation after re-disable")
 	}
@@ -326,7 +333,10 @@ func TestVerifyCloneRevision(t *testing.T) {
 
 	// Create a generation
 	RDDDisable(gitDir, gitDir, "clone")
-	gen := readLatestGeneration(filepath.Join(gitDir, rddGenerationsDir))
+	gen, genErr := readLatestGeneration(filepath.Join(gitDir, rddGenerationsDir))
+	if genErr != nil {
+		t.Fatalf("readLatestGeneration: %v", genErr)
+	}
 	if gen == nil {
 		t.Fatal("expected generation after disable")
 	}
@@ -377,17 +387,78 @@ func TestDeliveryDisposition_GateBypass(t *testing.T) {
 
 	RDDDisable("", "", "global")
 
-	// With RDD disabled, gate should pass without evaluating
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	// With RDD disabled, the gate must NOT bypass: it reports allowed=false
+	// with delivery disabled/unmanaged and never fabricates a pass, even for
+	// an empty lineage that would fail every other check.
+	result, err := EvaluateGate(GatePrePush, "", "empty", GateOptions{})
+	if err != nil {
+		t.Fatalf("EvaluateGate: %v", err)
+	}
+	if result.Passed {
+		t.Fatal("expected gate NOT to pass when RDD disabled (delivery unmanaged)")
+	}
+	if result.Allowed {
+		t.Fatal("expected allowed=false when RDD disabled")
+	}
+	if result.Delivery != DeliveryDisabledUnmanaged {
+		t.Errorf("delivery = %q, want %q", result.Delivery, DeliveryDisabledUnmanaged)
+	}
+	if result.Reason != "RDD disabled: delivery unmanaged" {
+		t.Errorf("reason = %q", result.Reason)
+	}
+}
 
-	// Even with an empty chain (would normally fail), gate should pass
-	store := OpenWithDir(t.TempDir(), "empty")
-	chain, _ := store.LoadChain()
-	result := PrePRGate(chain, nil, nil, false, gitDir)
-	if !result.Passed {
-		t.Fatal("expected gate to pass when RDD disabled (delivery unmanaged)")
+func TestDeliveryDisposition_GateUnreadableIsNotDisabled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	// Corrupt the global mode file: an unreadable switch is NOT a disabled
+	// switch, so the gate must NOT report the disabled disposition.
+	statePath := filepath.Join(home, ".biggz", rddStateFile)
+	if err := os.MkdirAll(filepath.Dir(statePath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(statePath, []byte("{not json"), 0644); err != nil {
+		t.Fatalf("write corrupt mode file: %v", err)
+	}
+
+	status, err := RDDStatus("", "")
+	if err == nil {
+		t.Fatal("expected RDDStatus to fail on a corrupt mode file")
+	}
+	if !errors.Is(err, ErrRDDModeCorrupt) {
+		t.Fatalf("expected ErrRDDModeCorrupt, got %v", err)
+	}
+	if !strings.Contains(err.Error(), statePath) {
+		t.Errorf("error must name the exact file %s, got: %v", statePath, err)
+	}
+	if !strings.Contains(err.Error(), "biggz rdd enable") {
+		t.Errorf("error must name the repair command, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not a disabled switch") {
+		t.Errorf("error must state the unreadable-switch semantics, got: %v", err)
+	}
+	// The report is advisory on error and must never claim disabled.
+	if status != nil && status.EffectiveMode == RDDModeDisabled {
+		t.Error("corrupt mode must not project a disabled effective mode")
+	}
+
+	// The gate resolves the corrupt switch as managed: it evaluates normally
+	// (no disabled/unmanaged disposition) and fails closed on the missing
+	// receipt instead of fabricating disabled delivery.
+	result, err := EvaluateGate(GatePostApply, "", "empty", GateOptions{})
+	if err != nil {
+		t.Fatalf("EvaluateGate: %v", err)
+	}
+	if result.Delivery == DeliveryDisabledUnmanaged {
+		t.Fatal("gate must not report disabled/unmanaged from a corrupt mode file")
+	}
+	if result.Allowed {
+		t.Fatal("expected gate denial under managed evaluation (no receipt)")
+	}
+	if !strings.Contains(result.Reason, "finalize") {
+		t.Errorf("expected reason naming finalize, got: %v", result.Reason)
 	}
 }
 

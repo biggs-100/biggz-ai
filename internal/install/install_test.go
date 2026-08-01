@@ -1,11 +1,14 @@
 package install_test
 
 import (
+	"bytes"
 	"context"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/biggz-ai/biggz/internal/assets"
 	"github.com/biggz-ai/biggz/internal/install"
 	"github.com/biggz-ai/biggz/plugintest"
 )
@@ -39,6 +42,9 @@ func TestInstall_AgentDetected(t *testing.T) {
 	if result.CommandsWritten == 0 {
 		t.Error("expected CommandsWritten > 0")
 	}
+	if result.PluginsDeployed == 0 {
+		t.Error("expected PluginsDeployed > 0")
+	}
 	if result.DryRun {
 		t.Error("expected DryRun=false")
 	}
@@ -59,6 +65,20 @@ func TestInstall_AgentDetected(t *testing.T) {
 	commandsDir := filepath.Join(tmpDir, ".config", "opencode", "commands")
 	if _, err := os.Stat(commandsDir); os.IsNotExist(err) {
 		t.Error("commands directory was not created on disk")
+	}
+
+	// Plugins deploy to the agent's global plugin dir (OpenCode auto-loads it)
+	pluginsDir := filepath.Join(tmpDir, ".config", "opencode", "plugins")
+	pluginFiles, _ := filepath.Glob(filepath.Join(pluginsDir, "*.ts"))
+	if len(pluginFiles) == 0 {
+		t.Error("no plugin .ts files were deployed to the agent plugins directory")
+	}
+	reviewPlugin := filepath.Join(pluginsDir, "review-result-artifacts.ts")
+	if _, err := os.Stat(reviewPlugin); os.IsNotExist(err) {
+		t.Error("review-result-artifacts.ts was not deployed to the agent plugins directory")
+	}
+	if got := result.PluginsDeployed; got != len(pluginFiles) {
+		t.Errorf("PluginsDeployed = %d, want %d plugin files on disk", got, len(pluginFiles))
 	}
 
 	// Verify at least one skill file exists under .biggz/skills/
@@ -129,6 +149,9 @@ func TestInstall_DryRun(t *testing.T) {
 	if result.CommandsWritten == 0 {
 		t.Error("expected CommandsWritten > 0 in dry-run")
 	}
+	if result.PluginsDeployed == 0 {
+		t.Error("expected PluginsDeployed > 0 in dry-run")
+	}
 
 	// Verify NO files were actually written during dry-run
 	if _, err := os.Stat(filepath.Join(tmpDir, ".biggz", "skills")); !os.IsNotExist(err) {
@@ -139,6 +162,55 @@ func TestInstall_DryRun(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(tmpDir, ".config", "opencode", "commands")); !os.IsNotExist(err) {
 		t.Error("commands directory should NOT exist after dry-run")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, ".config", "opencode", "plugins")); !os.IsNotExist(err) {
+		t.Error("plugins directory should NOT exist after dry-run")
+	}
+}
+
+func TestDeployPlugins_EmbeddedAssetWritten(t *testing.T) {
+	tmpDir := t.TempDir()
+	pluginsDir := filepath.Join(tmpDir, ".config", "opencode", "plugins")
+
+	// Dry-run: counts the embedded plugin without writing anything.
+	count, err := install.DeployPlugins(pluginsDir, assets.FS, true)
+	if err != nil {
+		t.Fatalf("dry-run DeployPlugins error = %v", err)
+	}
+	if count == 0 {
+		t.Fatal("dry-run DeployPlugins counted 0 plugins")
+	}
+	if _, err := os.Stat(pluginsDir); !os.IsNotExist(err) {
+		t.Error("plugins directory should NOT exist after dry-run")
+	}
+
+	// Real deploy: every embedded plugin file lands with identical bytes.
+	count, err = install.DeployPlugins(pluginsDir, assets.FS, false)
+	if err != nil {
+		t.Fatalf("DeployPlugins error = %v", err)
+	}
+	if count == 0 {
+		t.Fatal("DeployPlugins deployed 0 plugins")
+	}
+	embedded, err := fs.Glob(assets.FS, "opencode/plugins/*.ts")
+	if err != nil {
+		t.Fatalf("glob embedded plugins: %v", err)
+	}
+	if count != len(embedded) {
+		t.Errorf("DeployPlugins count = %d, want %d embedded plugins", count, len(embedded))
+	}
+	for _, name := range embedded {
+		want, err := fs.ReadFile(assets.FS, name)
+		if err != nil {
+			t.Fatalf("read embedded %s: %v", name, err)
+		}
+		got, err := os.ReadFile(filepath.Join(pluginsDir, filepath.Base(name)))
+		if err != nil {
+			t.Fatalf("deployed %s missing: %v", name, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("deployed %s content differs from the embedded asset", name)
+		}
 	}
 }
 

@@ -15,51 +15,51 @@ import (
 
 	"github.com/biggz-ai/biggz/model"
 	"github.com/biggz-ai/biggz/orchestrator"
-	"github.com/biggz-ai/biggz/plugin"
 	"github.com/biggz-ai/biggz/pipeline"
+	"github.com/biggz-ai/biggz/plugin"
 	"github.com/biggz-ai/biggz/plugintest"
 	"github.com/biggz-ai/biggz/policy"
 	"github.com/biggz-ai/biggz/registry"
 	"github.com/google/uuid"
 
+	"github.com/biggz-ai/biggz/internal/agents/antigravity"
 	"github.com/biggz-ai/biggz/internal/agents/claude"
 	"github.com/biggz-ai/biggz/internal/agents/codex"
 	"github.com/biggz-ai/biggz/internal/agents/cursor"
-	"github.com/biggz-ai/biggz/internal/agents/antigravity"
 	"github.com/biggz-ai/biggz/internal/agents/gemini"
 	"github.com/biggz-ai/biggz/internal/agents/hermes"
 	"github.com/biggz-ai/biggz/internal/agents/kilocode"
 	"github.com/biggz-ai/biggz/internal/agents/kimi"
 	"github.com/biggz-ai/biggz/internal/agents/kiro"
 	"github.com/biggz-ai/biggz/internal/agents/openclaw"
-	"github.com/biggz-ai/biggz/internal/agents/trae"
 	"github.com/biggz-ai/biggz/internal/agents/opencode"
 	"github.com/biggz-ai/biggz/internal/agents/pi"
 	"github.com/biggz-ai/biggz/internal/agents/qwen"
+	"github.com/biggz-ai/biggz/internal/agents/trae"
 	"github.com/biggz-ai/biggz/internal/agents/vscode"
 	"github.com/biggz-ai/biggz/internal/agents/windsurf"
+	"github.com/biggz-ai/biggz/internal/assets"
 	"github.com/biggz-ai/biggz/internal/backup"
 	"github.com/biggz-ai/biggz/internal/bigmem"
-	"github.com/biggz-ai/biggz/internal/assets"
 	"github.com/biggz-ai/biggz/internal/doctor"
 	"github.com/biggz-ai/biggz/internal/install"
-	"github.com/biggz-ai/biggz/internal/opencodeplugin"
-	"github.com/biggz-ai/biggz/internal/recoverytrace"
-	"github.com/biggz-ai/biggz/internal/update"
 	"github.com/biggz-ai/biggz/internal/lens/dependencies"
 	"github.com/biggz-ai/biggz/internal/lens/performance"
 	"github.com/biggz-ai/biggz/internal/lens/readability"
 	"github.com/biggz-ai/biggz/internal/lens/reliability"
 	"github.com/biggz-ai/biggz/internal/lens/resilience"
 	"github.com/biggz-ai/biggz/internal/lens/risk"
+	"github.com/biggz-ai/biggz/internal/opencodeplugin"
+	"github.com/biggz-ai/biggz/internal/recoverytrace"
 	"github.com/biggz-ai/biggz/internal/release"
 	"github.com/biggz-ai/biggz/internal/review"
 	"github.com/biggz-ai/biggz/internal/sdd"
 	"github.com/biggz-ai/biggz/internal/sddattempt"
-	"github.com/biggz-ai/biggz/internal/state"
 	"github.com/biggz-ai/biggz/internal/sddprofiles"
 	"github.com/biggz-ai/biggz/internal/skillregistry"
+	"github.com/biggz-ai/biggz/internal/state"
 	"github.com/biggz-ai/biggz/internal/tui"
+	"github.com/biggz-ai/biggz/internal/update"
 )
 
 // ---- Pipeline Stages ----
@@ -364,16 +364,16 @@ func syncRun() int {
 
 	// Build adapter map
 	adapters := map[string]plugin.AgentAdapter{
-		"opencode": opencode.NewAdapter(),
-		"qwen":     qwen.NewAdapter(),
-		"claude":   claude.NewAdapter(),
-		"cursor":   cursor.NewAdapter(),
-		"windsurf": windsurf.NewAdapter(),
-		"gemini":   gemini.NewAdapter(),
-		"codex":    codex.NewAdapter(),
-		"pi":       pi.NewAdapter(),
-		"vscode":   vscode.NewAdapter(),
-		"kiro":     kiro.NewAdapter(),
+		"opencode":    opencode.NewAdapter(),
+		"qwen":        qwen.NewAdapter(),
+		"claude":      claude.NewAdapter(),
+		"cursor":      cursor.NewAdapter(),
+		"windsurf":    windsurf.NewAdapter(),
+		"gemini":      gemini.NewAdapter(),
+		"codex":       codex.NewAdapter(),
+		"pi":          pi.NewAdapter(),
+		"vscode":      vscode.NewAdapter(),
+		"kiro":        kiro.NewAdapter(),
 		"antigravity": antigravity.NewAdapter(),
 		"hermes":      hermes.NewAdapter(),
 		"kimi":        kimi.NewAdapter(),
@@ -535,16 +535,16 @@ func installRun() int {
 
 	// Build adapter map
 	adapters := map[string]plugin.AgentAdapter{
-		"opencode": opencode.NewAdapter(),
-		"qwen":     qwen.NewAdapter(),
-		"claude":   claude.NewAdapter(),
-		"cursor":   cursor.NewAdapter(),
-		"windsurf": windsurf.NewAdapter(),
-		"gemini":   gemini.NewAdapter(),
-		"codex":    codex.NewAdapter(),
-		"pi":       pi.NewAdapter(),
-		"vscode":   vscode.NewAdapter(),
-		"kiro":     kiro.NewAdapter(),
+		"opencode":    opencode.NewAdapter(),
+		"qwen":        qwen.NewAdapter(),
+		"claude":      claude.NewAdapter(),
+		"cursor":      cursor.NewAdapter(),
+		"windsurf":    windsurf.NewAdapter(),
+		"gemini":      gemini.NewAdapter(),
+		"codex":       codex.NewAdapter(),
+		"pi":          pi.NewAdapter(),
+		"vscode":      vscode.NewAdapter(),
+		"kiro":        kiro.NewAdapter(),
 		"antigravity": antigravity.NewAdapter(),
 		"hermes":      hermes.NewAdapter(),
 		"kimi":        kimi.NewAdapter(),
@@ -592,12 +592,14 @@ func installRun() int {
 		fmt.Printf("  Skills: %d\n", result.SkillsDeployed)
 		fmt.Printf("  Config merge: %v\n", result.ConfigMerged)
 		fmt.Printf("  Commands: %d\n", result.CommandsWritten)
+		fmt.Printf("  Plugins: %d\n", result.PluginsDeployed)
 	} else {
 		fmt.Println("biggz-ai installed successfully")
 		fmt.Printf("  Agent: %s\n", result.BinaryPath)
 		fmt.Printf("  Skills deployed: %d\n", result.SkillsDeployed)
 		fmt.Printf("  Config merged: %v\n", result.ConfigMerged)
 		fmt.Printf("  Commands written: %d\n", result.CommandsWritten)
+		fmt.Printf("  Plugins deployed: %d\n", result.PluginsDeployed)
 	}
 	return 0
 }
@@ -640,55 +642,138 @@ func sddStatusRun() int {
 
 // sddVerifyValidateRun handles the "biggz sdd-verify-validate" subcommand.
 // Validates a verify report against authoritative requirement/scenario counts.
-// Usage: biggz sdd-verify-validate --input <path> [--requirements N] [--scenarios N]
+// Usage: biggz sdd-verify-validate --input <path|-> [--requirements N --scenarios N] [--json]
 func sddVerifyValidateRun() int {
-	args := os.Args[2:]
-	for _, a := range args {
-		if a == "--help" || a == "-h" {
-			fmt.Fprintln(os.Stderr, "Usage: biggz sdd-verify-validate --input <path> [--requirements N] [--scenarios N]")
-			fmt.Fprintln(os.Stderr, "  --input <path>       — path to verify report (required)")
-			fmt.Fprintln(os.Stderr, "  --requirements N     — authoritative requirement count")
-			fmt.Fprintln(os.Stderr, "  --scenarios N        — authoritative scenario count")
-			return 0
-		}
-	}
+	return runSDDVerifyValidate(os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+}
 
+// runSDDVerifyValidate is the testable core of sddVerifyValidateRun.
+//
+// Admission rules (Phase C1 parity):
+//   - --input accepts a file path or "-" for stdin; the input is capped at
+//     1 MiB.
+//   - --requirements and --scenarios must be provided together; when both
+//     are provided they are authoritative and a report whose counts differ
+//     is denied with a named reason. Lenient mode (no count comparison)
+//     applies ONLY when both are omitted.
+//   - --json emits the biggz-ai.verify-admission/v1 envelope; otherwise the
+//     human-readable verdict is printed.
+func runSDDVerifyValidate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	hasHelp := false
 	input := ""
-	req := -1
-	scen := -1
+	declaredReq, declaredScen := -1, -1
+	reqSet, scenSet := false, false
+	emitJSON := false
 
-	args = os.Args[2:]
+	parseErr := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--help", "-h":
+			hasHelp = true
 		case "--input":
-			if i+1 < len(args) {
-				i++
-				input = args[i]
+			if i+1 >= len(args) {
+				parseErr = "--input requires a value"
+				break
 			}
+			i++
+			input = args[i]
 		case "--requirements":
-			if i+1 < len(args) {
-				i++
-				fmt.Sscanf(args[i], "%d", &req)
+			if i+1 >= len(args) {
+				parseErr = "--requirements requires a value"
+				break
 			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil {
+				parseErr = fmt.Sprintf("invalid --requirements value %q", args[i])
+				break
+			}
+			declaredReq, reqSet = n, true
 		case "--scenarios":
-			if i+1 < len(args) {
-				i++
-				fmt.Sscanf(args[i], "%d", &scen)
+			if i+1 >= len(args) {
+				parseErr = "--scenarios requires a value"
+				break
 			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil {
+				parseErr = fmt.Sprintf("invalid --scenarios value %q", args[i])
+				break
+			}
+			declaredScen, scenSet = n, true
+		case "--json":
+			emitJSON = true
+		default:
+			parseErr = fmt.Sprintf("unknown flag %q", args[i])
 		}
 	}
 
+	if hasHelp {
+		fmt.Fprintln(stderr, "Usage: biggz sdd-verify-validate --input <path|-> [--requirements N --scenarios N] [--json]")
+		fmt.Fprintln(stderr, "  --input <path|->    — path to verify report, or - for stdin (required)")
+		fmt.Fprintln(stderr, "  --requirements N    — authoritative requirement count (must be given with --scenarios)")
+		fmt.Fprintln(stderr, "  --scenarios N       — authoritative scenario count (must be given with --requirements)")
+		fmt.Fprintln(stderr, "  --json              — emit the biggz-ai.verify-admission/v1 envelope")
+		return 0
+	}
+	if parseErr != "" {
+		fmt.Fprintf(stderr, "error: %s\n", parseErr)
+		return 1
+	}
 	if input == "" {
-		fmt.Fprintln(os.Stderr, "error: --input is required")
+		fmt.Fprintln(stderr, "error: --input is required")
+		return 1
+	}
+	if reqSet != scenSet {
+		fmt.Fprintln(stderr, "error: --requirements and --scenarios must be provided together")
+		return 1
+	}
+	if reqSet && (declaredReq < 0 || declaredScen < 0) {
+		fmt.Fprintln(stderr, "error: requirement and scenario counts must be nonnegative")
 		return 1
 	}
 
-	if err := sdd.ValidateVerifyReport(input, req, scen); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	var reader io.Reader = stdin
+	if input != "-" {
+		file, err := os.Open(input)
+		if err != nil {
+			fmt.Fprintf(stderr, "error: read verify report: %v\n", err)
+			return 1
+		}
+		defer file.Close()
+		reader = file
+	}
+
+	payload, err := io.ReadAll(io.LimitReader(reader, sdd.MaxVerifyReportBytes+1))
+	if err != nil {
+		fmt.Fprintf(stderr, "error: read verify report: %v\n", err)
+		return 1
+	}
+	if len(payload) > sdd.MaxVerifyReportBytes {
+		fmt.Fprintf(stderr, "error: verify report exceeds %d-byte limit (1 MiB)\n", sdd.MaxVerifyReportBytes)
 		return 1
 	}
 
-	fmt.Println("Verify report is valid.")
+	admission := sdd.ValidateVerifyReportAdmission(payload, declaredReq, declaredScen)
+
+	if emitJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(admission); err != nil {
+			fmt.Fprintf(stderr, "error: encoding output: %v\n", err)
+			return 1
+		}
+		if admission.Decision == "denied" {
+			return 1
+		}
+		return 0
+	}
+
+	if admission.Decision == "denied" {
+		fmt.Fprintf(stderr, "error: %s\n", admission.Reason)
+		return 1
+	}
+	fmt.Fprintln(stdout, "Verify report is valid.")
 	return 0
 }
 
@@ -724,6 +809,7 @@ func sddAttemptRun() int {
 	diagnosis := ""
 	reason := ""
 	resetBy := ""
+	requestID := ""
 	harnessDisp := ""
 	cleanupEv := ""
 	processEv := ""
@@ -732,39 +818,95 @@ func sddAttemptRun() int {
 	for i := 2; i < len(args); i++ {
 		switch args[i] {
 		case "--expected-revision":
-			if i+1 < len(args) { i++; expectedRev = args[i] }
+			if i+1 < len(args) {
+				i++
+				expectedRev = args[i]
+			}
 		case "--expected-binding-revision":
-			if i+1 < len(args) { i++; bindingRev = args[i] }
+			if i+1 < len(args) {
+				i++
+				bindingRev = args[i]
+			}
 		case "--successor-lineage":
-			if i+1 < len(args) { i++; bindingLineage = args[i] }
+			if i+1 < len(args) {
+				i++
+				bindingLineage = args[i]
+			}
 		case "--objective-id":
-			if i+1 < len(args) { i++; objectiveID = args[i] }
+			if i+1 < len(args) {
+				i++
+				objectiveID = args[i]
+			}
 		case "--work-unit":
-			if i+1 < len(args) { i++; workUnit = args[i] }
+			if i+1 < len(args) {
+				i++
+				workUnit = args[i]
+			}
 		case "--evidence-goal":
-			if i+1 < len(args) { i++; evidenceGoal = args[i] }
+			if i+1 < len(args) {
+				i++
+				evidenceGoal = args[i]
+			}
 		case "--evidence-revision":
-			if i+1 < len(args) { i++; evidenceRev = args[i] }
+			if i+1 < len(args) {
+				i++
+				evidenceRev = args[i]
+			}
 		case "--remediates-evidence-revision":
-			if i+1 < len(args) { i++; remediatesEv = args[i] }
+			if i+1 < len(args) {
+				i++
+				remediatesEv = args[i]
+			}
 		case "--outcome":
-			if i+1 < len(args) { i++; outcome = args[i] }
+			if i+1 < len(args) {
+				i++
+				outcome = args[i]
+			}
 		case "--diagnosis":
-			if i+1 < len(args) { i++; diagnosis = args[i] }
+			if i+1 < len(args) {
+				i++
+				diagnosis = args[i]
+			}
 		case "--reason":
-			if i+1 < len(args) { i++; reason = args[i] }
+			if i+1 < len(args) {
+				i++
+				reason = args[i]
+			}
 		case "--reset-by":
-			if i+1 < len(args) { i++; resetBy = args[i] }
+			if i+1 < len(args) {
+				i++
+				resetBy = args[i]
+			}
+		case "--request-id":
+			if i+1 < len(args) {
+				i++
+				requestID = args[i]
+			}
 		case "--harness-disposition":
-			if i+1 < len(args) { i++; harnessDisp = args[i] }
+			if i+1 < len(args) {
+				i++
+				harnessDisp = args[i]
+			}
 		case "--cleanup-evidence":
-			if i+1 < len(args) { i++; cleanupEv = args[i] }
+			if i+1 < len(args) {
+				i++
+				cleanupEv = args[i]
+			}
 		case "--process-evidence":
-			if i+1 < len(args) { i++; processEv = args[i] }
+			if i+1 < len(args) {
+				i++
+				processEv = args[i]
+			}
 		case "--max-attempts":
-			if i+1 < len(args) { i++; fmt.Sscanf(args[i], "%d", &maxAttempts) }
+			if i+1 < len(args) {
+				i++
+				fmt.Sscanf(args[i], "%d", &maxAttempts)
+			}
 		case "--max-lines":
-			if i+1 < len(args) { i++; fmt.Sscanf(args[i], "%d", &maxLines) }
+			if i+1 < len(args) {
+				i++
+				fmt.Sscanf(args[i], "%d", &maxLines)
+			}
 		}
 	}
 
@@ -774,6 +916,9 @@ func sddAttemptRun() int {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
+		}
+		if status.Migrated {
+			fmt.Println("Runtime ledger migrated from the legacy home-dir store (kept untouched).")
 		}
 		fmt.Printf("Change:           %s\n", status.ChangeName)
 		fmt.Printf("Revision:         %s\n", status.Revision)
@@ -791,18 +936,22 @@ func sddAttemptRun() int {
 
 	case "begin":
 		result, err := sddattempt.Begin(sddattempt.BeginParams{
-			ChangeName:  change,
-			RepoRoot:    cwd,
-			ExpectedRev: expectedRev,
-			ObjectiveID: objectiveID,
-			WorkUnit:    workUnit,
+			ChangeName:   change,
+			RepoRoot:     cwd,
+			ExpectedRev:  expectedRev,
+			ObjectiveID:  objectiveID,
+			WorkUnit:     workUnit,
 			EvidenceGoal: evidenceGoal,
-			MaxAttempts: maxAttempts,
-			MaxLines:    maxLines,
+			MaxAttempts:  maxAttempts,
+			MaxLines:     maxLines,
+			RequestID:    requestID,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
+		}
+		if result.Migrated {
+			fmt.Println("Runtime ledger migrated from the legacy home-dir store (kept untouched).")
 		}
 		if result.AlreadyActive {
 			fmt.Printf("Already active: attempt %d is still running\n", result.ActiveAttempt)
@@ -812,22 +961,26 @@ func sddAttemptRun() int {
 
 	case "finish":
 		result, err := sddattempt.Finish(sddattempt.FinishParams{
-			ChangeName:       change,
-			RepoRoot:         cwd,
-			ExpectedRev:      expectedRev,
-			Outcome:          outcome,
-			EvidenceRevision: evidenceRev,
-			Diagnosis:        diagnosis,
-			HarnessDisposition: harnessDisp,
-			CleanupEvidence:  cleanupEv,
-			ProcessEvidence:  processEv,
-			ExpectedBindingRevision: bindingRev,
-			SuccessorLineageID:      bindingLineage,
+			ChangeName:                 change,
+			RepoRoot:                   cwd,
+			ExpectedRev:                expectedRev,
+			Outcome:                    outcome,
+			EvidenceRevision:           evidenceRev,
+			Diagnosis:                  diagnosis,
+			HarnessDisposition:         harnessDisp,
+			CleanupEvidence:            cleanupEv,
+			ProcessEvidence:            processEv,
+			ExpectedBindingRevision:    bindingRev,
+			SuccessorLineageID:         bindingLineage,
 			RemediatesEvidenceRevision: remediatesEv,
+			RequestID:                  requestID,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
+		}
+		if result.Migrated {
+			fmt.Println("Runtime ledger migrated from the legacy home-dir store (kept untouched).")
 		}
 		fmt.Printf("Attempt finished (revision: %s)\n", result.Revision)
 		if result.Complete {
@@ -852,10 +1005,14 @@ func sddAttemptRun() int {
 			MaxAttempts: maxAttempts,
 			MaxLines:    maxLines,
 			ObjectiveID: objectiveID,
+			RequestID:   requestID,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
+		}
+		if result.Migrated {
+			fmt.Println("Runtime ledger migrated from the legacy home-dir store (kept untouched).")
 		}
 		fmt.Printf("Ledger reset (revision: %s)\n", result.Revision)
 		if result.NewStore {
@@ -914,8 +1071,9 @@ func sddContinueRun() int {
 
 // sddProfileRun handles the "biggz sdd-profile" subcommand.
 // Usage: biggz sdd-profile list
-//        biggz sdd-profile apply <name>
-//        biggz sdd-profile remove <name>
+//
+//	biggz sdd-profile apply <name>
+//	biggz sdd-profile remove <name>
 func sddProfileRun() int {
 	args := os.Args[2:]
 	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
@@ -1092,9 +1250,15 @@ func bigmemRun() int {
 		obs := &bigmem.Observation{Title: args[1], Content: args[2], Type: "manual"}
 		for i := 3; i < len(args)-1; i++ {
 			switch args[i] {
-			case "--type":    obs.Type = args[i+1]; i++
-			case "--project": obs.Project = args[i+1]; i++
-			case "--scope":   obs.Scope = args[i+1]; i++
+			case "--type":
+				obs.Type = args[i+1]
+				i++
+			case "--project":
+				obs.Project = args[i+1]
+				i++
+			case "--scope":
+				obs.Scope = args[i+1]
+				i++
 			}
 		}
 		if err := store.Save(obs); err != nil {
@@ -1112,10 +1276,20 @@ func bigmemRun() int {
 		opts := bigmem.SearchOptions{Limit: 20}
 		for i := 2; i < len(args)-1; i++ {
 			switch args[i] {
-			case "--type":    opts.Type = args[i+1]; i++
-			case "--project": opts.Project = args[i+1]; i++
-			case "--scope":   opts.Scope = args[i+1]; i++
-			case "--limit":   if n, err := strconv.Atoi(args[i+1]); err == nil { opts.Limit = n }; i++
+			case "--type":
+				opts.Type = args[i+1]
+				i++
+			case "--project":
+				opts.Project = args[i+1]
+				i++
+			case "--scope":
+				opts.Scope = args[i+1]
+				i++
+			case "--limit":
+				if n, err := strconv.Atoi(args[i+1]); err == nil {
+					opts.Limit = n
+				}
+				i++
 			}
 		}
 		results, err := store.Search(query, opts)
@@ -1162,31 +1336,51 @@ func bigmemRun() int {
 		}
 		hard := false
 		for _, a := range args {
-			if a == "--hard" { hard = true }
+			if a == "--hard" {
+				hard = true
+			}
 		}
 		if args[1] == "session" {
-			if len(args) < 3 { fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete session <id>"); return 1 }
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete session <id>")
+				return 1
+			}
 			if err := store.DeleteSession(args[2]); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
 			}
 			fmt.Printf("Session deleted: %s\n", args[2])
 		} else if args[1] == "prompt" {
-			if len(args) < 3 { fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete prompt <id>"); return 1 }
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete prompt <id>")
+				return 1
+			}
 			id, err := strconv.ParseInt(args[2], 10, 64)
-			if err != nil { fmt.Fprintln(os.Stderr, "invalid prompt id"); return 1 }
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "invalid prompt id")
+				return 1
+			}
 			if err := store.DeletePrompt(id); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
 			}
 			fmt.Printf("Prompt deleted: %s\n", args[2])
 		} else if args[1] == "project" {
-			if len(args) < 3 { fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete project <name> [--hard]"); return 1 }
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem delete project <name> [--hard]")
+				return 1
+			}
 			r, err := store.DeleteProject(args[2], hard)
-			if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
 			fmt.Printf("Project %q deleted: %d observations, %d prompts, %d sessions\n",
 				args[2], r.ObservationsDeleted, r.PromptsDeleted, r.SessionsDeleted)
 		} else {
 			if err := store.DeleteObservation(args[1], hard); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
 			}
 			fmt.Printf("Deleted: %s\n", args[1])
 		}
@@ -1201,15 +1395,20 @@ func bigmemRun() int {
 		for i := 2; i < len(args)-1; i++ {
 			switch args[i] {
 			case "--title":
-				updates["title"] = args[i+1]; i++
+				updates["title"] = args[i+1]
+				i++
 			case "--type":
-				updates["type"] = args[i+1]; i++
+				updates["type"] = args[i+1]
+				i++
 			case "--content":
-				updates["content"] = args[i+1]; i++
+				updates["content"] = args[i+1]
+				i++
 			case "--topic-key":
-				updates["topic_key"] = args[i+1]; i++
+				updates["topic_key"] = args[i+1]
+				i++
 			case "--scope":
-				updates["scope"] = args[i+1]; i++
+				updates["scope"] = args[i+1]
+				i++
 			}
 		}
 		if len(updates) == 0 {
@@ -1232,9 +1431,15 @@ func bigmemRun() int {
 		for i := 2; i < len(args); i++ {
 			switch args[i] {
 			case "--before":
-				if i+1 < len(args) { opts.Before, _ = strconv.Atoi(args[i+1]); i++ }
+				if i+1 < len(args) {
+					opts.Before, _ = strconv.Atoi(args[i+1])
+					i++
+				}
 			case "--after":
-				if i+1 < len(args) { opts.After, _ = strconv.Atoi(args[i+1]); i++ }
+				if i+1 < len(args) {
+					opts.After, _ = strconv.Atoi(args[i+1])
+					i++
+				}
 			}
 		}
 		entries, err := store.Timeline(opts)
@@ -1244,8 +1449,12 @@ func bigmemRun() int {
 		}
 		for _, e := range entries {
 			marker := "  "
-			if e.IsFocus { marker = "=>" }
-			if e.IsBefore { marker = "<=" }
+			if e.IsFocus {
+				marker = "=>"
+			}
+			if e.IsBefore {
+				marker = "<="
+			}
 			fmt.Printf("%s %s [%s] %s (%s)\n", marker, e.ID[:min(20, len(e.ID))], e.Type, e.Title, e.CreatedAt.Format(time.RFC3339))
 		}
 
@@ -1294,10 +1503,15 @@ func bigmemRun() int {
 	case "doctor":
 		useJSON := false
 		for i := 1; i < len(args); i++ {
-			if args[i] == "--json" { useJSON = true }
+			if args[i] == "--json" {
+				useJSON = true
+			}
 		}
 		r, err := store.Doctor()
-		if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 		if useJSON {
 			data, _ := json.MarshalIndent(r, "", "  ")
 			fmt.Println(string(data))
@@ -1362,8 +1576,14 @@ func bigmemRun() int {
 		}
 		if args[1] == "list" {
 			rows, err := store.ListProjects()
-			if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
-			if len(rows) == 0 { fmt.Println("No projects."); return 0 }
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+			if len(rows) == 0 {
+				fmt.Println("No projects.")
+				return 0
+			}
 			for _, p := range rows {
 				fmt.Printf("  %s — %d observations, %d sessions\n", p.Name, p.Observations, p.Sessions)
 			}
@@ -1372,14 +1592,22 @@ func bigmemRun() int {
 			dryRun := false
 			for i := 2; i < len(args); i++ {
 				switch args[i] {
-				case "--all": all = true
-				case "--dry-run": dryRun = true
+				case "--all":
+					all = true
+				case "--dry-run":
+					dryRun = true
 				}
 			}
 			r, err := store.ConsolidateProjects(all, dryRun)
-			if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
 			if dryRun {
-				if len(r.Groups) == 0 { fmt.Println("No similar project groups found."); return 0 }
+				if len(r.Groups) == 0 {
+					fmt.Println("No similar project groups found.")
+					return 0
+				}
 				for _, g := range r.Groups {
 					fmt.Printf("Group: %s\n", g.Canonical)
 					for _, p := range g.Projects[1:] {
@@ -1390,7 +1618,8 @@ func bigmemRun() int {
 				fmt.Printf("Consolidated %d projects\n", r.Merged)
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "unknown: projects %s\n", args[1]); return 1
+			fmt.Fprintf(os.Stderr, "unknown: projects %s\n", args[1])
+			return 1
 		}
 
 	case "compare":
@@ -1417,13 +1646,17 @@ func bigmemRun() int {
 		switch args[1] {
 		case "list":
 			status := ""
-			if len(args) > 2 { status = args[2] }
+			if len(args) > 2 {
+				status = args[2]
+			}
 			rels, err := store.ListRelations(status)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
 			}
 			if len(rels) == 0 {
-				fmt.Println("No relations found."); return 0
+				fmt.Println("No relations found.")
+				return 0
 			}
 			for _, r := range rels {
 				fmt.Printf("  %s [%s] %s → %s (%s)\n",
@@ -1432,11 +1665,13 @@ func bigmemRun() int {
 			}
 		case "show":
 			if len(args) < 3 {
-				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem conflicts show <id>"); return 1
+				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem conflicts show <id>")
+				return 1
 			}
 			rel, err := store.GetRelation(args[2])
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
 			}
 			src, _ := store.Get(rel.SourceID)
 			tgt, _ := store.Get(rel.TargetID)
@@ -1451,9 +1686,15 @@ func bigmemRun() int {
 			if tgt != nil {
 				fmt.Printf("  %s — %s [%s]\n", tgt.ID[:min(24, len(tgt.ID))], tgt.Title, tgt.Type)
 			}
-			if rel.Reason != "" { fmt.Printf("Reason: %s\n", rel.Reason) }
-			if rel.Evidence != "" { fmt.Printf("Evidence: %s\n", rel.Evidence) }
-			if rel.Confidence > 0 { fmt.Printf("Confidence: %.2f\n", rel.Confidence) }
+			if rel.Reason != "" {
+				fmt.Printf("Reason: %s\n", rel.Reason)
+			}
+			if rel.Evidence != "" {
+				fmt.Printf("Evidence: %s\n", rel.Evidence)
+			}
+			if rel.Confidence > 0 {
+				fmt.Printf("Confidence: %.2f\n", rel.Confidence)
+			}
 			fmt.Printf("Created: %s\n", rel.CreatedAt.Format(time.RFC3339))
 
 		case "judge":
@@ -1463,9 +1704,12 @@ func bigmemRun() int {
 				return 1
 			}
 			reason := ""
-			if len(args) > 4 { reason = strings.Join(args[4:], " ") }
+			if len(args) > 4 {
+				reason = strings.Join(args[4:], " ")
+			}
 			if err := store.JudgeRelation(args[2], args[3], reason, "", 1.0); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
 			}
 			fmt.Printf("Judged %s as %s\n", args[2][:min(24, len(args[2]))], args[3])
 
@@ -1475,18 +1719,30 @@ func bigmemRun() int {
 			apply := false
 			for i := 2; i < len(args); i++ {
 				switch args[i] {
-				case "--project": if i+1 < len(args) { project = args[i+1]; i++ }
-				case "--dry-run": dryRun = true
-				case "--apply":   apply = true
+				case "--project":
+					if i+1 < len(args) {
+						project = args[i+1]
+						i++
+					}
+				case "--dry-run":
+					dryRun = true
+				case "--apply":
+					apply = true
 				}
 			}
 			if apply {
 				n, err := store.ScanConflicts(project, false)
-				if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					return 1
+				}
 				fmt.Printf("Created %d pending conflict relations\n", n)
 			} else {
 				n, err := store.ScanConflicts(project, true)
-				if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+					return 1
+				}
 				if dryRun {
 					fmt.Printf("Dry-run: %d observations would create new relations\n", n)
 				} else {
@@ -1497,16 +1753,24 @@ func bigmemRun() int {
 		case "stats":
 			project := ""
 			for i := 2; i < len(args); i++ {
-				if args[i] == "--project" && i+1 < len(args) { project = args[i+1]; i++ }
+				if args[i] == "--project" && i+1 < len(args) {
+					project = args[i+1]
+					i++
+				}
 			}
 			cs, err := store.ConflictsStats(project)
-			if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
 			fmt.Printf("Total relations: %d\n", cs.TotalRelations)
 			fmt.Printf("Pending:         %d\n", cs.Pending)
 			fmt.Printf("Judged:          %d\n", cs.Judged)
 			if len(cs.ByVerdict) > 0 {
 				fmt.Println("By verdict:")
-				for v, c := range cs.ByVerdict { fmt.Printf("  %s: %d\n", v, c) }
+				for v, c := range cs.ByVerdict {
+					fmt.Printf("  %s: %d\n", v, c)
+				}
 			}
 
 		case "deferred":
@@ -1514,20 +1778,35 @@ func bigmemRun() int {
 			limit := 20
 			for i := 2; i < len(args); i++ {
 				switch args[i] {
-				case "--status": if i+1 < len(args) { status = args[i+1]; i++ }
-				case "--limit":  if i+1 < len(args) { limit, _ = strconv.Atoi(args[i+1]); i++ }
+				case "--status":
+					if i+1 < len(args) {
+						status = args[i+1]
+						i++
+					}
+				case "--limit":
+					if i+1 < len(args) {
+						limit, _ = strconv.Atoi(args[i+1])
+						i++
+					}
 				}
 			}
 			rels, err := store.ConflictsDeferred(status, limit)
-			if err != nil { fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1 }
-			if len(rels) == 0 { fmt.Println("No deferred relations."); return 0 }
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+			if len(rels) == 0 {
+				fmt.Println("No deferred relations.")
+				return 0
+			}
 			for _, r := range rels {
 				fmt.Printf("  %s %s → %s (%s)\n", r.ID[:min(24, len(r.ID))],
 					r.SourceID[:min(16, len(r.SourceID))], r.TargetID[:min(16, len(r.TargetID))], r.Relation)
 			}
 
 		default:
-			fmt.Fprintf(os.Stderr, "unknown: conflicts %s\n", args[1]); return 1
+			fmt.Fprintf(os.Stderr, "unknown: conflicts %s\n", args[1])
+			return 1
 		}
 
 	case "sync":
@@ -1553,7 +1832,8 @@ func bigmemRun() int {
 				doAll = true
 			case "--project":
 				if i+1 < len(args) {
-					project = args[i+1]; i++
+					project = args[i+1]
+					i++
 				}
 			}
 		}
@@ -1569,7 +1849,8 @@ func bigmemRun() int {
 		case doStatus:
 			st, err := store.SyncStatus(projectRoot)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
 			}
 			fmt.Printf("Sync status:\n")
 			fmt.Printf("  Dir:      %s\n", st.ExportDir)
@@ -1579,14 +1860,16 @@ func bigmemRun() int {
 		case doImport:
 			n, err := store.SyncImport(projectRoot)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
 			}
 			fmt.Printf("Imported %d observations\n", n)
 
 		default:
 			// No flags = export (like engram)
 			if err := store.SyncExport(project, projectRoot); err != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
 			}
 			fmt.Printf("Exported to %s\n", filepath.Join(projectRoot, ".bigmem"))
 		}
@@ -1608,8 +1891,9 @@ func bigmemRun() int {
 
 // backupRun handles the "biggz backup" subcommand.
 // Usage: biggz backup create <path> [path...]
-//        biggz backup list
-//        biggz backup restore <id> <target>
+//
+//	biggz backup list
+//	biggz backup restore <id> <target>
 func backupRun() int {
 	args := os.Args[2:]
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
@@ -1670,8 +1954,9 @@ func backupRun() int {
 
 // releaseRun handles the "biggz release" subcommand.
 // Usage: biggz release status       — show git state
-//        biggz release tag <version> — create version tag
-//        biggz release verify <version> — verify tag exists
+//
+//	biggz release tag <version> — create version tag
+//	biggz release verify <version> — verify tag exists
 func releaseRun() int {
 	args := os.Args[2:]
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
@@ -1835,6 +2120,8 @@ func rddRun() int {
 	}
 
 	if err != nil {
+		// Fail closed: an unreadable kill-switch record is NOT a disabled
+		// switch. The error names the exact file and the repair command.
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
@@ -2030,12 +2317,22 @@ func reviewRun() int {
 		return reviewStartRun()
 	case "resume":
 		return reviewResumeRun()
+	case "finalize":
+		return reviewFinalizeRun()
+	case "capture-result":
+		return reviewCaptureResultRun()
 	case "validate":
 		return reviewValidateRun()
 	case "export":
 		return reviewExportRun()
 	case "import":
 		return reviewImportRun()
+	case "repair":
+		return reviewRepairRun()
+	case "invalidate":
+		return reviewInvalidateRun()
+	case "abandon":
+		return reviewAbandonRun()
 	case "bind-sdd":
 		return reviewBindSDDRun()
 	default:
@@ -2054,17 +2351,41 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "  status <lineage>              Show review lineage status")
 	fmt.Fprintln(os.Stderr, "    --json                     Machine-readable JSON output")
 	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "  gate pre-pr|pre-push <lineage>  Run publication gate")
+	fmt.Fprintln(os.Stderr, "  gate post-apply|pre-commit|pre-push|pre-pr|release <lineage>  Run publication gate")
 	fmt.Fprintln(os.Stderr, "    --json                     Machine-readable JSON output")
 	fmt.Fprintln(os.Stderr, "    --dry-run                  Report without failing")
+	fmt.Fprintln(os.Stderr, "    --base-ref <ref>           pre-pr: explicit base boundary")
+	fmt.Fprintln(os.Stderr, "    --pre-pr-ci-attestation <file>  pre-pr: signed CI attestation (presence + parse, best-effort)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  start --subject <file>         Start a new review")
 	fmt.Fprintln(os.Stderr, "    [--lineage <id>]            Optional lineage ID (UUIDv7)")
+	fmt.Fprintln(os.Stderr, "    [--base-ref <sha>]          Base for the correction budget (default: subject commit parent, else empty tree)")
+	fmt.Fprintln(os.Stderr, "    [--lenses <list>]           Selected lens slots, comma-separated (default: inferred from captured slots)")
+	fmt.Fprintln(os.Stderr, "    [--consent <mode>]          Consent declaration: relay (default on a terminal), granted, or declined")
+	fmt.Fprintln(os.Stderr, "                                  relay: prints the typed consent envelope and exits 0 without creating a lineage")
+	fmt.Fprintln(os.Stderr, "                                  granted/declined: rerun with the human's answer for the exact candidate")
+	fmt.Fprintln(os.Stderr, "                                  A start with declared lenses needs consent; with none it is silent (low risk)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  resume <lineage>               Resume a review (Blocked/NeedsChanges -> InReview)")
 	fmt.Fprintln(os.Stderr, "    [--force]                   Skip non-critical validations")
+	fmt.Fprintln(os.Stderr, "    [--correction-lines <n>]    Correction forecast; must fit the frozen correction budget")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  finalize <lineage>             Finalize a fully captured review (terminal transition + persisted receipt)")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha>")
+	fmt.Fprintln(os.Stderr, "                                 Capture one strict reviewer result into the lineage event store")
+	fmt.Fprintln(os.Stderr, "    [--repository-context <json>]  Opaque binding JSON; values must echo the flags")
+	fmt.Fprintln(os.Stderr, "    [--subject-hash <sha>]         Provider-issued artifact subject hash")
+	fmt.Fprintln(os.Stderr, "    --input <file>|-               Raw reviewer result JSON file or - for stdin")
+	fmt.Fprintln(os.Stderr, "    [--preflight]                 Verify the binding and print the artifact subject without persisting")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  validate <lineage>             Validate chain integrity")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  repair <lineage>               Repair a corrupt tail event (truncates to the last valid event)")
+	fmt.Fprintln(os.Stderr, "                                  Mid-chain corruption refuses and names export as the recovery path")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  invalidate <lineage> <reason>  Mark the lineage invalidated; gates fail with the reason")
+	fmt.Fprintln(os.Stderr, "  abandon <lineage>              Withdraw the lineage; export/import remain possible")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  export <lineage>               Export review as JSON")
 	fmt.Fprintln(os.Stderr, "    [--output <file>]           Write to file instead of stdout")
@@ -2163,67 +2484,89 @@ func reviewStatusRun() int {
 	fmt.Printf("Head Hash:      %s\n", st.HeadHash)
 	fmt.Printf("Event Count:    %d\n", st.EventCount)
 	fmt.Printf("Chain Valid:    %t\n", st.ChainValid)
+	if st.NextTransition != nil {
+		nt := st.NextTransition
+		line := fmt.Sprintf("Next Transition: %s", nt.Action)
+		if nt.Reason != "" {
+			line += fmt.Sprintf(" (%s)", nt.Reason)
+		}
+		if nt.Lens != "" {
+			order := "?"
+			if nt.Order != nil {
+				order = strconv.Itoa(*nt.Order)
+			}
+			line += fmt.Sprintf(" (lens: %s, order: %s)", nt.Lens, order)
+		}
+		if nt.BudgetRemaining > 0 {
+			line += fmt.Sprintf(" (budget remaining: %d)", nt.BudgetRemaining)
+		}
+		if len(nt.Gates) > 0 {
+			line += fmt.Sprintf(" (gates: %s)", strings.Join(nt.Gates, ", "))
+		}
+		fmt.Println(line)
+	}
 	if st.Receipt != nil {
 		fmt.Printf("Receipt:        %s (hash: %s)\n", "valid", st.Receipt.BindingHash[:16]+"...")
 	} else {
 		fmt.Printf("Receipt:        none\n")
+	}
+	if st.ReceiptArtifact != nil {
+		fmt.Printf("Receipt Artifact: %s (hash: %s)\n", st.ReceiptArtifact.Path, st.ReceiptArtifact.Hash)
+	}
+	if st.Budget != nil {
+		fmt.Printf("Correction Budget: %d lines (max attempts: %d, original changed: %d)\n",
+			st.Budget.CorrectionLines, st.Budget.MaxAttempts, st.Budget.OriginalChangedLines)
 	}
 	fmt.Printf("Fix Rounds:     %d/%d\n", st.BudgetCounters.FixRounds, model.MaxFixRounds)
 	fmt.Printf("Scoped Valids:  %d/%d\n", st.BudgetCounters.ScopedValidations, model.MaxScopedValidations)
 	return 0
 }
 
-// reviewGateRun handles "biggz review gate pre-pr|pre-push <lineage>".
+// reviewGateRun handles "biggz review gate <post-apply|pre-commit|pre-push|pre-pr|release> <lineage>".
 func reviewGateRun() int {
 	args := os.Args[3:]
 	if len(args) < 2 {
-		fmt.Fprintln(os.Stderr, "Usage: biggz review gate <pre-pr|pre-push> <lineage> [--json] [--dry-run]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review gate <post-apply|pre-commit|pre-push|pre-pr|release> <lineage> [--json] [--dry-run] [--base-ref <ref>] [--pre-pr-ci-attestation <file>]")
 		return 1
 	}
 
-	gateType := args[0]
+	gateType := review.GateKind(args[0])
 	lineageID := args[1]
 	useJSON := false
-	dryRun := false
-	for _, a := range args[2:] {
-		switch a {
+	var opts review.GateOptions
+	for i := 2; i < len(args); i++ {
+		switch args[i] {
 		case "--json":
 			useJSON = true
 		case "--dry-run":
-			dryRun = true
+			opts.DryRun = true
+		case "--base-ref":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --base-ref requires a value")
+				return 1
+			}
+			i++
+			opts.BaseRef = args[i]
+		case "--pre-pr-ci-attestation":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --pre-pr-ci-attestation requires a value")
+				return 1
+			}
+			i++
+			opts.PrePRCIAttestation = args[i]
+		case "--help", "-h":
+			fmt.Fprintln(os.Stderr, "Usage: biggz review gate <post-apply|pre-commit|pre-push|pre-pr|release> <lineage> [--json] [--dry-run] [--base-ref <ref>] [--pre-pr-ci-attestation <file>]")
+			return 0
+		default:
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
+			return 1
 		}
 	}
 
-	if gateType != "pre-pr" && gateType != "pre-push" {
-		fmt.Fprintf(os.Stderr, "error: unknown gate type %q (use: pre-pr or pre-push)\n", gateType)
-		return 1
-	}
-
-	auth := review.NewAuthority("")
-	chain, err := auth.LoadChain(lineageID)
+	result, err := review.EvaluateGate(gateType, "", lineageID, opts)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: loading chain: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
-	}
-
-	commonDir, worktreeDir := detectGitDirs()
-	// For gate validation, use the common dir — gates operate at clone level
-	gitDir := commonDir
-	if gitDir == "" {
-		gitDir = worktreeDir
-	}
-
-	var result review.GateResult
-	if gateType == "pre-pr" {
-		result = review.PrePRGate(chain, nil, nil, dryRun, gitDir)
-	} else {
-		// For pre-push, try to get the current committed tree for scope comparison.
-		treeOut, treeErr := exec.Command("git", "rev-parse", "HEAD:").Output()
-		snapshotTree := ""
-		if treeErr == nil {
-			snapshotTree = strings.TrimSpace(string(treeOut))
-		}
-		result = review.PrePushGate(chain, nil, nil, snapshotTree, dryRun, gitDir)
 	}
 
 	if useJSON {
@@ -2236,6 +2579,19 @@ func reviewGateRun() int {
 	} else {
 		fmt.Fprintf(os.Stderr, "Gate: %s\n", result.Gate)
 		fmt.Fprintf(os.Stderr, "Passed: %t\n", result.Passed)
+		if result.Delivery != "" {
+			fmt.Fprintf(os.Stderr, "Delivery: %s\n", result.Delivery)
+		}
+		if result.Reason != "" {
+			fmt.Fprintf(os.Stderr, "Reason: %s\n", result.Reason)
+		}
+		if result.ReceiptHash != "" {
+			fmt.Fprintf(os.Stderr, "Receipt: %s\n", result.ReceiptHash)
+		}
+		if result.Findings != nil {
+			fmt.Fprintf(os.Stderr, "Findings: %d blocking, %d resolved, %d follow-up\n",
+				result.Findings.Blocking, result.Findings.Resolved, result.Findings.FollowUp)
+		}
 		if result.DryRun {
 			fmt.Fprintf(os.Stderr, "Mode: DRY RUN (exit zero regardless)\n")
 		}
@@ -2247,6 +2603,11 @@ func reviewGateRun() int {
 		}
 	}
 
+	// Exit zero for the disabled disposition (delivery follows ordinary
+	// repository policy, never an approval) and under --dry-run.
+	if result.Delivery == review.DeliveryDisabledUnmanaged || result.DryRun {
+		return 0
+	}
 	if !result.Passed {
 		return 1
 	}
@@ -2279,14 +2640,29 @@ func lastOperationStatus(lastOp string) string {
 		return "completed"
 	case "block":
 		return "blocked"
+	case "invalidate":
+		return "invalidated"
+	case "withdraw":
+		return "withdrawn"
 	}
 	return lastOp
 }
 
 // reviewStartRun handles "biggz review start --subject <file> [--lineage <id>]".
+// The correction budget is derived from the subject's changed lines and frozen
+// into the start_review event payload.
+//
+// Consent gate (Phase C1 parity): zero declared lenses is silent structural
+// readback; any declared lens needs consent. --consent relay prints the typed
+// biggz-ai.review-consent/v1 envelope and exits 0 without creating a lineage;
+// the caller relays it to a human and reruns with --consent granted or
+// --consent declined for the exact frozen candidate. Declined persists
+// nothing. An undeclared start on a terminal falls back to relay; headless
+// it errors — a review needing consent never starts silently.
 func reviewStartRun() int {
 	args := os.Args[3:]
-	var subjectFile, lineageID string
+	var subjectFile, lineageID, baseRef, lensesValue, consentValue string
+	interactive := terminalAttached(os.Stdout)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--subject":
@@ -2299,14 +2675,29 @@ func reviewStartRun() int {
 				i++
 				lineageID = args[i]
 			}
+		case "--base-ref":
+			if i+1 < len(args) {
+				i++
+				baseRef = args[i]
+			}
+		case "--lenses":
+			if i+1 < len(args) {
+				i++
+				lensesValue = args[i]
+			}
+		case "--consent":
+			if i+1 < len(args) {
+				i++
+				consentValue = args[i]
+			}
 		case "--help", "-h":
-			fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>] [--base-ref <sha>] [--lenses <list>] [--consent relay|granted|declined]")
 			return 0
 		}
 	}
 	if subjectFile == "" {
 		fmt.Fprintln(os.Stderr, "error: --subject is required")
-		fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>] [--base-ref <sha>] [--lenses <list>] [--consent relay|granted|declined]")
 		return 1
 	}
 
@@ -2325,6 +2716,50 @@ func reviewStartRun() int {
 		lineageID = uuid.Must(uuid.NewV7()).String()
 	}
 
+	lenses, err := review.ParseSelectedLenses(lensesValue)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+
+	// Consent gate: nothing is persisted before this point, so a relay or
+	// decline cannot create a lineage.
+	decision, err := review.EvaluateStartConsent(subject, lineageID, lenses, consentValue, interactive)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	switch decision.Decision {
+	case "relay":
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(decision.Envelope); err != nil {
+			fmt.Fprintf(os.Stderr, "error: encoding consent envelope: %v\n", err)
+			return 1
+		}
+		return 0
+	case "declined":
+		fmt.Fprintln(os.Stdout, decision.Message)
+		return 0
+	}
+
+	base, lines, err := review.DeriveOriginalChangedLines(subject.Repository, subject.CommitSHA, baseRef)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	budget, err := review.DeriveCorrectionBudget(lines)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	plan := review.StartEventPayload{
+		Schema: review.ReviewStartEventSchema, Repository: subject.Repository,
+		CommitSHA: subject.CommitSHA, BaseRef: base,
+		OriginalChangedLines: lines, CorrectionBudget: budget,
+		MaxCorrectionAttempts: review.MaxCompactCorrectionAttempts, SelectedLenses: lenses,
+	}
+
 	auth := review.NewAuthority("")
 	store, err := auth.Open(lineageID)
 	if err != nil {
@@ -2335,7 +2770,7 @@ func reviewStartRun() int {
 	r := review.New(subject)
 	r.State.Role = model.RoleReviewer
 	r.State.LineageID = lineageID
-	r.WithStore(store)
+	r.WithStore(store).FreezeStartPlan(plan)
 
 	ctx := context.Background()
 	if err := r.Start(ctx); err != nil {
@@ -2343,22 +2778,46 @@ func reviewStartRun() int {
 		return 1
 	}
 
-	fmt.Printf("Review started: %s\n", lineageID)
+	fmt.Printf("Review started: %s (correction budget: %d lines, base %s)\n", lineageID, budget, base)
 	return 0
 }
 
+// terminalAttached reports whether the given file is a terminal device.
+func terminalAttached(file *os.File) bool {
+	info, err := file.Stat()
+	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
 // reviewResumeRun handles "biggz review resume <lineage> [--force]".
+// The optional --correction-lines forecast is gated against the frozen
+// correction budget before the resume event appends.
 func reviewResumeRun() int {
 	args := os.Args[3:]
 	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "Usage: biggz review resume <lineage> [--force]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review resume <lineage> [--force] [--correction-lines <n>]")
 		return 0
 	}
 	lineageID := args[0]
 	force := false
-	for _, a := range args[1:] {
-		if a == "--force" {
+	correctionLines := 0
+	hasForecast := false
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--force":
 			force = true
+		case "--correction-lines":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --correction-lines requires a value")
+				return 1
+			}
+			i++
+			parsed, err := strconv.Atoi(args[i])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: --correction-lines must be an integer, got %q\n", args[i])
+				return 1
+			}
+			correctionLines = parsed
+			hasForecast = true
 		}
 	}
 
@@ -2389,6 +2848,13 @@ func reviewResumeRun() int {
 		}
 	}
 
+	if hasForecast {
+		if err := review.ResumeForecastGate(chain, correctionLines); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+	}
+
 	store, err := auth.Open(lineageID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: opening store: %v\n", err)
@@ -2408,6 +2874,196 @@ func reviewResumeRun() int {
 
 	fmt.Printf("%s → in_review\n", prevStatus)
 	return 0
+}
+
+// reviewFinalizeRun handles "biggz review finalize <lineage>".
+func reviewFinalizeRun() int {
+	if len(os.Args) < 4 || os.Args[3] == "--help" || os.Args[3] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review finalize <lineage>")
+		return 0
+	}
+	lineageID := os.Args[3]
+
+	outcome, err := review.Finalize("", lineageID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if outcome.Idempotent {
+		fmt.Printf("Review already finalized: %s (receipt %s, hash %s)\n",
+			lineageID, outcome.ReceiptPath, outcome.ReceiptHash)
+	} else {
+		fmt.Printf("Review finalized: %s (receipt %s, hash %s, revision %s)\n",
+			lineageID, outcome.ReceiptPath, outcome.ReceiptHash, outcome.Revision)
+	}
+	return 0
+}
+
+// reviewCaptureResultRun handles "biggz review capture-result".
+func reviewCaptureResultRun() int {
+	args := os.Args[3:]
+	var lineageID, targetID, lensName, expectedRevision, repositoryContext, subjectHash, input string
+	order := -1
+	preflight := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--lineage":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --lineage requires a value")
+				return 1
+			}
+			i++
+			lineageID = args[i]
+		case "--target":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --target requires a value")
+				return 1
+			}
+			i++
+			targetID = args[i]
+		case "--lens":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --lens requires a value")
+				return 1
+			}
+			i++
+			lensName = args[i]
+		case "--order":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --order requires a value")
+				return 1
+			}
+			i++
+			parsed, err := strconv.Atoi(args[i])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: --order must be an integer, got %q\n", args[i])
+				return 1
+			}
+			order = parsed
+		case "--expected-revision":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --expected-revision requires a value")
+				return 1
+			}
+			i++
+			expectedRevision = args[i]
+		case "--repository-context":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --repository-context requires a value")
+				return 1
+			}
+			i++
+			repositoryContext = args[i]
+		case "--subject-hash":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --subject-hash requires a value")
+				return 1
+			}
+			i++
+			subjectHash = args[i]
+		case "--input":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --input requires a value")
+				return 1
+			}
+			i++
+			input = args[i]
+		case "--preflight":
+			preflight = true
+		case "--help", "-h":
+			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight]")
+			return 0
+		default:
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
+			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight]")
+			return 1
+		}
+	}
+
+	if lineageID == "" || targetID == "" || lensName == "" || order < 0 || expectedRevision == "" {
+		fmt.Fprintln(os.Stderr, "error: --lineage, --target, --lens, --order, and --expected-revision are required")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight]")
+		return 1
+	}
+	if preflight && input != "" {
+		fmt.Fprintln(os.Stderr, "error: capture-result --preflight verifies the binding only and does not accept --input")
+		return 1
+	}
+	if !preflight && input == "" {
+		fmt.Fprintln(os.Stderr, "error: --input is required (or use --preflight)")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> --input <file>|- [--preflight]")
+		return 1
+	}
+
+	binding := review.CaptureBinding{
+		LineageID: lineageID, TargetIdentity: targetID, Lens: lensName,
+		Order: order, ExpectedRevision: expectedRevision, SubjectHash: subjectHash,
+	}
+	if repositoryContext != "" {
+		context, err := review.DecodeRepositoryContext([]byte(repositoryContext))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if err := context.Validate(binding); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		binding.Repo = context.Repo
+	}
+
+	if preflight {
+		result, err := review.Preflight(binding)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(result); err != nil {
+			fmt.Fprintf(os.Stderr, "error: encoding output: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	payload, err := readReviewerResultInput(input)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	outcome, err := review.Capture(binding, payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(outcome.Artifact); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encoding output: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+// readReviewerResultInput reads the reviewer result payload from a file, or
+// from stdin when input is "-".
+func readReviewerResultInput(input string) ([]byte, error) {
+	if input == "-" {
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, review.ArtifactResultLimit+1))
+		if err != nil {
+			return nil, fmt.Errorf("read reviewer result from stdin: %w", err)
+		}
+		if len(data) > review.ArtifactResultLimit {
+			return nil, fmt.Errorf("read reviewer result from stdin: exceeds the native bound")
+		}
+		return data, nil
+	}
+	data, err := os.ReadFile(input)
+	if err != nil {
+		return nil, fmt.Errorf("read reviewer result: %w", err)
+	}
+	return data, nil
 }
 
 // reviewValidateRun handles "biggz review validate <lineage>".
@@ -2455,6 +3111,76 @@ func reviewValidateRun() int {
 	if !verdict.Valid || !receiptOk {
 		return 1
 	}
+	return 0
+}
+
+// reviewRepairRun handles "biggz review repair <lineage>".
+// Validates the chain and repairs a corrupt tail event by truncating to the
+// last valid event; mid-chain corruption refuses and names export as the
+// recovery path. A healthy chain is a no-op.
+func reviewRepairRun() int {
+	if len(os.Args) < 4 || os.Args[3] == "--help" || os.Args[3] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review repair <lineage>")
+		return 0
+	}
+	lineageID := os.Args[3]
+
+	report, err := review.Repair("", lineageID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Lineage:   %s\n", report.LineageID)
+	if report.Repaired {
+		fmt.Printf("Repaired:  %s\n", report.Action)
+		fmt.Printf("  HEAD re-derived to: %s\n", report.HeadHash)
+		fmt.Printf("  Events kept:        %d\n", report.EventCount)
+		fmt.Printf("  Records truncated:  %d (removed)\n", report.Truncated)
+		fmt.Printf("  Detail:             %s\n", report.Detail)
+	} else {
+		fmt.Printf("Repaired:  no (%s)\n", report.Detail)
+	}
+	return 0
+}
+
+// reviewInvalidateRun handles "biggz review invalidate <lineage> <reason>".
+// Appends an invalidate event with the reason; the lineage state becomes
+// invalidated and subsequent gates fail with the reason.
+func reviewInvalidateRun() int {
+	if len(os.Args) < 5 || os.Args[3] == "--help" || os.Args[3] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review invalidate <lineage> <reason>")
+		return 0
+	}
+	lineageID := os.Args[3]
+	reason := strings.Join(os.Args[4:], " ")
+
+	revision, err := review.Invalidate("", lineageID, reason)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Review invalidated: %s (revision %s, state invalidated)\n", lineageID, revision)
+	fmt.Printf("  Subsequent gates fail with: %s\n", reason)
+	return 0
+}
+
+// reviewAbandonRun handles "biggz review abandon <lineage>".
+// Appends a withdraw event; the lineage state becomes withdrawn and gates
+// fail. Export/import remain possible.
+func reviewAbandonRun() int {
+	if len(os.Args) < 4 || os.Args[3] == "--help" || os.Args[3] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review abandon <lineage>")
+		return 0
+	}
+	lineageID := os.Args[3]
+
+	revision, err := review.Abandon("", lineageID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Review abandoned: %s (revision %s, state withdrawn)\n", lineageID, revision)
+	fmt.Println("  Export/import remain possible.")
 	return 0
 }
 
@@ -2651,7 +3377,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "  backup create|list|restore Snapshot/restore state")
 	fmt.Fprintln(os.Stderr, "  release status|tag|verify  Version management")
 	fmt.Fprintln(os.Stderr, "  skill-registry refresh     Regenerate skill registry")
-	fmt.Fprintln(os.Stderr, "  review list|status|gate|start|resume|validate|export|import  Review lineage commands")
+	fmt.Fprintln(os.Stderr, "  review list|status|gate|start|resume|validate|repair|invalidate|abandon|export|import  Review lineage commands")
 	fmt.Fprintln(os.Stderr, "  doctor [--json] [--fix]   Run system health checks")
 	fmt.Fprintln(os.Stderr, "  update [--dry-run]       Update biggz-ai to latest version")
 	fmt.Fprintln(os.Stderr, "  sync [flags]             Deploy skills, config, prompts, and commands")
@@ -3078,12 +3804,14 @@ func recoveryRun() int {
 		project := ""
 		for i := 1; i < len(args); i++ {
 			if args[i] == "--project" && i+1 < len(args) {
-				project = args[i+1]; i++
+				project = args[i+1]
+				i++
 			}
 		}
 		ledgers, err := store.ListLedgers(project)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
 		}
 		if len(ledgers) == 0 {
 			fmt.Println("No recovery ledgers found.")
@@ -3095,11 +3823,13 @@ func recoveryRun() int {
 
 	case "show":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz recovery show <id>"); return 1
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery show <id>")
+			return 1
 		}
 		ledgers, name, project, err := store.GetLedger(args[1])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
 		}
 		fmt.Printf("Ledger: %s (%s)\n", name, project)
 		fmt.Printf("Reconciliation:\n")
@@ -3115,41 +3845,56 @@ func recoveryRun() int {
 
 	case "generate":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz recovery generate <backlog.json> [--name N]"); return 1
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery generate <backlog.json> [--name N]")
+			return 1
 		}
 		name := "recovery-" + time.Now().UTC().Format("20060102")
 		project := ""
 		for i := 2; i < len(args); i++ {
 			switch args[i] {
-			case "--name": if i+1 < len(args) { name = args[i+1]; i++ }
-			case "--project": if i+1 < len(args) { project = args[i+1]; i++ }
+			case "--name":
+				if i+1 < len(args) {
+					name = args[i+1]
+					i++
+				}
+			case "--project":
+				if i+1 < len(args) {
+					project = args[i+1]
+					i++
+				}
 			}
 		}
 		data, err := os.ReadFile(args[1])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", args[1], err); return 1
+			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", args[1], err)
+			return 1
 		}
 		ledgers, err := recoverytrace.Generate(data, nil, recoverytrace.OverlapCounts{})
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: generate: %v\n", err); return 1
+			fmt.Fprintf(os.Stderr, "error: generate: %v\n", err)
+			return 1
 		}
 		id, err := store.SaveLedger(name, project, ledgers)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: save: %v\n", err); return 1
+			fmt.Fprintf(os.Stderr, "error: save: %v\n", err)
+			return 1
 		}
 		fmt.Printf("Generated ledger: %s\n", id)
 
 	case "validate":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz recovery validate <ledger.json>"); return 1
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery validate <ledger.json>")
+			return 1
 		}
 		data, err := os.ReadFile(args[1])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", args[1], err); return 1
+			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", args[1], err)
+			return 1
 		}
 		var ledgers recoverytrace.Ledgers
 		if err := json.Unmarshal(data, &ledgers); err != nil {
-			fmt.Fprintf(os.Stderr, "error: parse: %v\n", err); return 1
+			fmt.Fprintf(os.Stderr, "error: parse: %v\n", err)
+			return 1
 		}
 		expected := recoverytrace.Reconciliation{
 			Issues:         ledgers.Reconciliation.Issues,
@@ -3159,58 +3904,78 @@ func recoveryRun() int {
 			Decompositions: ledgers.Reconciliation.Decompositions,
 		}
 		if err := recoverytrace.ValidateLedgers(ledgers, expected); err != nil {
-			fmt.Fprintf(os.Stderr, "validation FAILED: %v\n", err); return 1
+			fmt.Fprintf(os.Stderr, "validation FAILED: %v\n", err)
+			return 1
 		}
 		fmt.Println("Validation PASSED")
 
 	case "export":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz recovery export <id> [file]"); return 1
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery export <id> [file]")
+			return 1
 		}
 		filePath := fmt.Sprintf("recovery-%s.json", args[1])
-		if len(args) > 2 { filePath = args[2] }
+		if len(args) > 2 {
+			filePath = args[2]
+		}
 		data, err := store.ExportLedger(args[1])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
 		}
 		if err := os.WriteFile(filePath, data, 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "error: write %s: %v\n", filePath, err); return 1
+			fmt.Fprintf(os.Stderr, "error: write %s: %v\n", filePath, err)
+			return 1
 		}
 		fmt.Printf("Exported to %s\n", filePath)
 
 	case "import":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz recovery import <file> [--name N] [--project P]"); return 1
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery import <file> [--name N] [--project P]")
+			return 1
 		}
 		name := "imported-" + time.Now().UTC().Format("20060102")
 		project := ""
 		for i := 2; i < len(args); i++ {
 			switch args[i] {
-			case "--name": if i+1 < len(args) { name = args[i+1]; i++ }
-			case "--project": if i+1 < len(args) { project = args[i+1]; i++ }
+			case "--name":
+				if i+1 < len(args) {
+					name = args[i+1]
+					i++
+				}
+			case "--project":
+				if i+1 < len(args) {
+					project = args[i+1]
+					i++
+				}
 			}
 		}
 		data, err := os.ReadFile(args[1])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", args[1], err); return 1
+			fmt.Fprintf(os.Stderr, "error: read %s: %v\n", args[1], err)
+			return 1
 		}
 		id, err := store.ImportLedger(data, name, project)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: import: %v\n", err); return 1
+			fmt.Fprintf(os.Stderr, "error: import: %v\n", err)
+			return 1
 		}
 		fmt.Printf("Imported ledger: %s\n", id)
 
 	case "delete":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz recovery delete <id>"); return 1
+			fmt.Fprintln(os.Stderr, "Usage: biggz recovery delete <id>")
+			return 1
 		}
 		if err := store.DeleteLedger(args[1]); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err); return 1
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
 		}
 		fmt.Printf("Deleted: %s\n", args[1])
 
 	default:
-		fmt.Fprintf(os.Stderr, "unknown: recovery %s\n", args[0]); return 1
+		fmt.Fprintf(os.Stderr, "unknown: recovery %s\n", args[0])
+		return 1
 	}
 	return 0
 }

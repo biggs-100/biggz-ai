@@ -137,25 +137,33 @@ func WithWriteLock(ctx context.Context, lm *LockManager, reviewID string, fn fun
 //
 //	.git/biggz/review-transactions/<lineage>/.lock
 //
-// Acquire creates the .lock file atomically using O_EXCL | O_CREATE.
-// Release removes the .lock file.
+// Acquire creates the lock file atomically using O_EXCL | O_CREATE.
+// Release removes the lock file.
 //
 // FileLock is NOT recursive. Calling Acquire twice without Release
 // will deadlock the second caller until the first caller's process
 // releases it or the file is stale.
 type FileLock struct {
-	dir string
+	dir  string
+	name string
 }
 
 // NewFileLock creates a FileLock for the given store directory.
 // The .lock file will be created at <dir>/.lock.
 func NewFileLock(dir string) *FileLock {
-	return &FileLock{dir: dir}
+	return &FileLock{dir: dir, name: ".lock"}
 }
 
-// LockFilePath returns the full path to the .lock file.
+// NewNamedFileLock creates a FileLock whose lock file is named name
+// (e.g. "LOCK") instead of ".lock", for stores that publish a LOCK file
+// as part of their on-disk contract (the SDD runtime ledger).
+func NewNamedFileLock(dir, name string) *FileLock {
+	return &FileLock{dir: dir, name: name}
+}
+
+// LockFilePath returns the full path to the lock file.
 func (fl *FileLock) LockFilePath() string {
-	return filepath.Join(fl.dir, ".lock")
+	return filepath.Join(fl.dir, fl.name)
 }
 
 // Acquire acquires the exclusive file lock. It creates the .lock file
@@ -198,7 +206,13 @@ func (fl *FileLock) Release() error {
 // WithFileLock executes f with an exclusive file lock held.
 // The lock is released when f returns.
 func WithFileLock(dir string, f func() error) error {
-	fl := NewFileLock(dir)
+	return WithNamedFileLock(dir, ".lock", f)
+}
+
+// WithNamedFileLock executes f with an exclusive lock on the named lock
+// file held. The lock is released when f returns.
+func WithNamedFileLock(dir, name string, f func() error) error {
+	fl := NewNamedFileLock(dir, name)
 	if err := fl.Acquire(); err != nil {
 		return err
 	}

@@ -1,0 +1,840 @@
+// Compact review finalization — correction budget freeze, forecast and
+// cumulative enforcement, and the persisted content-addressed receipt.
+//
+// This is biggz-ai's Phase A2 port of gentle-ai's compact review semantics
+// (internal/reviewtransaction/compact.go + risk.go), adapted to the
+// content-addressed event store:
+//
+//   - `review start` freezes CorrectionBudget = min(200, ceil(original changed
+//     lines / 2)) into the start_review event payload.
+//   - `review finalize` is the terminal transition: every selected lens slot
+//     must be captured, the canonical payloads are read back from the events
+//     for re-verification, a complete_review event is appended, and the full
+//     receipt is materialized under <lineage>/receipts/<sha256>.json.
+//   - The receipt hash binds genesis + head + trees + paths digest + findings,
+//     so gate validation can recompute it from the chain alone.
+package review
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/biggz-ai/biggz/model"
+)
+
+const (
+	ReviewStartEventSchema       = "biggz-ai.review-start-event/v1"
+	FinalizeEventSchema          = "biggz-ai.review-complete-event/v1"
+	ReviewReceiptSchema          = "biggz-ai.review-receipt/v1"
+	ReceiptBindingDomain         = "biggz-ai.review-receipt-binding/v1"
+	ReviewEvidenceDomain         = "biggz-ai.review-evidence/v1"
+	ReceiptsDirName              = "receipts"
+	CompleteReviewOperation      = "complete_review"
+	MaxCompactCorrectionAttempts = 1
+	CorrectionBudgetCap          = 200
+	ReviewReceiptTerminalState   = "completed"
+)
+
+// EmptyFixDeltaHash is the honest empty-input fix delta identity, mirroring
+// gentle-ai: SHA-256 of zero bytes. It is frozen until a correction binds a
+// real fix delta.
+const EmptyFixDeltaHash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// ---------------------------------------------------------------------------
+// Start plan
+// ---------------------------------------------------------------------------
+
+// StartEventPayload is the extended genesis payload frozen by `review start`.
+// It keeps the ReviewSubject fields (repository, commit_sha) at the top level
+// so legacy readers that unmarshal the genesis into model.ReviewSubject keep
+// working, and adds the derived budget and lens selection.
+type StartEventPayload struct {
+	Schema                string   `json:"schema,omitempty"`
+	Repository            string   `json:"repository"`
+	CommitSHA             string   `json:"commit_sha"`
+	BaseRef               string   `json:"base_ref,omitempty"`
+	OriginalChangedLines  int      `json:"original_changed_lines"`
+	CorrectionBudget      int      `json:"correction_budget"`
+	MaxCorrectionAttempts int      `json:"max_correction_attempts"`
+	SelectedLenses        []string `json:"lenses,omitempty"`
+}
+
+// ParseSelectedLenses canonicalizes a comma-separated --lenses value: trim,
+// validate every lens, sort, and deduplicate. An empty value selects nothing
+// (the captured slots then define the selection at finalize).
+func ParseSelectedLenses(value string) ([]string, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, ",")
+	lenses := make([]string, 0, len(parts))
+	for _, part := range parts {
+		lens := strings.TrimSpace(part)
+		if !isSupportedLens(lens) {
+			return nil, fmt.Errorf("unsupported review lens %q", lens)
+		}
+		lenses = append(lenses, lens)
+	}
+	return canonicalStrings(lenses, "selected lens")
+}
+
+// FrozenBudgetInfo mirrors the frozen start plan for `review status` output.
+type FrozenBudgetInfo struct {
+	CorrectionLines      int `json:"correction_lines"`
+	MaxAttempts          int `json:"max_attempts"`
+	OriginalChangedLines int `json:"original_changed_lines"`
+}
+
+// frozenBudgetOf reads the frozen correction budget from the chain genesis.
+// Legacy lineages started without a plan have no frozen budget and report nil.
+func frozenBudgetOf(chain ValidatedChain) *FrozenBudgetInfo {
+	if chain.Count == 0 {
+		return nil
+	}
+	var plan StartEventPayload
+	if err := json.Unmarshal(chain.Records[0].Payload, &plan); err != nil || plan.CorrectionBudget <= 0 {
+		return nil
+	}
+	return &FrozenBudgetInfo{
+		CorrectionLines: plan.CorrectionBudget, MaxAttempts: plan.MaxCorrectionAttempts,
+		OriginalChangedLines: plan.OriginalChangedLines,
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Correction budget derivation and enforcement
+// ---------------------------------------------------------------------------
+
+// DeriveCorrectionBudget freezes the maximum correction size from the
+// original authored candidate, mirroring gentle-ai's CorrectionBudget:
+// min(200, ceil(originalChangedLines / 2)).
+func DeriveCorrectionBudget(originalChangedLines int) (int, error) {
+	if originalChangedLines < 0 {
+		return 0, errors.New("original changed lines cannot be negative")
+	}
+	return min(CorrectionBudgetCap, originalChangedLines/2+originalChangedLines%2), nil
+}
+
+// DeriveOriginalChangedLines computes the authored changed-line count of the
+// subject commit against a base tree (additions + deletions via
+// `git diff --numstat`). The base is the explicit baseRef tree when given;
+// otherwise the subject commit's parent tree, falling back to git's empty
+// tree for a root commit — the same base derivation candidateManifest uses.
+// It returns the resolved base tree SHA and the line count.
+func DeriveOriginalChangedLines(repo, commitSHA, baseRef string) (base string, lines int, err error) {
+	repoArgs := func(args ...string) []string {
+		if repo != "" {
+			return append([]string{"-C", repo}, args...)
+		}
+		return args
+	}
+	// Legacy subjects (diff/files only, no commit SHA) bind to the current
+	// HEAD: the candidate tree is HEAD's tree and the base is HEAD's parent.
+	target := commitSHA
+	if target == "" {
+		target = "HEAD"
+	}
+	candidate, err := gitOutput(exec.Command("git", repoArgs("rev-parse", target+"^{tree}")...))
+	if err != nil {
+		return "", 0, fmt.Errorf("derive original changed lines: resolve candidate tree for %s: %w", commitSHA, err)
+	}
+	if baseRef != "" {
+		base, err = gitOutput(exec.Command("git", repoArgs("rev-parse", baseRef+"^{tree}")...))
+		if err != nil {
+			return "", 0, fmt.Errorf("derive original changed lines: resolve base tree for %s: %w", baseRef, err)
+		}
+	} else {
+		base, err = gitOutput(exec.Command("git", repoArgs("rev-parse", target+"^^{tree}")...))
+		if err != nil {
+			base = emptyTreeSHA
+		}
+	}
+	raw, err := gitOutput(exec.Command("git", repoArgs("diff", "--numstat", "--no-renames",
+		"--no-ext-diff", "--no-textconv", "--ignore-submodules=none", base, candidate, "--")...))
+	if err != nil {
+		return "", 0, fmt.Errorf("derive original changed lines: diff %s vs %s: %w", base, candidate, err)
+	}
+	lines, err = countNumstatLines(raw)
+	if err != nil {
+		return "", 0, fmt.Errorf("derive original changed lines: %w", err)
+	}
+	return base, lines, nil
+}
+
+// countNumstatLines sums additions and deletions from `git diff --numstat`
+// output. Binary entries (dashes) count zero, mirroring gentle-ai's
+// CountChangedLines.
+func countNumstatLines(raw string) (int, error) {
+	total := 0
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 {
+			return 0, fmt.Errorf("malformed numstat line %q", line)
+		}
+		if fields[0] == "-" || fields[1] == "-" {
+			continue
+		}
+		additions, addErr := strconv.Atoi(fields[0])
+		deletions, delErr := strconv.Atoi(fields[1])
+		if addErr != nil || delErr != nil {
+			return 0, fmt.Errorf("malformed numstat line %q", line)
+		}
+		total += additions + deletions
+	}
+	return total, nil
+}
+
+// ValidateCorrectionForecast rejects a correction forecast that exceeds the
+// frozen correction budget. The error names the budget so a consumer can
+// escalate exactly like gentle-ai's BeginCorrection over-budget escalation.
+func ValidateCorrectionForecast(forecastLines, budget int) error {
+	if forecastLines <= 0 {
+		return fmt.Errorf("correction forecast must be a positive line count, got %d", forecastLines)
+	}
+	if forecastLines > budget {
+		return fmt.Errorf("correction forecast of %d lines exceeds the frozen correction budget of %d lines; the lineage must escalate", forecastLines, budget)
+	}
+	return nil
+}
+
+// ValidateCorrectionActual re-validates the actual lines of a recorded
+// correction against the frozen budget at completion, including cumulative
+// accounting. Over-budget completion must escalate.
+func ValidateCorrectionActual(actualLines, cumulativeLines, budget int) error {
+	if actualLines < 0 || cumulativeLines < 0 {
+		return errors.New("correction line counts cannot be negative")
+	}
+	if cumulativeLines+actualLines > budget {
+		return fmt.Errorf("cumulative correction lines %d exceed the frozen correction budget of %d lines; the lineage must escalate",
+			cumulativeLines+actualLines, budget)
+	}
+	return nil
+}
+
+// CorrectionAttemptConsumed reports whether the cumulative attempt accounting
+// has exhausted the single compact correction attempt, mirroring gentle-ai's
+// MaxCompactCorrectionAttempts = 1.
+func CorrectionAttemptConsumed(cumulativeAttempts int) bool {
+	return cumulativeAttempts >= MaxCompactCorrectionAttempts
+}
+
+// ResumeForecastGate validates a correction forecast against the lineage's
+// frozen correction budget before a resume event appends.
+func ResumeForecastGate(chain ValidatedChain, forecastLines int) error {
+	if chain.Count == 0 {
+		return errors.New("resume: lineage has no events")
+	}
+	var plan StartEventPayload
+	if err := json.Unmarshal(chain.Records[0].Payload, &plan); err != nil || plan.CorrectionBudget <= 0 {
+		return errors.New("resume: lineage has no frozen correction budget; start the review with the budget derivation enabled")
+	}
+	return ValidateCorrectionForecast(forecastLines, plan.CorrectionBudget)
+}
+
+// ---------------------------------------------------------------------------
+// Persisted receipt artifact
+// ---------------------------------------------------------------------------
+
+// ReceiptLensSubject binds one captured lens slot in the receipt: the lens,
+// its selected order, the provider-owned subject hash, the result hash, and
+// the content-addressed manifest reference.
+type ReceiptLensSubject struct {
+	Lens          string `json:"lens"`
+	SelectedOrder int    `json:"order"`
+	SubjectHash   string `json:"subject_hash"`
+	ResultHash    string `json:"result_hash"`
+	ManifestPath  string `json:"manifest_path,omitempty"`
+}
+
+// PersistedReceipt is the full terminal receipt materialized by finalize
+// under receipts/<sha256>.json. It mirrors gentle-ai's CompactReceipt field
+// set adapted to biggz, plus genesis_revision and head_revision so the
+// receipt hash can bind the whole lineage. PolicyHash stays empty until gates
+// bind; FixDeltaHash stays at EmptyFixDeltaHash until a correction.
+type PersistedReceipt struct {
+	Schema             string               `json:"schema"`
+	LineageID          string               `json:"lineage_id"`
+	Generation         int                  `json:"generation"`
+	GenesisRevision    string               `json:"genesis_revision"`
+	HeadRevision       string               `json:"head_revision"`
+	BaseTree           string               `json:"base_tree"`
+	InitialReviewTree  string               `json:"initial_review_tree"`
+	FinalCandidateTree string               `json:"final_candidate_tree"`
+	PathsDigest        string               `json:"paths_digest"`
+	FixDeltaHash       string               `json:"fix_delta_hash"`
+	PolicyHash         string               `json:"policy_hash"`
+	EvidenceHash       string               `json:"evidence_hash"`
+	RiskTier           string               `json:"risk_tier"`
+	SelectedLenses     []string             `json:"selected_lenses"`
+	LensSubjects       []ReceiptLensSubject `json:"lens_subjects"`
+	ResolvedFindingIDs []string             `json:"resolved_finding_ids"`
+	TerminalState      string               `json:"terminal_state"`
+	ReceiptHash        string               `json:"receipt_hash"`
+}
+
+// computeHash derives the binding hash over every receipt field except the
+// hash itself, so validation can recompute it from the persisted bytes.
+func (r PersistedReceipt) computeHash() string {
+	preimage := struct {
+		Schema             string               `json:"schema"`
+		LineageID          string               `json:"lineage_id"`
+		Generation         int                  `json:"generation"`
+		GenesisRevision    string               `json:"genesis_revision"`
+		HeadRevision       string               `json:"head_revision"`
+		BaseTree           string               `json:"base_tree"`
+		InitialReviewTree  string               `json:"initial_review_tree"`
+		FinalCandidateTree string               `json:"final_candidate_tree"`
+		PathsDigest        string               `json:"paths_digest"`
+		FixDeltaHash       string               `json:"fix_delta_hash"`
+		PolicyHash         string               `json:"policy_hash"`
+		EvidenceHash       string               `json:"evidence_hash"`
+		RiskTier           string               `json:"risk_tier"`
+		SelectedLenses     []string             `json:"selected_lenses"`
+		LensSubjects       []ReceiptLensSubject `json:"lens_subjects"`
+		ResolvedFindingIDs []string             `json:"resolved_finding_ids"`
+		TerminalState      string               `json:"terminal_state"`
+	}{
+		Schema: r.Schema, LineageID: r.LineageID, Generation: r.Generation,
+		GenesisRevision: r.GenesisRevision, HeadRevision: r.HeadRevision,
+		BaseTree: r.BaseTree, InitialReviewTree: r.InitialReviewTree, FinalCandidateTree: r.FinalCandidateTree,
+		PathsDigest: r.PathsDigest, FixDeltaHash: r.FixDeltaHash, PolicyHash: r.PolicyHash,
+		EvidenceHash: r.EvidenceHash, RiskTier: r.RiskTier,
+		SelectedLenses: r.SelectedLenses, LensSubjects: r.LensSubjects,
+		ResolvedFindingIDs: r.ResolvedFindingIDs, TerminalState: r.TerminalState,
+	}
+	payload, _ := json.Marshal(preimage)
+	return domainHash(ReceiptBindingDomain, payload)
+}
+
+// Validate verifies the receipt's canonical shape and self-hash without
+// consulting mutable repository state.
+func (r PersistedReceipt) Validate() error {
+	if r.Schema != ReviewReceiptSchema {
+		return errors.New("receipt schema is unsupported")
+	}
+	if strings.TrimSpace(r.LineageID) == "" || strings.ContainsAny(r.LineageID, "\x00\r\n") {
+		return errors.New("receipt lineage identity is incomplete")
+	}
+	if r.Generation < 1 {
+		return errors.New("receipt generation must be positive")
+	}
+	if !validSHA256Hex(r.GenesisRevision) || !validSHA256Hex(r.HeadRevision) {
+		return errors.New("receipt genesis and head revisions must be SHA-256 event revisions")
+	}
+	for _, tree := range []string{r.BaseTree, r.InitialReviewTree, r.FinalCandidateTree} {
+		if !validCommitSHA(tree) {
+			return errors.New("receipt tree identities are invalid")
+		}
+	}
+	for _, identity := range []string{r.PathsDigest, r.FixDeltaHash, r.EvidenceHash} {
+		if !validSHA256Identity(identity) {
+			return errors.New("receipt paths, fix-delta, and evidence hashes are invalid")
+		}
+	}
+	if r.PolicyHash != "" && !validSHA256Identity(r.PolicyHash) {
+		return errors.New("receipt policy hash is invalid")
+	}
+	if !validRiskTier(r.RiskTier) {
+		return fmt.Errorf("receipt risk tier %q is unsupported", r.RiskTier)
+	}
+	if r.TerminalState != ReviewReceiptTerminalState {
+		return fmt.Errorf("receipt terminal state %q is unsupported", r.TerminalState)
+	}
+	lenses, err := canonicalStrings(r.SelectedLenses, "selected lens")
+	if err != nil || !equalStrings(lenses, r.SelectedLenses) {
+		return errors.New("receipt selected lenses must be canonical")
+	}
+	if len(lenses) != len(r.LensSubjects) {
+		return errors.New("receipt lens subjects must cover every selected lens exactly once")
+	}
+	seen := make(map[string]struct{}, len(r.LensSubjects))
+	for index, subject := range r.LensSubjects {
+		if !isSupportedLens(subject.Lens) || !containsString(lenses, subject.Lens) {
+			return fmt.Errorf("receipt lens subject[%d] does not bind a selected lens", index)
+		}
+		if subject.SelectedOrder < 0 {
+			return fmt.Errorf("receipt lens subject[%d] order is invalid", index)
+		}
+		if !validSHA256Identity(subject.SubjectHash) || !validSHA256Identity(subject.ResultHash) {
+			return fmt.Errorf("receipt lens subject[%d] hashes are invalid", index)
+		}
+		if _, duplicate := seen[subject.Lens]; duplicate {
+			return fmt.Errorf("receipt lens subject %q is recorded twice", subject.Lens)
+		}
+		seen[subject.Lens] = struct{}{}
+		if index > 0 {
+			prev := r.LensSubjects[index-1]
+			if subject.SelectedOrder < prev.SelectedOrder ||
+				(subject.SelectedOrder == prev.SelectedOrder && subject.Lens <= prev.Lens) {
+				return errors.New("receipt lens subjects must be canonically ordered by order then lens")
+			}
+		}
+	}
+	ids, err := canonicalStrings(r.ResolvedFindingIDs, "resolved finding id")
+	if err != nil || !equalStrings(ids, r.ResolvedFindingIDs) {
+		return errors.New("receipt resolved finding IDs must be canonical")
+	}
+	if !validSHA256Identity(r.ReceiptHash) || r.ReceiptHash != r.computeHash() {
+		return errors.New("receipt hash does not match the receipt binding")
+	}
+	return nil
+}
+
+// validRiskTier reports whether the tier is one of the derivation outputs.
+func validRiskTier(tier string) bool {
+	switch tier {
+	case "low", "medium", "high":
+		return true
+	}
+	return false
+}
+
+func containsString(values []string, value string) bool {
+	for _, item := range values {
+		if item == value {
+			return true
+		}
+	}
+	return false
+}
+
+// deriveRiskTier maps the captured lens count to a tier. biggz has no
+// content-based risk classifier yet (gentle-ai's SnapshotBuilder), so the
+// tier is a selection/volume proxy: no lenses → low, one to three → medium,
+// four or more → high.
+func deriveRiskTier(lensCount int) string {
+	switch {
+	case lensCount >= 4:
+		return "high"
+	case lensCount >= 1:
+		return "medium"
+	default:
+		return "low"
+	}
+}
+
+// ReceiptArtifactRef names the persisted receipt artifact for status output.
+type ReceiptArtifactRef struct {
+	Path string `json:"path"`
+	Hash string `json:"hash"`
+}
+
+// receiptArtifactOf reads the persisted receipt reference from the terminal
+// complete_review event, if any. The scan walks the whole chain from the end:
+// a lineage resumed after finalize still carries its terminal receipt, and new
+// events after it are exactly what the gate must surface as uncovered.
+func receiptArtifactOf(chain ValidatedChain) *ReceiptArtifactRef {
+	for index := len(chain.Records) - 1; index >= 0; index-- {
+		rec := &chain.Records[index]
+		if rec.Operation != CompleteReviewOperation {
+			continue
+		}
+		var evt completeEventPayload
+		if err := json.Unmarshal(rec.Payload, &evt); err != nil || evt.ReceiptPath == "" {
+			return nil
+		}
+		return &ReceiptArtifactRef{Path: evt.ReceiptPath, Hash: evt.ReceiptHash}
+	}
+	return nil
+}
+
+// completeEventPayload is the durable complete_review event payload: a
+// reference to the persisted receipt artifact. The receipt itself binds the
+// pre-finalize head, so the event and the receipt are mutually non-circular.
+type completeEventPayload struct {
+	Schema      string `json:"schema"`
+	ReceiptPath string `json:"receipt_path"`
+	ReceiptHash string `json:"receipt_hash"`
+}
+
+// FinalizeOutcome describes a terminal finalize: the persisted receipt
+// artifact reference and the appended complete_review revision. Idempotent is
+// true when the lineage was already finalized and nothing was appended.
+type FinalizeOutcome struct {
+	LineageID   string `json:"lineage_id"`
+	ReceiptPath string `json:"receipt_path"`
+	ReceiptHash string `json:"receipt_hash"`
+	Revision    string `json:"revision"`
+	Idempotent  bool   `json:"idempotent"`
+}
+
+// finalizeSlot is one captured lens_result event together with its parsed
+// payload, ordered by (selected order, lens).
+type finalizeSlot struct {
+	payload lensResultEventPayload
+}
+
+// finalizeData is everything derived from the chain + repository that the
+// receipt binds: the frozen candidate trees and manifest, the re-verified
+// captured slots, and the aggregate evidence and finding sets.
+type finalizeData struct {
+	baseTree       string
+	candidateTree  string
+	manifestDigest string
+	slots          []finalizeSlot
+	evidenceHash   string
+	resolvedIDs    []string
+	riskTier       string
+}
+
+// Finalize runs the terminal transition for a lineage: every selected lens
+// slot must be captured, the captured canonical payloads are read back from
+// the events for re-verification, a complete_review event is appended, and
+// the receipt is materialized under receipts/<sha256>.json. A second finalize
+// on an unchanged lineage is idempotent: it returns the same receipt without
+// appending anything.
+func Finalize(repo, lineageID string) (FinalizeOutcome, error) {
+	store, err := Open(repo, lineageID)
+	if err != nil {
+		return FinalizeOutcome{}, fmt.Errorf("finalize: open store: %w", err)
+	}
+	var outcome FinalizeOutcome
+	err = WithFileLock(store.Dir, func() error {
+		chain, err := store.LoadChain()
+		if err != nil {
+			return fmt.Errorf("finalize: load chain: %w", err)
+		}
+		if chain.Count == 0 {
+			return errors.New("finalize: lineage has no events")
+		}
+		// Terminal state (Phase C2): an invalidated/withdrawn lineage must
+		// not be finalizable — a receipt would fabricate reviewed history
+		// the lineage has explicitly disowned.
+		if state, reason := terminatedStateOf(chain); state != "" {
+			if state == "invalidated" && reason != "" {
+				return fmt.Errorf("finalize: lineage is invalidated: %s", reason)
+			}
+			return fmt.Errorf("finalize: lineage is %s", state)
+		}
+		verdict := store.Validate()
+		if !verdict.Valid {
+			return fmt.Errorf("finalize: chain integrity failed: %s", verdict.Reason)
+		}
+		revisions := recordRevisions(chain)
+		genesis := chain.Records[0]
+		if genesis.Operation != "start_review" {
+			return errors.New("finalize: lineage genesis is not a review start")
+		}
+		var plan StartEventPayload
+		if err := json.Unmarshal(genesis.Payload, &plan); err != nil || strings.TrimSpace(plan.CommitSHA) == "" {
+			return errors.New("finalize: genesis event does not carry a review subject")
+		}
+		last := chain.Records[chain.Count-1]
+		if last.Operation == CompleteReviewOperation {
+			return finalizeIdempotent(store, repo, chain, revisions, plan, &outcome)
+		}
+		data, err := deriveFinalizeData(repo, chain, plan)
+		if err != nil {
+			return err
+		}
+		receipt := buildReceipt(chain.LineageID, revisions[0], chain.HeadHash, data)
+		if err := receipt.Validate(); err != nil {
+			return fmt.Errorf("finalize: receipt validation failed: %w", err)
+		}
+		path, err := writeReceiptLocked(store, receipt)
+		if err != nil {
+			return fmt.Errorf("finalize: persist receipt: %w", err)
+		}
+		eventPayload, err := json.Marshal(completeEventPayload{
+			Schema: FinalizeEventSchema, ReceiptPath: path, ReceiptHash: receipt.ReceiptHash,
+		})
+		if err != nil {
+			return fmt.Errorf("finalize: marshal complete event: %w", err)
+		}
+		revision, err := store.appendLocked(chain.HeadHash, Record{
+			Operation: CompleteReviewOperation,
+			Role:      string(model.RoleLead),
+			Actor:     string(model.RoleLead),
+			Timestamp: time.Now().Format(time.RFC3339Nano),
+			Payload:   eventPayload,
+		})
+		if err != nil {
+			return fmt.Errorf("finalize: append complete_review event: %w", err)
+		}
+		outcome = FinalizeOutcome{
+			LineageID: lineageID, ReceiptPath: path, ReceiptHash: receipt.ReceiptHash, Revision: revision,
+		}
+		return nil
+	})
+	return outcome, err
+}
+
+// finalizeIdempotent handles a second finalize on an already-terminal
+// lineage: the receipt is re-derived from the chain and compared with the
+// persisted artifact. Nothing is appended.
+func finalizeIdempotent(store *Store, repo string, chain ValidatedChain, revisions []string, plan StartEventPayload, outcome *FinalizeOutcome) error {
+	last := chain.Records[chain.Count-1]
+	var evt completeEventPayload
+	if err := json.Unmarshal(last.Payload, &evt); err != nil || evt.ReceiptPath == "" || !validSHA256Identity(evt.ReceiptHash) {
+		return errors.New("finalize: lineage is already completed but carries no persisted receipt artifact")
+	}
+	stored, err := readReceiptFile(store, evt)
+	if err != nil {
+		return fmt.Errorf("finalize: persisted receipt artifact is unreadable: %w", err)
+	}
+	if chain.Count < 2 {
+		return errors.New("finalize: completed lineage lacks a captured review head")
+	}
+	data, err := deriveFinalizeData(repo, chain, plan)
+	if err != nil {
+		return err
+	}
+	receipt := buildReceipt(chain.LineageID, revisions[0], revisions[chain.Count-2], data)
+	if err := receipt.Validate(); err != nil {
+		return fmt.Errorf("finalize: receipt validation failed: %w", err)
+	}
+	if !reflect.DeepEqual(stored, receipt) {
+		return errors.New("finalize: persisted receipt does not match the current lineage state")
+	}
+	*outcome = FinalizeOutcome{
+		LineageID: chain.LineageID, ReceiptPath: evt.ReceiptPath,
+		ReceiptHash: evt.ReceiptHash, Revision: chain.HeadHash, Idempotent: true,
+	}
+	return nil
+}
+
+// deriveFinalizeData assembles and re-verifies the completed review from the
+// captured canonical payloads: selection parity, repository-derived trees and
+// manifest, per-slot subject/hash re-verification, and the aggregate evidence
+// and resolved-finding sets.
+func deriveFinalizeData(repo string, chain ValidatedChain, plan StartEventPayload) (finalizeData, error) {
+	slots := make([]finalizeSlot, 0)
+	for index := range chain.Records {
+		rec := &chain.Records[index]
+		if rec.Operation != LensResultOperation {
+			continue
+		}
+		var payload lensResultEventPayload
+		if err := json.Unmarshal(rec.Payload, &payload); err != nil {
+			return finalizeData{}, fmt.Errorf("finalize: lens result event %d is malformed: %w", index, err)
+		}
+		if payload.AdmissionDecision != AdmissionCompleted {
+			return finalizeData{}, fmt.Errorf(
+				"finalize: lens slot %q order %d was not captured (admission %s); all selected lens slots must be captured before finalize",
+				payload.Lens, payload.SelectedOrder, payload.AdmissionDecision)
+		}
+		slots = append(slots, finalizeSlot{payload: payload})
+	}
+	sort.SliceStable(slots, func(i, j int) bool {
+		if slots[i].payload.SelectedOrder != slots[j].payload.SelectedOrder {
+			return slots[i].payload.SelectedOrder < slots[j].payload.SelectedOrder
+		}
+		return slots[i].payload.Lens < slots[j].payload.Lens
+	})
+	capturedNames := sortedUniqueLensNames(slots)
+	declared, err := canonicalStrings(plan.SelectedLenses, "selected lens")
+	if err != nil {
+		return finalizeData{}, fmt.Errorf("finalize: frozen lens selection is not canonical: %w", err)
+	}
+	if len(declared) > 0 {
+		if !equalStrings(declared, capturedNames) {
+			missing := stringDifference(declared, capturedNames)
+			if len(missing) > 0 {
+				return finalizeData{}, fmt.Errorf("finalize: missing captured lens slot(s): %s; capture every selected lens before finalize", strings.Join(missing, ", "))
+			}
+			return finalizeData{}, fmt.Errorf("finalize: captured lens slot(s) outside the frozen selection: %s", strings.Join(stringDifference(capturedNames, declared), ", "))
+		}
+	} else if len(capturedNames) == 0 {
+		return finalizeData{}, errors.New("finalize: no captured lens slots; nothing to finalize")
+	}
+	baseTree, candidateTree, entries, err := candidateManifest(repo, plan.CommitSHA)
+	if err != nil {
+		return finalizeData{}, fmt.Errorf("finalize: derive candidate manifest: %w", err)
+	}
+	manifestDigest, err := ChangedPathManifestDigest(entries)
+	if err != nil {
+		return finalizeData{}, fmt.Errorf("finalize: manifest digest: %w", err)
+	}
+	for _, slot := range slots {
+		payload := slot.payload
+		want, err := NewArtifactSubject(chain.LineageID, payload.ExpectedRevision, plan.CommitSHA,
+			baseTree, candidateTree, manifestDigest, payload.Lens, payload.SelectedOrder)
+		if err != nil {
+			return finalizeData{}, fmt.Errorf("finalize: re-derive artifact subject for lens %q order %d: %w", payload.Lens, payload.SelectedOrder, err)
+		}
+		if want.SubjectHash != payload.SubjectHash {
+			return finalizeData{}, fmt.Errorf(
+				"finalize: lens %q order %d subject hash does not match the frozen candidate binding", payload.Lens, payload.SelectedOrder)
+		}
+		if payload.ManifestSHA256 != manifestDigest {
+			return finalizeData{}, fmt.Errorf(
+				"finalize: lens %q order %d manifest digest does not match the frozen candidate", payload.Lens, payload.SelectedOrder)
+		}
+		if payloadSHA256(payload.CanonicalPayload) != payload.CanonicalPayloadSHA256 {
+			return finalizeData{}, fmt.Errorf(
+				"finalize: lens %q order %d canonical payload hash mismatch", payload.Lens, payload.SelectedOrder)
+		}
+		if LensResultHash(payload.Result) != payload.ResultHash {
+			return finalizeData{}, fmt.Errorf(
+				"finalize: lens %q order %d result hash mismatch", payload.Lens, payload.SelectedOrder)
+		}
+	}
+	evidenceHash, err := reviewEvidenceHash(slots)
+	if err != nil {
+		return finalizeData{}, err
+	}
+	resolved := make([]string, 0)
+	for _, slot := range slots {
+		resolved = append(resolved, slot.payload.CandidateCausalFindingIDs...)
+	}
+	resolved, err = canonicalStrings(resolved, "resolved finding id")
+	if err != nil {
+		return finalizeData{}, fmt.Errorf("finalize: candidate-causal finding IDs: %w", err)
+	}
+	return finalizeData{
+		baseTree: baseTree, candidateTree: candidateTree, manifestDigest: manifestDigest,
+		slots: slots, evidenceHash: evidenceHash, resolvedIDs: resolved,
+		riskTier: deriveRiskTier(len(capturedNames)),
+	}, nil
+}
+
+// buildReceipt assembles the terminal receipt from the derived finalize data.
+// SelectedLenses are canonical (sorted, unique); LensSubjects keep the slot
+// order (selected order, then lens).
+func buildReceipt(lineageID, genesisRevision, headRevision string, data finalizeData) PersistedReceipt {
+	subjects := make([]ReceiptLensSubject, 0, len(data.slots))
+	for _, slot := range data.slots {
+		subjects = append(subjects, ReceiptLensSubject{
+			Lens: slot.payload.Lens, SelectedOrder: slot.payload.SelectedOrder,
+			SubjectHash: slot.payload.SubjectHash, ResultHash: slot.payload.ResultHash,
+			ManifestPath: slot.payload.ManifestPath,
+		})
+	}
+	receipt := PersistedReceipt{
+		Schema: ReviewReceiptSchema, LineageID: lineageID, Generation: 1,
+		GenesisRevision: genesisRevision, HeadRevision: headRevision,
+		BaseTree: data.baseTree, InitialReviewTree: data.candidateTree, FinalCandidateTree: data.candidateTree,
+		PathsDigest: data.manifestDigest, FixDeltaHash: EmptyFixDeltaHash,
+		EvidenceHash: data.evidenceHash, RiskTier: data.riskTier,
+		SelectedLenses: sortedUniqueLensNames(data.slots), LensSubjects: subjects,
+		ResolvedFindingIDs: data.resolvedIDs, TerminalState: ReviewReceiptTerminalState,
+	}
+	receipt.ReceiptHash = receipt.computeHash()
+	return receipt
+}
+
+// reviewEvidenceHash binds the complete set of captured canonical payloads.
+func reviewEvidenceHash(slots []finalizeSlot) (string, error) {
+	type slotPreimage struct {
+		Lens             string          `json:"lens"`
+		SelectedOrder    int             `json:"order"`
+		CanonicalSHA256  string          `json:"canonical_sha256"`
+		ResultHash       string          `json:"result_hash"`
+		CanonicalPayload json.RawMessage `json:"canonical_payload"`
+	}
+	preimage := struct {
+		Schema string         `json:"schema"`
+		Slots  []slotPreimage `json:"slots"`
+	}{Schema: ReviewEvidenceDomain, Slots: make([]slotPreimage, 0, len(slots))}
+	for _, slot := range slots {
+		preimage.Slots = append(preimage.Slots, slotPreimage{
+			Lens: slot.payload.Lens, SelectedOrder: slot.payload.SelectedOrder,
+			CanonicalSHA256: slot.payload.CanonicalPayloadSHA256, ResultHash: slot.payload.ResultHash,
+			CanonicalPayload: slot.payload.CanonicalPayload,
+		})
+	}
+	payload, err := json.Marshal(preimage)
+	if err != nil {
+		return "", fmt.Errorf("finalize: marshal evidence: %w", err)
+	}
+	return domainHash(ReviewEvidenceDomain, payload), nil
+}
+
+// sortedUniqueLensNames returns the deduplicated, sorted lens names of the
+// captured slots.
+func sortedUniqueLensNames(slots []finalizeSlot) []string {
+	names := make(map[string]struct{}, len(slots))
+	for _, slot := range slots {
+		names[slot.payload.Lens] = struct{}{}
+	}
+	sorted := make([]string, 0, len(names))
+	for name := range names {
+		sorted = append(sorted, name)
+	}
+	sort.Strings(sorted)
+	return sorted
+}
+
+func stringDifference(left, right []string) []string {
+	excluded := make(map[string]struct{}, len(right))
+	for _, value := range right {
+		excluded[value] = struct{}{}
+	}
+	difference := make([]string, 0)
+	for _, value := range left {
+		if _, ok := excluded[value]; !ok {
+			difference = append(difference, value)
+		}
+	}
+	return difference
+}
+
+// recordRevisions returns each record's content-hash revision, oldest first.
+func recordRevisions(chain ValidatedChain) []string {
+	if chain.Count == 0 {
+		return nil
+	}
+	revisions := make([]string, chain.Count)
+	hash := chain.HeadHash
+	for index := chain.Count - 1; index >= 0; index-- {
+		revisions[index] = hash
+		hash = chain.Records[index].PrevRevision
+	}
+	return revisions
+}
+
+// writeReceiptLocked persists the content-addressed receipt under
+// <lineage>/receipts/<sha256>.json. The caller holds the lineage file lock.
+// Same content is a no-op; different content is an error.
+func writeReceiptLocked(store *Store, receipt PersistedReceipt) (string, error) {
+	payload, err := json.MarshalIndent(receipt, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	digest := sha256Hex(payload)
+	path := filepath.Join(store.Dir, ReceiptsDirName, digest+".json")
+	if err := publishNoReplace(path, payload); err != nil {
+		return "", err
+	}
+	return filepath.Join(ReceiptsDirName, digest+".json"), nil
+}
+
+// readReceiptFile loads a persisted receipt artifact and verifies its
+// content-address, schema, and recorded hash.
+func readReceiptFile(store *Store, evt completeEventPayload) (PersistedReceipt, error) {
+	if filepath.Dir(evt.ReceiptPath) != ReceiptsDirName || !strings.HasSuffix(evt.ReceiptPath, ".json") {
+		return PersistedReceipt{}, fmt.Errorf("receipt path %q is not under receipts/", evt.ReceiptPath)
+	}
+	payload, err := os.ReadFile(filepath.Join(store.Dir, evt.ReceiptPath))
+	if err != nil {
+		return PersistedReceipt{}, err
+	}
+	name := strings.TrimSuffix(filepath.Base(evt.ReceiptPath), ".json")
+	if !validSHA256Hex(name) || sha256Hex(payload) != name {
+		return PersistedReceipt{}, fmt.Errorf("receipt artifact name %q does not match its content hash", name)
+	}
+	var receipt PersistedReceipt
+	if err := json.Unmarshal(payload, &receipt); err != nil {
+		return PersistedReceipt{}, fmt.Errorf("parse receipt artifact: %w", err)
+	}
+	if err := receipt.Validate(); err != nil {
+		return PersistedReceipt{}, fmt.Errorf("validate receipt artifact: %w", err)
+	}
+	if receipt.ReceiptHash != evt.ReceiptHash {
+		return PersistedReceipt{}, errors.New("receipt artifact hash does not match the complete_review event reference")
+	}
+	return receipt, nil
+}

@@ -40,6 +40,7 @@ type Result struct {
 	SkillsDeployed  int    // number of skill files written (or would be written in dry-run)
 	ConfigMerged    bool   // whether the config file was merged and written
 	CommandsWritten int    // number of command files written (or would be written in dry-run)
+	PluginsDeployed int    // number of plugin files written (or would be written in dry-run)
 	DryRun          bool   // whether this was a dry-run (no files written)
 }
 
@@ -96,6 +97,17 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		return result, fmt.Errorf("write commands: %w", err)
 	}
 	result.CommandsWritten = written
+
+	// Deploy OpenCode plugins to the agent's plugin directory
+	// (~/.config/opencode/plugins/ for OpenCode). Local plugin files are
+	// auto-discovered at startup and need no `plugin: []` config registration
+	// (that array is only for npm packages).
+	pluginsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "plugins")
+	pluginsDeployed, err := DeployPlugins(pluginsDir, assets.FS, cfg.DryRun)
+	if err != nil {
+		return result, fmt.Errorf("deploy plugins: %w", err)
+	}
+	result.PluginsDeployed = pluginsDeployed
 
 	// Inject persona into system prompt file (AGENTS.md or equivalent)
 	if err := DeployPersona(adapter, homeDir, cfg.DryRun); err != nil {
@@ -372,6 +384,43 @@ func DeployCommands(commandsDir string, ffs fs.FS, dryRun bool) (int, error) {
 		}
 		relPath := strings.TrimPrefix(path, "opencode/commands/")
 		targetPath := filepath.Join(commandsDir, relPath)
+		if dryRun {
+			count++
+			return nil
+		}
+		if err := os.MkdirAll(filepath.Dir(targetPath), 0755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", filepath.Dir(targetPath), err)
+		}
+		if _, err := filemerge.WriteFileAtomic(targetPath, data, 0644); err != nil {
+			return fmt.Errorf("write %s: %w", targetPath, err)
+		}
+		count++
+		return nil
+	})
+	return count, err
+}
+
+// DeployPlugins copies all embedded OpenCode plugin files (under the
+// "opencode/plugins/" prefix) into pluginsDir — the agent's global plugin
+// directory (for OpenCode: ~/.config/opencode/plugins/). OpenCode auto-loads
+// every local plugin file there at startup, so no `plugin: []` config
+// registration is needed (that array is only for npm packages).
+// When dryRun is true, counts files without writing.
+func DeployPlugins(pluginsDir string, ffs fs.FS, dryRun bool) (int, error) {
+	count := 0
+	err := fs.WalkDir(ffs, "opencode/plugins", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		data, err := fs.ReadFile(ffs, path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		relPath := strings.TrimPrefix(path, "opencode/plugins/")
+		targetPath := filepath.Join(pluginsDir, relPath)
 		if dryRun {
 			count++
 			return nil

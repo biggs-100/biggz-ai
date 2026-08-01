@@ -22,10 +22,11 @@ import (
 // Review wraps a ReviewState with lifecycle coordination.
 // When a Store is attached, every lifecycle transition persists an event.
 type Review struct {
-	State    *model.ReviewState
-	Findings []Finding
-	store    *Store
-	fsm      model.FSM
+	State     *model.ReviewState
+	Findings  []Finding
+	store     *Store
+	fsm       model.FSM
+	startPlan *StartEventPayload
 }
 
 // New creates a new Review in Unreviewed state with a fresh ReviewState.
@@ -43,6 +44,14 @@ func New(subject model.ReviewSubject) *Review {
 // Returns the Review for chaining.
 func (r *Review) WithStore(store *Store) *Review {
 	r.store = store
+	return r
+}
+
+// FreezeStartPlan attaches the derived start plan (correction budget, base
+// ref, lens selection) to the genesis event payload. Returns the Review for
+// chaining.
+func (r *Review) FreezeStartPlan(plan StartEventPayload) *Review {
+	r.startPlan = &plan
 	return r
 }
 
@@ -64,7 +73,12 @@ func (r *Review) appendEvent(prevRev, operation string) (string, error) {
 	}
 	// Attach subject as payload for genesis events.
 	if operation == "start_review" {
-		payload, _ := json.Marshal(r.State.Subject)
+		var payload []byte
+		if r.startPlan != nil {
+			payload, _ = json.Marshal(r.startPlan)
+		} else {
+			payload, _ = json.Marshal(r.State.Subject)
+		}
 		rec.Payload = payload
 	}
 	// Attach MerkleRoot for completion events.

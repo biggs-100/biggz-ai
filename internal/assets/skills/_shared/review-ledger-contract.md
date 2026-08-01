@@ -14,6 +14,20 @@ The provider-owned lineage is the single source of truth. Query `biggz review st
 
 Reviewer findings enter the lineage through the native chain; the orchestrator never constructs canonical bytes or hashes. Only candidate-caused severe findings block: `pre-existing` and `base-only` become follow-ups, `unknown` escalates, WARNING/SUGGESTION remain info. Deterministic blockers need no refuter; inferential blockers share one read-only refuter batch. Judgment Day uses two independent judges.
 
+## Transport
+
+The reviewer runs as one foreground `task` call whose prompt is provider-owned and rewritten by the `review-result-artifacts` plugin — the caller-authored task body is discarded. The plugin is deployed by `biggz install` to the agent's plugin directory (`~/.config/opencode/plugins/` for OpenCode), which auto-loads it at startup; it is the transport between the orchestrator, the reviewer sub-agent, and the native capture CLI.
+
+**Binding.** Begin the reviewer task prompt with the exact literal prefix `GENTLE_AI_REVIEW_BINDING ` — including the trailing space and never `=`; the same literal as gentle-ai, the de-facto standard across both projects — followed by one-line JSON assembled only from provider-returned state: `lineage`, `target` (subject commit), `lens`, `order`, `revision` from the lineage head (`expected-revision`), `repository_context` when provider-issued, and `subject_hash` when the artifact subject is already known; omit only provider-omitted fields. These are the prompt's first bytes. Never add `candidate_diff` or candidate bytes — the reviewer receives only the manifest reference.
+
+**Preflight.** The plugin's `tool.execute.before` hook rejects background tasks and malformed bindings, then runs `biggz review capture-result --preflight` with the binding flags (no `--cwd` — biggz resolves the repository from the working directory; a provider-issued `repository_context` may pin it). The returned artifact subject (base/candidate trees + ordered changed-path manifest) is injected under `GENTLE_AI_REVIEW_CONTEXT ` followed by one-line JSON, and the binding is completed with the preflight `subject_hash`.
+
+**Capture.** The reviewer echoes `subject_hash` and returns completed inspection over every manifest path, findings, and evidence. The plugin's `tool.execute.after` hook extracts strict JSON from the task result — rejecting empty and nested envelopes — runs `biggz review capture-result --input -` with the binding flags, and replaces the task output with the captured artifact.
+
+**Quarantine.** biggz has no preserve CLI verb. On capture failure the raw payload is preserved without forwarding its contents: `.git/biggz/preserved-results/<lineage>-<lens>-<order>-<ts>.json` (exclusive write, never overwrite), at most 8 preserve attempts per session; only typed decisions (`reviewer artifact admission <decision>`, extraction classes) are forwarded. Re-capturing identical bytes can never satisfy admission; only a relaunched reviewer can produce a corrected result.
+
+**Routing.** After each lens capture, query `biggz review status <lineage> --json` and proceed only from the returned state: when every selected lens slot is captured, `biggz review finalize <lineage>` materializes the terminal receipt, then `biggz review gate pre-pr|pre-push <lineage> --json` validates it. Never skip to a gate from transcript text alone.
+
 ## Correction
 
 Ordinary review permits one correction transaction, tracked in `budget_counters`. After the bounded edit, run one read-only scoped fix validator; the facade maps correction only to corroborated frozen IDs and genesis paths and rejects over-budget repository evidence. Later observations are follow-ups, not another correction. Judgment Day alone keeps its existing two-round rule. SDD then runs one independent requirements/runtime verification. Failure escalates and never starts another reviewer, refuter, correction, or validator.

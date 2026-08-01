@@ -31,13 +31,17 @@ type LineageInfo struct {
 
 // LineageStatus provides detailed status for a single lineage.
 type LineageStatus struct {
-	LineageID      string              `json:"lineage_id"`
-	HeadHash       string              `json:"head_hash"`
-	EventCount     int                 `json:"event_count"`
-	ChainValid     bool                `json:"chain_valid"`
-	Receipt        *Receipt            `json:"receipt,omitempty"`
-	IntegrityVerdict *IntegrityVerdict `json:"integrity_verdict,omitempty"`
-	BudgetCounters model.BudgetCounters `json:"budget_counters"`
+	LineageID        string               `json:"lineage_id"`
+	HeadHash         string               `json:"head_hash"`
+	EventCount       int                  `json:"event_count"`
+	ChainValid       bool                 `json:"chain_valid"`
+	Receipt          *Receipt             `json:"receipt,omitempty"`
+	IntegrityVerdict *IntegrityVerdict    `json:"integrity_verdict,omitempty"`
+	BudgetCounters   model.BudgetCounters `json:"budget_counters"`
+	Lenses           []CapturedLens       `json:"lenses"`
+	Budget           *FrozenBudgetInfo    `json:"budget,omitempty"`
+	ReceiptArtifact  *ReceiptArtifactRef  `json:"receipt_artifact,omitempty"`
+	NextTransition   *NextTransition      `json:"next_transition,omitempty"`
 }
 
 // NewAuthority creates an Authority for the given repo root.
@@ -145,7 +149,15 @@ func (a *Authority) Status(lineageID string) (*LineageStatus, error) {
 		ChainValid:       verdict.Valid,
 		IntegrityVerdict: &verdict,
 		BudgetCounters:   model.BudgetCounters{},
+		Lenses:           CapturedLenses(chain),
+		Budget:           frozenBudgetOf(chain),
+		ReceiptArtifact:  receiptArtifactOf(chain),
 	}
+
+	// Derived routing envelope (Phase C2): the orchestrator's ONLY routing
+	// authority. Derived from persisted bytes and the RDD kill switch; all
+	// existing fields are unchanged.
+	st.NextTransition = deriveNextTransition(store, a.repo, chain, verdict)
 
 	// Create receipt if chain is valid and has events.
 	if verdict.Valid && chain.Count > 0 {

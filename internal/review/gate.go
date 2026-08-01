@@ -1,6 +1,8 @@
 package review
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -20,7 +22,7 @@ import (
 type DeliveryDisposition int
 
 const (
-	DispositionReceiptGoverned   DeliveryDisposition = iota
+	DispositionReceiptGoverned DeliveryDisposition = iota
 	DispositionDisabledUnmanaged
 	DispositionUnmanaged
 )
@@ -50,21 +52,72 @@ func ResolveDeliveryDisposition(gitDir string) DeliveryDisposition {
 type GateKind string
 
 const (
-	// New gate kinds (publication gates).
-	GatePrePR   GateKind = "pre-pr"
-	GatePrePush GateKind = "pre-push"
-
-	// Legacy gate kinds (deprecated, kept for backward compat).
+	// Full gate kind set (publication gates, mirroring gentle-ai).
+	GatePostApply GateKind = "post-apply"
 	GatePreCommit GateKind = "pre-commit"
+	GatePrePush   GateKind = "pre-push"
+	GatePrePR     GateKind = "pre-pr"
 	GateRelease   GateKind = "release"
 )
 
+// Delivery dispositions reported on gate results. None of these values is an
+// approval or a PASS.
+const (
+	// DeliveryReceiptGoverned means an existing receipt governs delivery.
+	DeliveryReceiptGoverned = "receipt_governed"
+	// DeliveryDisabledUnmanaged is delivery of work produced with the kill
+	// switch off and no receipt.
+	DeliveryDisabledUnmanaged = "disabled/unmanaged"
+	// DeliveryUnmanaged is delivery with the switch on but no receipt yet.
+	DeliveryUnmanaged = "unmanaged"
+)
+
+// supportedGateKind reports whether the kind is one of the five publication
+// gates.
+func supportedGateKind(kind GateKind) bool {
+	switch kind {
+	case GatePostApply, GatePreCommit, GatePrePush, GatePrePR, GateRelease:
+		return true
+	}
+	return false
+}
+
+// GateFindingsSummary summarizes the recomputed finding state of a lineage at
+// gate time: candidate-causal (blocking), candidate-causal resolved by the
+// receipt, and pre-existing/base-only (follow-up) findings.
+type GateFindingsSummary struct {
+	Blocking int `json:"blocking"`
+	Resolved int `json:"resolved"`
+	FollowUp int `json:"follow_up"`
+}
+
 // GateResult describes the outcome of a gate validation.
+//
+// Passed is the legacy exit-zero indicator: it is true ONLY on a real pass,
+// or under --dry-run (report without failing). Allowed is the honest
+// authorization decision: false for every denial including the disabled
+// disposition. Delivery names what governs delivery and never fabricates an
+// approval.
 type GateResult struct {
-	Gate    GateKind `json:"gate"`
-	Passed  bool     `json:"passed"`
-	Reasons []string `json:"reasons,omitempty"`
-	DryRun  bool     `json:"dry_run"`
+	Gate        GateKind             `json:"gate"`
+	LineageID   string               `json:"lineage,omitempty"`
+	Passed      bool                 `json:"passed"`
+	Allowed     bool                 `json:"allowed"`
+	Delivery    string               `json:"delivery,omitempty"`
+	Reason      string               `json:"reason,omitempty"`
+	ReceiptHash string               `json:"receipt_hash,omitempty"`
+	Findings    *GateFindingsSummary `json:"findings,omitempty"`
+	Reasons     []string             `json:"reasons,omitempty"`
+	DryRun      bool                 `json:"dry_run"`
+}
+
+// GateOptions carries the extra inputs some gate kinds need. Repo is the
+// repository root; empty means the current working directory.
+type GateOptions struct {
+	Repo               string
+	BaseRef            string // pre-pr only: explicit base ref boundary
+	PrePRCIAttestation string // pre-pr only: signed CI attestation file (best-effort: presence + parse)
+	DryRun             bool
 }
 
 // ---------------------------------------------------------------------------
@@ -74,8 +127,12 @@ type GateResult struct {
 // gateConfigYAML is the on-disk structure for .biggz/config.yaml.
 type gateConfigYAML struct {
 	Gate struct {
-		PrePR  struct{ Enabled bool `yaml:"enabled"` }  `yaml:"pre-pr"`
-		PrePush struct{ Enabled bool `yaml:"enabled"` } `yaml:"pre-push"`
+		PrePR struct {
+			Enabled bool `yaml:"enabled"`
+		} `yaml:"pre-pr"`
+		PrePush struct {
+			Enabled bool `yaml:"enabled"`
+		} `yaml:"pre-push"`
 	} `yaml:"gate"`
 }
 
@@ -441,4 +498,552 @@ func ValidateCheck(kind GateKind, state *model.ReviewState, cfg GateConfigLegacy
 		Allowed: true,
 		Reason:  fmt.Sprintf("%s: passed", kind),
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Full gate evaluation (Phase A3 — review-workflow parity)
+// ---------------------------------------------------------------------------
+//
+// EvaluateGate is the single gate entry point behind `biggz review gate
+// <kind> <lineage>`. It resolves the RDD kill switch, loads the persisted
+// receipt (A2) and the captured lens results (A1), recomputes blocking
+// findings from candidate-causal dispositions, validates the receipt binding
+// against the live chain and repository trees, and runs the kind-specific
+// checks adapted from gentle-ai's compact gate semantics at a practical
+// level:
+//
+//   - post-apply: chain + receipt + findings + current HEAD tree matches the
+//     reviewed candidate tree (when derivable).
+//   - pre-commit: staged projection — the staged tree must reproduce the
+//     reviewed candidate tree exactly, and no staged path may lie outside the
+//     reviewed path manifest. biggz manifests freeze only tracked paths, so
+//     intended-untracked retention reduces to the staged-subset check: any
+//     untracked path entering the index fails it (documented reduced scope).
+//   - pre-push: publication range — the reviewed commit must be an ancestor of
+//     HEAD with no unreviewed commits after it. A correction receipt
+//     (fix_delta_hash != empty) may deliver exactly one fix commit whose tree
+//     equals the reviewed candidate (fix-diff delivery).
+//   - pre-pr: base-ref boundary — the PR diff (base vs candidate) must stay
+//     inside the reviewed path manifest; files outside the manifest fail.
+//     Optional --pre-pr-ci-attestation accepts a signed JSON file by presence
+//     and parseability (signature verification is out of scope).
+//   - release: receipt + findings + freshness (HEAD tree == reviewed candidate
+//     tree). biggz release is tag-based, so the configuration/generated/
+//     provenance/publication-boundary artifact checks are reduced away
+//     (documented reduced scope).
+//
+// Disabled-mode semantics: when the kill switch is off, ANY gate returns
+// allowed=false with delivery "disabled/unmanaged" and never reports a pass.
+// An UNREADABLE switch is NOT a disabled switch: RDDStatus errors resolve as
+// managed and the gate evaluates normally — delivery never fabricates
+// "disabled/unmanaged" from a corrupt file.
+
+// gateBinding is the repository-derived state every gate check shares: the
+// frozen start plan, the immutable base/candidate trees, the ordered
+// changed-path manifest entries frozen by the review, and its digest.
+type gateBinding struct {
+	plan           StartEventPayload
+	baseTree       string
+	candidateTree  string
+	manifestPaths  []string
+	manifestSHA256 string
+}
+
+// deriveGateBinding re-derives the frozen candidate binding from the genesis
+// subject and the live repository.
+func deriveGateBinding(repo string, chain ValidatedChain) (gateBinding, error) {
+	if chain.Count == 0 {
+		return gateBinding{}, errors.New("lineage has no events")
+	}
+	var plan StartEventPayload
+	if err := json.Unmarshal(chain.Records[0].Payload, &plan); err != nil || strings.TrimSpace(plan.CommitSHA) == "" {
+		return gateBinding{}, errors.New("genesis event does not carry a review subject")
+	}
+	baseTree, candidateTree, entries, err := candidateManifest(repo, plan.CommitSHA)
+	if err != nil {
+		return gateBinding{}, fmt.Errorf("derive candidate binding: %w", err)
+	}
+	digest, err := ChangedPathManifestDigest(entries)
+	if err != nil {
+		return gateBinding{}, fmt.Errorf("derive candidate binding: manifest digest: %w", err)
+	}
+	return gateBinding{
+		plan: plan, baseTree: baseTree, candidateTree: candidateTree,
+		manifestPaths: ManifestPaths(entries), manifestSHA256: digest,
+	}, nil
+}
+
+// EvaluateGate runs the full gate evaluation for one publication gate kind
+// against a lineage. Gate denials are encoded in the result; error is
+// reserved for hard infrastructure failures (store or repository unusable).
+func EvaluateGate(kind GateKind, repo, lineageID string, opts GateOptions) (GateResult, error) {
+	if !supportedGateKind(kind) {
+		return GateResult{}, fmt.Errorf("unsupported review gate %q (use: post-apply, pre-commit, pre-push, pre-pr, or release)", kind)
+	}
+	if opts.Repo != "" {
+		repo = opts.Repo
+	}
+	result := GateResult{Gate: kind, LineageID: lineageID, DryRun: opts.DryRun}
+
+	// 0. Kill switch, checked first — exactly like the legacy gates. Disabled
+	// means ANY gate reports allowed=false with delivery disabled/unmanaged,
+	// exit zero, and never invents approval.
+	worktreeDir, commonDir := detectRDDDirs(repo)
+	if status, rddErr := RDDStatus(worktreeDir, commonDir); rddErr == nil && status.EffectiveMode == RDDModeDisabled {
+		result.Delivery = DeliveryDisabledUnmanaged
+		result.Reason = "RDD disabled: delivery unmanaged"
+		return result, nil
+	}
+	// rddErr != nil means an unreadable switch: NOT a disabled switch. Resolve
+	// as managed and evaluate normally — never fabricate disabled/unmanaged.
+
+	store, err := Open(repo, lineageID)
+	if err != nil {
+		return GateResult{}, fmt.Errorf("gate: open store: %w", err)
+	}
+	chain, err := store.LoadChain()
+	if err != nil {
+		return GateResult{}, fmt.Errorf("gate: load chain: %w", err)
+	}
+
+	var reasons []string
+
+	// 1. Chain integrity: content-address verification over the whole store.
+	verdict := store.Validate()
+	if !verdict.Valid {
+		reasons = append(reasons, "review chain is invalid (integrity check failed): "+verdict.Reason)
+	}
+	if chain.Count == 0 {
+		reasons = append(reasons, "review chain is empty (no events)")
+	}
+
+	// 2. Terminal state (Phase C2): an invalidated/withdrawn/escalated/
+	//    blocked/superseded lineage can never pass a gate. The invalidate
+	//    reason is surfaced verbatim — a pass is never fabricated.
+	if state, reason := terminatedStateOf(chain); state != "" {
+		switch {
+		case state == "invalidated" && reason != "":
+			reasons = append(reasons, "lineage is invalidated: "+reason)
+		default:
+			reasons = append(reasons, "lineage is "+state)
+		}
+	}
+
+	// 3. Receipt binding: load the persisted receipt, verify it against the
+	//    lineage state and the repository-derived candidate trees/paths.
+	var receipt PersistedReceipt
+	var binding gateBinding
+	bindingErr := error(nil)
+	if chain.Count > 0 {
+		if binding, bindingErr = deriveGateBinding(repo, chain); bindingErr != nil {
+			reasons = append(reasons, "gate binding: "+bindingErr.Error())
+		}
+	}
+	loadedReceipt, receiptErr := loadPersistedReceipt(store, chain)
+	if receiptErr != nil {
+		reasons = append(reasons, receiptErr.Error())
+	} else {
+		receipt = loadedReceipt
+		result.ReceiptHash = receipt.ReceiptHash
+		if bindingErr == nil {
+			reasons = append(reasons, verifyReceiptBinding(receipt, binding, chain)...)
+		}
+		summary, findingReasons := recomputeGateFindings(chain, receipt)
+		result.Findings = &summary
+		reasons = append(reasons, findingReasons...)
+	}
+
+	// 4. Kind-specific checks against the live repository.
+	if receiptErr == nil && bindingErr == nil {
+		switch kind {
+		case GatePostApply:
+			reasons = append(reasons, postApplyChecks(repo, receipt)...)
+		case GatePreCommit:
+			reasons = append(reasons, preCommitChecks(repo, receipt, binding)...)
+		case GatePrePush:
+			reasons = append(reasons, prePushChecks(repo, receipt, binding)...)
+		case GatePrePR:
+			reasons = append(reasons, prePRChecks(repo, opts, receipt, binding)...)
+		case GateRelease:
+			reasons = append(reasons, releaseChecks(repo, receipt)...)
+		}
+	}
+
+	result.Reasons = reasons
+	result.Reason = strings.Join(reasons, "; ")
+	if result.Reason == "" {
+		result.Reason = "gate passed"
+	}
+	result.Allowed = len(reasons) == 0
+	result.Passed = result.Allowed || opts.DryRun
+	if result.Allowed {
+		result.Delivery = DeliveryReceiptGoverned
+	}
+	return result, nil
+}
+
+// loadPersistedReceipt loads the terminal receipt artifact referenced by the
+// lineage's complete_review event. A missing artifact names finalize as the
+// required step.
+func loadPersistedReceipt(store *Store, chain ValidatedChain) (PersistedReceipt, error) {
+	ref := receiptArtifactOf(chain)
+	if ref == nil {
+		return PersistedReceipt{}, errors.New("missing persisted review receipt: run 'biggz review finalize <lineage>' to finalize the captured review")
+	}
+	return readReceiptFile(store, completeEventPayload{
+		Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash,
+	})
+}
+
+// verifyReceiptBinding checks that the persisted receipt matches the live
+// lineage state: the chain genesis and pre-finalize head revisions, and the
+// repository-derived base/candidate trees and path manifest digest. A
+// tampered or foreign receipt fails here.
+func verifyReceiptBinding(receipt PersistedReceipt, binding gateBinding, chain ValidatedChain) []string {
+	var reasons []string
+	revisions := recordRevisions(chain)
+	if len(revisions) < 2 {
+		return append(reasons, "receipt binding: lineage has no captured head to bind")
+	}
+	if receipt.GenesisRevision != revisions[0] {
+		reasons = append(reasons, fmt.Sprintf(
+			"receipt binding: genesis revision %s does not match the lineage genesis %s; the receipt is foreign or the chain was replaced",
+			receipt.GenesisRevision, revisions[0]))
+	}
+	completeIndex := -1
+	for index := len(chain.Records) - 1; index >= 0; index-- {
+		if chain.Records[index].Operation == CompleteReviewOperation {
+			completeIndex = index
+			break
+		}
+	}
+	if completeIndex < 1 {
+		return append(reasons, "receipt binding: chain carries no terminal complete_review event")
+	}
+	if receipt.HeadRevision != revisions[completeIndex-1] {
+		reasons = append(reasons, fmt.Sprintf(
+			"receipt binding: head revision %s does not match the captured head %s; the chain changed after finalize",
+			receipt.HeadRevision, revisions[completeIndex-1]))
+	}
+	if receipt.BaseTree != binding.baseTree {
+		reasons = append(reasons, fmt.Sprintf(
+			"receipt binding: base tree %s does not match the frozen candidate base %s; the receipt is foreign or the repository changed",
+			receipt.BaseTree, binding.baseTree))
+	}
+	if receipt.InitialReviewTree != binding.candidateTree {
+		reasons = append(reasons, fmt.Sprintf(
+			"receipt binding: initial review tree %s does not match the frozen candidate tree %s",
+			receipt.InitialReviewTree, binding.candidateTree))
+	}
+	if receipt.FinalCandidateTree != binding.candidateTree {
+		reasons = append(reasons, fmt.Sprintf(
+			"receipt binding: final candidate tree %s does not match the frozen candidate tree %s",
+			receipt.FinalCandidateTree, binding.candidateTree))
+	}
+	if receipt.PathsDigest != binding.manifestSHA256 {
+		reasons = append(reasons, fmt.Sprintf(
+			"receipt binding: paths digest %s does not match the frozen candidate manifest %s",
+			receipt.PathsDigest, binding.manifestSHA256))
+	}
+	return reasons
+}
+
+// recomputeGateFindings recomputes the finding summary from the captured lens
+// results (A1): candidate-causal finding IDs recorded at admission are
+// blocking unless the receipt (or its fix delta) shows them resolved;
+// pre-existing/base-only dispositions never block; unknown dispositions on a
+// severe finding escalate.
+func recomputeGateFindings(chain ValidatedChain, receipt PersistedReceipt) (GateFindingsSummary, []string) {
+	var summary GateFindingsSummary
+	var reasons []string
+	fixDeltaDelivered := receipt.FixDeltaHash != "" && receipt.FixDeltaHash != EmptyFixDeltaHash
+	for index := range chain.Records {
+		rec := &chain.Records[index]
+		if rec.Operation != LensResultOperation {
+			continue
+		}
+		var payload lensResultEventPayload
+		if err := json.Unmarshal(rec.Payload, &payload); err != nil || payload.AdmissionDecision != AdmissionCompleted {
+			continue
+		}
+		for _, finding := range payload.Result.Findings {
+			if !isSevereSeverity(finding.Severity) {
+				if finding.CausalDisposition == CausalPreExisting || finding.CausalDisposition == CausalBaseOnly {
+					summary.FollowUp++
+				}
+				continue
+			}
+			switch finding.CausalDisposition {
+			case CausalPreExisting, CausalBaseOnly:
+				summary.FollowUp++
+			case CausalIntroduced, CausalBehaviorActivated, CausalWorsened:
+				// counted below through the candidate-causal set
+			default:
+				reasons = append(reasons, fmt.Sprintf(
+					"finding [%s] has unknown causal disposition %q; the lineage must escalate", finding.ID, finding.CausalDisposition))
+			}
+		}
+		for _, id := range payload.CandidateCausalFindingIDs {
+			switch {
+			case containsString(receipt.ResolvedFindingIDs, id) || fixDeltaDelivered:
+				summary.Resolved++
+			default:
+				summary.Blocking++
+				reasons = append(reasons, fmt.Sprintf(
+					"unresolved finding [%s]: candidate-causal finding is not resolved by the persisted receipt; review it and re-finalize the lineage", id))
+			}
+		}
+	}
+	return summary, reasons
+}
+
+// postApplyChecks verifies the applied candidate is still the reviewed
+// candidate: current HEAD tree matches the receipt's final candidate tree,
+// when derivable.
+func postApplyChecks(repo string, receipt PersistedReceipt) []string {
+	headTree, err := headTreeSHA(repo)
+	if err != nil {
+		return nil // only when available
+	}
+	if headTree != receipt.FinalCandidateTree {
+		return []string{fmt.Sprintf(
+			"post-apply: current HEAD tree %s does not match the reviewed candidate tree %s", headTree, receipt.FinalCandidateTree)}
+	}
+	return nil
+}
+
+// preCommitChecks verifies the staged projection reproduces the reviewed
+// candidate: every staged path must lie inside the reviewed path manifest,
+// and the staged tree must equal the receipt's final candidate tree.
+// Intended-untracked retention is reduced to the staged-subset check: biggz
+// manifests freeze only tracked paths, so untracked paths are outside the
+// reviewed scope by construction and any of them entering the index fails the
+// subset check.
+func preCommitChecks(repo string, receipt PersistedReceipt, binding gateBinding) []string {
+	var reasons []string
+	staged, err := stagedPaths(repo)
+	if err != nil {
+		return append(reasons, fmt.Sprintf("pre-commit: staged projection cannot be derived: %v", err))
+	}
+	var outside []string
+	for _, path := range staged {
+		if !containsString(binding.manifestPaths, path) {
+			outside = append(outside, path)
+		}
+	}
+	if len(outside) > 0 {
+		reasons = append(reasons, fmt.Sprintf(
+			"pre-commit: staged path(s) outside the reviewed candidate: %s", strings.Join(outside, ", ")))
+	}
+	stagedTree, err := gitIn(repo, "write-tree")
+	if err != nil {
+		return append(reasons, fmt.Sprintf("pre-commit: staged tree cannot be derived: %v", err))
+	}
+	if stagedTree != receipt.FinalCandidateTree {
+		reasons = append(reasons, fmt.Sprintf(
+			"pre-commit: staged tree %s does not reproduce the reviewed candidate tree %s; stage exactly the reviewed candidate before committing",
+			stagedTree, receipt.FinalCandidateTree))
+	}
+	return reasons
+}
+
+// prePushChecks verifies the publication range: the reviewed commit must be
+// an ancestor of HEAD with no unreviewed commits after it. A correction
+// receipt (fix-diff delivery) may deliver exactly one commit whose tree equals
+// the reviewed candidate.
+func prePushChecks(repo string, receipt PersistedReceipt, binding gateBinding) []string {
+	fixDeltaDelivered := receipt.FixDeltaHash != "" && receipt.FixDeltaHash != EmptyFixDeltaHash
+	ancestor, err := commitIsAncestor(repo, binding.plan.CommitSHA, "HEAD")
+	if err != nil {
+		return []string{fmt.Sprintf("pre-push: publication range cannot be derived: %v", err)}
+	}
+	if !ancestor {
+		return []string{fmt.Sprintf(
+			"pre-push: the reviewed commit %s is not on the current HEAD lineage", binding.plan.CommitSHA)}
+	}
+	count, err := gitIn(repo, "rev-list", "--count", binding.plan.CommitSHA+"..HEAD")
+	if err != nil {
+		return []string{fmt.Sprintf("pre-push: delivered commit count cannot be derived: %v", err)}
+	}
+	commits := strings.TrimSpace(count)
+	if commits != "0" {
+		if fixDeltaDelivered && commits == "1" {
+			headTree, treeErr := headTreeSHA(repo)
+			if treeErr != nil {
+				return []string{fmt.Sprintf("pre-push: fix-diff delivery tree cannot be derived: %v", treeErr)}
+			}
+			if headTree == receipt.FinalCandidateTree {
+				return nil // fix-diff delivery of the reviewed correction
+			}
+		}
+		return []string{fmt.Sprintf(
+			"pre-push: %s unreviewed commit(s) after the reviewed head %s; review them before pushing",
+			commits, binding.plan.CommitSHA)}
+	}
+	return nil
+}
+
+// prePRChecks verifies the PR diff against the base boundary stays inside the
+// reviewed candidate scope, and that HEAD still matches the reviewed
+// candidate. The base boundary is the explicit --base-ref tree when given,
+// otherwise the reviewed commit's parent tree (the frozen receipt base).
+// The optional CI attestation is accepted best-effort: presence + parse of a
+// signed JSON file; signature verification is out of scope.
+func prePRChecks(repo string, opts GateOptions, receipt PersistedReceipt, binding gateBinding) []string {
+	var reasons []string
+	headTree, err := headTreeSHA(repo)
+	if err != nil {
+		return append(reasons, fmt.Sprintf("pre-pr: current HEAD tree cannot be derived: %v", err))
+	}
+	if headTree != receipt.FinalCandidateTree {
+		return append(reasons, fmt.Sprintf(
+			"pre-pr: current HEAD tree %s does not match the reviewed candidate tree %s", headTree, receipt.FinalCandidateTree))
+	}
+	boundary := opts.BaseRef
+	boundaryTree := ""
+	if boundary != "" {
+		if boundaryTree, err = gitIn(repo, "rev-parse", boundary+"^{tree}"); err != nil {
+			return append(reasons, fmt.Sprintf("pre-pr: base boundary %q cannot be resolved: %v", boundary, err))
+		}
+	} else if parentTree, parentErr := gitIn(repo, "rev-parse", binding.plan.CommitSHA+"^^{tree}"); parentErr == nil {
+		boundaryTree = parentTree
+	} else {
+		boundaryTree = receipt.BaseTree // root commit: the frozen empty-tree base
+	}
+	diff, err := gitIn(repo, "diff", "--name-only", "-z", "--no-renames", boundaryTree, receipt.FinalCandidateTree)
+	if err != nil {
+		return append(reasons, fmt.Sprintf("pre-pr: diff against the base boundary cannot be derived: %v", err))
+	}
+	var outside []string
+	for _, path := range splitNulPaths(diff) {
+		if !containsString(binding.manifestPaths, path) {
+			outside = append(outside, path)
+		}
+	}
+	if len(outside) > 0 {
+		reasons = append(reasons, fmt.Sprintf(
+			"pre-pr: diff against base %s touches path(s) outside the reviewed candidate scope: %s",
+			boundaryTree, strings.Join(outside, ", ")))
+	}
+	if opts.PrePRCIAttestation != "" {
+		data, readErr := os.ReadFile(opts.PrePRCIAttestation)
+		switch {
+		case readErr != nil:
+			reasons = append(reasons, fmt.Sprintf("pre-pr: CI attestation %q cannot be read: %v", opts.PrePRCIAttestation, readErr))
+		case !json.Valid(data):
+			reasons = append(reasons, fmt.Sprintf("pre-pr: CI attestation %q is not valid signed JSON", opts.PrePRCIAttestation))
+		}
+	}
+	return reasons
+}
+
+// releaseChecks verifies release freshness: current HEAD tree must match the
+// reviewed candidate tree. biggz release is tag-based, so the release
+// configuration/generated/provenance/publication-boundary/freshness ARTIFACT
+// checks are reduced away and only the receipt + freshness gates remain
+// (documented reduced scope).
+func releaseChecks(repo string, receipt PersistedReceipt) []string {
+	headTree, err := headTreeSHA(repo)
+	if err != nil {
+		return []string{fmt.Sprintf("release: freshness cannot be derived: %v", err)}
+	}
+	if headTree != receipt.FinalCandidateTree {
+		return []string{fmt.Sprintf(
+			"release: current HEAD tree %s does not match the reviewed candidate %s; release requires the reviewed commit at HEAD",
+			headTree, receipt.FinalCandidateTree)}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Git helpers
+// ---------------------------------------------------------------------------
+
+// detectRDDDirs resolves the worktree and common git dirs for RDD resolution.
+// Outside a git repository both are empty and RDDStatus falls back to the
+// global mode.
+func detectRDDDirs(repo string) (worktreeDir, commonDir string) {
+	worktreeDir = revParseRepoDir(repo, "--git-dir")
+	commonDir = revParseRepoDir(repo, "--git-common-dir")
+	if commonDir == "" {
+		commonDir = worktreeDir
+	}
+	return worktreeDir, commonDir
+}
+
+// revParseRepoDir runs `git rev-parse <flag>` in repo and resolves the result
+// to an absolute path. Returns "" on any failure.
+func revParseRepoDir(repo, flag string) string {
+	args := []string{"rev-parse", flag}
+	if repo != "" {
+		args = append([]string{"-C", repo}, args...)
+	}
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return ""
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		return ""
+	}
+	if !filepath.IsAbs(dir) {
+		base := repo
+		if base == "" {
+			base, _ = os.Getwd()
+		}
+		dir = filepath.Join(base, dir)
+	}
+	return filepath.Clean(dir)
+}
+
+// gitIn runs a git command in repo and returns trimmed stdout.
+func gitIn(repo string, args ...string) (string, error) {
+	full := make([]string, 0, len(args)+2)
+	if repo != "" {
+		full = append(full, "-C", repo)
+	}
+	full = append(full, args...)
+	out, err := exec.Command("git", full...).Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// headTreeSHA resolves the current HEAD tree. Only used "when available".
+func headTreeSHA(repo string) (string, error) {
+	return gitIn(repo, "rev-parse", "HEAD:")
+}
+
+// stagedPaths returns the NUL-separated path list of the current index.
+func stagedPaths(repo string) ([]string, error) {
+	out, err := gitIn(repo, "diff", "--cached", "--name-only", "-z")
+	if err != nil {
+		return nil, err
+	}
+	return splitNulPaths(out), nil
+}
+
+// commitIsAncestor reports whether ancestor is an ancestor of head.
+func commitIsAncestor(repo, ancestor, head string) (bool, error) {
+	_, err := gitIn(repo, "merge-base", "--is-ancestor", ancestor, head)
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// splitNulPaths splits NUL-separated git output into non-empty paths.
+func splitNulPaths(out string) []string {
+	var paths []string
+	for _, value := range strings.Split(out, "\x00") {
+		if value = strings.TrimSpace(value); value != "" {
+			paths = append(paths, value)
+		}
+	}
+	return paths
 }
