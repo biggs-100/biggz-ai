@@ -52,11 +52,14 @@ type ConsentCandidateScope struct {
 	Lenses     []string   `json:"lenses"`
 }
 
-// ConsentChoice is one offered answer with the effect of choosing it.
+// ConsentChoice is one offered answer with the effect of choosing it. In the
+// negotiated contract mode (WithFollowUpInvocations), Invocation names the
+// exact follow-up command line the orchestrator must run for this answer.
 type ConsentChoice struct {
-	ID     string `json:"id"`
-	Label  string `json:"label"`
-	Effect string `json:"effect"`
+	ID         string `json:"id"`
+	Label      string `json:"label"`
+	Effect     string `json:"effect"`
+	Invocation string `json:"invocation,omitempty"`
 }
 
 // ConsentEnvelope is the typed consent question `biggz review start

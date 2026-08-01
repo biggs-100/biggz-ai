@@ -2370,6 +2370,9 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  status <lineage>              Show review lineage status")
 	fmt.Fprintln(os.Stderr, "    --json                     Machine-readable JSON output")
+	fmt.Fprintln(os.Stderr, "    --contract <schema> --next-transition  Print ONLY the negotiated")
+	fmt.Fprintln(os.Stderr, "                                  biggz-ai.review-integration/v1 routing envelope")
+	fmt.Fprintln(os.Stderr, "                                  (collect/execute/stop; exit 0)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  gate post-apply|pre-commit|pre-push|pre-pr|release <lineage>  Run publication gate")
 	fmt.Fprintln(os.Stderr, "    --json                     Machine-readable JSON output")
@@ -2385,6 +2388,9 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "                                  relay: prints the typed consent envelope and exits 0 without creating a lineage")
 	fmt.Fprintln(os.Stderr, "                                  granted/declined: rerun with the human's answer for the exact candidate")
 	fmt.Fprintln(os.Stderr, "                                  A start with declared lenses needs consent; with none it is silent (low risk)")
+	fmt.Fprintln(os.Stderr, "    [--contract <schema>]       Negotiated mode: a medium/high candidate always relays its consent")
+	fmt.Fprintln(os.Stderr, "                                  envelope (never the headless error); each choice names the exact")
+	fmt.Fprintln(os.Stderr, "                                  follow-up invocation (supported: biggz-ai.review-integration/v1)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  resume <lineage>               Resume a review (Blocked/NeedsChanges -> InReview)")
 	fmt.Fprintln(os.Stderr, "    [--force]                   Skip non-critical validations")
@@ -2495,14 +2501,31 @@ func reviewListRun() int {
 }
 
 // reviewStatusRun handles "biggz review status <lineage>".
+//
+// Negotiated contract mode (Phase D2): `--contract biggz-ai.review-integration/v1
+// --next-transition` prints ONLY the provider-owned routing envelope and exits
+// 0 — no raw status fields, nothing to interpret. The pair is mandatory: a
+// half-declared request refuses rather than silently emitting a different
+// shape. Unknown contract values error naming the supported ones. Without
+// --contract the previous behavior is unchanged.
 func reviewStatusRun() int {
 	args := os.Args[3:]
 	useJSON := false
-	var lineageID string
+	var lineageID, contract string
+	nextTransition := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--json":
 			useJSON = true
+		case "--next-transition":
+			nextTransition = true
+		case "--contract":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --contract requires a value")
+				return 1
+			}
+			i++
+			contract = args[i]
 		default:
 			if lineageID == "" && !strings.HasPrefix(args[i], "--") {
 				lineageID = args[i]
@@ -2510,8 +2533,35 @@ func reviewStatusRun() int {
 		}
 	}
 	if lineageID == "" {
-		fmt.Fprintln(os.Stderr, "Usage: biggz review status <lineage> [--json]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review status <lineage> [--json] [--contract <schema> --next-transition]")
 		return 1
+	}
+
+	if contract != "" || nextTransition {
+		if contract == "" {
+			fmt.Fprintf(os.Stderr, "error: --next-transition requires --contract (supported: %s)\n", strings.Join(review.SupportedReviewContracts, ", "))
+			return 1
+		}
+		if contract != review.ContractSchema {
+			fmt.Fprintf(os.Stderr, "error: unknown review integration contract %q (supported: %s)\n", contract, strings.Join(review.SupportedReviewContracts, ", "))
+			return 1
+		}
+		if !nextTransition {
+			fmt.Fprintln(os.Stderr, "error: --contract requires --next-transition (the negotiated envelope mode)")
+			return 1
+		}
+		env, err := review.NewAuthority("").BuildNextTransition(lineageID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(env); err != nil {
+			fmt.Fprintf(os.Stderr, "error: encoding output: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	auth := review.NewAuthority("")
@@ -2722,9 +2772,14 @@ func lastOperationStatus(lastOp string) string {
 // or --consent declined for the exact frozen candidate. Declined persists
 // nothing. An undeclared start on a terminal falls back to relay; headless
 // it errors — a review needing consent never starts silently.
+//
+// Negotiated contract mode (Phase D2): `--contract biggz-ai.review-integration/v1`
+// turns the headless consent case into the relay envelope (never the hard
+// error) and extends every choice with the exact follow-up invocation for
+// that answer. --consent granted/declined keep their existing behavior.
 func reviewStartRun() int {
 	args := os.Args[3:]
-	var subjectFile, lineageID, baseRef, lensesValue, consentValue string
+	var subjectFile, lineageID, baseRef, lensesValue, consentValue, contract string
 	interactive := terminalAttached(os.Stdout)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -2753,14 +2808,24 @@ func reviewStartRun() int {
 				i++
 				consentValue = args[i]
 			}
+		case "--contract":
+			if i+1 < len(args) {
+				i++
+				contract = args[i]
+			}
 		case "--help", "-h":
-			fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>] [--base-ref <sha>] [--lenses <list>] [--consent relay|granted|declined]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>] [--base-ref <sha>] [--lenses <list>] [--consent relay|granted|declined] [--contract <schema>]")
 			return 0
 		}
 	}
+	if contract != "" && contract != review.ContractSchema {
+		fmt.Fprintf(os.Stderr, "error: unknown review integration contract %q (supported: %s)\n", contract, strings.Join(review.SupportedReviewContracts, ", "))
+		return 1
+	}
+	contractMode := contract == review.ContractSchema
 	if subjectFile == "" {
 		fmt.Fprintln(os.Stderr, "error: --subject is required")
-		fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>] [--base-ref <sha>] [--lenses <list>] [--consent relay|granted|declined]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>] [--base-ref <sha>] [--lenses <list>] [--consent relay|granted|declined] [--contract <schema>]")
 		return 1
 	}
 
@@ -2796,7 +2861,12 @@ func reviewStartRun() int {
 	planned := review.PlanLenses(tier, lenses)
 
 	// Consent gate: nothing is persisted before this point, so a relay or
-	// decline cannot create a lineage.
+	// decline cannot create a lineage. In contract mode an undeclared consent
+	// is a relay (never the headless hard error): the orchestrator always
+	// receives the typed envelope.
+	if contractMode && consentValue == "" {
+		consentValue = string(review.ConsentModeRelay)
+	}
 	decision, err := review.EvaluateStartConsent(subject, lineageID, input, planned, consentValue, interactive)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -2804,6 +2874,9 @@ func reviewStartRun() int {
 	}
 	switch decision.Decision {
 	case "relay":
+		if contractMode {
+			decision.Envelope.WithFollowUpInvocations(startFollowUpBase(subjectFile, lineageID, baseRef, lensesValue))
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(decision.Envelope); err != nil {
@@ -2860,6 +2933,37 @@ func reviewStartRun() int {
 func terminalAttached(file *os.File) bool {
 	info, err := file.Stat()
 	return err == nil && info.Mode()&os.ModeCharDevice != 0
+}
+
+// startFollowUpBase renders the exact follow-up start invocation the contract
+// consent envelope names for each answer: the original flags echoed (the
+// frozen candidate lineage always pinned), with --consent appended by the
+// envelope builder. The orchestrator runs EXACTLY the named invocation.
+func startFollowUpBase(subjectFile, lineageID, baseRef, lensesValue string) string {
+	parts := []string{"biggz", "review", "start"}
+	if subjectFile != "" {
+		parts = append(parts, "--subject", followUpShellWord(subjectFile))
+	}
+	if lineageID != "" {
+		parts = append(parts, "--lineage", lineageID)
+	}
+	if baseRef != "" {
+		parts = append(parts, "--base-ref", baseRef)
+	}
+	if lensesValue != "" {
+		parts = append(parts, "--lenses", followUpShellWord(lensesValue))
+	}
+	return strings.Join(parts, " ")
+}
+
+// followUpShellWord quotes a follow-up value when it contains shell-significant
+// characters; safe tokens are echoed verbatim so the printed invocation reads
+// exactly like the flag list.
+func followUpShellWord(value string) string {
+	if value != "" && !strings.ContainsAny(value, " \t\"'") {
+		return value
+	}
+	return "\"" + strings.ReplaceAll(value, "\"", "\\\"") + "\""
 }
 
 // reviewResumeRun handles "biggz review resume <lineage> [--force]".

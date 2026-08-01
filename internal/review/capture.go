@@ -51,11 +51,14 @@ type CapturedLens struct {
 
 // RepositoryContext is the optional provider-issued binding JSON accepted by
 // `biggz review capture-result --repository-context`. Every identity field it
-// carries must echo the corresponding flag; "repo" selects the repository
-// root. Unknown keys are rejected.
+// carries must echo the corresponding flag; "repo" (or its negotiated-contract
+// alias "repository") selects the repository root, and "project" echoes the
+// repository basename. Unknown keys are rejected.
 type RepositoryContext struct {
-	Repo             string `json:"repo,omitempty"`
-	LineageID        string `json:"lineage_id,omitempty"`
+	Repo       string `json:"repo,omitempty"`
+	Repository string `json:"repository,omitempty"` // alias emitted by the negotiated contract envelope
+	Project    string `json:"project,omitempty"`    // informational echo of the repository basename
+	LineageID  string `json:"lineage_id,omitempty"`
 	TargetIdentity   string `json:"target_identity,omitempty"`
 	ExpectedRevision string `json:"expected_revision,omitempty"`
 	Lens             string `json:"lens,omitempty"`
@@ -74,6 +77,11 @@ func DecodeRepositoryContext(payload []byte) (RepositoryContext, error) {
 	var extra any
 	if err := decoder.Decode(&extra); err == nil {
 		return RepositoryContext{}, errors.New("repository context contains multiple JSON values")
+	}
+	// The negotiated contract envelope emits "repository" (with "project");
+	// resolve it to the canonical "repo" pin.
+	if context.Repo == "" {
+		context.Repo = context.Repository
 	}
 	return context, nil
 }
@@ -97,6 +105,9 @@ func (c RepositoryContext) Validate(binding CaptureBinding) error {
 	}
 	if c.SubjectHash != "" && c.SubjectHash != binding.SubjectHash {
 		return fmt.Errorf("repository context subject_hash %q does not match --subject-hash %q", c.SubjectHash, binding.SubjectHash)
+	}
+	if c.Project != "" && c.Repo != "" && repositoryProjectOf(c.Repo) != c.Project {
+		return fmt.Errorf("repository context project %q does not match repository %q", c.Project, c.Repo)
 	}
 	return nil
 }

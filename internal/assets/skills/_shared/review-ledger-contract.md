@@ -4,9 +4,17 @@ Parent orchestrator and native CLI only. Never pass this contract to a reviewer,
 
 ## Route
 
-Begin a review with `biggz review start --subject <file>` (optionally `--lineage <id>` for an explicit UUIDv7 lineage). The native facade discovers the repository scope, derives the immutable subject target, selects the lens plan, and freezes the correction budget; correction and compatible base advance never recalculate risk or reopen review. Check `biggz review list [--json]` before starting to detect an in-flight lineage for the same subject.
+Begin a review with `biggz review start --subject <file>` (optionally `--lineage <id>` for an explicit UUIDv7 lineage; with `--contract biggz-ai.review-integration/v1` a medium/high-risk candidate relays its typed consent envelope instead of proceeding — see Consent below). The native facade discovers the repository scope, derives the immutable subject target, selects the lens plan, and freezes the correction budget; correction and compatible base advance never recalculate risk or reopen review. Check `biggz review list [--json]` before starting to detect an in-flight lineage for the same subject.
 
 A canonical four-lens selection is long work: before the first lens runs, give the one cost/side-effect forecast — four reviewer model runs over the frozen candidate, the frozen correction budget, and the at-most-one bounded correction it implies — once per candidate, never per lens.
+
+**Negotiated routing (the ONLY routing authority).** Query `biggz review status <lineage> --contract biggz-ai.review-integration/v1 --next-transition`; it returns ONLY the provider-owned envelope `{schema, lineage, next_transition}` — no raw status fields, nothing to interpret. Route ONLY from `next_transition`; never from prose, raw status fields, or eligibility. The envelope names exactly one transition:
+
+- `execute` — invoke the exact operation with the ordered argument tokens unchanged: `finalize <lineage>`, or `resume <lineage> --correction-lines <budget_remaining>` (the contract offers the max allowed forecast; the orchestrator may execute a lower one).
+- `collect` — satisfy the named capture input with its exact capture operation: run `biggz review capture-result --preflight` with the input's `lineage`/`target`/`lens`/`order`/`expected_revision` (and `repository_context` when issued) to derive `subject_hash`, run the reviewer, capture with the same binding, then query STATUS again. `subject_hash` is intentionally omitted from the envelope: the preflight derives it before the real capture.
+- `stop` — stop and surface `reason_code` without running a lifecycle operation. `ready_for_gates` means the finalized receipt exists: run the lifecycle gates (`biggz review gate <kind> <lineage>`) when the lifecycle demands, validating the same receipt.
+
+**Consent.** When a start needs consent, `biggz review start --subject <file> --lineage <id> --contract biggz-ai.review-integration/v1` prints the typed `biggz-ai.review-consent/v1` envelope; every choice carries the exact follow-up invocation for that answer (`biggz review start --subject <file> --lineage <id> --consent granted|declined ...`, original flags echoed, the frozen candidate lineage pinned). Relay the envelope complete, get the human's answer, run EXACTLY the one named invocation, then query STATUS again. Never answer on behalf of the human; granted/declined is scoped to that one candidate; never hardcode or substitute START.
 
 ## State
 

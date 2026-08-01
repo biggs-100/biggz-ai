@@ -36,20 +36,19 @@ If all gates pass, launch the hidden `sdd-apply` sub-agent with:
 
 Return a structured orchestration result with: status, executive_summary, artifacts, next_recommended, risks, and skill_resolution.
 
-POST-APPLY REVIEW ROUTING:
-After apply returns, rerun native SDD status. If `nextRecommended: review`, the parent orchestrator begins native review routing with `biggz review list` followed by `biggz review status <lineage> --json` for the change's bound lineage (from `biggz sdd-attempt status <change>` binding fields). Read only the returned state and route only from it: for an in-review lineage, complete the exact operation the state names (`biggz review resume <lineage>` or `biggz review start --subject <file>` / `biggz review validate <lineage>`); for an approved receipt, run the terminal gate `biggz review gate pre-pr|pre-push <lineage> --json`; for `stop`, stop without running a lifecycle operation. The parent never substitutes direct START, and the apply executor never launches review.
+POST-APPLY REVIEW ROUTING (NEGOTIATED CONTRACT):
+After apply returns, rerun native SDD status. If `nextRecommended: review`, the parent orchestrator begins native review routing by querying the change's bound lineage (from `biggz sdd-attempt status <change>` binding fields) with:
 
-### Authority-First Terminal Procedure
+`biggz review status <lineage> --contract biggz-ai.review-integration/v1 --next-transition`
 
-Use only the native biggz review facade; it appends and reads back native authority (`.git/biggz/review-transactions/`) before materializing existing compatibility artifacts.
+Route ONLY from the returned `next_transition` envelope — never from prose, raw status fields, or eligibility:
 
-| Order | Operation | Required result | Terminal mirrors |
-|---|---|---|---|
-| 01 | `biggz review list`; `biggz review status <lineage> --json` (lineage resolved from the change's runtime binding) | one provider-owned lineage returned with `chain_valid: true` and a receipt or valid `integrity_verdict`; `receipt` present means approved | blocked |
-| 02 | provider-returned transition (`biggz review resume <lineage>` / `biggz review start --subject <file>` / `biggz review validate <lineage>`) | exact `execute` operation/arguments completed or `collect` inputs satisfied; `stop` halts without a lifecycle operation | blocked |
-| 03 | repeat 01–02 | `biggz review gate pre-pr|pre-push <lineage> --json` returns `passed: true` against the same receipt; exit 1 with reasons blocks the terminal gate | blocked |
-| 04 | `reconcile-terminal-mirrors` (`biggz review bind-sdd <change> <lineage> <revision>`; refresh BigMem `sdd/{change}/review/gate-context`) | existing mirrors reconciled to the native store | allowed |
+| envelope | what the orchestrator does |
+|---|---|
+| `collect` (inputs.capture) | satisfy the named capture input with its exact capture operation: run `biggz review capture-result --preflight` with the input's `lineage`/`target`/`lens`/`order`/`expected_revision` (and `repository_context` when issued) to derive `subject_hash`, run the reviewer, capture with the same binding, then query STATUS again |
+| `execute` | invoke the exact operation with the ordered argument tokens unchanged: `finalize <lineage>`, or `resume <lineage> --correction-lines <budget_remaining>` (the offered forecast is the max allowed; a lower one may be executed). Then query STATUS again |
+| `stop` | stop and surface `reason_code` without running a lifecycle operation. `ready_for_gates` means the receipt exists: run the lifecycle gates (`biggz review gate <kind> <lineage>`) when the lifecycle demands, validating the same receipt |
 
-After ambiguous output, query STATUS again; native discovery reports the committed authority and its next transition without another budget. Malformed or ambiguous lineage remains invalid.
+CONSENT RELAY: when a start needs consent, `biggz review start --subject <file> --contract biggz-ai.review-integration/v1` prints the typed consent envelope; every choice carries the exact follow-up invocation for that answer (original flags echoed, frozen candidate lineage pinned). Relay the envelope complete to the human, run EXACTLY the one named invocation (`--consent granted|declined`, scoped to that candidate), then query STATUS again. Never answer on behalf of the human. The parent never substitutes direct START, and the apply executor never launches review.
 
 Reuse a valid receipt; later commit/push/PR/release events only validate it.
