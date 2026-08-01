@@ -530,7 +530,8 @@ func buildCapturedArtifact(store *Store, subject ArtifactSubject, admission Arti
 }
 
 // CapturedLenses scans a chain for lens_result events and returns the captured
-// lens summaries in selected-order.
+// lens summaries in selected-order. Captures superseded by a later
+// dispose/reopen are discarded evidence and are not surfaced.
 func CapturedLenses(chain ValidatedChain) []CapturedLens {
 	lenses := make([]CapturedLens, 0)
 	for index := range chain.Records {
@@ -543,6 +544,9 @@ func CapturedLenses(chain ValidatedChain) []CapturedLens {
 			continue
 		}
 		if payload.AdmissionDecision != AdmissionCompleted {
+			continue
+		}
+		if isSlotSuperseded(chain, index, payload.Lens, payload.SelectedOrder) {
 			continue
 		}
 		lenses = append(lenses, CapturedLens{

@@ -243,8 +243,11 @@ func TestFinalize_HappyPathPersistsReceipt(t *testing.T) {
 			t.Errorf("lens subject hashes invalid: %+v", subject)
 		}
 	}
-	if !reflect.DeepEqual(receipt.ResolvedFindingIDs, []string{"R1-001", "R2-001"}) {
-		t.Errorf("resolved finding IDs = %v, want [R1-001 R2-001]", receipt.ResolvedFindingIDs)
+	if !reflect.DeepEqual(receipt.ResolvedFindingIDs, []string{}) {
+		t.Errorf("resolved finding IDs = %v, want [] (deterministic findings are auto-blocking and never resolved by the receipt)", receipt.ResolvedFindingIDs)
+	}
+	if !reflect.DeepEqual(receipt.StandingFindingIDs, []string{}) {
+		t.Errorf("standing finding IDs = %v, want [] (no refuter batch was registered)", receipt.StandingFindingIDs)
 	}
 	if receipt.TerminalState != ReviewReceiptTerminalState {
 		t.Errorf("terminal state = %q", receipt.TerminalState)

@@ -1,6 +1,7 @@
 package review
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,9 @@ type LineageStatus struct {
 	Budget           *FrozenBudgetInfo    `json:"budget,omitempty"`
 	ReceiptArtifact  *ReceiptArtifactRef  `json:"receipt_artifact,omitempty"`
 	NextTransition   *NextTransition      `json:"next_transition,omitempty"`
+	RiskTier         string               `json:"risk_tier,omitempty"`
+	LensPlan         []string             `json:"lens_plan,omitempty"`
+	Refutations      *RefutationSummary   `json:"refutations,omitempty"`
 }
 
 // NewAuthority creates an Authority for the given repo root.
@@ -154,10 +158,33 @@ func (a *Authority) Status(lineageID string) (*LineageStatus, error) {
 		ReceiptArtifact:  receiptArtifactOf(chain),
 	}
 
+	// Frozen risk tier and lens plan from the start_review genesis, when the
+	// lineage was started with the classifier (legacy lineages report none).
+	if chain.Count > 0 {
+		var plan StartEventPayload
+		if err := json.Unmarshal(chain.Records[0].Payload, &plan); err == nil {
+			st.RiskTier = plan.RiskTier
+			st.LensPlan = plan.LensPlan
+			if len(st.LensPlan) == 0 {
+				st.LensPlan = plan.SelectedLenses
+			}
+		}
+	}
+
 	// Derived routing envelope (Phase C2): the orchestrator's ONLY routing
 	// authority. Derived from persisted bytes and the RDD kill switch; all
 	// existing fields are unchanged.
 	st.NextTransition = deriveNextTransition(store, a.repo, chain, verdict)
+
+	// Refutation surface (Debt D2): the required inferential candidate-causal
+	// findings, the recorded verdicts, and what is still pending. A malformed
+	// refutation payload (impossible without breaking the content address)
+	// reports nothing rather than crashing status.
+	if chain.Count > 0 {
+		if summary, err := RefutationSummaryOf(chain); err == nil {
+			st.Refutations = summary
+		}
+	}
 
 	// Create receipt if chain is valid and has events.
 	if verdict.Valid && chain.Count > 0 {

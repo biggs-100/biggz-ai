@@ -14,8 +14,10 @@ import (
 // ---------------------------------------------------------------------------
 
 // gateFixture builds a finalized lineage on the fixture repo (base commit +
-// candidate commit touching a.txt and b.txt), capturing one risk lens. HOME is
-// isolated so the RDD kill switch is deterministic.
+// candidate commit touching a.txt and b.txt), capturing one risk lens whose
+// severe inferential finding is refuted by the one refuter batch, so the
+// receipt resolves it and the gates pass. HOME is isolated so the RDD kill
+// switch is deterministic.
 func gateFixture(t *testing.T) (repo, head string, outcome FinalizeOutcome) {
 	t.Helper()
 	home := t.TempDir()
@@ -23,7 +25,10 @@ func gateFixture(t *testing.T) (repo, head string, outcome FinalizeOutcome) {
 	t.Setenv("USERPROFILE", home)
 	repo, _, head = finalizeFixtureRepo(t)
 	finalizeStart(t, repo, head, "gate-fixture", []string{"risk"}, "")
-	captureLens(t, repo, "gate-fixture", head, "risk", 0)
+	captureLensFindings(t, repo, "gate-fixture", head, "risk", 0, []map[string]any{
+		severeFinding("R1-001", "risk", "inferential", "introduced", "CRITICAL"),
+	})
+	refuteVerdicts(t, repo, "gate-fixture", refuteVerdict("R1-001", "refuted", "locked counterexample at a.txt:2"))
 	var err error
 	outcome, err = Finalize(repo, "gate-fixture")
 	if err != nil {

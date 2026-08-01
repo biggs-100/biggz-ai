@@ -130,8 +130,11 @@ func TestNextTransition_CorrectionWhenBlockingFindings(t *testing.T) {
 	repo, _, head := finalizeFixtureRepo(t)
 	finalizeStart(t, repo, head, "nt-correction", []string{"risk"}, "")
 
-	// Capture with a blocking finding and finalize: the receipt resolves
-	// every candidate-causal finding, so the lineage gates clean.
+	// Capture with a deterministic blocking finding and finalize: the receipt
+	// does NOT resolve it (deterministic findings are auto-blocking), so a
+	// resume after finalize followed by a NEW capture leaves every
+	// candidate-causal finding unresolved: the lineage must route to
+	// correction, not gate.
 	captureLens(t, repo, "nt-correction", head, "risk", 0)
 	if _, err := Finalize(repo, "nt-correction"); err != nil {
 		t.Fatalf("Finalize: %v", err)

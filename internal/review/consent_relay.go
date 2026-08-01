@@ -1,13 +1,14 @@
 // Relayed consent for `review start` — the typed, non-interactive consent
 // flow of Phase C1 review-workflow parity.
 //
-// A start with declared lenses is a medium-risk review that needs consent
-// before a lineage is created. Instead of the dead-code console prompt
-// (PromptConsent), start speaks a typed JSON envelope: `--consent relay`
-// prints the question and exits 0 without persisting anything; the caller
-// relays it to a human and reruns with `--consent granted` or
-// `--consent declined` for the exact frozen candidate. A start with zero
-// declared lenses is silent structural readback: no consent is asked.
+// A start whose content-based classification is medium or high risk needs
+// consent before a lineage is created. Instead of the dead-code console
+// prompt (PromptConsent), start speaks a typed JSON envelope: `--consent
+// relay` prints the question and exits 0 without persisting anything; the
+// caller relays it to a human and reruns with `--consent granted` or
+// `--consent declined` for the exact frozen candidate. A low-risk candidate
+// (documentation-only or trivial content, whatever lenses are declared) is
+// silent structural readback: no consent is asked.
 package review
 
 import (
@@ -37,18 +38,8 @@ type ReviewRisk string
 const (
 	RiskLow    ReviewRisk = "low"
 	RiskMedium ReviewRisk = "medium"
+	RiskHigh   ReviewRisk = "high"
 )
-
-// ResolveReviewRisk proxies the risk tier from the declared lens selection:
-// zero declared lenses is silent structural readback (low, no consent); any
-// declared lens is a consolidated review (medium, consent required). This is
-// the Phase A2 tier proxy adapted to the lenses the start already declares.
-func ResolveReviewRisk(lenses []string) ReviewRisk {
-	if len(lenses) == 0 {
-		return RiskLow
-	}
-	return RiskMedium
-}
 
 // ConsentCandidateScope identifies the exact frozen candidate the consent
 // decision applies to. A relayed answer only ever authorizes this candidate;
@@ -86,7 +77,8 @@ type ConsentEnvelope struct {
 const (
 	reviewConsentHeadline     = "Biggz AI can review this change before you call it done."
 	reviewConsentValue        = "Reviewing takes a bit longer, and it makes the result substantially safer."
-	reviewConsentReasonMedium = "this change declares review lenses, so it gets one consolidated review."
+	reviewConsentReasonMedium = "this change needs one consolidated review."
+	reviewConsentReasonHigh   = "this change touches high-risk territory, so it gets the full four-lens review."
 	reviewConsentOffPathCmd   = "biggz rdd disable"
 	reviewConsentOffPathNote  = "To turn reviews off for good, run '" + reviewConsentOffPathCmd + "'."
 
@@ -116,15 +108,16 @@ type ConsentDecision struct {
 // pure: it never touches the event store, so a relay or decline cannot
 // create a lineage.
 //
-//   - low risk (zero declared lenses): silent, no consent. A declined
-//     declaration is refused: there is no question to answer.
+//   - low risk (classifier tier): silent, no consent, whatever lenses are
+//     planned. A declined declaration is refused: there is no question to
+//     answer.
 //   - declared relay: returns the typed envelope (Decision "relay").
 //   - declared granted: proceed.
 //   - declared declined: scoped decline, nothing persisted.
-//   - undeclared with lenses: interactive callers fall back to relay; a
-//     non-interactive caller gets an error — a review needing consent must
-//     never start silently.
-func EvaluateStartConsent(subject model.ReviewSubject, lineageID string, lenses []string, declared string, interactive bool) (ConsentDecision, error) {
+//   - undeclared with a medium/high candidate: interactive callers fall
+//     back to relay; a non-interactive caller gets an error — a review
+//     needing consent must never start silently.
+func EvaluateStartConsent(subject model.ReviewSubject, lineageID string, input RiskInput, lenses []string, declared string, interactive bool) (ConsentDecision, error) {
 	mode := ConsentMode(strings.TrimSpace(declared))
 	switch mode {
 	case ConsentModeRelay, ConsentModeGranted, ConsentModeDeclined, "":
@@ -132,7 +125,8 @@ func EvaluateStartConsent(subject model.ReviewSubject, lineageID string, lenses 
 		return ConsentDecision{}, fmt.Errorf("invalid --consent mode %q (use relay, granted, or declined)", declared)
 	}
 
-	if ResolveReviewRisk(lenses) == RiskLow {
+	tier := ClassifyRisk(input.Paths, input.ChangedLines, input.DiffSummary)
+	if tier == RiskLow {
 		if mode == ConsentModeDeclined {
 			return ConsentDecision{}, errReviewConsentDeclineWithoutQuestion
 		}
@@ -147,30 +141,33 @@ func EvaluateStartConsent(subject model.ReviewSubject, lineageID string, lenses 
 	case ConsentModeDeclined:
 		return ConsentDecision{Decision: "declined", Message: reviewConsentDeclinedMessage}, nil
 	case ConsentModeRelay:
-		return ConsentDecision{Decision: "relay", Envelope: buildConsentEnvelope(subject, lineageID, lenses)}, nil
+		return ConsentDecision{Decision: "relay", Envelope: buildConsentEnvelope(subject, lineageID, tier, input, lenses)}, nil
 	default:
 		if interactive {
 			// Interactive omission falls back to relay: the user still sees
 			// the typed question and reruns with granted or declined. Nothing
 			// is persisted.
-			return ConsentDecision{Decision: "relay", Envelope: buildConsentEnvelope(subject, lineageID, lenses)}, nil
+			return ConsentDecision{Decision: "relay", Envelope: buildConsentEnvelope(subject, lineageID, tier, input, lenses)}, nil
 		}
 		return ConsentDecision{}, errors.New("review needs consent: no --consent declared and no terminal to relay the question. Run 'biggz review start' with --consent relay to print the consent envelope, then rerun with --consent granted or --consent declined")
 	}
 }
 
-func buildConsentEnvelope(subject model.ReviewSubject, lineageID string, lenses []string) *ConsentEnvelope {
-	evidence := []string{"declared lenses: " + strings.Join(lenses, ", ")}
+func buildConsentEnvelope(subject model.ReviewSubject, lineageID string, tier ReviewRisk, input RiskInput, lenses []string) *ConsentEnvelope {
+	reason := reviewConsentReasonMedium
+	if tier == RiskHigh {
+		reason = reviewConsentReasonHigh
+	}
 	return &ConsentEnvelope{
 		Schema:   ConsentModeSchema,
 		Headline: reviewConsentHeadline,
-		Reason:   reviewConsentReasonMedium + " " + reviewConsentValue,
-		RiskEvidence: evidence,
+		Reason:   reason + " " + reviewConsentValue,
+		RiskEvidence: riskEvidence(input, lenses),
 		Candidate: ConsentCandidateScope{
 			Repository: subject.Repository,
 			CommitSHA:  subject.CommitSHA,
 			Lineage:    lineageID,
-			Risk:       RiskMedium,
+			Risk:       tier,
 			Lenses:     lenses,
 		},
 		Choices: []ConsentChoice{

@@ -2321,6 +2321,8 @@ func reviewRun() int {
 		return reviewFinalizeRun()
 	case "capture-result":
 		return reviewCaptureResultRun()
+	case "refute":
+		return reviewRefuteRun()
 	case "validate":
 		return reviewValidateRun()
 	case "export":
@@ -2329,6 +2331,24 @@ func reviewRun() int {
 		return reviewImportRun()
 	case "repair":
 		return reviewRepairRun()
+	case "recover":
+		return reviewRecoverRun()
+	case "reclaim":
+		return reviewReclaimRun()
+	case "reconcile-authority":
+		return reviewReconcileAuthorityRun()
+	case "dispose-result":
+		return reviewDisposeResultRun()
+	case "reopen-results":
+		return reviewReopenResultsRun()
+	case "inspect":
+		return reviewInspectRun()
+	case "schema":
+		return reviewSchemaRun()
+	case "retry-final-verification":
+		return reviewRetryFinalVerificationRun()
+	case "quarantine-legacy":
+		return reviewQuarantineLegacyRun()
 	case "invalidate":
 		return reviewInvalidateRun()
 	case "abandon":
@@ -2379,13 +2399,44 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "    --input <file>|-               Raw reviewer result JSON file or - for stdin")
 	fmt.Fprintln(os.Stderr, "    [--preflight]                 Verify the binding and print the artifact subject without persisting")
 	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  refute <lineage> --input <file>|-   Register the one read-only refuter batch")
+	fmt.Fprintln(os.Stderr, "                                 Every inferential candidate-causal finding must carry a verdict")
+	fmt.Fprintln(os.Stderr, "                                 (refuted|stands) in one shot before finalize")
+	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  validate <lineage>             Validate chain integrity")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  repair <lineage>               Repair a corrupt tail event (truncates to the last valid event)")
 	fmt.Fprintln(os.Stderr, "                                  Mid-chain corruption refuses and names export as the recovery path")
 	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  recover <lineage>              Restore a LOST HEAD from the deepest fully-verified chain")
+	fmt.Fprintln(os.Stderr, "                                  Intact authority is a no-op; mid-chain corruption refuses (never guesses)")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  reclaim <lineage>              Move orphaned manifests/ and receipts/ artifacts to trash/<ts>/")
+	fmt.Fprintln(os.Stderr, "                                  (never deleted; chain events and referenced artifacts untouched)")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  reconcile-authority <lineage>  Verify BigMem mirror topics sdd/<lineage>/review/* against native state")
+	fmt.Fprintln(os.Stderr, "    [--write]                   Refresh missing/stale mirrors from native state")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  dispose-result <lineage> --lens <name> --order <n> [--reason <text>]")
+	fmt.Fprintln(os.Stderr, "                                 Discard a captured lens slot; re-capture is allowed afterwards")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  reopen-results <lineage>       Dispose ALL captured lens slots (bulk re-collection after a scope change)")
+	fmt.Fprintln(os.Stderr, "                                  Finalize refuses until every planned slot is re-captured")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  inspect <lineage> [--json]     Inspect every event in chain order (operation, schema, size, hash)")
+	fmt.Fprintln(os.Stderr, "                                  --json: full summaries; lens_result payloads are never dumped")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  schema [--event <name>]        List review event/artifact schemas, or print one schema's fields")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  retry-final-verification <lineage>")
+	fmt.Fprintln(os.Stderr, "                                 Re-validate terminal state; re-materialize a missing receipt artifact")
+	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  invalidate <lineage> <reason>  Mark the lineage invalidated; gates fail with the reason")
 	fmt.Fprintln(os.Stderr, "  abandon <lineage>              Withdraw the lineage; export/import remain possible")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  quarantine-legacy              NOT implemented: biggz has no legacy quarantine store; preserved")
+	fmt.Fprintln(os.Stderr, "                                 results live plugin-side at <repo>/.git/biggz/preserved-results/,")
+	fmt.Fprintln(os.Stderr, "                                 outside the CLI by design")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  export <lineage>               Export review as JSON")
 	fmt.Fprintln(os.Stderr, "    [--output <file>]           Write to file instead of stdout")
@@ -2517,8 +2568,18 @@ func reviewStatusRun() int {
 		fmt.Printf("Correction Budget: %d lines (max attempts: %d, original changed: %d)\n",
 			st.Budget.CorrectionLines, st.Budget.MaxAttempts, st.Budget.OriginalChangedLines)
 	}
+	if st.RiskTier != "" {
+		fmt.Printf("Risk Tier:      %s\n", st.RiskTier)
+	}
+	if len(st.LensPlan) > 0 {
+		fmt.Printf("Lens Plan:      %s\n", strings.Join(st.LensPlan, ", "))
+	}
 	fmt.Printf("Fix Rounds:     %d/%d\n", st.BudgetCounters.FixRounds, model.MaxFixRounds)
 	fmt.Printf("Scoped Valids:  %d/%d\n", st.BudgetCounters.ScopedValidations, model.MaxScopedValidations)
+	if st.Refutations != nil {
+		fmt.Printf("Refutations:    total %d, refuted %d, stands %d, pending %d\n",
+			st.Refutations.Total, st.Refutations.Refuted, st.Refutations.Stands, st.Refutations.Pending)
+	}
 	return 0
 }
 
@@ -2650,13 +2711,15 @@ func lastOperationStatus(lastOp string) string {
 
 // reviewStartRun handles "biggz review start --subject <file> [--lineage <id>]".
 // The correction budget is derived from the subject's changed lines and frozen
-// into the start_review event payload.
+// into the start_review event payload, alongside the content-based risk tier
+// and the frozen lens plan.
 //
-// Consent gate (Phase C1 parity): zero declared lenses is silent structural
-// readback; any declared lens needs consent. --consent relay prints the typed
-// biggz-ai.review-consent/v1 envelope and exits 0 without creating a lineage;
-// the caller relays it to a human and reruns with --consent granted or
-// --consent declined for the exact frozen candidate. Declined persists
+// Consent gate (Phase D1 parity): the classifier tier decides consent. A
+// low-risk candidate (documentation-only or trivial content) is silent
+// structural readback; medium/high needs consent. --consent relay prints the
+// typed biggz-ai.review-consent/v1 envelope and exits 0 without creating a
+// lineage; the caller relays it to a human and reruns with --consent granted
+// or --consent declined for the exact frozen candidate. Declined persists
 // nothing. An undeclared start on a terminal falls back to relay; headless
 // it errors — a review needing consent never starts silently.
 func reviewStartRun() int {
@@ -2722,9 +2785,19 @@ func reviewStartRun() int {
 		return 1
 	}
 
+	// Classify the subject from the same base/candidate derivation as the
+	// correction budget: paths + line count → tier → frozen lens plan.
+	input, err := review.DeriveRiskInput(subject.Repository, subject.CommitSHA, baseRef)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	tier := review.ClassifyRisk(input.Paths, input.ChangedLines, input.DiffSummary)
+	planned := review.PlanLenses(tier, lenses)
+
 	// Consent gate: nothing is persisted before this point, so a relay or
 	// decline cannot create a lineage.
-	decision, err := review.EvaluateStartConsent(subject, lineageID, lenses, consentValue, interactive)
+	decision, err := review.EvaluateStartConsent(subject, lineageID, input, planned, consentValue, interactive)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -2743,21 +2816,17 @@ func reviewStartRun() int {
 		return 0
 	}
 
-	base, lines, err := review.DeriveOriginalChangedLines(subject.Repository, subject.CommitSHA, baseRef)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
-	}
-	budget, err := review.DeriveCorrectionBudget(lines)
+	budget, err := review.DeriveCorrectionBudget(input.ChangedLines)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 	plan := review.StartEventPayload{
 		Schema: review.ReviewStartEventSchema, Repository: subject.Repository,
-		CommitSHA: subject.CommitSHA, BaseRef: base,
-		OriginalChangedLines: lines, CorrectionBudget: budget,
-		MaxCorrectionAttempts: review.MaxCompactCorrectionAttempts, SelectedLenses: lenses,
+		CommitSHA: subject.CommitSHA, BaseRef: input.BaseTree,
+		OriginalChangedLines: input.ChangedLines, CorrectionBudget: budget,
+		MaxCorrectionAttempts: review.MaxCompactCorrectionAttempts,
+		SelectedLenses:        planned, RiskTier: string(tier), LensPlan: planned,
 	}
 
 	auth := review.NewAuthority("")
@@ -2778,7 +2847,12 @@ func reviewStartRun() int {
 		return 1
 	}
 
-	fmt.Printf("Review started: %s (correction budget: %d lines, base %s)\n", lineageID, budget, base)
+	lensLabel := "none"
+	if len(planned) > 0 {
+		lensLabel = strings.Join(planned, ", ")
+	}
+	fmt.Printf("Review started: %s (correction budget: %d lines, base %s, risk tier: %s, lenses: %s)\n",
+		lineageID, budget, input.BaseTree, tier, lensLabel)
 	return 0
 }
 
@@ -3046,6 +3120,60 @@ func reviewCaptureResultRun() int {
 	return 0
 }
 
+// reviewRefuteRun handles "biggz review refute <lineage> --input <file>|-".
+// Registers the one read-only refuter batch: verdicts for every inferential
+// candidate-causal finding must be supplied in one shot. The outcome JSON
+// mirrors the captured-artifact surface for machine consumption.
+func reviewRefuteRun() int {
+	args := os.Args[3:]
+	var lineageID, input string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--input":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --input requires a value")
+				return 1
+			}
+			i++
+			input = args[i]
+		case "--help", "-h":
+			fmt.Fprintln(os.Stderr, "Usage: biggz review refute <lineage> --input <file>|-")
+			return 0
+		default:
+			if lineageID == "" && !strings.HasPrefix(args[i], "--") {
+				lineageID = args[i]
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
+			fmt.Fprintln(os.Stderr, "Usage: biggz review refute <lineage> --input <file>|-")
+			return 1
+		}
+	}
+	if lineageID == "" || input == "" {
+		fmt.Fprintln(os.Stderr, "error: <lineage> and --input are required")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review refute <lineage> --input <file>|-")
+		return 1
+	}
+
+	payload, err := readReviewerResultInput(input)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	outcome, err := review.Refute("", lineageID, payload)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(outcome); err != nil {
+		fmt.Fprintf(os.Stderr, "error: encoding output: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
 // readReviewerResultInput reads the reviewer result payload from a file, or
 // from stdin when input is "-".
 func readReviewerResultInput(input string) ([]byte, error) {
@@ -3141,6 +3269,361 @@ func reviewRepairRun() int {
 		fmt.Printf("Repaired:  no (%s)\n", report.Detail)
 	}
 	return 0
+}
+
+// reviewRecoverRun handles "biggz review recover <lineage>".
+// Restores a LOST HEAD from the deepest fully-verified chain; a HEAD that
+// exists with an intact chain is a no-op; mid-chain corruption refuses.
+func reviewRecoverRun() int {
+	if len(os.Args) < 4 || os.Args[3] == "--help" || os.Args[3] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review recover <lineage>")
+		return 0
+	}
+	lineageID := os.Args[3]
+
+	report, err := review.Recover("", lineageID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Lineage:   %s\n", report.LineageID)
+	if report.Recovered {
+		fmt.Printf("Recovered: yes (%s)\n", report.Action)
+		fmt.Printf("  HEAD restored to: %s\n", report.HeadHash)
+		fmt.Printf("  Events kept:      %d\n", report.EventCount)
+		fmt.Printf("  Detail:           %s\n", report.Detail)
+	} else {
+		fmt.Printf("Recovered: no (%s)\n", report.Detail)
+	}
+	return 0
+}
+
+// reviewReclaimRun handles "biggz review reclaim <lineage>".
+// Moves orphaned manifests/ and receipts/ artifacts to trash/<ts>/; chain
+// events and referenced artifacts are untouched.
+func reviewReclaimRun() int {
+	if len(os.Args) < 4 || os.Args[3] == "--help" || os.Args[3] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review reclaim <lineage>")
+		return 0
+	}
+	lineageID := os.Args[3]
+
+	report, err := review.Reclaim("", lineageID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Lineage:  %s\n", report.LineageID)
+	if report.Reclaimed == 0 {
+		fmt.Printf("Reclaimed: 0 (%s)\n", report.Detail)
+		return 0
+	}
+	fmt.Printf("Reclaimed: %d artifact(s) moved to %s\n", report.Reclaimed, report.TrashDir)
+	for _, path := range report.Paths {
+		fmt.Printf("  %s\n", path)
+	}
+	fmt.Printf("  %s\n", report.Detail)
+	return 0
+}
+
+// reviewReconcileAuthorityRun handles "biggz review reconcile-authority
+// <lineage> [--write]". Read-only by default; --write refreshes missing/stale
+// BigMem mirror topics from native state.
+func reviewReconcileAuthorityRun() int {
+	args := os.Args[3:]
+	var lineageID string
+	write := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--write":
+			write = true
+		case "--help", "-h":
+			fmt.Fprintln(os.Stderr, "Usage: biggz review reconcile-authority <lineage> [--write]")
+			return 0
+		default:
+			if lineageID == "" && !strings.HasPrefix(args[i], "--") {
+				lineageID = args[i]
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
+			fmt.Fprintln(os.Stderr, "Usage: biggz review reconcile-authority <lineage> [--write]")
+			return 1
+		}
+	}
+	if lineageID == "" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review reconcile-authority <lineage> [--write]")
+		return 1
+	}
+
+	report, err := review.ReconcileAuthority("", lineageID, write)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Lineage:       %s\n", report.LineageID)
+	fmt.Printf("Project:       %s\n", report.Project)
+	fmt.Printf("Chain valid:   %t\n", report.ChainValid)
+	fmt.Printf("BigMem mirrors:\n")
+	for _, topic := range report.Topics {
+		line := fmt.Sprintf("  %-52s %s", topic.Topic, topic.Status)
+		if topic.Detail != "" {
+			line += " (" + topic.Detail + ")"
+		}
+		fmt.Println(line)
+	}
+	if write {
+		fmt.Printf("Refreshed:     %d topic(s) from native state\n", report.Refreshed)
+	} else {
+		fmt.Printf("Refreshed:     0 (read-only; pass --write to refresh missing/stale mirrors)\n")
+	}
+	return 0
+}
+
+// reviewDisposeResultRun handles "biggz review dispose-result <lineage>
+// --lens <name> --order <n> [--reason <text>]". Discards a captured lens slot;
+// re-capture for the slot is allowed afterwards.
+func reviewDisposeResultRun() int {
+	args := os.Args[3:]
+	var lineageID, lensName, reason string
+	order := -1
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--lens":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --lens requires a value")
+				return 1
+			}
+			i++
+			lensName = args[i]
+		case "--order":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --order requires a value")
+				return 1
+			}
+			i++
+			parsed, err := strconv.Atoi(args[i])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: --order must be an integer, got %q\n", args[i])
+				return 1
+			}
+			order = parsed
+		case "--reason":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --reason requires a value")
+				return 1
+			}
+			i++
+			reason = args[i]
+		case "--help", "-h":
+			fmt.Fprintln(os.Stderr, "Usage: biggz review dispose-result <lineage> --lens <name> --order <n> [--reason <text>]")
+			return 0
+		default:
+			if lineageID == "" && !strings.HasPrefix(args[i], "--") {
+				lineageID = args[i]
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
+			fmt.Fprintln(os.Stderr, "Usage: biggz review dispose-result <lineage> --lens <name> --order <n> [--reason <text>]")
+			return 1
+		}
+	}
+	if lineageID == "" || lensName == "" || order < 0 {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review dispose-result <lineage> --lens <name> --order <n> [--reason <text>]")
+		return 1
+	}
+
+	revision, err := review.DisposeResult("", lineageID, lensName, order, reason)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Lens slot disposed: %s order %d (lineage %s, revision %s)\n", lensName, order, lineageID, revision)
+	if reason != "" {
+		fmt.Printf("  Reason: %s\n", reason)
+	}
+	fmt.Println("  Re-capture the slot to supersede the disposal; finalize refuses until then.")
+	return 0
+}
+
+// reviewReopenResultsRun handles "biggz review reopen-results <lineage>".
+// Disposes every captured lens slot in one bulk transition.
+func reviewReopenResultsRun() int {
+	if len(os.Args) < 4 || os.Args[3] == "--help" || os.Args[3] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review reopen-results <lineage>")
+		return 0
+	}
+	lineageID := os.Args[3]
+
+	revision, err := review.ReopenResults("", lineageID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Review reopened: %s (revision %s)\n", lineageID, revision)
+	fmt.Println("  Every captured lens slot is disposed; re-capture all planned slots before finalize.")
+	return 0
+}
+
+// reviewInspectRun handles "biggz review inspect <lineage> [--json]".
+// Lists every event in chain order; lens_result payloads are never dumped.
+func reviewInspectRun() int {
+	args := os.Args[3:]
+	var lineageID string
+	useJSON := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--json":
+			useJSON = true
+		case "--help", "-h":
+			fmt.Fprintln(os.Stderr, "Usage: biggz review inspect <lineage> [--json]")
+			return 0
+		default:
+			if lineageID == "" && !strings.HasPrefix(args[i], "--") {
+				lineageID = args[i]
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
+			fmt.Fprintln(os.Stderr, "Usage: biggz review inspect <lineage> [--json]")
+			return 1
+		}
+	}
+	if lineageID == "" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review inspect <lineage> [--json]")
+		return 1
+	}
+
+	result, err := review.Inspect("", lineageID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	if useJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(result); err != nil {
+			fmt.Fprintf(os.Stderr, "error: encoding output: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+	fmt.Printf("Lineage: %s (head %s, %d event(s))\n", result.LineageID, shortHash(result.HeadHash), result.EventCount)
+	fmt.Printf("%-3s %-22s %-40s %-6s %s\n", "#", "Operation", "Schema", "Size", "Revision")
+	for index, event := range result.Events {
+		detail := ""
+		switch {
+		case event.Lens != "" && event.Order != nil:
+			detail = fmt.Sprintf(" lens=%s order=%d", event.Lens, *event.Order)
+		case event.ReceiptPath != "":
+			detail = " receipt=" + event.ReceiptPath
+		case len(event.DisposedSlots) > 0:
+			detail = fmt.Sprintf(" slots=%d", len(event.DisposedSlots))
+		}
+		fmt.Printf("%-3d %-22s %-40s %-6d %s%s\n", index+1, event.Operation, event.Schema, event.Size, shortHash(event.Revision), detail)
+	}
+	return 0
+}
+
+// reviewSchemaRun handles "biggz review schema [--event <name>]".
+// Lists every event/artifact schema biggz understands, or prints one schema's
+// documented field set.
+func reviewSchemaRun() int {
+	args := os.Args[3:]
+	event := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--event":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --event requires a value")
+				return 1
+			}
+			i++
+			event = args[i]
+		case "--help", "-h":
+			fmt.Fprintln(os.Stderr, "Usage: biggz review schema [--event <name>]")
+			return 0
+		default:
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
+			fmt.Fprintln(os.Stderr, "Usage: biggz review schema [--event <name>]")
+			return 1
+		}
+	}
+	if event != "" {
+		info, err := review.SchemaInfoOf(event)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		fmt.Printf("%s: %s\n", info.Name, info.SchemaID)
+		fmt.Printf("  fields: %s\n", strings.Join(info.Fields, ", "))
+		return 0
+	}
+	fmt.Println("Review event/artifact schemas:")
+	for _, info := range review.SchemaList() {
+		fmt.Printf("  %-18s %s\n", info.Name, info.SchemaID)
+	}
+	fmt.Println()
+	fmt.Printf("Field sets: 'biggz review schema --event <name>' (supported: %s)\n", strings.Join(review.SchemaNames(), ", "))
+	return 0
+}
+
+// reviewRetryFinalVerificationRun handles "biggz review
+// retry-final-verification <lineage>". Re-validates the terminal state and
+// re-materializes a missing receipt artifact from the canonical payloads.
+func reviewRetryFinalVerificationRun() int {
+	if len(os.Args) < 4 || os.Args[3] == "--help" || os.Args[3] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review retry-final-verification <lineage>")
+		return 0
+	}
+	lineageID := os.Args[3]
+
+	report, err := review.RetryFinalVerification("", lineageID)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Lineage:          %s\n", report.LineageID)
+	fmt.Printf("Chain integrity:  %s\n", passFailLabel(report.ChainValid))
+	if report.ReceiptReMaterialized {
+		fmt.Printf("Receipt match:    %s (receipt re-materialized from canonical payloads)\n", passFailLabel(report.ReceiptMatch))
+	} else {
+		fmt.Printf("Receipt match:    %s\n", passFailLabel(report.ReceiptMatch))
+	}
+	if report.ReceiptPath != "" {
+		fmt.Printf("Receipt artifact: %s (hash: %s)\n", report.ReceiptPath, report.ReceiptHash)
+	}
+	for _, reason := range report.Reasons {
+		fmt.Printf("  - %s\n", reason)
+	}
+	fmt.Printf("Result:           %s\n", passFailLabel(report.Passed))
+	if !report.Passed {
+		return 1
+	}
+	return 0
+}
+
+// reviewQuarantineLegacyRun handles "biggz review quarantine-legacy".
+// biggz has no legacy quarantine store by design: preserved reviewer results
+// live plugin-side at <repo>/.git/biggz/preserved-results/ and are outside the
+// CLI. The verb exists only to explain that.
+func reviewQuarantineLegacyRun() int {
+	fmt.Fprintln(os.Stderr, "error: quarantine-legacy is not implemented in biggz: there is no legacy quarantine store; preserved reviewer results live plugin-side at <repo>/.git/biggz/preserved-results/ and are outside the CLI by design")
+	return 1
+}
+
+// passFailLabel renders a bool as PASS/FAIL.
+func passFailLabel(ok bool) string {
+	if ok {
+		return "PASS"
+	}
+	return "FAIL"
+}
+
+// shortHash abbreviates a revision for table output.
+func shortHash(hash string) string {
+	if len(hash) > 12 {
+		return hash[:12]
+	}
+	return hash
 }
 
 // reviewInvalidateRun handles "biggz review invalidate <lineage> <reason>".
@@ -3377,7 +3860,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "  backup create|list|restore Snapshot/restore state")
 	fmt.Fprintln(os.Stderr, "  release status|tag|verify  Version management")
 	fmt.Fprintln(os.Stderr, "  skill-registry refresh     Regenerate skill registry")
-	fmt.Fprintln(os.Stderr, "  review list|status|gate|start|resume|validate|repair|invalidate|abandon|export|import  Review lineage commands")
+	fmt.Fprintln(os.Stderr, "  review list|status|gate|start|resume|validate|repair|recover|reclaim|reconcile-authority|dispose-result|reopen-results|inspect|schema|retry-final-verification|invalidate|abandon|export|import  Review lineage commands")
 	fmt.Fprintln(os.Stderr, "  doctor [--json] [--fix]   Run system health checks")
 	fmt.Fprintln(os.Stderr, "  update [--dry-run]       Update biggz-ai to latest version")
 	fmt.Fprintln(os.Stderr, "  sync [flags]             Deploy skills, config, prompts, and commands")

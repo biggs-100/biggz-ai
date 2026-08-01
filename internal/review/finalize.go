@@ -56,7 +56,10 @@ const EmptyFixDeltaHash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b93
 // StartEventPayload is the extended genesis payload frozen by `review start`.
 // It keeps the ReviewSubject fields (repository, commit_sha) at the top level
 // so legacy readers that unmarshal the genesis into model.ReviewSubject keep
-// working, and adds the derived budget and lens selection.
+// working, and adds the derived budget, the content-based risk tier, and the
+// lens selection. SelectedLenses is the FROZEN lens plan: declared lenses win,
+// otherwise PlanLenses derives it from the risk tier — so next_transition and
+// finalize can rely on the selection without inferring it from captures later.
 type StartEventPayload struct {
 	Schema                string   `json:"schema,omitempty"`
 	Repository            string   `json:"repository"`
@@ -66,11 +69,13 @@ type StartEventPayload struct {
 	CorrectionBudget      int      `json:"correction_budget"`
 	MaxCorrectionAttempts int      `json:"max_correction_attempts"`
 	SelectedLenses        []string `json:"lenses,omitempty"`
+	RiskTier              string   `json:"risk_tier,omitempty"`
+	LensPlan              []string `json:"lens_plan,omitempty"`
 }
 
 // ParseSelectedLenses canonicalizes a comma-separated --lenses value: trim,
 // validate every lens, sort, and deduplicate. An empty value selects nothing
-// (the captured slots then define the selection at finalize).
+// (PlanLenses then derives the frozen selection from the risk tier).
 func ParseSelectedLenses(value string) ([]string, error) {
 	if strings.TrimSpace(value) == "" {
 		return nil, nil
@@ -264,6 +269,12 @@ type ReceiptLensSubject struct {
 // set adapted to biggz, plus genesis_revision and head_revision so the
 // receipt hash can bind the whole lineage. PolicyHash stays empty until gates
 // bind; FixDeltaHash stays at EmptyFixDeltaHash until a correction.
+//
+// Finding routing (machine-enforced refutation): resolved_finding_ids are the
+// findings the refuter batch refuted — they no longer block; standing_finding_ids
+// are the findings that stood — they stay blocking. Deterministic
+// candidate-causal findings are auto-blocking and appear in NEITHER set (only
+// a correction resolves them).
 type PersistedReceipt struct {
 	Schema             string               `json:"schema"`
 	LineageID          string               `json:"lineage_id"`
@@ -281,6 +292,7 @@ type PersistedReceipt struct {
 	SelectedLenses     []string             `json:"selected_lenses"`
 	LensSubjects       []ReceiptLensSubject `json:"lens_subjects"`
 	ResolvedFindingIDs []string             `json:"resolved_finding_ids"`
+	StandingFindingIDs []string             `json:"standing_finding_ids"`
 	TerminalState      string               `json:"terminal_state"`
 	ReceiptHash        string               `json:"receipt_hash"`
 }
@@ -305,6 +317,7 @@ func (r PersistedReceipt) computeHash() string {
 		SelectedLenses     []string             `json:"selected_lenses"`
 		LensSubjects       []ReceiptLensSubject `json:"lens_subjects"`
 		ResolvedFindingIDs []string             `json:"resolved_finding_ids"`
+		StandingFindingIDs []string             `json:"standing_finding_ids"`
 		TerminalState      string               `json:"terminal_state"`
 	}{
 		Schema: r.Schema, LineageID: r.LineageID, Generation: r.Generation,
@@ -313,7 +326,8 @@ func (r PersistedReceipt) computeHash() string {
 		PathsDigest: r.PathsDigest, FixDeltaHash: r.FixDeltaHash, PolicyHash: r.PolicyHash,
 		EvidenceHash: r.EvidenceHash, RiskTier: r.RiskTier,
 		SelectedLenses: r.SelectedLenses, LensSubjects: r.LensSubjects,
-		ResolvedFindingIDs: r.ResolvedFindingIDs, TerminalState: r.TerminalState,
+		ResolvedFindingIDs: r.ResolvedFindingIDs, StandingFindingIDs: r.StandingFindingIDs,
+		TerminalState: r.TerminalState,
 	}
 	payload, _ := json.Marshal(preimage)
 	return domainHash(ReceiptBindingDomain, payload)
@@ -387,6 +401,15 @@ func (r PersistedReceipt) Validate() error {
 	if err != nil || !equalStrings(ids, r.ResolvedFindingIDs) {
 		return errors.New("receipt resolved finding IDs must be canonical")
 	}
+	standing, err := canonicalStrings(r.StandingFindingIDs, "standing finding id")
+	if err != nil || !equalStrings(standing, r.StandingFindingIDs) {
+		return errors.New("receipt standing finding IDs must be canonical")
+	}
+	for _, id := range r.ResolvedFindingIDs {
+		if containsString(r.StandingFindingIDs, id) {
+			return fmt.Errorf("receipt finding %q cannot be both resolved and standing", id)
+		}
+	}
 	if !validSHA256Identity(r.ReceiptHash) || r.ReceiptHash != r.computeHash() {
 		return errors.New("receipt hash does not match the receipt binding")
 	}
@@ -411,10 +434,11 @@ func containsString(values []string, value string) bool {
 	return false
 }
 
-// deriveRiskTier maps the captured lens count to a tier. biggz has no
-// content-based risk classifier yet (gentle-ai's SnapshotBuilder), so the
-// tier is a selection/volume proxy: no lenses → low, one to three → medium,
-// four or more → high.
+// deriveRiskTier is the legacy lens-count tier proxy, kept only as a fallback
+// for lineages frozen before the content-based classifier (their start plan
+// has no risk_tier): no lenses → low, one to three → medium, four or more →
+// high. New lineages carry the classifier tier in the frozen start plan and
+// never reach this fallback.
 func deriveRiskTier(lensCount int) string {
 	switch {
 	case lensCount >= 4:
@@ -479,7 +503,9 @@ type finalizeSlot struct {
 
 // finalizeData is everything derived from the chain + repository that the
 // receipt binds: the frozen candidate trees and manifest, the re-verified
-// captured slots, and the aggregate evidence and finding sets.
+// captured slots, and the aggregate evidence and finding sets. resolvedIDs
+// are the refuted findings; standingIDs are the findings that stood the
+// refuter batch and remain blocking.
 type finalizeData struct {
 	baseTree       string
 	candidateTree  string
@@ -487,6 +513,7 @@ type finalizeData struct {
 	slots          []finalizeSlot
 	evidenceHash   string
 	resolvedIDs    []string
+	standingIDs    []string
 	riskTier       string
 }
 
@@ -626,6 +653,11 @@ func deriveFinalizeData(repo string, chain ValidatedChain, plan StartEventPayloa
 				"finalize: lens slot %q order %d was not captured (admission %s); all selected lens slots must be captured before finalize",
 				payload.Lens, payload.SelectedOrder, payload.AdmissionDecision)
 		}
+		// A capture superseded by a later dispose/reopen is discarded evidence:
+		// it must not count toward parity, evidence hashing, or the receipt.
+		if isSlotSuperseded(chain, index, payload.Lens, payload.SelectedOrder) {
+			continue
+		}
 		slots = append(slots, finalizeSlot{payload: payload})
 	}
 	sort.SliceStable(slots, func(i, j int) bool {
@@ -640,6 +672,19 @@ func deriveFinalizeData(repo string, chain ValidatedChain, plan StartEventPayloa
 		return finalizeData{}, fmt.Errorf("finalize: frozen lens selection is not canonical: %w", err)
 	}
 	if len(declared) > 0 {
+		// A disposed slot in the frozen lens plan without a fresh capture
+		// blocks finalize: the disposition is a discard, never a silent pass.
+		disposed, err := disposedSlots(chain)
+		if err != nil {
+			return finalizeData{}, fmt.Errorf("finalize: slot disposition state: %w", err)
+		}
+		for _, slot := range disposed {
+			if containsString(declared, slot.Lens) {
+				return finalizeData{}, fmt.Errorf(
+					"finalize: lens slot %q order %d is disposed and not re-captured; run 'biggz review capture-result' for that slot again before finalize",
+					slot.Lens, slot.Order)
+			}
+		}
 		if !equalStrings(declared, capturedNames) {
 			missing := stringDifference(declared, capturedNames)
 			if len(missing) > 0 {
@@ -686,18 +731,70 @@ func deriveFinalizeData(repo string, chain ValidatedChain, plan StartEventPayloa
 	if err != nil {
 		return finalizeData{}, err
 	}
-	resolved := make([]string, 0)
-	for _, slot := range slots {
-		resolved = append(resolved, slot.payload.CandidateCausalFindingIDs...)
-	}
-	resolved, err = canonicalStrings(resolved, "resolved finding id")
+	// Machine-enforced refutation (Debt D2 parity with gentle-ai's
+	// ClassifyEvidence/ApplyRefuterOutcomes): severe candidate-causal findings
+	// with inferential evidence must carry a refuter verdict BEFORE finalize;
+	// deterministic findings are auto-blocking and never refutable; unknown or
+	// insufficient evidence escalates and refutation never papers over it.
+	refState, err := collectRefutationState(chain)
 	if err != nil {
-		return finalizeData{}, fmt.Errorf("finalize: candidate-causal finding IDs: %w", err)
+		return finalizeData{}, fmt.Errorf("finalize: refutation state: %w", err)
+	}
+	if refState.batches > 1 {
+		return finalizeData{}, fmt.Errorf(
+			"finalize: lineage carries %d refutation batches; exactly one read-only refuter batch per review", refState.batches)
+	}
+	for _, slot := range slots {
+		for _, finding := range slot.payload.Result.Findings {
+			if !isSevereSeverity(finding.Severity) {
+				continue
+			}
+			switch finding.CausalDisposition {
+			case CausalPreExisting, CausalBaseOnly:
+				continue // follow-ups, never escalated or refuted
+			case CausalUnknown:
+				return finalizeData{}, fmt.Errorf(
+					"finalize: finding [%s] has unknown causal disposition; the lineage must escalate — re-capture the lens before finalize (refutation cannot cover it)",
+					finding.ID)
+			}
+			if finding.EvidenceClass == EvidenceInsufficient {
+				return finalizeData{}, fmt.Errorf(
+					"finalize: finding [%s] has insufficient evidence class; the lineage must escalate — re-capture the lens before finalize (refutation cannot cover it)",
+					finding.ID)
+			}
+		}
+	}
+	if len(refState.requirements) > 0 {
+		covered := make(map[string]struct{}, len(refState.verdicts))
+		for _, verdict := range refState.verdicts {
+			covered[verdict.FindingID] = struct{}{}
+		}
+		pending := stringDifference(refState.requirements, sortedSetKeys(covered))
+		if len(pending) > 0 {
+			return finalizeData{}, fmt.Errorf(
+				"finalize: refutation pending for finding(s): %s; run 'biggz review refute %s --input -' to register the refuter batch before finalize",
+				strings.Join(pending, ", "), chain.LineageID)
+		}
+	}
+	resolved, err := canonicalStrings(refState.refuted, "resolved finding id")
+	if err != nil {
+		return finalizeData{}, fmt.Errorf("finalize: refuted finding IDs: %w", err)
+	}
+	standing, err := canonicalStrings(refState.stands, "standing finding id")
+	if err != nil {
+		return finalizeData{}, fmt.Errorf("finalize: standing finding IDs: %w", err)
+	}
+	// The receipt records the tier the classifier froze at start. Legacy
+	// lineages started before the classifier carry no risk_tier and fall back
+	// to the lens-count proxy so their receipts keep replaying unchanged.
+	riskTier := plan.RiskTier
+	if riskTier == "" {
+		riskTier = deriveRiskTier(len(capturedNames))
 	}
 	return finalizeData{
 		baseTree: baseTree, candidateTree: candidateTree, manifestDigest: manifestDigest,
 		slots: slots, evidenceHash: evidenceHash, resolvedIDs: resolved,
-		riskTier: deriveRiskTier(len(capturedNames)),
+		standingIDs: standing, riskTier: riskTier,
 	}, nil
 }
 
@@ -720,7 +817,8 @@ func buildReceipt(lineageID, genesisRevision, headRevision string, data finalize
 		PathsDigest: data.manifestDigest, FixDeltaHash: EmptyFixDeltaHash,
 		EvidenceHash: data.evidenceHash, RiskTier: data.riskTier,
 		SelectedLenses: sortedUniqueLensNames(data.slots), LensSubjects: subjects,
-		ResolvedFindingIDs: data.resolvedIDs, TerminalState: ReviewReceiptTerminalState,
+		ResolvedFindingIDs: data.resolvedIDs, StandingFindingIDs: data.standingIDs,
+		TerminalState: ReviewReceiptTerminalState,
 	}
 	receipt.ReceiptHash = receipt.computeHash()
 	return receipt

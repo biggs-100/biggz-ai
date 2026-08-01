@@ -750,13 +750,14 @@ func verifyReceiptBinding(receipt PersistedReceipt, binding gateBinding, chain V
 
 // recomputeGateFindings recomputes the finding summary from the captured lens
 // results (A1): candidate-causal finding IDs recorded at admission are
-// blocking unless the receipt (or its fix delta) shows them resolved;
-// pre-existing/base-only dispositions never block; unknown dispositions on a
-// severe finding escalate.
+// blocking unless the receipt (or its fix delta) shows them resolved; refuted
+// findings appear resolved, standing and deterministic findings block; unknown
+// dispositions or insufficient evidence on a severe finding escalate.
 func recomputeGateFindings(chain ValidatedChain, receipt PersistedReceipt) (GateFindingsSummary, []string) {
 	var summary GateFindingsSummary
 	var reasons []string
 	fixDeltaDelivered := receipt.FixDeltaHash != "" && receipt.FixDeltaHash != EmptyFixDeltaHash
+	findingsByID := make(map[string]ArtifactFinding)
 	for index := range chain.Records {
 		rec := &chain.Records[index]
 		if rec.Operation != LensResultOperation {
@@ -767,6 +768,7 @@ func recomputeGateFindings(chain ValidatedChain, receipt PersistedReceipt) (Gate
 			continue
 		}
 		for _, finding := range payload.Result.Findings {
+			findingsByID[finding.ID] = finding
 			if !isSevereSeverity(finding.Severity) {
 				if finding.CausalDisposition == CausalPreExisting || finding.CausalDisposition == CausalBaseOnly {
 					summary.FollowUp++
@@ -777,6 +779,10 @@ func recomputeGateFindings(chain ValidatedChain, receipt PersistedReceipt) (Gate
 			case CausalPreExisting, CausalBaseOnly:
 				summary.FollowUp++
 			case CausalIntroduced, CausalBehaviorActivated, CausalWorsened:
+				if finding.EvidenceClass == EvidenceInsufficient {
+					reasons = append(reasons, fmt.Sprintf(
+						"finding [%s] has insufficient evidence class; the lineage must escalate and re-capture the lens", finding.ID))
+				}
 				// counted below through the candidate-causal set
 			default:
 				reasons = append(reasons, fmt.Sprintf(
@@ -789,8 +795,18 @@ func recomputeGateFindings(chain ValidatedChain, receipt PersistedReceipt) (Gate
 				summary.Resolved++
 			default:
 				summary.Blocking++
-				reasons = append(reasons, fmt.Sprintf(
-					"unresolved finding [%s]: candidate-causal finding is not resolved by the persisted receipt; review it and re-finalize the lineage", id))
+				message := fmt.Sprintf(
+					"unresolved finding [%s]: candidate-causal finding is not resolved by the persisted receipt; review it and re-finalize the lineage", id)
+				finding, known := findingsByID[id]
+				switch {
+				case containsString(receipt.StandingFindingIDs, id):
+					message = fmt.Sprintf(
+						"unresolved finding [%s]: the refuter verdict stands; the finding remains blocking", id)
+				case known && finding.EvidenceClass == EvidenceDeterministic:
+					message = fmt.Sprintf(
+						"unresolved finding [%s]: deterministic finding is auto-blocking and cannot be refuted; resolve it with a correction", id)
+				}
+				reasons = append(reasons, message)
 			}
 		}
 	}
