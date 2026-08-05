@@ -917,6 +917,9 @@ func sddAttemptRun() int {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
+		if status.Scope == sddattempt.ScopeMachine {
+			fmt.Printf("runtime ledger: machine-scoped (no git repository; stored under %s)\n", sddattempt.MachineLedgerDir())
+		}
 		if status.Migrated {
 			fmt.Println("Runtime ledger migrated from the legacy home-dir store (kept untouched).")
 		}
@@ -950,6 +953,9 @@ func sddAttemptRun() int {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
+		if result.Scope == sddattempt.ScopeMachine {
+			fmt.Printf("runtime ledger: machine-scoped (no git repository; stored under %s)\n", sddattempt.MachineLedgerDir())
+		}
 		if result.Migrated {
 			fmt.Println("Runtime ledger migrated from the legacy home-dir store (kept untouched).")
 		}
@@ -978,6 +984,9 @@ func sddAttemptRun() int {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
+		}
+		if result.Scope == sddattempt.ScopeMachine {
+			fmt.Printf("runtime ledger: machine-scoped (no git repository; stored under %s)\n", sddattempt.MachineLedgerDir())
 		}
 		if result.Migrated {
 			fmt.Println("Runtime ledger migrated from the legacy home-dir store (kept untouched).")
@@ -1010,6 +1019,9 @@ func sddAttemptRun() int {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
+		}
+		if result.Scope == sddattempt.ScopeMachine {
+			fmt.Printf("runtime ledger: machine-scoped (no git repository; stored under %s)\n", sddattempt.MachineLedgerDir())
 		}
 		if result.Migrated {
 			fmt.Println("Runtime ledger migrated from the legacy home-dir store (kept untouched).")
@@ -3918,9 +3930,13 @@ func reviewBindSDDRun() int {
 		return 1
 	}
 
-	if err := sdd.BindApprovedReview(changeName, cwd, lineageID, bindingRev); err != nil {
+	scope, err := sdd.BindApprovedReview(changeName, cwd, lineageID, bindingRev)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+	if scope == sddattempt.ScopeMachine {
+		fmt.Printf("runtime ledger: machine-scoped (no git repository; stored under %s)\n", sddattempt.MachineLedgerDir())
 	}
 
 	fmt.Printf("Review %q bound to SDD change %q (revision: %s)\n", lineageID, changeName, bindingRev)

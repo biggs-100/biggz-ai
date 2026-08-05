@@ -1,7 +1,7 @@
-// Clone-scoped CAS runtime ledger store (Phase C2 review-workflow parity).
+// Two-level CAS runtime ledger store (Phase C2 review-workflow parity).
 //
-// The SDD attempt ledger moves out of the home directory into the git common
-// directory, mirroring gentle-ai's clone-scoped sdd-runtime ledger
+// The SDD attempt ledger lives in the git common directory, mirroring
+// gentle-ai's clone-scoped sdd-runtime ledger
 // (internal/sddstatus/runtime_ledger.go) adapted to biggz's snapshot-per-
 // revision records:
 //
@@ -10,6 +10,18 @@
 //	  LOCK                     — exclusive lock file (O_EXCL create/release,
 //	                             reusing the review store's file-lock helper)
 //	  record-<revision>.json   — content-addressed snapshot records
+//
+// Root resolution is two-level (resolveStore): inside a git repository the
+// ledger is clone-scoped as above; when the working directory is NOT a git
+// repository — and only for that failure class (see isNotGitRepoError) — the
+// store falls back to a machine-scoped ledger with the SAME layout and CAS
+// semantics under the home directory:
+//
+//	<home>/.biggz/sdd-runtime-nogit/v1/<change>/
+//
+// The scope is tagged on the Store (Scope: "clone" | "machine") and surfaced
+// on status and operation results so callers can print a notice when
+// operating outside a git repository.
 //
 // Every mutation appends ONE immutable record (a full store snapshot) and
 // advances HEAD. Replay reads the HEAD record and verifies its content
@@ -28,10 +40,10 @@
 // fails verification.
 //
 // Migration: on first access, when the legacy home-dir single-file ledger
-// ~/.biggz/sdd-runtime/v1/<change>.json exists and the clone-scoped store is
-// empty, the legacy content is imported as the initial record. The migration
-// is reported once (Migrated flags on the results) and the legacy file is
-// kept untouched — never deleted.
+// ~/.biggz/sdd-runtime/v1/<change>.json exists and the ledger store (in
+// either scope) is empty, the legacy content is imported as the initial
+// record. The migration is reported once (Migrated flags on the results) and
+// the legacy file is kept untouched — never deleted.
 package sddattempt
 
 import (
@@ -53,11 +65,25 @@ import (
 // holds all runtime ledgers ("biggz/sdd-runtime/v1").
 const runtimeStoreContainer = "biggz"
 
-// Store locates the clone-scoped runtime ledger for one SDD change.
+// Ledger scope tags. The scope is a property of root resolution, not of the
+// ledger content: it is never serialized into the CAS records.
+const (
+	// ScopeClone marks a ledger stored in the git common directory
+	// (biggz/sdd-runtime/v1) — shared by every worktree of the clone.
+	ScopeClone = "clone"
+	// ScopeMachine marks the no-git fallback ledger stored in the home
+	// directory (biggz/sdd-runtime-nogit/v1) when no git repository exists.
+	ScopeMachine = "machine"
+)
+
+// Store locates the runtime ledger for one SDD change. The ledger is
+// clone-scoped (git common dir) when the caller is inside a git repository
+// and machine-scoped (<home>/.biggz/sdd-runtime-nogit) otherwise; see Scope.
 type Store struct {
-	Dir        string // <git-common-dir>/biggz/sdd-runtime/v1/<change>
+	Dir        string // ledger directory, <root>/v1/<change> where <root> depends on the scope
 	Change     string
 	LegacyPath string // legacy home-dir single-file location (migration source)
+	Scope      string // ScopeClone or ScopeMachine
 }
 
 // validateChangeName rejects change names that would escape the ledger
@@ -73,10 +99,16 @@ func validateChangeName(changeName string) error {
 	return nil
 }
 
-// resolveStore locates the ledger store for a change. Outside a git
-// repository the clone-scoped ledger cannot be placed and an error names
-// the requirement. The storeRootOverride redirects both the new and the
-// legacy location for tests.
+// resolveStore locates the ledger store for a change using two-level root
+// resolution:
+//   - clone scope: <git-common-dir>/biggz/sdd-runtime/v1/<change>/ when the
+//     caller is inside a git repository;
+//   - machine scope: <home>/.biggz/sdd-runtime-nogit/v1/<change>/ when the
+//     caller is NOT in a git repository. Only that failure class falls back;
+//     other git failures (permission, missing git binary, ...) fail loudly.
+//
+// The storeRootOverride redirects both the new and the legacy location for
+// tests.
 func resolveStore(changeName, repoRoot string) (Store, error) {
 	if err := validateChangeName(changeName); err != nil {
 		return Store{}, err
@@ -86,6 +118,7 @@ func resolveStore(changeName, repoRoot string) (Store, error) {
 			Dir:        filepath.Join(storeRootOverride, changeName),
 			Change:     changeName,
 			LegacyPath: filepath.Join(storeRootOverride, changeName+".json"),
+			Scope:      ScopeClone,
 		}, nil
 	}
 	home, _ := os.UserHomeDir()
@@ -94,14 +127,34 @@ func resolveStore(changeName, repoRoot string) (Store, error) {
 	}
 	legacyPath := filepath.Join(home, ".biggz", RuntimeDir, RuntimeVersion, changeName+".json")
 
+	store, err := resolveCloneStore(changeName, repoRoot, legacyPath)
+	if err != nil {
+		if !isNotGitRepoError(err) {
+			return Store{}, err
+		}
+		// Not a git repository: fall back to the machine-scoped ledger with
+		// the same layout and CAS semantics (see package comment).
+		return Store{
+			Dir:        filepath.Join(home, ".biggz", RuntimeNoGitDir, RuntimeVersion, changeName),
+			Change:     changeName,
+			LegacyPath: legacyPath,
+			Scope:      ScopeMachine,
+		}, nil
+	}
+	return store, nil
+}
+
+// resolveCloneStore resolves the clone-scoped store inside the git common
+// directory. Any git failure returns an error; callers classify the
+// not-a-git-repository failure class with isNotGitRepoError.
+func resolveCloneStore(changeName, repoRoot, legacyPath string) (Store, error) {
 	args := []string{"rev-parse", "--git-common-dir"}
 	if repoRoot != "" {
 		args = append([]string{"-C", repoRoot}, args...)
 	}
 	out, err := exec.Command("git", args...).Output()
 	if err != nil {
-		return Store{}, fmt.Errorf(
-			"not a git repository: the SDD runtime ledger lives in the git common directory under biggz/sdd-runtime/v1 (the legacy home-dir store at %s stays untouched)", legacyPath)
+		return Store{}, fmt.Errorf("git common-dir discovery failed: %w", err)
 	}
 	commonDir := strings.TrimSpace(string(out))
 	if commonDir == "" {
@@ -118,7 +171,33 @@ func resolveStore(changeName, repoRoot string) (Store, error) {
 		Dir:        filepath.Join(filepath.Clean(commonDir), runtimeStoreContainer, RuntimeDir, RuntimeVersion, changeName),
 		Change:     changeName,
 		LegacyPath: legacyPath,
+		Scope:      ScopeClone,
 	}, nil
+}
+
+// isNotGitRepoError reports whether err is git's "not a git repository"
+// failure class — the ONLY class that falls back to the machine-scoped
+// ledger. Everything else (permission errors, a missing git binary, an
+// unreadable git dir, ...) fails loudly. Classification relies on git's own
+// stderr wording; a localized git producing a different message would fail
+// loudly instead of falling back, which is the safe direction.
+func isNotGitRepoError(err error) bool {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return false
+	}
+	return strings.Contains(strings.ToLower(string(exitErr.Stderr)), "not a git repository")
+}
+
+// MachineLedgerDir returns the container directory of the machine-scoped
+// fallback ledger (<home>/.biggz/sdd-runtime-nogit), under which every
+// fallback change ledger lives keyed by version. It is used for CLI notices.
+func MachineLedgerDir() string {
+	home, _ := os.UserHomeDir()
+	if home == "" {
+		home = "."
+	}
+	return filepath.Join(home, ".biggz", RuntimeNoGitDir)
 }
 
 // replay loads the current ledger state. It returns (nil, false, nil) when

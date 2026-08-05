@@ -306,12 +306,63 @@ func TestCAS_EmbeddedReceiptRevisionMatchesRecord(t *testing.T) {
 	}
 }
 
-func TestStore_OutsideGitRepoFailsClosed(t *testing.T) {
+func TestStore_OutsideGitRepoFallsBackToMachineScope(t *testing.T) {
 	// No storeRootOverride: resolution uses the real git common dir.
-	// A temp dir outside any git repository must fail with a clear error.
+	// Outside a git repository the runtime attempt authority must fall back
+	// to the machine-scoped ledger instead of failing closed.
+	redirectHome(t)
 	dir := t.TempDir()
-	_, err := Status("ch-nogit", dir)
-	if err == nil || !strings.Contains(err.Error(), "git common directory") {
-		t.Fatalf("expected git-common-dir requirement error, got %v", err)
+
+	status, err := Status("ch-nogit", dir)
+	if err != nil {
+		t.Fatalf("Status() error: %v", err)
+	}
+	if status.Scope != ScopeMachine {
+		t.Fatalf("status scope = %q, want %q", status.Scope, ScopeMachine)
+	}
+	if status.NextAction != "begin" {
+		t.Fatalf("status next action = %q, want begin", status.NextAction)
+	}
+
+	begin, err := Begin(BeginParams{ChangeName: "ch-nogit", RepoRoot: dir, WorkUnit: "w"})
+	if err != nil {
+		t.Fatalf("Begin() error: %v", err)
+	}
+	if begin.Scope != ScopeMachine {
+		t.Fatalf("begin scope = %q, want %q", begin.Scope, ScopeMachine)
+	}
+	if begin.ActiveAttempt != 1 {
+		t.Fatalf("active attempt = %d, want 1", begin.ActiveAttempt)
+	}
+
+	finish, err := Finish(FinishParams{ChangeName: "ch-nogit", RepoRoot: dir, ExpectedRev: begin.Revision, Outcome: "passed"})
+	if err != nil {
+		t.Fatalf("Finish() error: %v", err)
+	}
+	if finish.Scope != ScopeMachine {
+		t.Fatalf("finish scope = %q, want %q", finish.Scope, ScopeMachine)
+	}
+	if !finish.Complete {
+		t.Fatal("finish must complete the ledger")
+	}
+
+	status2, err := Status("ch-nogit", dir)
+	if err != nil {
+		t.Fatalf("Status() after finish error: %v", err)
+	}
+	if !status2.Complete || status2.Scope != ScopeMachine {
+		t.Fatalf("status after finish = %+v, want complete + machine scope", status2)
+	}
+
+	// The ledger lives under the machine-scoped fallback dir with the same
+	// layout: HEAD + content-addressed record.
+	storeDir := machineStoreDir(t, "ch-nogit")
+	headData, err := os.ReadFile(filepath.Join(storeDir, "HEAD"))
+	if err != nil {
+		t.Fatalf("read machine-scoped HEAD: %v", err)
+	}
+	head := strings.TrimSpace(string(headData))
+	if _, err := os.Stat(filepath.Join(storeDir, "record-"+head+".json")); err != nil {
+		t.Fatalf("machine-scoped record missing: %v", err)
 	}
 }

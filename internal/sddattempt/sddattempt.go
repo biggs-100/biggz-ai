@@ -30,6 +30,9 @@ import (
 const (
 	// RuntimeDir is the directory name of the runtime ledger container.
 	RuntimeDir = "sdd-runtime"
+	// RuntimeNoGitDir is the directory name of the machine-scoped fallback
+	// ledger container, used when no git repository is present.
+	RuntimeNoGitDir = "sdd-runtime-nogit"
 	// RuntimeVersion is the schema version.
 	RuntimeVersion = "v1"
 )
@@ -190,6 +193,10 @@ type RuntimeStatus struct {
 	// ledger into the clone-scoped store (reported once).
 	Migrated bool `json:"migrated,omitempty"`
 
+	// Scope is the ledger scope: "clone" (git common dir) or "machine"
+	// (no-git home fallback, see ScopeMachine).
+	Scope string `json:"scope,omitempty"`
+
 	// Optional binding info (only when a binding revision is set)
 	BindingRevision  string `json:"binding_revision,omitempty"`
 	BindingLineage   string `json:"binding_lineage,omitempty"`
@@ -214,6 +221,7 @@ func Status(changeName, repoRoot string) (*RuntimeStatus, error) {
 				ChangeName: changeName,
 				NextAction: "begin",
 				Migrated:   false,
+				Scope:      s.Scope,
 			}
 			return nil
 		}
@@ -226,6 +234,7 @@ func Status(changeName, repoRoot string) (*RuntimeStatus, error) {
 			NextAction:       deriveNextAction(store),
 			AttemptCount:     len(store.Attempts),
 			Migrated:         migrated,
+			Scope:            s.Scope,
 			BindingRevision:  store.BindingRevision,
 			BindingLineage:   store.BindingLineage,
 			EvidenceRevision: store.EvidenceRevision,
@@ -280,6 +289,7 @@ type BeginResult struct {
 	ActiveAttempt int    `json:"active_attempt"`
 	AlreadyActive bool   `json:"already_active,omitempty"`
 	Migrated      bool   `json:"migrated,omitempty"`
+	Scope         string `json:"scope,omitempty"`
 }
 
 // Begin starts a new attempt on the change. Returns the attempt ordinal.
@@ -333,7 +343,7 @@ func Begin(params BeginParams) (*BeginResult, error) {
 					BeganAt:     time.Now().UTC().Format(time.RFC3339),
 				}},
 			}
-			outcome := &BeginResult{ActiveAttempt: 1}
+			outcome := &BeginResult{ActiveAttempt: 1, Scope: s.Scope}
 			recordRequest(store, params.RequestID, opBegin, digest, outcome)
 			if params.RequestID != "" {
 				setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
@@ -341,7 +351,7 @@ func Begin(params BeginParams) (*BeginResult, error) {
 			if err := s.commit(store); err != nil {
 				return fmt.Errorf("save store: %w", err)
 			}
-			result = &BeginResult{Revision: store.Revision, ActiveAttempt: 1}
+			result = &BeginResult{Revision: store.Revision, ActiveAttempt: 1, Scope: s.Scope}
 			return nil
 		}
 		store := loaded
@@ -375,6 +385,7 @@ func Begin(params BeginParams) (*BeginResult, error) {
 						Revision:      store.Revision,
 						ActiveAttempt: store.ActiveAttempt,
 						AlreadyActive: true,
+						Scope:         s.Scope,
 					}
 					return nil
 				}
@@ -403,7 +414,7 @@ func Begin(params BeginParams) (*BeginResult, error) {
 			WorkUnit:    params.WorkUnit,
 			BeganAt:     time.Now().UTC().Format(time.RFC3339),
 		})
-		outcome := &BeginResult{ActiveAttempt: nextOrdinal}
+		outcome := &BeginResult{ActiveAttempt: nextOrdinal, Scope: s.Scope}
 		recordRequest(store, params.RequestID, opBegin, digest, outcome)
 		if params.RequestID != "" {
 			setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
@@ -411,13 +422,14 @@ func Begin(params BeginParams) (*BeginResult, error) {
 		if err := s.commit(store); err != nil {
 			return fmt.Errorf("save store: %w", err)
 		}
-		result = &BeginResult{Revision: store.Revision, ActiveAttempt: nextOrdinal}
+		result = &BeginResult{Revision: store.Revision, ActiveAttempt: nextOrdinal, Scope: s.Scope}
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	result.Migrated = migrated
+	result.Scope = s.Scope
 	return result, nil
 }
 
@@ -453,6 +465,7 @@ type FinishResult struct {
 	DecisionRequired  bool   `json:"decision_required,omitempty"`
 	Complete          bool   `json:"complete,omitempty"`
 	Migrated          bool   `json:"migrated,omitempty"`
+	Scope             string `json:"scope,omitempty"`
 }
 
 // Finish closes the current attempt.
@@ -564,6 +577,7 @@ func Finish(params FinishParams) (*FinishResult, error) {
 			RemainingAttempts: remaining,
 			DecisionRequired:  store.DecisionRequired,
 			Complete:          store.Complete,
+			Scope:             s.Scope,
 		}
 		recordRequest(store, params.RequestID, opFinish, digest, outcome)
 		if params.RequestID != "" {
@@ -578,6 +592,7 @@ func Finish(params FinishParams) (*FinishResult, error) {
 			RemainingAttempts: remaining,
 			DecisionRequired:  store.DecisionRequired,
 			Complete:          store.Complete,
+			Scope:             s.Scope,
 		}
 		return nil
 	})
@@ -585,6 +600,7 @@ func Finish(params FinishParams) (*FinishResult, error) {
 		return nil, err
 	}
 	result.Migrated = migrated
+	result.Scope = s.Scope
 	return result, nil
 }
 
@@ -609,6 +625,7 @@ type ResetResult struct {
 	AttemptsReset int    `json:"attempts_reset"`
 	NewStore      bool   `json:"new_store,omitempty"`
 	Migrated      bool   `json:"migrated,omitempty"`
+	Scope         string `json:"scope,omitempty"`
 }
 
 // Reset clears the attempt history and creates a fresh ledger for a new
@@ -648,7 +665,7 @@ func Reset(params ResetParams) (*ResetResult, error) {
 				UpdatedAt:   time.Now().UTC().Format(time.RFC3339),
 				NextAction:  "begin",
 			}
-			outcome := &ResetResult{NewStore: true}
+			outcome := &ResetResult{NewStore: true, Scope: s.Scope}
 			recordRequest(store, params.RequestID, opReset, digest, outcome)
 			if params.RequestID != "" {
 				setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
@@ -656,7 +673,7 @@ func Reset(params ResetParams) (*ResetResult, error) {
 			if err := s.commit(store); err != nil {
 				return fmt.Errorf("save store: %w", err)
 			}
-			result = &ResetResult{Revision: store.Revision, NewStore: true}
+			result = &ResetResult{Revision: store.Revision, NewStore: true, Scope: s.Scope}
 			return nil
 		}
 		store := loaded
@@ -717,7 +734,7 @@ func Reset(params ResetParams) (*ResetResult, error) {
 		}
 
 		store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-		outcome := &ResetResult{AttemptsReset: attemptCount}
+		outcome := &ResetResult{AttemptsReset: attemptCount, Scope: s.Scope}
 		recordRequest(store, params.RequestID, opReset, digest, outcome)
 		if params.RequestID != "" {
 			setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
@@ -729,6 +746,7 @@ func Reset(params ResetParams) (*ResetResult, error) {
 		result = &ResetResult{
 			Revision:      store.Revision,
 			AttemptsReset: attemptCount,
+			Scope:         s.Scope,
 		}
 		return nil
 	})
@@ -736,6 +754,7 @@ func Reset(params ResetParams) (*ResetResult, error) {
 		return nil, err
 	}
 	result.Migrated = migrated
+	result.Scope = s.Scope
 	return result, nil
 }
 
@@ -849,7 +868,9 @@ const HelpText = `SDD Attempt Runtime Ledger — manage attempt budgets for SDD 
 
 The ledger lives in the git common directory (biggz/sdd-runtime/v1/<change>/)
 as content-addressed CAS records; a legacy home-dir ledger is migrated
-automatically on first access (the old file is kept untouched).
+automatically on first access (the old file is kept untouched). Outside a git
+repository the ledger falls back to a machine-scoped store
+(~/.biggz/sdd-runtime-nogit/v1/<change>/) with the same semantics.
 
 Usage:
   biggz sdd-attempt status <change>              — show current attempt state
