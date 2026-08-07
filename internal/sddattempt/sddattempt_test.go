@@ -22,7 +22,7 @@ func setStoreRoot(t *testing.T) string {
 // assert that a replay leaves the committed record unchanged.
 func storeFileBytes(t *testing.T, changeName string) []byte {
 	t.Helper()
-	dir := filepath.Join(storeRootOverride, changeName)
+	dir := filepath.Join(storeRootOverride, RuntimeVersion, changeName)
 	headData, err := os.ReadFile(filepath.Join(dir, "HEAD"))
 	if err != nil {
 		t.Fatalf("read HEAD: %v", err)

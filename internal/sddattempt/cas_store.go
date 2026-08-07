@@ -56,6 +56,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -166,6 +167,49 @@ func validateChangeName(changeName string) error {
 	return nil
 }
 
+// encodedRuntimeChangeNamespace holds identities that cannot be a directory
+// name verbatim. A leading underscore is unreachable for a legacy identity,
+// so the namespace can never collide with a kebab-case change's own ledger.
+const encodedRuntimeChangeNamespace = "_encoded"
+
+// encodedRuntimeChangeDigestWidth is the length of the identity digest suffix
+// (32 hex characters = 128 bits). Narrower and a birthday search over crafted
+// case variants becomes practical, letting two identities share one ledger
+// directory; wider and the leaf stops being addressable on Windows, where an
+// identity at the 96-character limit already crowds the path ceiling.
+const encodedRuntimeChangeDigestWidth = 32
+
+// legacyRuntimeChange matches change identities the ledger has always stored
+// directly at v1/<change>: lowercase letters and digits with single hyphens
+// between them, at most 96 characters. The lowercase-only shape is
+// load-bearing: an uppercase variant would share one directory with its
+// lowercase sibling on a case-insensitive filesystem, which is exactly the
+// collision the encoded namespace exists to prevent.
+var legacyRuntimeChange = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+// legacyRuntimeChangeDir reports whether a change identity is one the runtime
+// ledger has always stored directly at v1/<change>.
+func legacyRuntimeChangeDir(change string) bool {
+	return len(change) <= 96 && legacyRuntimeChange.MatchString(change)
+}
+
+// runtimeChangeLedgerDir derives the ledger directory for a change identity.
+//
+// A legacy kebab-case identity keeps its exact v1/<change> directory, so
+// every attempt chain written by an earlier version stays reachable. Anything
+// else is encoded, because the directory name alone cannot carry the
+// identity: on a case-insensitive filesystem "DEC-X" and "dec-x" would share
+// one directory and silently merge two unrelated attempt chains. Lowercasing
+// makes the path stable across those filesystems and the digest of the
+// verbatim identity keeps the case variants apart.
+func runtimeChangeLedgerDir(base, change string) string {
+	if legacyRuntimeChangeDir(change) {
+		return filepath.Join(base, "v1", change)
+	}
+	digest := sha256Hex([]byte("biggz-ai.sdd-runtime-change-identity/v1\n" + change))
+	return filepath.Join(base, "v1", encodedRuntimeChangeNamespace, strings.ToLower(change)+"-"+digest[:encodedRuntimeChangeDigestWidth])
+}
+
 // resolveStore locates the ledger store for a change using two-level root
 // resolution:
 //   - clone scope: <git-common-dir>/biggz/sdd-runtime/v1/<change>/ when the
@@ -182,7 +226,7 @@ func resolveStore(changeName, repoRoot string) (Store, error) {
 	}
 	if storeRootOverride != "" {
 		return Store{
-			Dir:        filepath.Join(storeRootOverride, changeName),
+			Dir:        runtimeChangeLedgerDir(storeRootOverride, changeName),
 			Change:     changeName,
 			LegacyPath: filepath.Join(storeRootOverride, changeName+".json"),
 			Scope:      ScopeClone,
@@ -202,7 +246,7 @@ func resolveStore(changeName, repoRoot string) (Store, error) {
 		// Not a git repository: fall back to the machine-scoped ledger with
 		// the same layout and CAS semantics (see package comment).
 		return Store{
-			Dir:        filepath.Join(home, ".biggz", RuntimeNoGitDir, RuntimeVersion, changeName),
+			Dir:        runtimeChangeLedgerDir(filepath.Join(home, ".biggz", RuntimeNoGitDir), changeName),
 			Change:     changeName,
 			LegacyPath: legacyPath,
 			Scope:      ScopeMachine,
@@ -235,7 +279,7 @@ func resolveCloneStore(changeName, repoRoot, legacyPath string) (Store, error) {
 		commonDir = filepath.Join(base, commonDir)
 	}
 	return Store{
-		Dir:        filepath.Join(filepath.Clean(commonDir), runtimeStoreContainer, RuntimeDir, RuntimeVersion, changeName),
+		Dir:        runtimeChangeLedgerDir(filepath.Join(filepath.Clean(commonDir), runtimeStoreContainer, RuntimeDir), changeName),
 		Change:     changeName,
 		LegacyPath: legacyPath,
 		Scope:      ScopeClone,

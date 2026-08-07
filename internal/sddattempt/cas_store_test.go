@@ -81,7 +81,7 @@ func TestMigration_ImportsLegacyLedgerOnce(t *testing.T) {
 	}
 
 	// Records now live under the clone-scoped store dir.
-	storeDir := filepath.Join(root, "ch-migrate")
+	storeDir := filepath.Join(root, RuntimeVersion, "ch-migrate")
 	if _, err := os.Stat(filepath.Join(storeDir, "HEAD")); err != nil {
 		t.Fatalf("HEAD missing after migration: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestMigration_RejectsBrokenLegacyLedger(t *testing.T) {
 		t.Fatalf("expected revision-check failure, got %v", err)
 	}
 	// Fail closed: nothing was migrated.
-	if _, statErr := os.Stat(filepath.Join(root, "ch-broken", "HEAD")); !os.IsNotExist(statErr) {
+	if _, statErr := os.Stat(filepath.Join(root, RuntimeVersion, "ch-broken", "HEAD")); !os.IsNotExist(statErr) {
 		t.Fatal("broken legacy ledger must not be migrated")
 	}
 }
@@ -188,7 +188,7 @@ func TestCAS_RecordsAreContentAddressed(t *testing.T) {
 		t.Fatalf("Finish() error: %v", err)
 	}
 
-	storeDir := filepath.Join(storeRootOverride, "ch-cas")
+	storeDir := filepath.Join(storeRootOverride, RuntimeVersion, "ch-cas")
 	entries, err := os.ReadDir(storeDir)
 	if err != nil {
 		t.Fatalf("read store dir: %v", err)
@@ -234,7 +234,7 @@ func TestCAS_TamperedRecordFailsClosed(t *testing.T) {
 	if _, err := Begin(BeginParams{ChangeName: "ch-tamper", RepoRoot: "r", WorkUnit: "w"}); err != nil {
 		t.Fatalf("Begin() error: %v", err)
 	}
-	storeDir := filepath.Join(storeRootOverride, "ch-tamper")
+	storeDir := filepath.Join(storeRootOverride, RuntimeVersion, "ch-tamper")
 	headData, err := os.ReadFile(filepath.Join(storeDir, "HEAD"))
 	if err != nil {
 		t.Fatalf("read HEAD: %v", err)
@@ -278,7 +278,7 @@ func TestCAS_EmbeddedReceiptRevisionMatchesRecord(t *testing.T) {
 
 	// The committed record's embedded receipt outcome must carry the record's
 	// own revision (C1 convergent-replay guarantee).
-	storeDir := filepath.Join(storeRootOverride, "ch-receipt")
+	storeDir := filepath.Join(storeRootOverride, RuntimeVersion, "ch-receipt")
 	headData, err := os.ReadFile(filepath.Join(storeDir, "HEAD"))
 	if err != nil {
 		t.Fatalf("read HEAD: %v", err)
