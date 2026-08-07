@@ -7,8 +7,11 @@ import { join } from "node:path"
 // biggz-ai review transport plugin.
 //
 // Port of gentle-ai's review-result-artifacts plugin adapted to the biggz
-// native CLI. It owns the transport between the orchestrator, the reviewer
-// sub-agent, and `biggz review capture-result`:
+// native CLI. It owns two independent responsibilities that happen to share
+// one OpenCode host:
+//
+//  (1) reviewer transport between the orchestrator, the reviewer sub-agent,
+//      and `biggz review capture-result`:
 //
 //   - tool.execute.before: validates the GENTLE_AI_REVIEW_BINDING literal,
 //     rejects background tasks, runs `capture-result --preflight` to obtain
@@ -26,6 +29,13 @@ import { join } from "node:path"
 //     (exclusive write, never overwrite) and only safe typed diagnostics are
 //     forwarded — never payload contents.
 //
+//  (2) SDD phase task-result handling (isSDDPhase and everything under it):
+//      validates the `<task_result>` envelope of SDD phase sub-agents and,
+//      on failure, stores a per-session terminal GENTLE_AI_SDD_FAILURE handoff
+//      (schemaName biggz-ai.sdd-task-result-failure/v1) that rethrows on any
+//      later launch of the same phase in the same session. Ported from
+//      gentle-ai with the schema name and continuation command adapted.
+//
 // GENTLE_AI_REVIEW_BINDING is adopted verbatim from gentle-ai: it is the
 // de-facto standard literal across both projects, so a binding authored for
 // one transport is recognizable in the other.
@@ -34,6 +44,7 @@ const REVIEW_AGENTS = new Set(["review-risk", "review-readability", "review-reli
 const BINDING = /^GENTLE_AI_REVIEW_BINDING (\{[^\n]+\})(?:\n|$)/
 const TASK_RESULT = /^<task id="[^"\r\n]+" state="completed">\n<task_result>\n([\s\S]*?)\n<\/task_result>\n<\/task>$/
 const TASK_TAG = /<\/?task(?:\s|>)|<\/?task_result>/
+const SDD_PHASES = ["sdd-init", "sdd-explore", "sdd-propose", "sdd-spec", "sdd-design", "sdd-tasks", "sdd-apply", "sdd-verify", "sdd-archive", "sdd-onboard"]
 
 const GIT_COMMIT_SHA = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/
 const SHA256_HEX = /^[a-f0-9]{64}$/
@@ -131,26 +142,79 @@ function parseBinding(prompt: unknown, lens: string): ReviewBinding {
   return value as ReviewBinding
 }
 
-function reviewerResult(output: unknown): string {
-  if (typeof output !== "string" || output.trim() === "") throw new Error("reviewer output must not be empty")
-  const trimmed = output.trim()
+// taskResult unwraps a completed OpenCode task's `<task_result>` envelope.
+// `classification` is attached to the thrown error only when the caller
+// supplies one -- the SDD phase path (below) needs a machine-readable class
+// to build its terminal handoff; the reviewer path has no such consumer and
+// gets a plain error.
+function taskResult(output: unknown, subject: string, classification?: string): string {
+  const fail = (message: string, taskResultClass: string): never => {
+    if (classification) throw Object.assign(new Error(message), { [classification]: taskResultClass })
+    throw new Error(message)
+  }
+  if (typeof output !== "string" || output.trim() === "") {
+    fail(`${subject} output must not be empty`, "empty_result")
+  }
+  const trimmed = (output as string).trim()
   const envelope = TASK_RESULT.exec(trimmed)
   if (!envelope) {
-    if (TASK_TAG.test(trimmed)) throw new Error("reviewer output contains a malformed task result envelope")
+    if (TASK_TAG.test(trimmed)) fail(`${subject} output contains a malformed task result envelope`, "malformed_result")
     return trimmed
   }
   if (envelope[1].trim() === "") {
-    throw Object.assign(new Error("reviewer task result is empty"), { reviewClass: "empty_result" })
+    fail(`${subject} task result is empty`, "empty_result")
   }
   if (TASK_TAG.test(envelope[1])) {
-    throw Object.assign(new Error("reviewer task result contains a nested task envelope"), { reviewClass: "nested_envelope" })
+    fail(`${subject} task result contains a nested task envelope`, "nested_envelope")
   }
   return envelope[1]
 }
 
-function extractionClass(cause: unknown): string | undefined {
-  const value = (cause as { reviewClass?: unknown } | null)?.reviewClass
+// reviewerResult hands back the model's raw final text, classified so the
+// capture path can type the failure it quarantines. Biggz divergence from
+// gentle-ai: the classification here is `reviewClass` (not `sddClass`) and is
+// consumed by preservedCaptureFailure to build typed diagnostics.
+function reviewerResult(output: unknown): string {
+  return taskResult(output, "reviewer", "reviewClass")
+}
+
+function extractionClass(cause: unknown, property: string): string | undefined {
+  const value = (cause as Record<string, unknown> | null)?.[property]
   return typeof value === "string" ? value : undefined
+}
+
+function isSDDPhase(agent: string): boolean {
+  return SDD_PHASES.some((phase) => agent === phase || agent.startsWith(phase + "-"))
+}
+const SDD_TASK_FAILURE_PREFIX = "GENTLE_AI_SDD_FAILURE "
+type SDDTaskFailure = { phase: string, code: string, handoff: string }
+type SDDTaskFailureError = Error & { sddFailure: SDDTaskFailure }
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`
+}
+function sddTaskFailure(phase: string, cwd: string, cause: unknown): SDDTaskFailureError {
+  const classification = extractionClass(cause, "sddClass")
+  const code = classification === "empty_result" ? "sdd_task_result_empty" : "sdd_task_result_malformed"
+  const failure: SDDTaskFailure = {
+    phase,
+    code,
+    handoff: SDD_TASK_FAILURE_PREFIX + JSON.stringify({
+      schemaName: "biggz-ai.sdd-task-result-failure/v1",
+      status: "blocked",
+      code,
+      phase,
+      summary: `${phase} returned no valid task result. Do not retry or advance SDD; inspect the existing artifact state and surface the terminal failure to the user.`,
+      continuation: `biggz sdd-status --cwd ${shellQuote(cwd)} --json`,
+    }),
+  }
+  return Object.assign(
+    new Error(failure.handoff),
+    { sddFailure: failure },
+  ) as SDDTaskFailureError
+}
+
+function captureCwd(worktree: string | undefined, directory: string): string {
+  return worktree || directory
 }
 
 function runNative(cwd: string, args: string[], stdin: string): Promise<string> {
@@ -226,11 +290,13 @@ async function preflightCapture(cwd: string, binding: ReviewBinding): Promise<Re
     return value as unknown as ReviewCapturePreflight
   } catch (cause) {
     // Preflight runs before any reviewer is launched, so the native message
-    // cannot embed reviewer payload content: forward it verbatim.
+    // cannot embed reviewer payload content; it is still scrubbed (never
+    // forwarded verbatim) because native failures can quote absolute paths,
+    // environment assignments, or emails the transcript must not carry.
     const scope = binding.repository_context ? "the provider-issued repository context" : cwd
     throw new Error(
       `review capture preflight failed for lens ${binding.lens} under ${scope}: ` +
-      `${errorMessage(cause)}. ` +
+      `${scrubbedCause(cause)}. ` +
       `The reviewer was not launched, so its exactly-once invocation is preserved. ` +
       `Relaunch the lens from the repository that owns lineage ${binding.lineage} ` +
       `(biggz resolves the repository from the working directory).`,
@@ -270,6 +336,33 @@ async function injectReviewerContext(prompt: string, lens: string, cwd: string):
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
+}
+
+// The privacy gate a forwarded cause passes through. It mirrors gentle-ai's
+// reviewScrubDefectReportField (internal/cli/review_defect_report.go field for
+// field) -- same three patterns, same marker, same first-line-only rule --
+// because the plugin cannot call into Go and the two surfaces must redact the
+// same things. The native side scrubs what it forwards; this scrubs what the
+// native side did not author, such as an OS-level spawn failure.
+const REDACTION_MARKER = "<redacted>"
+const ENV_ASSIGNMENT = /\b[A-Z][A-Z0-9_]{2,}=\S+/g
+const EMAIL_ADDRESS = /[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g
+const ABSOLUTE_PATH = /(?:[A-Za-z]:)?[\\/][^\s"'`]+/g
+// Bounds a cause bound for a session transcript. Native failures can quote
+// reviewer payload fragments, so this is a limit, not a formatting preference.
+const CAUSE_LIMIT = 512
+
+function scrubText(value: string): string {
+  const scrubbed = value.split("\n", 1)[0]
+    .replace(ENV_ASSIGNMENT, REDACTION_MARKER)
+    .replace(EMAIL_ADDRESS, REDACTION_MARKER)
+    .replace(ABSOLUTE_PATH, REDACTION_MARKER)
+    .trim()
+  return scrubbed.length > CAUSE_LIMIT ? `${scrubbed.slice(0, CAUSE_LIMIT)} (truncated)` : scrubbed
+}
+
+function scrubbedCause(cause: unknown): string {
+  return scrubText(errorMessage(cause))
 }
 
 // ADMISSION_REJECTION matches the typed decision the native CLI emits when it
@@ -326,7 +419,7 @@ async function preservedCaptureFailure(
   }
   preserveAttempts.set(sessionID, attempts + 1)
   const decision = admissionDecision(cause)
-  const classLabel = extractionClass(cause)
+  const classLabel = extractionClass(cause, "reviewClass")
   const typed = decision
     ? `reviewer artifact admission ${decision}`
     : classLabel
@@ -354,15 +447,29 @@ async function preservedCaptureFailure(
 
 const ReviewResultArtifactsPlugin: Plugin = async ({ directory, worktree }) => {
   const preserveAttempts: Map<string, number> = new Map()
+  const failedSDDSessions = new Map<string, SDDTaskFailure>()
   const cwd = worktree || directory
   return {
-    dispose: async () => { preserveAttempts.clear() },
+    dispose: async () => { preserveAttempts.clear(); failedSDDSessions.clear() },
     event: async ({ event }) => {
-      if (event.type === "session.deleted") preserveAttempts.delete(event.properties.info.id)
+      if (event.type === "session.deleted") {
+        preserveAttempts.delete(event.properties.info.id)
+        failedSDDSessions.delete(event.properties.info.id)
+      }
     },
     "tool.execute.before": async (input, output) => {
-      if (input.tool !== "task" || typeof output.args?.subagent_type !== "string" ||
-          !REVIEW_AGENTS.has(output.args.subagent_type)) return
+      if (input.tool !== "task" || typeof output.args?.subagent_type !== "string") return
+      const subagent = output.args.subagent_type
+      if (isSDDPhase(subagent)) {
+        // A session that already produced a terminal SDD failure must never
+        // relaunch the phase: the handoff is rethrown verbatim.
+        const failure = failedSDDSessions.get(input.sessionID)
+        if (failure) {
+          throw new Error(failure.handoff)
+        }
+        return
+      }
+      if (!REVIEW_AGENTS.has(subagent)) return
       if (typeof output.args.prompt !== "string") {
         throw new Error("review task is missing GENTLE_AI_REVIEW_BINDING")
       }
@@ -376,7 +483,19 @@ const ReviewResultArtifactsPlugin: Plugin = async ({ directory, worktree }) => {
       )
     },
     "tool.execute.after": async (input, output) => {
-      if (input.tool !== "task" || typeof input.args?.subagent_type !== "string" || !REVIEW_AGENTS.has(input.args.subagent_type)) return
+      if (input.tool !== "task" || typeof input.args?.subagent_type !== "string") return
+      const subagent = input.args.subagent_type
+      if (isSDDPhase(subagent)) {
+        try {
+          taskResult(output.output, "SDD phase", "sddClass")
+        } catch (cause) {
+          const failure = sddTaskFailure(subagent, captureCwd(worktree, directory), cause)
+          failedSDDSessions.set(input.sessionID, failure.sddFailure)
+          throw failure
+        }
+        return
+      }
+      if (!REVIEW_AGENTS.has(subagent)) return
       if (typeof input.args.prompt !== "string" || !BINDING.test(input.args.prompt)) return
       const lens = input.args.subagent_type.slice("review-".length)
       const binding = parseBinding(input.args.prompt, lens)

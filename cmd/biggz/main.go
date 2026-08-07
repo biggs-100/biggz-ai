@@ -597,12 +597,39 @@ func installRun() int {
 
 // sddStatusRun handles the "biggz sdd-status" subcommand.
 // It scans the openspec/changes directory and reports active/archived changes.
+// Usage: biggz sdd-status [--cwd <dir>] [--json]
+//   --json emits the sdd.Status payload (active + archived + review_disabled)
+//   as JSON, consumed by the SDD phase failure handoff
+//   (biggz-ai.sdd-task-result-failure/v1 continuation command).
 func sddStatusRun() int {
 	// Look for openspec/ relative to the current working dir
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
+	args := os.Args[2:]
+	emitJSON := false
+	cwd := ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--json":
+			emitJSON = true
+		case "--cwd":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --cwd requires a directory")
+				return 1
+			}
+			i++
+			cwd = args[i]
+		default:
+			fmt.Fprintf(os.Stderr, "error: unknown flag %s\n", args[i])
+			return 1
+		}
+	}
+
+	var err error
+	if cwd == "" {
+		cwd, err = os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 	}
 
 	openspecRoot := filepath.Join(cwd, "openspec")
@@ -625,6 +652,21 @@ func sddStatusRun() int {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+
+	if emitJSON {
+		payload := struct {
+			Active         []sdd.ChangeStatus `json:"active"`
+			Archived       []sdd.ChangeStatus `json:"archived"`
+			ReviewDisabled bool               `json:"review_disabled"`
+		}{Active: active, Archived: archived, ReviewDisabled: reviewDisabled}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(payload); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	fmt.Print(sdd.FormatStatus(active, archived, sdd.StatusOptions{ReviewDisabled: reviewDisabled}))
