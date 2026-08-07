@@ -29,3 +29,6 @@ Thumbs.db
 
 .biggz/
 coverage/
+/coverage
+# Untracked sync export from agent sync runs (user data, not referenced by code)
+/bg-sync/

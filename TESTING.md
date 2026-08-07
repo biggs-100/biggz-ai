@@ -116,9 +116,8 @@ biggz sdd-status
 ## 5. Recovery Trace
 
 ```powershell
-# Generate a recovery ledger
-echo '[{"kind":"issue","number":1,"title":"test"},{"kind":"pull_request","number":1,"title":"test PR"}]' | Set-Content test-backlog.json
-biggz recovery generate test-backlog.json --name "test-recovery"
+# Generate a recovery ledger from the sample fixture
+biggz recovery generate testdata/recovery/test-backlog.json --name "test-recovery"
 
 # List ledgers
 biggz recovery list
