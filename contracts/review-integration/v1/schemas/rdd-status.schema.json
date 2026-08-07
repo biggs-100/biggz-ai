@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/rdd-status.schema.json",
+  "title": "Biggz AI RDD kill-switch status report",
+  "description": "The `biggz rdd status` report: the effective review mode and its three scope layers (global, clone, worktree), which scope supplied the effective value, when it was recorded, and how many worktrees contribute.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "effective_mode", "global_mode", "clone_mode", "worktree_mode", "source", "recorded_at"],
+  "properties": {
+    "schema": {"const": "biggz-ai.rdd-status/v1"},
+    "effective_mode": {"$ref": "#/$defs/mode"},
+    "global_mode": {"$ref": "#/$defs/mode"},
+    "clone_mode": {"$ref": "#/$defs/mode"},
+    "worktree_mode": {"$ref": "#/$defs/mode"},
+    "source": {"type": "string", "minLength": 1},
+    "recorded_at": {"anyOf": [{"type": "null"}, {"type": "string", "minLength": 1}]},
+    "worktree_count": {"type": "integer", "minimum": 0}
+  },
+  "$defs": {
+    "mode": {"enum": ["", "enabled", "disabled"]}
+  }
+}

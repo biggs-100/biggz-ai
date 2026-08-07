@@ -1,0 +1,36 @@
+{
+  "schema": "biggz-ai.review-receipt/v1",
+  "lineage_id": "lineage-receipt-001",
+  "generation": 1,
+  "genesis_revision": "e65de71b53917f0c0b6843d8ed3ad6e81ca824de7768f9f1e68f54ff523acbb5",
+  "head_revision": "c1735848f238c6ae8be8c79226a1708410ec43e299361ffd7ed41a1b296bb72d",
+  "base_tree": "752b556a42ff0d908a4cb28c6ee18d36ad0693d5",
+  "initial_review_tree": "697a0e58843a617630803f877976766d8625ee9a",
+  "final_candidate_tree": "51264f57aba810997fa870837e1857332d30de55",
+  "paths_digest": "sha256:97e11a0510fa69d9e235de0979d1fbeb5fc4ddf4ae2e82ae769cf468221e5f24",
+  "fix_delta_hash": "sha256:6e48bf97f615974c825b185f17eeadc64b6d31d6f525412b7e804c3d9be379c7",
+  "policy_hash": "",
+  "evidence_hash": "sha256:ce2f654eb9114ffb3474989a5908dfef40d268057bb52c53005d155b9ab6c880",
+  "risk_tier": "medium",
+  "selected_lenses": ["readability", "risk"],
+  "lens_subjects": [
+    {
+      "lens": "risk",
+      "order": 0,
+      "subject_hash": "sha256:d8c38bc48a94fcf416659327cf2110d0e9567c72e744941c962d0ea5c8a8db62",
+      "result_hash": "sha256:7010c467a3f25e1e80da89dc8f7994d5fb70ec142a2806c0f52a49444f6c4fe5",
+      "manifest_path": "manifests/61cb3fffc187eeb1e1293ddd8f450a0bcaeabf0dfa81df1d20569c19b3f49d53.json"
+    },
+    {
+      "lens": "readability",
+      "order": 1,
+      "subject_hash": "sha256:d8c38bc48a94fcf416659327cf2110d0e9567c72e744941c962d0ea5c8a8db62",
+      "result_hash": "sha256:7010c467a3f25e1e80da89dc8f7994d5fb70ec142a2806c0f52a49444f6c4fe5",
+      "manifest_path": "manifests/61cb3fffc187eeb1e1293ddd8f450a0bcaeabf0dfa81df1d20569c19b3f49d53.json"
+    }
+  ],
+  "resolved_finding_ids": ["R1-001"],
+  "standing_finding_ids": ["R1-002"],
+  "terminal_state": "completed",
+  "receipt_hash": "sha256:54625c63114360a6c7fbcc077faf5b0f0572588aa9fd7883537e7069eaaa3edc"
+}

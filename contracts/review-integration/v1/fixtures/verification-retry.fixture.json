@@ -1,0 +1,11 @@
+{
+  "schema": "biggz-ai.review-verification-retry/v1",
+  "lineage_id": "lineage-retry-001",
+  "passed": true,
+  "chain_valid": true,
+  "receipt_match": true,
+  "receipt_re_materialized": false,
+  "receipt_path": "receipts/54625c63114360a6c7fbcc077faf5b0f0572588aa9fd7883537e7069eaaa3edc.json",
+  "receipt_hash": "sha256:54625c63114360a6c7fbcc077faf5b0f0572588aa9fd7883537e7069eaaa3edc",
+  "reasons": []
+}

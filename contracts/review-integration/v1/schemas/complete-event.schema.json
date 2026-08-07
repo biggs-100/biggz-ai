@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/complete-event.schema.json",
+  "title": "Biggz AI complete_review event payload",
+  "description": "The durable complete_review event payload: a reference to the persisted receipt artifact. The receipt itself binds the pre-finalize head, so the event and the receipt are mutually non-circular.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "receipt_path", "receipt_hash"],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-complete-event/v1"},
+    "receipt_path": {"type": "string", "minLength": 1},
+    "receipt_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

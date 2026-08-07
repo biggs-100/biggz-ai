@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/contract.schema.json",
+  "title": "Biggz AI negotiated review-integration contract envelope",
+  "description": "The ONLY routing authority of the negotiated flow: schema, lineage, and exactly one typed next_transition. The envelope deliberately carries no raw status field. Exactly one of collect (inputs), execute (operation + arguments), or stop (reason_code) is present, enforced with allOf + if/then, mirroring gentle-ai's v2 status if/then discipline.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "lineage", "next_transition"],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-integration/v1"},
+    "lineage": {"type": "string", "minLength": 1},
+    "next_transition": {"$ref": "#/$defs/next_transition"}
+  },
+  "$defs": {
+    "sha256_hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "git_sha": {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"},
+    "lens": {"enum": ["risk", "readability", "reliability", "resilience", "performance", "dependencies"]},
+    "next_transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {"enum": ["collect", "execute", "stop"]},
+        "operation": {"type": "string", "minLength": 1},
+        "arguments": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "reason_code": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+        "inputs": {
+          "type": "object",
+          "additionalProperties": false,
+          "propertyNames": {"const": "capture"},
+          "required": ["capture"],
+          "properties": {"capture": {"$ref": "#/$defs/contract_capture_input"}}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"type": {"const": "collect"}}, "required": ["type"]},
+          "then": {
+            "required": ["inputs"],
+            "not": {"anyOf": [{"required": ["operation"]}, {"required": ["arguments"]}, {"required": ["reason_code"]}]}
+          },
+          "else": {"not": {"required": ["inputs"]}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "execute"}}, "required": ["type"]},
+          "then": {
+            "required": ["operation", "arguments"],
+            "not": {"anyOf": [{"required": ["inputs"]}, {"required": ["reason_code"]}]}
+          },
+          "else": {"not": {"required": ["operation"]}}
+        },
+        {
+          "if": {"properties": {"type": {"const": "stop"}}, "required": ["type"]},
+          "then": {
+            "required": ["reason_code"],
+            "not": {"anyOf": [{"required": ["operation"]}, {"required": ["arguments"]}, {"required": ["inputs"]}]}
+          }
+        }
+      ]
+    },
+    "contract_capture_input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lineage", "target", "lens", "order", "expected_revision"],
+      "properties": {
+        "lineage": {"type": "string", "minLength": 1},
+        "target": {"$ref": "#/$defs/git_sha"},
+        "lens": {"$ref": "#/$defs/lens"},
+        "order": {"type": "integer", "minimum": 0},
+        "expected_revision": {"$ref": "#/$defs/sha256_hex"},
+        "repository_context": {"$ref": "#/$defs/repository_context"}
+      }
+    },
+    "repository_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "project"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "project": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

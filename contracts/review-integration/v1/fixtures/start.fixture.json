@@ -1,0 +1,12 @@
+{
+  "schema": "biggz-ai.review-start-event/v1",
+  "repository": "C:/Users/dev/acme",
+  "commit_sha": "dba504c5ef0ecb92a006074854ac94a380fa26fe",
+  "base_ref": "752b556a42ff0d908a4cb28c6ee18d36ad0693d5",
+  "original_changed_lines": 5,
+  "correction_budget": 3,
+  "max_correction_attempts": 1,
+  "lenses": ["risk", "readability"],
+  "risk_tier": "medium",
+  "lens_plan": ["risk", "readability"]
+}

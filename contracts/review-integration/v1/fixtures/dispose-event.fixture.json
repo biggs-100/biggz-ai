@@ -1,0 +1,6 @@
+{
+  "schema": "biggz-ai.review-dispose-event/v1",
+  "lens": "readability",
+  "order": 1,
+  "reason": "review scope changed: the manifest no longer contains this path"
+}

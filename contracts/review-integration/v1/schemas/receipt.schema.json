@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/receipt.schema.json",
+  "title": "Biggz AI persisted review receipt",
+  "description": "The full terminal receipt materialized by finalize under receipts/<sha256>.json: the binding hashes (genesis/head revisions, trees, paths, fix delta, policy, evidence), the frozen lens plan and captured lens subjects, the refuter finding routing, and the self-binding receipt hash.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "lineage_id",
+    "generation",
+    "genesis_revision",
+    "head_revision",
+    "base_tree",
+    "initial_review_tree",
+    "final_candidate_tree",
+    "paths_digest",
+    "fix_delta_hash",
+    "policy_hash",
+    "evidence_hash",
+    "risk_tier",
+    "selected_lenses",
+    "lens_subjects",
+    "resolved_finding_ids",
+    "standing_finding_ids",
+    "terminal_state",
+    "receipt_hash"
+  ],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-receipt/v1"},
+    "lineage_id": {"type": "string", "minLength": 1},
+    "generation": {"type": "integer", "minimum": 1},
+    "genesis_revision": {"$ref": "#/$defs/sha256_hex"},
+    "head_revision": {"$ref": "#/$defs/sha256_hex"},
+    "base_tree": {"$ref": "#/$defs/git_tree"},
+    "initial_review_tree": {"$ref": "#/$defs/git_tree"},
+    "final_candidate_tree": {"$ref": "#/$defs/git_tree"},
+    "paths_digest": {"$ref": "#/$defs/sha256"},
+    "fix_delta_hash": {"$ref": "#/$defs/sha256"},
+    "policy_hash": {"anyOf": [{"const": ""}, {"$ref": "#/$defs/sha256"}]},
+    "evidence_hash": {"$ref": "#/$defs/sha256"},
+    "risk_tier": {"enum": ["low", "medium", "high"]},
+    "selected_lenses": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/lens"}
+    },
+    "lens_subjects": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/lens_subject"}
+    },
+    "resolved_finding_ids": {"type": "array", "items": {"$ref": "#/$defs/finding_id"}},
+    "standing_finding_ids": {"type": "array", "items": {"$ref": "#/$defs/finding_id"}},
+    "terminal_state": {"const": "completed"},
+    "receipt_hash": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "sha256_hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "git_tree": {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"},
+    "lens": {"enum": ["risk", "readability", "reliability", "resilience", "performance", "dependencies"]},
+    "finding_id": {"type": "string", "pattern": "^R[1-6]-[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "lens_subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lens", "order", "subject_hash", "result_hash"],
+      "properties": {
+        "lens": {"$ref": "#/$defs/lens"},
+        "order": {"type": "integer", "minimum": 0},
+        "subject_hash": {"$ref": "#/$defs/sha256"},
+        "result_hash": {"$ref": "#/$defs/sha256"},
+        "manifest_path": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

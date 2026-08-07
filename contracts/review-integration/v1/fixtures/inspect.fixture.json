@@ -1,0 +1,33 @@
+{
+  "schema": "biggz-ai.review-inspect/v1",
+  "lineage_id": "lineage-inspect-001",
+  "head_hash": "c1735848f238c6ae8be8c79226a1708410ec43e299361ffd7ed41a1b296bb72d",
+  "genesis_hash": "e65de71b53917f0c0b6843d8ed3ad6e81ca824de7768f9f1e68f54ff523acbb5",
+  "event_count": 2,
+  "events": [
+    {
+      "revision": "e65de71b53917f0c0b6843d8ed3ad6e81ca824de7768f9f1e68f54ff523acbb5",
+      "operation": "start_review",
+      "schema": "biggz-ai.review-start-event/v1",
+      "role": "Reviewer",
+      "actor": "Reviewer",
+      "timestamp": "2026-08-07T10:14:30.123456789Z",
+      "prev_revision": "",
+      "size": 412
+    },
+    {
+      "revision": "c1735848f238c6ae8be8c79226a1708410ec43e299361ffd7ed41a1b296bb72d",
+      "operation": "lens_result",
+      "schema": "biggz-ai.review-lens-result-event/v1",
+      "role": "Reviewer",
+      "actor": "Reviewer",
+      "timestamp": "2026-08-07T10:15:30.123456789Z",
+      "prev_revision": "e65de71b53917f0c0b6843d8ed3ad6e81ca824de7768f9f1e68f54ff523acbb5",
+      "size": 1512,
+      "subject_hash": "sha256:d8c38bc48a94fcf416659327cf2110d0e9567c72e744941c962d0ea5c8a8db62",
+      "lens": "risk",
+      "order": 0,
+      "manifest_path": "manifests/61cb3fffc187eeb1e1293ddd8f450a0bcaeabf0dfa81df1d20569c19b3f49d53.json"
+    }
+  ]
+}

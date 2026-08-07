@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/dispose-event.schema.json",
+  "title": "Biggz AI dispose event payload",
+  "description": "The durable `dispose` event payload appended by `biggz review dispose-result <lineage> --lens <name> --order <n>`: the lens slot discarded plus the optional audit reason.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "lens", "order"],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-dispose-event/v1"},
+    "lens": {"enum": ["risk", "readability", "reliability", "resilience", "performance", "dependencies"]},
+    "order": {"type": "integer", "minimum": 0},
+    "reason": {"type": "string", "minLength": 1}
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "schema": "biggz-ai.review-refutation-event/v1",
+  "lineage_id": "lineage-refute-001",
+  "verdicts": [
+    {
+      "finding_id": "R1-001",
+      "verdict": "refuted",
+      "evidence": "The cited function guards the path before any token is read."
+    },
+    {
+      "finding_id": "R1-002",
+      "verdict": "stands",
+      "evidence": "The reproducer still reaches the unguarded branch on empty input."
+    }
+  ]
+}

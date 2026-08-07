@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/withdraw-event.schema.json",
+  "title": "Biggz AI withdraw event payload",
+  "description": "The durable `withdraw` event payload appended by `biggz review abandon <lineage>`: the schema marker alone — the withdraw event carries no payload fields.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema"],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-withdraw-event/v1"}
+  }
+}

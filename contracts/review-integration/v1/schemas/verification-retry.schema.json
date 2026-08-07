@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/verification-retry.schema.json",
+  "title": "Biggz AI final verification retry report",
+  "description": "The outcome of `biggz review retry-final-verification <lineage>`: chain validity plus the persisted-receipt match, including whether the missing receipt was re-materialized from the canonical payloads.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "lineage_id", "passed", "chain_valid", "receipt_match", "receipt_re_materialized", "reasons"],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-verification-retry/v1"},
+    "lineage_id": {"type": "string", "minLength": 1},
+    "passed": {"type": "boolean"},
+    "chain_valid": {"type": "boolean"},
+    "receipt_match": {"type": "boolean"},
+    "receipt_re_materialized": {"type": "boolean"},
+    "receipt_path": {"type": "string", "minLength": 1},
+    "receipt_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "reasons": {"type": "array", "items": {"type": "string", "minLength": 1}}
+  }
+}

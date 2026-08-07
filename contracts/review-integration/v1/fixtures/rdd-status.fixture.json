@@ -1,0 +1,9 @@
+{
+  "schema": "biggz-ai.rdd-status/v1",
+  "effective_mode": "enabled",
+  "global_mode": "enabled",
+  "clone_mode": "",
+  "worktree_mode": "",
+  "source": "global",
+  "recorded_at": "2026-08-07T10:15:30Z"
+}

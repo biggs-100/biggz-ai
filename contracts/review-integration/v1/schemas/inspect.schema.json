@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/inspect.schema.json",
+  "title": "Biggz AI review inspect report",
+  "description": "The per-event inspection of a lineage in chain order (`biggz review inspect`): revisions, operations, payload schemas, roles, and the selective surfaces of lens_result/complete_review/dispose/reopen payloads. Payloads are never dumped.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "lineage_id", "head_hash", "genesis_hash", "event_count", "events"],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-inspect/v1"},
+    "lineage_id": {"type": "string", "minLength": 1},
+    "head_hash": {"$ref": "#/$defs/sha256_hex"},
+    "genesis_hash": {"$ref": "#/$defs/sha256_hex"},
+    "event_count": {"type": "integer", "minimum": 0},
+    "events": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/event_summary"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "sha256_hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "lens": {"enum": ["risk", "readability", "reliability", "resilience", "performance", "dependencies"]},
+    "event_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "operation", "schema", "role", "actor", "timestamp", "prev_revision", "size"],
+      "properties": {
+        "revision": {"$ref": "#/$defs/sha256_hex"},
+        "operation": {"type": "string", "minLength": 1},
+        "schema": {"type": "string"},
+        "role": {"type": "string", "minLength": 1},
+        "actor": {"type": "string", "minLength": 1},
+        "timestamp": {"type": "string", "minLength": 1},
+        "prev_revision": {"anyOf": [{"const": ""}, {"$ref": "#/$defs/sha256_hex"}]},
+        "size": {"type": "integer", "minimum": 0},
+        "subject_hash": {"$ref": "#/$defs/sha256"},
+        "lens": {"$ref": "#/$defs/lens"},
+        "order": {"type": "integer", "minimum": 0},
+        "manifest_path": {"type": "string", "minLength": 1},
+        "receipt_path": {"type": "string", "minLength": 1},
+        "receipt_hash": {"$ref": "#/$defs/sha256"},
+        "reason": {"type": "string", "minLength": 1},
+        "disposed_slots": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/slot"}
+        }
+      }
+    },
+    "slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lens", "order"],
+      "properties": {
+        "lens": {"$ref": "#/$defs/lens"},
+        "order": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

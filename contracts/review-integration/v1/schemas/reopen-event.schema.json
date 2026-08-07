@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/reopen-event.schema.json",
+  "title": "Biggz AI reopen event payload",
+  "description": "The durable `reopen` event payload appended by `biggz review reopen-results <lineage>`: the complete list of captured lens slots the bulk disposition discards.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "slots"],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-reopen-event/v1"},
+    "slots": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/slot"}
+    }
+  },
+  "$defs": {
+    "slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lens", "order"],
+      "properties": {
+        "lens": {"enum": ["risk", "readability", "reliability", "resilience", "performance", "dependencies"]},
+        "order": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

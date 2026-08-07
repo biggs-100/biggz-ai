@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/rdd-consent.schema.json",
+  "title": "Biggz AI one-time RDD consent record",
+  "description": "The immutable one-time consent record persisted as <git-dir>/biggz/rdd-mode/asked.json: a schema marker alone.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema"],
+  "properties": {
+    "schema": {"const": "biggz-ai.rdd-consent/v1"}
+  }
+}

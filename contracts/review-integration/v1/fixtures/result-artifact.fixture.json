@@ -1,0 +1,14 @@
+{
+  "schema": "biggz-ai.review-result-artifact/v1",
+  "lineage_id": "lineage-result-001",
+  "target_identity": "dba504c5ef0ecb92a006074854ac94a380fa26fe",
+  "lens": "risk",
+  "selected_order": 0,
+  "subject_hash": "sha256:d8c38bc48a94fcf416659327cf2110d0e9567c72e744941c962d0ea5c8a8db62",
+  "admission_decision": "completed",
+  "revision": "c1735848f238c6ae8be8c79226a1708410ec43e299361ffd7ed41a1b296bb72d",
+  "path": ".git/biggz/review-transactions/lineage-result-001/c1735848f238c6ae8be8c79226a1708410ec43e299361ffd7ed41a1b296bb72d",
+  "canonical_sha256": "sha256:1de4cf91365dee7b3adaad240e361c4f611027a828f3a3b1a93cf76cae4a254a",
+  "result_hash": "sha256:7010c467a3f25e1e80da89dc8f7994d5fb70ec142a2806c0f52a49444f6c4fe5",
+  "manifest_path": "manifests/61cb3fffc187eeb1e1293ddd8f450a0bcaeabf0dfa81df1d20569c19b3f49d53.json"
+}

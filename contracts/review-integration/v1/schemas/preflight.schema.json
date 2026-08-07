@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/preflight.schema.json",
+  "title": "Biggz AI capture preflight result",
+  "description": "The JSON emitted by `biggz review capture-result --preflight`: the artifact subject (base/candidate trees + ordered changed-path manifest) without any persistence.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "lineage_id",
+    "target_identity",
+    "lens",
+    "selected_order",
+    "expected_revision",
+    "subject",
+    "base_tree",
+    "candidate_tree",
+    "changed_path_manifest_sha256",
+    "changed_path_manifest"
+  ],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-capture-preflight/v1"},
+    "lineage_id": {"type": "string", "minLength": 1},
+    "target_identity": {"$ref": "#/$defs/git_sha"},
+    "lens": {"$ref": "#/$defs/lens"},
+    "selected_order": {"type": "integer", "minimum": 0},
+    "expected_revision": {"$ref": "#/$defs/sha256_hex"},
+    "subject": {"$ref": "#/$defs/artifact_subject"},
+    "base_tree": {"$ref": "#/$defs/git_tree"},
+    "candidate_tree": {"$ref": "#/$defs/git_tree"},
+    "changed_path_manifest_sha256": {"$ref": "#/$defs/sha256"},
+    "changed_path_manifest": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/changed_path_entry"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "sha256_hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "git_sha": {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"},
+    "git_tree": {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"},
+    "lens": {"enum": ["risk", "readability", "reliability", "resilience", "performance", "dependencies"]},
+    "artifact_subject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "subject_hash",
+        "lineage_id",
+        "authority_revision",
+        "target_identity",
+        "base_tree",
+        "candidate_tree",
+        "changed_path_manifest_sha256",
+        "lens",
+        "selected_order"
+      ],
+      "properties": {
+        "schema": {"const": "biggz-ai.review-artifact-subject/v1"},
+        "subject_hash": {"$ref": "#/$defs/sha256"},
+        "lineage_id": {"type": "string", "minLength": 1},
+        "authority_revision": {"$ref": "#/$defs/sha256_hex"},
+        "target_identity": {"$ref": "#/$defs/git_sha"},
+        "base_tree": {"$ref": "#/$defs/git_tree"},
+        "candidate_tree": {"$ref": "#/$defs/git_tree"},
+        "changed_path_manifest_sha256": {"$ref": "#/$defs/sha256"},
+        "lens": {"$ref": "#/$defs/lens"},
+        "selected_order": {"type": "integer", "minimum": 0}
+      }
+    },
+    "changed_path_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "status", "old_mode", "new_mode", "deleted"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "status": {"enum": ["A", "D", "M", "T"]},
+        "old_mode": {"type": "string", "pattern": "^[0-7]{6}$"},
+        "new_mode": {"type": "string", "pattern": "^[0-7]{6}$"},
+        "deleted": {"type": "boolean"}
+      }
+    }
+  }
+}

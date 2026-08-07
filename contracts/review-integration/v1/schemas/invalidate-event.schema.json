@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/invalidate-event.schema.json",
+  "title": "Biggz AI invalidate event payload",
+  "description": "The durable `invalidate` event payload appended by `biggz review invalidate <lineage> <reason>`: the audit reason for the terminal state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "reason"],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-invalidate-event/v1"},
+    "reason": {"type": "string", "minLength": 1}
+  }
+}

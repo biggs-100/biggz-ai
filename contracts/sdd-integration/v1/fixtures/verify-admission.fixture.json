@@ -1,0 +1,12 @@
+{
+  "schema": "biggz-ai.verify-admission/v1",
+  "decision": "admitted",
+  "requirements": {
+    "declared": 4,
+    "counted": 4
+  },
+  "scenarios": {
+    "declared": 7,
+    "counted": 7
+  }
+}

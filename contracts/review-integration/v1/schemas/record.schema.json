@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/record.schema.json",
+  "title": "Biggz AI content-addressed review record",
+  "description": "A single event in the content-addressed review store — THE schema that governs every event file. The revision is NOT stored in the record: it IS the file name (SHA-256 of the canonical record bytes). The payload stays unconstrained at record level: each operation's payload is formalized by its own envelope schema (lens-result-event, refutation-event, ...). The genesis record's prevRevision is the empty string.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "prevRevision", "operation", "role", "actor", "timestamp", "payload"],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-record/v1"},
+    "prevRevision": {"anyOf": [{"const": ""}, {"$ref": "#/$defs/sha256_hex"}]},
+    "operation": {"type": "string", "minLength": 1},
+    "role": {"type": "string", "minLength": 1},
+    "actor": {"type": "string", "minLength": 1},
+    "timestamp": {"type": "string", "minLength": 1},
+    "payload": {}
+  },
+  "$defs": {
+    "sha256_hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

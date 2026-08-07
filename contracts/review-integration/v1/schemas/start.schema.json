@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/start.schema.json",
+  "title": "Biggz AI review start genesis payload",
+  "description": "The extended genesis payload frozen by `biggz review start`: ReviewSubject fields (repository, commit_sha) at the top level so legacy readers that unmarshal the genesis into model.ReviewSubject keep working, plus the derived correction budget, the content-based risk tier, and the frozen lens selection. NOTE: the $id file is start.schema.json but the in-envelope const is biggz-ai.review-start-event/v1 (see contracts/README.md for the mapping).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "repository",
+    "commit_sha",
+    "original_changed_lines",
+    "correction_budget",
+    "max_correction_attempts"
+  ],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-start-event/v1"},
+    "repository": {"type": "string", "minLength": 1},
+    "commit_sha": {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"},
+    "base_ref": {"type": "string"},
+    "original_changed_lines": {"type": "integer", "minimum": 0},
+    "correction_budget": {"type": "integer", "minimum": 0, "maximum": 200},
+    "max_correction_attempts": {"type": "integer", "minimum": 0},
+    "lenses": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/lens"}
+    },
+    "risk_tier": {"enum": ["low", "medium", "high"]},
+    "lens_plan": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/lens"}
+    }
+  },
+  "$defs": {
+    "lens": {"enum": ["risk", "readability", "reliability", "resilience", "performance", "dependencies"]}
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "schema": "biggz-ai.review-reopen-event/v1",
+  "slots": [
+    {
+      "lens": "risk",
+      "order": 0
+    },
+    {
+      "lens": "readability",
+      "order": 1
+    }
+  ]
+}

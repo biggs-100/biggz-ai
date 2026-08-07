@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/refutation.schema.json",
+  "title": "Biggz AI refuter batch input",
+  "description": "The strict wire envelope accepted by `biggz review refute <lineage> --input -`: the complete per-finding verdict batch for the one read-only refuter pass.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "lineage", "verdicts"],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-refutation/v1"},
+    "lineage": {"type": "string", "minLength": 1},
+    "verdicts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/verdict"}
+    }
+  },
+  "$defs": {
+    "finding_id": {"type": "string", "pattern": "^R[1-6]-[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "verdict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["finding_id", "verdict", "evidence"],
+      "properties": {
+        "finding_id": {"$ref": "#/$defs/finding_id"},
+        "verdict": {"enum": ["refuted", "stands"]},
+        "evidence": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

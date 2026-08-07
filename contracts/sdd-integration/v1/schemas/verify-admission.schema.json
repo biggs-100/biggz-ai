@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/sdd-integration/v1/schemas/verify-admission.schema.json",
+  "title": "Biggz AI verify report admission decision",
+  "description": "The structured admission decision for a fenced-YAML verify report: admitted or denied, the reason, and the authoritative declared vs counted requirement and scenario pairs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "decision", "requirements", "scenarios"],
+  "properties": {
+    "schema": {"const": "biggz-ai.verify-admission/v1"},
+    "decision": {"enum": ["admitted", "denied"]},
+    "reason": {"type": "string", "minLength": 1},
+    "requirements": {"$ref": "#/$defs/count_pair"},
+    "scenarios": {"$ref": "#/$defs/count_pair"}
+  },
+  "$defs": {
+    "count_pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["counted"],
+      "properties": {
+        "declared": {"anyOf": [{"type": "null"}, {"type": "integer", "minimum": 0}]},
+        "counted": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

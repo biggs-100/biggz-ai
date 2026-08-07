@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/sdd-integration/v1/schemas/edit-authority-consent.schema.json",
+  "title": "Biggz AI SDD edit-authority consent question",
+  "description": "The typed blocking consent question a multi-repository SDD change raises when its task plan targets repository roots outside the authorized edit roots: why input is required, the identity block (change + missing roots), and the exact runnable follow-up invocations (grant then decline, prefixItems discipline). Granting is per-change and audited; declining persists nothing and the change stays blocked.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "contract",
+    "operation",
+    "action",
+    "blocking",
+    "change",
+    "missing_roots",
+    "headline",
+    "reason",
+    "value",
+    "evidence",
+    "choices",
+    "off_path_note",
+    "off_path_command"
+  ],
+  "properties": {
+    "schema": {"const": "biggz-ai.edit-authority-consent/v1"},
+    "contract": {"const": "biggz-ai.sdd-integration/v1"},
+    "operation": {"const": "sdd-attempt.grant"},
+    "action": {"const": "consent_required"},
+    "blocking": {"const": true},
+    "change": {"type": "string", "minLength": 1},
+    "missing_roots": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "headline": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1},
+    "value": {"type": "string", "minLength": 1},
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "choices": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "prefixItems": [
+        {"$ref": "#/$defs/choice_granted"},
+        {"$ref": "#/$defs/choice_declined"}
+      ],
+      "items": false
+    },
+    "off_path_note": {"type": "string", "minLength": 1},
+    "off_path_command": {"$ref": "#/$defs/status_invocation"}
+  },
+  "$defs": {
+    "status_invocation": {"type": "string", "pattern": "^biggz sdd-status .+$"},
+    "choice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "effect", "invocation"],
+      "properties": {
+        "id": {"enum": ["granted", "declined"]},
+        "label": {"type": "string", "minLength": 1},
+        "effect": {"type": "string", "minLength": 1},
+        "invocation": {"type": "string", "minLength": 1}
+      }
+    },
+    "choice_granted": {
+      "description": "The granted choice names the exact runnable `biggz sdd-attempt grant` invocation: the change, the optional compare-and-swap --expected-revision, every missing --root, and the audit/identity tokens (--actor, --reason, --request-id, --change-instance).",
+      "allOf": [{"$ref": "#/$defs/choice"}],
+      "properties": {
+        "id": {"const": "granted"},
+        "invocation": {
+          "type": "string",
+          "pattern": "^biggz sdd-attempt grant .+ --root \".*\" .*--actor .*--reason .*--request-id .*--change-instance .*$"
+        }
+      }
+    },
+    "choice_declined": {
+      "description": "Declining persists nothing: the change stays blocked, and the runnable follow-up is native SDD status for the same change.",
+      "allOf": [{"$ref": "#/$defs/choice"}],
+      "properties": {
+        "id": {"const": "declined"},
+        "invocation": {"$ref": "#/$defs/status_invocation"}
+      }
+    }
+  }
+}

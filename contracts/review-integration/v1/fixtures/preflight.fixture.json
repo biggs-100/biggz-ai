@@ -1,0 +1,32 @@
+{
+  "schema": "biggz-ai.review-capture-preflight/v1",
+  "lineage_id": "lineage-preflight-001",
+  "target_identity": "dba504c5ef0ecb92a006074854ac94a380fa26fe",
+  "lens": "risk",
+  "selected_order": 0,
+  "expected_revision": "c1735848f238c6ae8be8c79226a1708410ec43e299361ffd7ed41a1b296bb72d",
+  "subject": {
+    "schema": "biggz-ai.review-artifact-subject/v1",
+    "subject_hash": "sha256:d8c38bc48a94fcf416659327cf2110d0e9567c72e744941c962d0ea5c8a8db62",
+    "lineage_id": "lineage-preflight-001",
+    "authority_revision": "c1735848f238c6ae8be8c79226a1708410ec43e299361ffd7ed41a1b296bb72d",
+    "target_identity": "dba504c5ef0ecb92a006074854ac94a380fa26fe",
+    "base_tree": "752b556a42ff0d908a4cb28c6ee18d36ad0693d5",
+    "candidate_tree": "51264f57aba810997fa870837e1857332d30de55",
+    "changed_path_manifest_sha256": "sha256:61cb3fffc187eeb1e1293ddd8f450a0bcaeabf0dfa81df1d20569c19b3f49d53",
+    "lens": "risk",
+    "selected_order": 0
+  },
+  "base_tree": "752b556a42ff0d908a4cb28c6ee18d36ad0693d5",
+  "candidate_tree": "51264f57aba810997fa870837e1857332d30de55",
+  "changed_path_manifest_sha256": "sha256:61cb3fffc187eeb1e1293ddd8f450a0bcaeabf0dfa81df1d20569c19b3f49d53",
+  "changed_path_manifest": [
+    {
+      "path": "internal/auth/token.go",
+      "status": "M",
+      "old_mode": "100644",
+      "new_mode": "100644",
+      "deleted": false
+    }
+  ]
+}

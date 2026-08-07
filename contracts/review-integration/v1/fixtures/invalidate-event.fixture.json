@@ -1,0 +1,4 @@
+{
+  "schema": "biggz-ai.review-invalidate-event/v1",
+  "reason": "policy violation: credential shipped in plaintext"
+}

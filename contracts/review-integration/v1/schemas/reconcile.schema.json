@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/reconcile.schema.json",
+  "title": "Biggz AI authority reconciliation report",
+  "description": "The outcome of `biggz review reconcile-authority <lineage>`: which BigMem mirror topics (transaction, ledger, receipt, gate-context) are current, missing, or stale against the native lineage store, and how many were refreshed on --write. The four mirror payload shapes are formalized as $defs, each carrying its own schema const.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "lineage_id", "project", "chain_valid", "topics", "refreshed", "wrote"],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-reconcile/v1"},
+    "lineage_id": {"type": "string", "minLength": 1},
+    "project": {"type": "string", "minLength": 1},
+    "chain_valid": {"type": "boolean"},
+    "topics": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/topic_status"}
+    },
+    "refreshed": {"type": "integer", "minimum": 0},
+    "wrote": {"type": "boolean"}
+  },
+  "$defs": {
+    "sha256_hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "topic_status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topic", "status"],
+      "properties": {
+        "topic": {"type": "string", "minLength": 1},
+        "status": {"enum": ["current", "missing", "stale"]},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    },
+    "transaction_mirror": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "lineage_id", "head_hash", "genesis_hash", "event_count", "last_operation", "recorded_at"],
+      "properties": {
+        "schema": {"const": "biggz-ai.review-mirror-transaction/v1"},
+        "lineage_id": {"type": "string", "minLength": 1},
+        "head_hash": {"$ref": "#/$defs/sha256_hex"},
+        "genesis_hash": {"$ref": "#/$defs/sha256_hex"},
+        "event_count": {"type": "integer", "minimum": 0},
+        "last_operation": {"type": "string", "minLength": 1},
+        "recorded_at": {"type": "string", "minLength": 1}
+      }
+    },
+    "ledger_entry_mirror": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["revision", "operation", "schema", "role", "actor", "timestamp"],
+      "properties": {
+        "revision": {"$ref": "#/$defs/sha256_hex"},
+        "operation": {"type": "string", "minLength": 1},
+        "schema": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "minLength": 1},
+        "actor": {"type": "string", "minLength": 1},
+        "timestamp": {"type": "string", "minLength": 1}
+      }
+    },
+    "ledger_mirror": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "lineage_id", "head_hash", "events"],
+      "properties": {
+        "schema": {"const": "biggz-ai.review-mirror-ledger/v1"},
+        "lineage_id": {"type": "string", "minLength": 1},
+        "head_hash": {"$ref": "#/$defs/sha256_hex"},
+        "events": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/ledger_entry_mirror"}
+        }
+      }
+    },
+    "receipt_mirror": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "lineage_id"],
+      "properties": {
+        "schema": {"const": "biggz-ai.review-mirror-receipt/v1"},
+        "lineage_id": {"type": "string", "minLength": 1},
+        "receipt_path": {"type": "string", "minLength": 1},
+        "receipt_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "receipt": {"$ref": "receipt.schema.json"},
+        "detail": {"type": "string", "minLength": 1}
+      }
+    },
+    "gate_context_mirror": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema", "lineage_id", "chain_valid", "terminal_state", "last_operation", "event_count"],
+      "properties": {
+        "schema": {"const": "biggz-ai.review-mirror-gate-context/v1"},
+        "lineage_id": {"type": "string", "minLength": 1},
+        "chain_valid": {"type": "boolean"},
+        "terminal_state": {"type": "string", "minLength": 1},
+        "receipt_hash": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "last_operation": {"type": "string", "minLength": 1},
+        "event_count": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "schema": "biggz-ai.review-record/v1",
+  "prevRevision": "e65de71b53917f0c0b6843d8ed3ad6e81ca824de7768f9f1e68f54ff523acbb5",
+  "operation": "lens_result",
+  "role": "Reviewer",
+  "actor": "Reviewer",
+  "timestamp": "2026-08-07T10:15:30.123456789Z",
+  "payload": {
+    "schema": "biggz-ai.review-lens-result-event/v1",
+    "lineage_id": "lineage-record-001",
+    "expected_revision": "e65de71b53917f0c0b6843d8ed3ad6e81ca824de7768f9f1e68f54ff523acbb5",
+    "subject_hash": "sha256:d8c38bc48a94fcf416659327cf2110d0e9567c72e744941c962d0ea5c8a8db62",
+    "lens": "risk",
+    "selected_order": 0,
+    "admission_decision": "completed",
+    "inspection": {
+      "status": "completed",
+      "paths": ["internal/auth/token.go"]
+    },
+    "canonical_payload": {
+      "subject_hash": "sha256:d8c38bc48a94fcf416659327cf2110d0e9567c72e744941c962d0ea5c8a8db62",
+      "inspection": {
+        "status": "completed",
+        "paths": ["internal/auth/token.go"]
+      },
+      "lens": "risk",
+      "findings": [],
+      "evidence": ["reproducer in scripts/repro.sh line 7"]
+    },
+    "canonical_payload_sha256": "sha256:1de4cf91365dee7b3adaad240e361c4f611027a828f3a3b1a93cf76cae4a254a",
+    "result_hash": "sha256:7010c467a3f25e1e80da89dc8f7994d5fb70ec142a2806c0f52a49444f6c4fe5",
+    "candidate_causal_finding_ids": ["R1-001"],
+    "manifest_sha256": "sha256:61cb3fffc187eeb1e1293ddd8f450a0bcaeabf0dfa81df1d20569c19b3f49d53",
+    "manifest_path": "manifests/61cb3fffc187eeb1e1293ddd8f450a0bcaeabf0dfa81df1d20569c19b3f49d53.json",
+    "result": {
+      "lens": "risk",
+      "findings": [
+        {
+          "id": "R1-001",
+          "lens": "risk",
+          "location": "internal/auth/token.go:42",
+          "severity": "CRITICAL",
+          "claim": "Token is read before the guard validates the caller.",
+          "evidence_class": "inferential",
+          "causal_disposition": "introduced"
+        }
+      ],
+      "evidence": ["reproducer in scripts/repro.sh line 7"],
+      "result_hash": "sha256:7010c467a3f25e1e80da89dc8f7994d5fb70ec142a2806c0f52a49444f6c4fe5"
+    }
+  }
+}

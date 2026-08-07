@@ -1,0 +1,31 @@
+{
+  "schema": "biggz-ai.review-consent/v1",
+  "headline": "Biggz AI can review this change before you call it done.",
+  "reason": "this change touches high-risk territory, so it gets the full four-lens review. Reviewing takes a bit longer, and it makes the result substantially safer.",
+  "risk_evidence": [
+    "sensitive path: internal/auth/token.go",
+    "lens plan: risk, readability, reliability, resilience"
+  ],
+  "candidate": {
+    "repository": "C:/Users/dev/acme",
+    "commit_sha": "dba504c5ef0ecb92a006074854ac94a380fa26fe",
+    "lineage": "lineage-consent-001",
+    "risk": "high",
+    "lenses": ["risk", "readability", "reliability", "resilience"]
+  },
+  "choices": [
+    {
+      "id": "granted",
+      "label": "Run the review now",
+      "effect": "Starts the review for this candidate and creates its review lineage; later candidates are asked again.",
+      "invocation": "biggz review start --subject C:/tmp/subject.json --lineage lineage-consent-001 --lenses risk,readability,reliability,resilience --consent granted"
+    },
+    {
+      "id": "declined",
+      "label": "Not now, just this once",
+      "effect": "Skips the review for this exact candidate only; nothing is persisted, and the next candidate is asked again.",
+      "invocation": "biggz review start --subject C:/tmp/subject.json --lineage lineage-consent-001 --lenses risk,readability,reliability,resilience --consent declined"
+    }
+  ],
+  "off_path_note": "To turn reviews off for good, run 'biggz rdd disable'."
+}

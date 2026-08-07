@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://biggz-ai.dev/contracts/review-integration/v1/schemas/result-artifact.schema.json",
+  "title": "Biggz AI captured reviewer result artifact",
+  "description": "The JSON emitted by a successful `biggz review capture-result`: the admitted artifact slot identity, the provider-owned admission decision, and the content-addressed references (event revision, canonical payload, result, manifest).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "lineage_id",
+    "target_identity",
+    "lens",
+    "selected_order",
+    "subject_hash",
+    "admission_decision",
+    "revision",
+    "path",
+    "canonical_sha256",
+    "result_hash",
+    "manifest_path"
+  ],
+  "properties": {
+    "schema": {"const": "biggz-ai.review-result-artifact/v1"},
+    "lineage_id": {"type": "string", "minLength": 1},
+    "target_identity": {"$ref": "#/$defs/git_sha"},
+    "lens": {"$ref": "#/$defs/lens"},
+    "selected_order": {"type": "integer", "minimum": 0},
+    "subject_hash": {"$ref": "#/$defs/sha256"},
+    "admission_decision": {
+      "enum": ["completed", "incomplete", "ambiguous", "out_of_scope", "binding_mismatch"]
+    },
+    "revision": {"$ref": "#/$defs/sha256_hex"},
+    "path": {"type": "string", "minLength": 1},
+    "canonical_sha256": {"$ref": "#/$defs/sha256"},
+    "result_hash": {"$ref": "#/$defs/sha256"},
+    "manifest_path": {"type": "string", "minLength": 1}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "sha256_hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "git_sha": {"type": "string", "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"},
+    "lens": {"enum": ["risk", "readability", "reliability", "resilience", "performance", "dependencies"]}
+  }
+}
