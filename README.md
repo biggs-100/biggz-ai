@@ -2,7 +2,7 @@
 
 **AI Agent Harness — Review-Driven Development with Human-in-the-Loop**
 
-biggz-ai is a lightweight, self-contained harness for AI coding agents (OpenCode, Claude Code, Qwen). It provides SDD (Spec-Driven Development) workflow orchestration, code review pipelines with 4 lenses (R1-R4), persistent memory (BigMem), and full lifecycle management — all with the human always in control.
+biggz-ai is a lightweight, self-contained harness for AI coding agents (OpenCode, Claude Code, Qwen). It provides SDD (Spec-Driven Development) workflow orchestration, code review pipelines with 6 lenses (R1-R4 + performance, dependencies), persistent memory (BigMem), and full lifecycle management — all with the human always in control.
 
 Inspired by gentle-ai, but rebuilt from scratch with 95% less code, a cleaner architecture, and no legacy debt.
 
@@ -40,7 +40,7 @@ echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
 
 ```
 CLI (cmd/biggz)
-  ├── Orchestrator ──► Pipeline/DAG ──► Lenses (R1-R4)
+  ├── Orchestrator ──► Pipeline/DAG ──► Lenses (R1-R4, Performance, Dependencies)
   ├── Install ──► Agent Detection ──► Skill Deploy ──► Config Merge
   ├── SDD ──► Status, Verify, Attempt, Continue
   ├── BigMem ──► MCP Server ──► 22 memory tools
@@ -78,11 +78,13 @@ Input (ReviewSubject)
     ├── Readability (R2)   — file length, naming heuristics
     ├── Reliability (R3)   — test coverage, error handling
     ├── Resilience (R4)    — timeouts, context, concurrency
+    ├── Performance        — hotspots, complexity, resource usage
+    ├── Dependencies       — imports, transitive risk
     └── Policy Evaluator   — business rules (depends on all lenses)
   → ReviewState with evidence chain + MerkleRoot
 ```
 
-All 4 lenses run in parallel — they have no dependencies on each other.
+All 6 lenses run in parallel — they have no dependencies on each other.
 
 ## BigMem Memory
 

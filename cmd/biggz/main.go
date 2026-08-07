@@ -17,7 +17,6 @@ import (
 	"github.com/biggs-100/biggz-ai/orchestrator"
 	"github.com/biggs-100/biggz-ai/pipeline"
 	"github.com/biggs-100/biggz-ai/plugin"
-	"github.com/biggs-100/biggz-ai/plugintest"
 	"github.com/biggs-100/biggz-ai/policy"
 	"github.com/biggs-100/biggz-ai/registry"
 	"github.com/google/uuid"
@@ -228,12 +227,6 @@ func main() {
 	// Build-time registry wiring
 	reg := registry.New()
 
-	dummyLens := &plugintest.DummyLens{}
-	if err := reg.RegisterLens(dummyLens); err != nil {
-		fmt.Fprintf(os.Stderr, "error: registering lens: %v\n", err)
-		os.Exit(1)
-	}
-
 	riskLens := &risk.RiskLens{}
 	if err := reg.RegisterLens(riskLens); err != nil {
 		fmt.Fprintf(os.Stderr, "error: registering lens: %v\n", err)
@@ -278,12 +271,10 @@ func main() {
 	pGraph.AddNode(&lensStage{lens: resilienceLens})
 	pGraph.AddNode(&lensStage{lens: performanceLens})
 	pGraph.AddNode(&lensStage{lens: dependenciesLens})
-	pGraph.AddNode(&lensStage{lens: dummyLens})
 	// Policy depends on all lenses
 	pGraph.AddNode(&policyStage{evaluator: minEvEval},
 		"lens-risk", "lens-readability", "lens-reliability",
-		"lens-resilience", "lens-performance", "lens-dependencies",
-		"lens-dummy-lens")
+		"lens-resilience", "lens-performance", "lens-dependencies")
 
 	// Use DAG orchestrator for parallel lens execution
 	orch := orchestrator.NewWithGraph(reg, pGraph)
