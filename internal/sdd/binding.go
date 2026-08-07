@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/biggz-ai/biggz/internal/sddattempt"
+	"github.com/biggs-100/biggz-ai/internal/sddattempt"
 )
 
 // BindApprovedReview binds an approved review lineage to an SDD change.

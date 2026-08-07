@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/pipeline"
-	"github.com/biggz-ai/biggz/registry"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/pipeline"
+	"github.com/biggs-100/biggz-ai/registry"
 )
 
 // Orchestrator manages the full review lifecycle.

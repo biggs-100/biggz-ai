@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/tui/styles"
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -30,7 +30,7 @@ type pluginInfo struct {
 }
 
 var communityPlugins = []pluginInfo{
-	{"biggz-mcp", "BigMem MCP server (22 memory tools)", "core", "github.com/biggz-ai/biggz", true},
+	{"biggz-mcp", "BigMem MCP server (22 memory tools)", "core", "github.com/biggs-100/biggz-ai", true},
 	{"context7", "Documentation search via Context7", "tools", "github.com/context7/context7-mcp", false},
 	{"grep-by-vercel", "Code search across GitHub", "tools", "github.com/vercel/grep", false},
 	{"sentry", "Error tracking and performance monitoring", "monitoring", "github.com/getsentry/sentry-mcp", false},

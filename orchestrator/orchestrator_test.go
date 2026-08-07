@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/registry"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/registry"
 )
 
 // errStageFailure is a sentinel error used by the failing stage test.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 func TestNewReceipt_FromChain(t *testing.T) {

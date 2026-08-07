@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/review"
-	"github.com/biggz-ai/biggz/internal/sdd"
-	"github.com/biggz-ai/biggz/internal/tui/styles"
+	"github.com/biggs-100/biggz-ai/internal/review"
+	"github.com/biggs-100/biggz-ai/internal/sdd"
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

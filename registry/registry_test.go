@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 // compile-time check: *mockLens implements plugin.LensPlugin

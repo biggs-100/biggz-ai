@@ -3,8 +3,8 @@ package agents
 import (
 	"fmt"
 
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 // globalFactories holds adapters registered via package-level Register.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // InstalledAgent describes a detected AI coding agent on the system.

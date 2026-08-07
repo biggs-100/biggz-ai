@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/sdd"
+	"github.com/biggs-100/biggz-ai/internal/sdd"
 )
 
 func sddNewRun() int {

@@ -27,7 +27,7 @@ Chain strategy: stacked-to-main
 
 ## Phase 1: Foundation
 
-- [x] 1.1 Create `go.mod` — module `github.com/biggz-ai/biggz`, Go 1.22+
+- [x] 1.1 Create `go.mod` — module `github.com/biggs-100/biggz-ai`, Go 1.22+
 - [x] 1.2 Create `model/review.go` — `ReviewSubject`, `ReviewState` (UUIDv7 ID), `Evidence`, `PolicyVerdict`
 - [x] 1.3 Create `model/fsm.go` — `Status` enum, transition map, pure `Transition()` returning error on invalid
 - [x] 1.4 Create `model/hash.go` — `AppendEvidence()` with linked `PrevHash`, `MerkleRoot()` via SHA-256 of tail

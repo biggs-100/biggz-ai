@@ -3,7 +3,7 @@
 // and the scale of changes.
 package risk
 
-import "github.com/biggz-ai/biggz/internal/lens/gitdiff"
+import "github.com/biggs-100/biggz-ai/internal/lens/gitdiff"
 
 // RiskLevel represents the overall assessment of a code change's risk.
 type RiskLevel string

@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/lens/gitdiff"
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/internal/lens/gitdiff"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 // ReadabilityLens is a LensPlugin that analyzes git diffs to assess

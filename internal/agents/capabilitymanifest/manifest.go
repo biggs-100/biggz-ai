@@ -11,7 +11,7 @@ package capabilitymanifest
 import (
 	"fmt"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // AgentCapabilityManifest declares what features an AI coding agent supports.

@@ -6,7 +6,7 @@ package components
 import (
 	"context"
 
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 // DeploymentResult describes what happened during a component deploy.

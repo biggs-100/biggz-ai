@@ -1,6 +1,6 @@
 package agents
 
-import "github.com/biggz-ai/biggz/model"
+import "github.com/biggs-100/biggz-ai/model"
 
 // SystemPromptStrategy is a type alias for model.SystemPromptStrategy.
 type SystemPromptStrategy = model.SystemPromptStrategy

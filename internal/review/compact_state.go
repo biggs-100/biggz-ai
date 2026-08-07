@@ -21,7 +21,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // CompactStateSchema identifies the compact state format version.

@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/biggz-ai/biggz/internal/assets"
-	"github.com/biggz-ai/biggz/internal/install"
-	"github.com/biggz-ai/biggz/plugintest"
+	"github.com/biggs-100/biggz-ai/internal/assets"
+	"github.com/biggs-100/biggz-ai/internal/install"
+	"github.com/biggs-100/biggz-ai/plugintest"
 )
 
 func TestInstall_AgentDetected(t *testing.T) {

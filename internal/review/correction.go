@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // Correction represents a single fix applied during a review cycle.

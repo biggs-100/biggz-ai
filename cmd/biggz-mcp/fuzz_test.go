@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/biggz-ai/biggz/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/bigmem"
 )
 
 // FuzzMCPRequest fuzzes the MCP server's request parser with random JSON.

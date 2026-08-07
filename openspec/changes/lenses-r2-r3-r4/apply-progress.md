@@ -26,12 +26,12 @@ Extracted shared git diff parsing into `internal/lens/gitdiff/` and implemented 
 ## Test Results
 
 ```
-ok  github.com/biggz-ai/biggz/internal/lens/gitdiff      0.957s  9 tests
-ok  github.com/biggz-ai/biggz/internal/lens/readability   1.047s  15 tests
-ok  github.com/biggz-ai/biggz/internal/lens/reliability   1.007s  16 tests
-ok  github.com/biggz-ai/biggz/internal/lens/resilience    1.176s  15 tests
-ok  github.com/biggz-ai/biggz/internal/lens/risk          1.128s  15 tests
-ok  github.com/biggz-ai/biggz/cmd/biggz                   5.468s  (build + test)
+ok  github.com/biggs-100/biggz-ai/internal/lens/gitdiff      0.957s  9 tests
+ok  github.com/biggs-100/biggz-ai/internal/lens/readability   1.047s  15 tests
+ok  github.com/biggs-100/biggz-ai/internal/lens/reliability   1.007s  16 tests
+ok  github.com/biggs-100/biggz-ai/internal/lens/resilience    1.176s  15 tests
+ok  github.com/biggs-100/biggz-ai/internal/lens/risk          1.128s  15 tests
+ok  github.com/biggs-100/biggz-ai/cmd/biggz                   5.468s  (build + test)
 ```
 
 **Total: 70 lens tests passing, 0 failing.**

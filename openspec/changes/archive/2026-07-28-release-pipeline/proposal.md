@@ -64,7 +64,7 @@ Reference architecture from gentle-ai's 4-layer update system, trimmed to single
 
 ## Rollback Plan
 
-Revert the `.goreleaser.yaml`, workflow, `internal/update/`, and CLI changes. Existing `release` subcommand is unaffected. Users on a broken version run `go install github.com/biggz-ai/biggz@previous-tag`.
+Revert the `.goreleaser.yaml`, workflow, `internal/update/`, and CLI changes. Existing `release` subcommand is unaffected. Users on a broken version run `go install github.com/biggs-100/biggz-ai@previous-tag`.
 
 ## Dependencies
 

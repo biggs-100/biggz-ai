@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/doctor"
-	"github.com/biggz-ai/biggz/internal/tui/styles"
-	"github.com/biggz-ai/biggz/internal/update"
+	"github.com/biggs-100/biggz-ai/internal/doctor"
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
+	"github.com/biggs-100/biggz-ai/internal/update"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

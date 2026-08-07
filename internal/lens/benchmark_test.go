@@ -5,14 +5,14 @@ import (
 	"os"
 	"testing"
 
-	"github.com/biggz-ai/biggz/internal/lens/dependencies"
-	"github.com/biggz-ai/biggz/internal/lens/performance"
-	"github.com/biggz-ai/biggz/internal/lens/readability"
-	"github.com/biggz-ai/biggz/internal/lens/reliability"
-	"github.com/biggz-ai/biggz/internal/lens/resilience"
-	"github.com/biggz-ai/biggz/internal/lens/risk"
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/internal/lens/dependencies"
+	"github.com/biggs-100/biggz-ai/internal/lens/performance"
+	"github.com/biggs-100/biggz-ai/internal/lens/readability"
+	"github.com/biggs-100/biggz-ai/internal/lens/reliability"
+	"github.com/biggs-100/biggz-ai/internal/lens/resilience"
+	"github.com/biggs-100/biggz-ai/internal/lens/risk"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 // BenchmarkLensRisk benchmarks the Risk lens analysis.

@@ -24,7 +24,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // ContractSchema identifies the negotiated review-integration envelope.

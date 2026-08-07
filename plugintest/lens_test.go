@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // TestDummyLens_Analyze_HappyPath verifies that a valid subject produces a

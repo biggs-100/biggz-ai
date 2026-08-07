@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/pipeline"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/pipeline"
 )
 
 func TestNew(t *testing.T) {

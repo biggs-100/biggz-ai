@@ -31,7 +31,7 @@
 ## Completed Tasks
 
 ### Phase 1: Foundation
-- [x] 1.1 Create `go.mod` — module `github.com/biggz-ai/biggz`, Go 1.22+
+- [x] 1.1 Create `go.mod` — module `github.com/biggs-100/biggz-ai`, Go 1.22+
 - [x] 1.2 Create `model/review.go` — `ReviewSubject`, `ReviewState` (UUIDv7 ID), `Evidence`, `PolicyVerdict`
 - [x] 1.3 Create `model/fsm.go` — `Status` enum, transition map, pure `Transition()` returning error on invalid
 - [x] 1.4 Create `model/hash.go` — `AppendEvidence()` with linked `PrevHash`, `MerkleRoot()` via SHA-256 of tail
@@ -60,7 +60,7 @@
 
 | File | Action | What Was Done |
 |------|--------|---------------|
-| `go.mod` | Created | Module `github.com/biggz-ai/biggz`, Go 1.22, deps google/uuid + rapid |
+| `go.mod` | Created | Module `github.com/biggs-100/biggz-ai`, Go 1.22, deps google/uuid + rapid |
 | `go.sum` | Created | Dependency checksums |
 | `model/review.go` | Created | `ReviewStatus` enum, `ReviewSubject`, `ReviewState` (UUIDv7 via google/uuid), `Evidence`, `PolicyVerdict`, `Correction` types |
 | `model/fsm.go` | Created | 5-state transition map, pure `Transition()` function, `AllowedTransitions()` helper |

@@ -5,14 +5,14 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/agents/claude"
-	"github.com/biggz-ai/biggz/internal/agents/cursor"
-	"github.com/biggz-ai/biggz/internal/agents/opencode"
-	"github.com/biggz-ai/biggz/internal/agents/qwen"
-	"github.com/biggz-ai/biggz/internal/agents/windsurf"
-	"github.com/biggz-ai/biggz/internal/install"
-	"github.com/biggz-ai/biggz/internal/tui/styles"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/internal/agents/claude"
+	"github.com/biggs-100/biggz-ai/internal/agents/cursor"
+	"github.com/biggs-100/biggz-ai/internal/agents/opencode"
+	"github.com/biggs-100/biggz-ai/internal/agents/qwen"
+	"github.com/biggs-100/biggz-ai/internal/agents/windsurf"
+	"github.com/biggs-100/biggz-ai/internal/install"
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
+	"github.com/biggs-100/biggz-ai/plugin"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // appendTestRecords appends n simple records to a fresh store inside a git

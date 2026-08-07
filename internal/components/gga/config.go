@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	"github.com/biggz-ai/biggz/internal/filemerge"
+	"github.com/biggs-100/biggz-ai/internal/filemerge"
 )
 
 // InjectionResult describes what files were written.

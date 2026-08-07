@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/bigmem"
-	"github.com/biggz-ai/biggz/internal/tui/styles"
+	"github.com/biggs-100/biggz-ai/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

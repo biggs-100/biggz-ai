@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 const (

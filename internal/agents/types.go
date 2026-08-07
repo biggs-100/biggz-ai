@@ -1,6 +1,6 @@
 package agents
 
-import "github.com/biggz-ai/biggz/model"
+import "github.com/biggs-100/biggz-ai/model"
 
 // AgentID is a type alias for model.AgentID, ensuring all agent adapters
 // return the canonical typed identifier from model.

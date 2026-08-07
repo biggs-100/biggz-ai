@@ -3,7 +3,7 @@ package capabilitymanifest
 import (
 	"testing"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 func TestCount_Exactly27(t *testing.T) {

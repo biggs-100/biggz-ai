@@ -9,7 +9,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // Stage defines a single unit of work within a pipeline.

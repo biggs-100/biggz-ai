@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/review"
+	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
 const (

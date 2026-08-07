@@ -1,6 +1,6 @@
 package screens
 
-import "github.com/biggz-ai/biggz/internal/tui/styles"
+import "github.com/biggs-100/biggz-ai/internal/tui/styles"
 
 // HelpContent describes the help for a screen.
 type HelpContent struct {

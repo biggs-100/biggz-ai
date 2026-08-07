@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/biggz-ai/biggz/internal/filemerge"
+	"github.com/biggs-100/biggz-ai/internal/filemerge"
 )
 
 // Context7Config holds the configuration for the Context7 MCP server.

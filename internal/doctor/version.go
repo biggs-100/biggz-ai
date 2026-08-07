@@ -17,7 +17,7 @@ const (
 //
 // The embedded version is injected at build time via -ldflags:
 //
-//	go build -ldflags="-X github.com/biggz-ai/biggz/internal/doctor.BuildVersion=v1.0.0"
+//	go build -ldflags="-X github.com/biggs-100/biggz-ai/internal/doctor.BuildVersion=v1.0.0"
 //
 // If BuildVersion is empty, the check uses "dev" as the installed version.
 var BuildVersion string

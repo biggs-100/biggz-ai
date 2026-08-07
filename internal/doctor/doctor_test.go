@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/biggz-ai/biggz/internal/bigmem"
-	"github.com/biggz-ai/biggz/internal/review"
+	"github.com/biggs-100/biggz-ai/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
 func TestStatusString(t *testing.T) {

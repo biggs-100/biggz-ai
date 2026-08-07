@@ -108,7 +108,7 @@ GoReleaser injects version directly into `doctor.BuildVersion`:
 ```yaml
 ldflags:
   - -s -w
-  - -X github.com/biggz-ai/biggz/internal/doctor.BuildVersion={{ .Version }}
+  - -X github.com/biggs-100/biggz-ai/internal/doctor.BuildVersion={{ .Version }}
 ```
 
 No code change needed in `version.go` — the `var BuildVersion string` on line 23 is the ldflags target.

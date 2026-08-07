@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/biggz-ai/biggz/internal/bigmem"
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // ---------------------------------------------------------------------------

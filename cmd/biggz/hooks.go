@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/hooks"
+	"github.com/biggs-100/biggz-ai/internal/hooks"
 )
 
 func hooksRun() int {

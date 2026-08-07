@@ -16,7 +16,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/biggz-ai/biggz/internal/update"
+	"github.com/biggs-100/biggz-ai/internal/update"
 )
 
 // ---------------------------------------------------------------------------
@@ -459,7 +459,7 @@ func TestReplaceBinary_Windows(t *testing.T) {
 }
 
 func TestReplaceHint_Windows(t *testing.T) {
-	hint := update.ReplaceHint("github.com/biggz-ai/biggz")
+	hint := update.ReplaceHint("github.com/biggs-100/biggz-ai")
 	if runtime.GOOS == "windows" {
 		if !strings.Contains(hint, "go install") {
 			t.Errorf("ReplaceHint on Windows should contain 'go install', got: %s", hint)
@@ -473,8 +473,8 @@ func TestReplaceHint_Windows(t *testing.T) {
 
 func TestReplaceHint_ModulePath(t *testing.T) {
 	// On both platforms, the module path should appear somewhere.
-	hint := update.ReplaceHint("github.com/biggz-ai/biggz")
-	if !strings.Contains(hint, "github.com/biggz-ai/biggz") {
+	hint := update.ReplaceHint("github.com/biggs-100/biggz-ai")
+	if !strings.Contains(hint, "github.com/biggs-100/biggz-ai") {
 		t.Errorf("ReplaceHint should include module path, got: %s", hint)
 	}
 }

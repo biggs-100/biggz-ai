@@ -8,8 +8,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 // DummyLens is a LensPlugin that returns a static finding.

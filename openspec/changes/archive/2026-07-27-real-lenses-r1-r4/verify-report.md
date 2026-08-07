@@ -44,22 +44,22 @@ output: (empty — clean build)
 go test ./internal/lens/risk/... -count=1
 exit code: 0
 PASS
-ok  	github.com/biggz-ai/biggz/internal/lens/risk	1.171s
+ok  	github.com/biggs-100/biggz-ai/internal/lens/risk	1.171s
 ```
 
 **Full test suite**: ✅ All packages pass
 ```text
-ok  	github.com/biggz-ai/biggz/cmd/biggz	3.892s
-ok  	github.com/biggz-ai/biggz/internal/agents/opencode	0.928s
-ok  	github.com/biggz-ai/biggz/internal/filemerge	1.821s
-ok  	github.com/biggz-ai/biggz/internal/install	1.996s
-ok  	github.com/biggz-ai/biggz/internal/lens/risk	1.171s
-ok  	github.com/biggz-ai/biggz/model	1.751s
-ok  	github.com/biggz-ai/biggz/orchestrator	1.290s
-ok  	github.com/biggz-ai/biggz/pipeline	0.877s
-ok  	github.com/biggz-ai/biggz/plugintest	1.123s
-ok  	github.com/biggz-ai/biggz/policy	0.905s
-ok  	github.com/biggz-ai/biggz/registry	0.675s
+ok  	github.com/biggs-100/biggz-ai/cmd/biggz	3.892s
+ok  	github.com/biggs-100/biggz-ai/internal/agents/opencode	0.928s
+ok  	github.com/biggs-100/biggz-ai/internal/filemerge	1.821s
+ok  	github.com/biggs-100/biggz-ai/internal/install	1.996s
+ok  	github.com/biggs-100/biggz-ai/internal/lens/risk	1.171s
+ok  	github.com/biggs-100/biggz-ai/model	1.751s
+ok  	github.com/biggs-100/biggz-ai/orchestrator	1.290s
+ok  	github.com/biggs-100/biggz-ai/pipeline	0.877s
+ok  	github.com/biggs-100/biggz-ai/plugintest	1.123s
+ok  	github.com/biggs-100/biggz-ai/policy	0.905s
+ok  	github.com/biggs-100/biggz-ai/registry	0.675s
 ```
 
 **Coverage**: ➖ Not available (no coverage threshold configured)

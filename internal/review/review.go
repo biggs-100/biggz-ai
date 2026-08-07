@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/pipeline"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/pipeline"
 )
 
 // Review wraps a ReviewState with lifecycle coordination.

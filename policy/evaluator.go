@@ -7,7 +7,7 @@ package policy
 import (
 	"context"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // Evaluator checks whether a review state satisfies a specific policy.

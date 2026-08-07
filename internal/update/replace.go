@@ -27,7 +27,7 @@ func ReplaceBinary(src, dst string) error {
 // manually replace the binary. On Windows, this prints a go install command
 // since the running .exe cannot be overwritten.
 //
-// The modulePath should be the Go module path (e.g., "github.com/biggz-ai/biggz").
+// The modulePath should be the Go module path (e.g., "github.com/biggs-100/biggz-ai").
 func ReplaceHint(modulePath string) string {
 	if runtime.GOOS == "windows" {
 		return fmt.Sprintf("Download complete. To update, run:\n  go install %s@latest", modulePath)

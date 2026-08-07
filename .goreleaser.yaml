@@ -16,7 +16,7 @@ builds:
       - amd64
       - arm64
     ldflags:
-      - -s -w -X github.com/biggz-ai/biggz/internal/doctor.BuildVersion={{ .Version }}
+      - -s -w -X github.com/biggs-100/biggz-ai/internal/doctor.BuildVersion={{ .Version }}
     main: ./cmd/biggz/
     binary: biggz
 
@@ -37,5 +37,5 @@ signs:
 
 release:
   github:
-    owner: biggz-ai
-    name: biggz
+    owner: biggs-100
+    name: biggz-ai

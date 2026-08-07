@@ -40,14 +40,14 @@ All 9 tasks across 4 phases are marked [x] in `tasks.md`.
 
 **Tests**: ✅ All 42 passed (exit 0)
 ```
-ok  github.com/biggz-ai/biggz/cmd/biggz       2.884s
-ok  github.com/biggz-ai/biggz/model            1.692s
-ok  github.com/biggz-ai/biggz/orchestrator     0.995s
-ok  github.com/biggz-ai/biggz/pipeline         1.051s
-?   github.com/biggz-ai/biggz/plugin           [no test files]
-ok  github.com/biggz-ai/biggz/plugintest       1.120s
-ok  github.com/biggz-ai/biggz/policy           1.238s
-ok  github.com/biggz-ai/biggz/registry         1.028s
+ok  github.com/biggs-100/biggz-ai/cmd/biggz       2.884s
+ok  github.com/biggs-100/biggz-ai/model            1.692s
+ok  github.com/biggs-100/biggz-ai/orchestrator     0.995s
+ok  github.com/biggs-100/biggz-ai/pipeline         1.051s
+?   github.com/biggs-100/biggz-ai/plugin           [no test files]
+ok  github.com/biggs-100/biggz-ai/plugintest       1.120s
+ok  github.com/biggs-100/biggz-ai/policy           1.238s
+ok  github.com/biggs-100/biggz-ai/registry         1.028s
 ```
 
 **Coverage**: Not measured / threshold: N/A → ➖ Not available

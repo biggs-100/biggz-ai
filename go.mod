@@ -1,4 +1,4 @@
-module github.com/biggz-ai/biggz
+module github.com/biggs-100/biggz-ai
 
 go 1.25.0
 

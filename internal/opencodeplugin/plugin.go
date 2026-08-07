@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/filemerge"
+	"github.com/biggs-100/biggz-ai/internal/filemerge"
 )
 
 // Plugin describes a community OpenCode plugin.

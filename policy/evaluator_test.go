@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // minimumEvidenceEvaluator checks that at least one evidence entry exists.

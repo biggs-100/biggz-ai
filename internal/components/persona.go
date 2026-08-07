@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/biggz-ai/biggz/internal/assets"
-	"github.com/biggz-ai/biggz/internal/filemerge"
-	"github.com/biggz-ai/biggz/internal/install"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/internal/assets"
+	"github.com/biggs-100/biggz-ai/internal/filemerge"
+	"github.com/biggs-100/biggz-ai/internal/install"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 // PersonaStyle defines available persona styles.

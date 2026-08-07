@@ -6,7 +6,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // defaultGitTimeout is the maximum time for a git operation.

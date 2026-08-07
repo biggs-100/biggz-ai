@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/biggz-ai/biggz/internal/review"
+	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
 // ─── review start consent gate (Phase D1) ────────────────────────────────────

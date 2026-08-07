@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"github.com/biggz-ai/biggz/internal/tui/screens"
+	"github.com/biggs-100/biggz-ai/internal/tui/screens"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

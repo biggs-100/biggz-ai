@@ -9,7 +9,7 @@ package plugin
 import (
 	"context"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // LensResult contains the findings produced by a LensPlugin after analysis.

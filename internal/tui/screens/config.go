@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/filemerge"
-	"github.com/biggz-ai/biggz/internal/tui/styles"
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/internal/filemerge"
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/plugin"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

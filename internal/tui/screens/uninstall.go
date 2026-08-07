@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/filemerge"
-	"github.com/biggz-ai/biggz/internal/tui/styles"
+	"github.com/biggs-100/biggz-ai/internal/filemerge"
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

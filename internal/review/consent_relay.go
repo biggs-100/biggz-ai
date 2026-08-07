@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // ConsentModeSchema identifies the relayed consent envelope.

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/biggz-ai/biggz/internal/review"
+	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
 // ─── negotiated review-integration contract (Phase D2) ───────────────────────

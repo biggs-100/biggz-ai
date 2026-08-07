@@ -5,7 +5,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // errStageFail is the sentinel error returned by mock stages that are

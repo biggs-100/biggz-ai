@@ -4,9 +4,9 @@ import (
 	"context"
 	"io/fs"
 
-	"github.com/biggz-ai/biggz/internal/assets"
-	"github.com/biggz-ai/biggz/internal/install"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/internal/assets"
+	"github.com/biggs-100/biggz-ai/internal/install"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 type skillsComponent struct {

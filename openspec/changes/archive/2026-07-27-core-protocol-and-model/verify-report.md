@@ -40,13 +40,13 @@ All 15 tasks across 5 phases are marked [x] in `tasks.md`.
 
 **Tests**: ✅ All passed (exit 0)
 ```
-?   	github.com/biggz-ai/biggz/cmd/biggz	[no test files]
-ok  	github.com/biggz-ai/biggz/model	0.905s
-?   	github.com/biggz-ai/biggz/orchestrator	[no test files]
-ok  	github.com/biggz-ai/biggz/pipeline	0.553s
-?   	github.com/biggz-ai/biggz/plugin	[no test files]
-?   	github.com/biggz-ai/biggz/policy	[no test files]
-ok  	github.com/biggz-ai/biggz/registry	0.563s
+?   	github.com/biggs-100/biggz-ai/cmd/biggz	[no test files]
+ok  	github.com/biggs-100/biggz-ai/model	0.905s
+?   	github.com/biggs-100/biggz-ai/orchestrator	[no test files]
+ok  	github.com/biggs-100/biggz-ai/pipeline	0.553s
+?   	github.com/biggs-100/biggz-ai/plugin	[no test files]
+?   	github.com/biggs-100/biggz-ai/policy	[no test files]
+ok  	github.com/biggs-100/biggz-ai/registry	0.563s
 ```
 
 **Runtime Harness**: ✅ Passed (exit 0, valid JSON)

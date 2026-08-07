@@ -1,6 +1,6 @@
 package agents
 
-import "github.com/biggz-ai/biggz/model"
+import "github.com/biggs-100/biggz-ai/model"
 
 // MCPStrategy is a type alias for model.MCPStrategy.
 type MCPStrategy = model.MCPStrategy

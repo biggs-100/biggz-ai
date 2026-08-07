@@ -22,7 +22,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/bigmem"
 )
 
 const (

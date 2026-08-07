@@ -43,7 +43,7 @@ go test ./... -count=1 → all packages pass
 ```
 Doctor-specific test results:
 ```
-ok  github.com/biggz-ai/biggz/internal/doctor  2.486s
+ok  github.com/biggs-100/biggz-ai/internal/doctor  2.486s
   - TestStatusString                    PASS
   - TestReportBucketing                PASS
   - TestRunner_PanicIsolation          PASS

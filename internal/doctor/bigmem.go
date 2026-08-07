@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	"github.com/biggz-ai/biggz/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/bigmem"
 	_ "modernc.org/sqlite"
 )
 

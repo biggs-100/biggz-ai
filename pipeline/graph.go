@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/biggz-ai/biggz/model"
+	"github.com/biggs-100/biggz-ai/model"
 )
 
 // Node is a single unit in a DAG execution graph.

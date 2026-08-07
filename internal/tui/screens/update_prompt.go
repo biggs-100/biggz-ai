@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/tui/styles"
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -51,7 +51,7 @@ func (m UpdatePromptModel) View() string {
 	b.WriteString(styles.WarningBox.Render(fmt.Sprintf(
 		"A new version of biggz-ai is available: %s\n\n"+
 			"Run 'biggz update' to upgrade, or visit\n"+
-			"github.com/biggz-ai/biggz/releases", m.version)))
+			"github.com/biggs-100/biggz-ai/releases", m.version)))
 	b.WriteString("\n\n")
 	b.WriteString(styles.Help.Render("ENTER to dismiss · ESC continue"))
 	return styles.AppStyle.Render(b.String())

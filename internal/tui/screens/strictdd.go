@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/state"
-	"github.com/biggz-ai/biggz/internal/tui/styles"
+	"github.com/biggs-100/biggz-ai/internal/state"
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 )
 

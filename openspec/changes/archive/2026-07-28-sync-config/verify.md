@@ -35,9 +35,9 @@ go build ./... → exit 0 (no output)
 
 **Tests**: ✅ All packages passed
 ```text
-ok  github.com/biggz-ai/biggz/cmd/biggz           12.770s
-ok  github.com/biggz-ai/biggz/internal/filemerge    1.979s
-ok  github.com/biggz-ai/biggz/internal/install      3.362s
+ok  github.com/biggs-100/biggz-ai/cmd/biggz           12.770s
+ok  github.com/biggs-100/biggz-ai/internal/filemerge    1.979s
+ok  github.com/biggs-100/biggz-ai/internal/install      3.362s
 ... (all 25 packages passed, 0 failures)
 ```
 

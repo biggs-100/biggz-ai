@@ -17,10 +17,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/biggz-ai/biggz/internal/assets"
-	"github.com/biggz-ai/biggz/internal/filemerge"
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/internal/assets"
+	"github.com/biggs-100/biggz-ai/internal/filemerge"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 // Config controls the install behavior.

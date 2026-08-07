@@ -39,7 +39,7 @@ stdin (ReviewSubject JSON)
 
 | File | Action | Description |
 |------|--------|-------------|
-| `go.mod` | Create | Module `github.com/biggz-ai/biggz`, Go 1.22+ |
+| `go.mod` | Create | Module `github.com/biggs-100/biggz-ai`, Go 1.22+ |
 | `model/review.go` | Create | `ReviewSubject`, `ReviewState` (with UUIDv7 ID), `Evidence`, `PolicyVerdict` types |
 | `model/fsm.go` | Create | `Status` enum (Pending/InProgress/Completed/Archived/Failed), transition table, `Transition()` function |
 | `model/hash.go` | Create | `AppendEvidence()` — appends with PrevHash, computes entry Hash; `MerkleRoot()` — SHA-256 of tail |

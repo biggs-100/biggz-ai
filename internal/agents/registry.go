@@ -7,9 +7,9 @@ package agents
 import (
 	"fmt"
 
-	"github.com/biggz-ai/biggz/internal/agents/capabilitymanifest"
-	"github.com/biggz-ai/biggz/model"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/internal/agents/capabilitymanifest"
+	"github.com/biggs-100/biggz-ai/model"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 // Factory is a function type that creates a new AgentAdapter on demand.

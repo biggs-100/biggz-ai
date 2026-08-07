@@ -152,7 +152,7 @@ The CLI MUST add an `update` subcommand dispatched via the existing switch-based
 - GIVEN `biggz update` on Windows
 - WHEN the engine identifies the platform
 - THEN binary replacement MUST NOT be attempted
-- AND the system MUST print `go install github.com/biggz-ai/biggz@latest`
+- AND the system MUST print `go install github.com/biggs-100/biggz-ai@latest`
 
 #### Scenario: Signature verification failure
 

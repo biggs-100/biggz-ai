@@ -5,8 +5,8 @@
 package catalog
 
 import (
-	"github.com/biggz-ai/biggz/internal/agents"
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/internal/agents"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 // SkillEntry extends CatalogEntry with platform and dependency metadata.

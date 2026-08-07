@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/biggz-ai/biggz/plugin"
+	"github.com/biggs-100/biggz-ai/plugin"
 )
 
 // Registry holds the set of registered lens plugins and agent adapters.
