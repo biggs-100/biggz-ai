@@ -132,6 +132,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.showHelp = false
 				return m, nil
 			}
+			if m.currentScreen == screenAgentBuilder {
+				// The agent builder owns ESC for its internal back navigation
+				// (engine → prompt → SDD → ...) and only exits to the
+				// dashboard from its first or last views. Fall through to the
+				// screen routing below instead of returning to the dashboard.
+				break
+			}
 			m.currentScreen = screenDashboard
 			m.showHelp = false
 			return m, nil

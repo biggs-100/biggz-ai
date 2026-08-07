@@ -188,6 +188,17 @@ var helpData = map[int]HelpContent{
 		},
 		Paragraph: "Browse BigMem sessions. Each session groups observations from a single coding conversation.",
 	},
+	16: {
+		Title: "Agent Builder",
+		Keys: []HelpKey{
+			{"↑↓ / j k", "Navigate options"},
+			{"ENTER", "Select option"},
+			{"TAB", "Continue from prompt (when text is entered)"},
+			{"↑↓", "Scroll SKILL.md preview content"},
+			{"ESC", "Back one step"},
+		},
+		Paragraph: "Create custom sub-agent skills with AI: choose a generation engine, describe the agent, optionally attach it to an SDD phase, preview the generated SKILL.md, then install it to your agents.",
+	},
 }
 
 // GetHelp returns the help content for a screen ID.
