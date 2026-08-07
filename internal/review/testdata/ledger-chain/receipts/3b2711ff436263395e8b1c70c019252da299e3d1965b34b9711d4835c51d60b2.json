@@ -1,0 +1,39 @@
+{
+  "schema": "biggz-ai.review-receipt/v1",
+  "lineage_id": "ledger-regression",
+  "generation": 1,
+  "genesis_revision": "fc90d9e357c44e5d5c2895fd154a5278d42c6dc4bc69f1c7ad8bfc3326279b19",
+  "head_revision": "1c8a239925907eb341881a6080f2c2917d4dabbd74b4759c51e3d70745da1bf7",
+  "base_tree": "4b36dfd79db36d8c59d1fb032de66b57f0457b65",
+  "initial_review_tree": "fe8de9fe21aafd33e3961c0c9b553ef5c344270c",
+  "final_candidate_tree": "fe8de9fe21aafd33e3961c0c9b553ef5c344270c",
+  "paths_digest": "sha256:7f9d8100c1ded105af556c6bebe23417f18f3788675d59c03b0b9af0572610ec",
+  "fix_delta_hash": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "policy_hash": "",
+  "evidence_hash": "sha256:f8e8d709f3f8062c597d4c640a6f226490da1b595591fe4cd9b80216ca488fd2",
+  "risk_tier": "medium",
+  "selected_lenses": [
+    "readability",
+    "risk"
+  ],
+  "lens_subjects": [
+    {
+      "lens": "risk",
+      "order": 0,
+      "subject_hash": "sha256:8896a48aaba10cc454a0b804a4516e4d031fd4512dac71858f1f09ea0d35aeed",
+      "result_hash": "sha256:83ebe6f1a2dbb31434135b97ba0177513db6bf534761c26b1a8881ab549c3af6",
+      "manifest_path": "manifests//7f9d8100c1ded105af556c6bebe23417f18f3788675d59c03b0b9af0572610ec.json"
+    },
+    {
+      "lens": "readability",
+      "order": 1,
+      "subject_hash": "sha256:c62a4475adad0e2363dde0baffb82b8953beb1288355cf4159818ce6f2351196",
+      "result_hash": "sha256:2746357830fd04e7806e65113ea8368fc82ef85aebed0520906b2b433794eba8",
+      "manifest_path": "manifests//7f9d8100c1ded105af556c6bebe23417f18f3788675d59c03b0b9af0572610ec.json"
+    }
+  ],
+  "resolved_finding_ids": [],
+  "standing_finding_ids": [],
+  "terminal_state": "completed",
+  "receipt_hash": "sha256:9c5dad579003c1d678292f01676dff4590e518db5d4dc084587ba08d71295d70"
+}

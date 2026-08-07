@@ -1,0 +1,27 @@
+{
+  "schema": "biggz-ai.review-changed-path-manifest-file/v1",
+  "lineage_id": "ledger-regression",
+  "base_tree": "4b36dfd79db36d8c59d1fb032de66b57f0457b65",
+  "candidate_tree": "fe8de9fe21aafd33e3961c0c9b553ef5c344270c",
+  "manifest_sha256": "sha256:7f9d8100c1ded105af556c6bebe23417f18f3788675d59c03b0b9af0572610ec",
+  "paths": [
+    "a.txt",
+    "b.txt"
+  ],
+  "entries": [
+    {
+      "path": "a.txt",
+      "status": "A",
+      "old_mode": "000000",
+      "new_mode": "100644",
+      "deleted": false
+    },
+    {
+      "path": "b.txt",
+      "status": "A",
+      "old_mode": "000000",
+      "new_mode": "100644",
+      "deleted": false
+    }
+  ]
+}

@@ -83,3 +83,20 @@
 | Property-based testing | FSM invariants via `rapid` |
 | Atomic config merge | `filemerge.WriteFile` (temp → rename) |
 | MCP server in Go | No external binary dependency |
+| Contracts-dir walk test | gentle validates schemas ad hoc in CLI tests; biggz compiles EVERY schema and validates EVERY fixture (`internal/contracts/walk_test.go`) |
+
+## Wire-Envelope Formalization
+
+| Dimension | gentle-ai | biggz-ai |
+|---|---|---|
+| Schema home | `contracts/review-integration/{v1,v2}/` + `contracts/sdd-integration/v1/` | `contracts/review-integration/v1/` + `contracts/sdd-integration/v1/` |
+| Engine | Inline `jsonschema` usage inside CLI tests only | `internal/contracts` package: embedded FS compiler, no network, cached |
+| Validation stance | Test-only conformance of emitted bytes | Same, inherited — test-only + opt-in emission checks, never runtime |
+| Directory walk test | Absent | Added: every schema compiles with its `$id`; every fixture validates 1:1; negative cases mutate fixtures programmatically |
+| `$id` host | `https://gentle-ai.dev/contracts/...` | `https://biggz-ai.dev/contracts/...` |
+| Ledger additivity proof | Implicit | `internal/review/ledger_regression_test.go` bakes a pre-layer chain and proves no ledger byte changes |
+
+biggz's v1 contract dirs start UNFROZEN (no FREEZE.md until a first release
+consumer pins them); gentle's v1 is frozen (see its FREEZE.md wording). The
+versioning policy — new version = new `v<N+1>/` directory, freeze recorded
+in FREEZE.md — is shared.

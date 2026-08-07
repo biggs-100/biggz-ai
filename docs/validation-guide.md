@@ -404,9 +404,43 @@ opencode --agent biggz-orchestrator
 # Both should work
 ```
 
+## Test 15: Contracts Formalization Layer
+
+The wire-envelope formalization layer is validated by its own walk test plus
+the emitted-payload conformance tests:
+
+```bash
+go test ./internal/contracts/ -v
+```
+
+Expected:
+- `TestContractsEverySchemaCompilesWithDeclaredID` — all 23 embedded
+  schemas compile with their declared `$id` after AddEmbedded.
+- `TestContractsEveryFixtureValidatesAgainstSameNameSchema` — all 23
+  positive fixtures validate 1:1 against their same-name schema.
+- `TestContractsNegativeConformance` — mutated fixtures (wrong schema const,
+  missing required, extra key, bad sha256, wrong enum, collect+execute
+  together) are all rejected.
+- `TestEnvelopeConformance_*` — real engine output validates: contract
+  envelope (collect + stop), consent envelope, captured artifact, persisted
+  receipt, every chain event payload + record, refutation round trip,
+  verification-retry report, inspect report, SDD edit-authority consent
+  envelope, and verify admission (admitted + denied).
+
+Ledger additivity (the layer must never change a ledger byte):
+
+```bash
+go test ./internal/review/ -run TestLedgerRegression -v
+```
+
+Expected: a frozen pre-layer chain (`testdata/ledger-chain`) loads with
+intact content addresses, `IntegrityVerdict` valid, the receipt artifact
+re-read and `PersistedReceipt.Validate()` passing, and every frozen event
+payload conforming to its contract schema.
+
 ## Success Criteria
 
-All 14 tests must pass. Report any test that fails with:
+All 15 tests must pass. Report any test that fails with:
 - Test number and name
 - Actual output vs expected
 - Error message (if any)

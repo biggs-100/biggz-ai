@@ -24,6 +24,7 @@ internal/
 ├── assets/          — Embedded skills + configs
 ├── backup/          — tar.gz snapshot/restore
 ├── BigMem/          — Persistent observation store + MCP tools
+├── contracts/       — Wire-envelope formalization engine (test-only validation)
 ├── filemerge/       — Atomic write, JSONC merge, section injection
 ├── install/         — Agent detection + deploy
 ├── lens/            — Review lenses (risk, readability, reliability, resilience)
@@ -138,3 +139,25 @@ Kill switch stored in:
 - **Clone-local**: `.git/rdd-mode.json` (can only disable)
 
 Any "off" wins. Status is read-only. Re-enabling applies to future candidates only.
+
+## Contracts Formalization Layer
+
+The repo-root `contracts/` tree holds frozen JSON Schemas (draft 2020-12)
+plus one positive fixture per schema for every wire envelope biggz emits:
+`review-integration/v1` (21 schemas) and `sdd-integration/v1` (2 schemas).
+The tree is embedded via `contracts/embed.go` (go:embed cannot reach parent
+directories from `internal/`), and `internal/contracts` builds the
+validation engine on top of it: a compiler that resolves ONLY from the
+embedded FS (never the network), an `AddEmbedded` walk that registers every
+schema by its declared `$id`, and cached `Schema`/`ValidateJSON`/
+`ValidateEnvelope` entry points.
+
+Validation stance (inherited from gentle-ai): the schemas are CI-time
+conformance of emitted bytes and test-only helpers — NEVER a runtime path of
+the engine. The engine's own strict decoders and content-addressed integrity
+checks remain the runtime authority. The layer is additive-only: it cannot
+change a ledger byte, proven by `internal/review/ledger_regression_test.go`,
+which loads a frozen pre-layer chain and asserts LoadChain, IntegrityVerdict,
+PersistedReceipt.Validate, and receiptArtifactOf behave identically with the
+layer present. See `contracts/README.md` for the const-vs-`$id` split, the
+excluded formats, and the versioning policy.
