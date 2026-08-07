@@ -2094,32 +2094,68 @@ func releaseRun() int {
 }
 
 // skillRegistryRun handles the "biggz skill-registry" subcommand.
-// Usage: biggz skill-registry refresh [--force]   — regenerate skill registry
+// Usage: biggz skill-registry refresh [--force] [--quiet] [--cwd <dir>] [--no-gitignore]
+//   — regenerate skill registry
 func skillRegistryRun() int {
 	args := os.Args[2:]
 
 	if len(args) < 1 || args[0] != "refresh" {
-		fmt.Fprintln(os.Stderr, "Usage: biggz skill-registry refresh [--force]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz skill-registry refresh [--force] [--quiet] [--cwd <dir>] [--no-gitignore]")
 		return 1
 	}
 
 	force := false
-	for _, a := range args[1:] {
-		if a == "--force" {
+	quiet := false
+	noGitignore := false
+	cwd := ""
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--force":
 			force = true
+		case "--quiet":
+			quiet = true
+		case "--no-gitignore":
+			// Accepted and ignored: biggz-ai has no EnsureATLIgnored equivalent,
+			// so there is nothing a no-gitignore flag could disable. The flag is
+			// accepted so the OpenCode skill-registry plugin can pass the exact
+			// gentle-ai invocation shape.
+			noGitignore = true
+		case "--cwd":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --cwd requires a directory")
+				return 1
+			}
+			i++
+			cwd = args[i]
+		default:
+			fmt.Fprintf(os.Stderr, "error: unknown flag %s\n", args[i])
+			return 1
 		}
 	}
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return 1
+	if cwd == "" {
+		var err error
+		cwd, err = os.Getwd()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 	}
+
+	// --no-gitignore is an accepted no-op: biggz-ai has no EnsureATLIgnored
+	// equivalent (the .atl/skill-registry.md index is never gitignored), so the
+	// flag is parsed and discarded to keep the plugin invocation shape identical
+	// to gentle-ai's.
+	_ = noGitignore
 
 	result, err := skillregistry.Refresh(cwd, force)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
+	}
+
+	if quiet {
+		return 0
 	}
 
 	if result.Cached {
@@ -4047,7 +4083,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "  bigmem save|search|get     Persistent memory")
 	fmt.Fprintln(os.Stderr, "  backup create|list|restore Snapshot/restore state")
 	fmt.Fprintln(os.Stderr, "  release status|tag|verify  Version management")
-	fmt.Fprintln(os.Stderr, "  skill-registry refresh     Regenerate skill registry")
+	fmt.Fprintln(os.Stderr, "  skill-registry refresh     Regenerate skill registry [--force] [--quiet] [--cwd <dir>] [--no-gitignore]")
 	fmt.Fprintln(os.Stderr, "  review list|status|gate|start|resume|validate|repair|recover|reclaim|reconcile-authority|dispose-result|reopen-results|inspect|schema|retry-final-verification|invalidate|abandon|export|import  Review lineage commands")
 	fmt.Fprintln(os.Stderr, "  doctor [--json] [--fix]   Run system health checks")
 	fmt.Fprintln(os.Stderr, "  update [--dry-run]       Update biggz-ai to latest version")
