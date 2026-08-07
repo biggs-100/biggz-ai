@@ -150,3 +150,24 @@ func editAuthorityBlockedReason(roots []string) string {
 		strings.Join(quoted, ", "),
 	)
 }
+
+// applyEditAuthorityBlock forces applyState blocked before dependencies and
+// nextRecommended derive from it, so a plan whose work units the apply
+// outside-root guard would refuse never reports ready/apply. It runs ONLY
+// when apply would otherwise be ready: completed work needs no forward edit
+// authority, and planning-blocked changes already carry their own expected
+// planning reasons. It wraps detectUnauthorizedEditRoots with the derived
+// (workspaceRoot + granted roots) allowed set; the unauthorized roots
+// themselves and the typed consent envelope are already surfaced by the
+// legacy probe in readChange.
+func applyEditAuthorityBlock(applyState ApplyState, reasons *blockerReasons, tasksText string, workspaceRoot string, allowedEditRoots []string) ApplyState {
+	if applyState != ApplyReady {
+		return applyState
+	}
+	roots := detectUnauthorizedEditRoots(tasksText, workspaceRoot, allowedEditRoots)
+	if len(roots) == 0 {
+		return applyState
+	}
+	reasons.genuine = append(reasons.genuine, editAuthorityBlockedReason(roots))
+	return ApplyBlocked
+}

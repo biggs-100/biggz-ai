@@ -293,6 +293,27 @@ func deriveNextAction(store *RuntimeStore) string {
 	return "begin"
 }
 
+// RemediationComplete reports whether the ledger's last attempt is a passed
+// correction of exactly the given failed evidence revision: the attempt was
+// finished as passed and its --remediates-evidence-revision binding names
+// the failed evidence the status derives. When true, the status clears its
+// remediation state so dependencies route Verify → ready and next →
+// verify. The instance parameter is accepted for caller symmetry with
+// StatusWithInstance; the immutable attempt chain is change-scoped, so it
+// does not affect the answer. A nil/missing ledger or an empty evidence
+// revision never completes remediation.
+func RemediationComplete(changeName, repoRoot, instance, evidenceRevision string) bool {
+	if evidenceRevision == "" {
+		return false
+	}
+	store, err := LoadStore(changeName, repoRoot)
+	if err != nil || len(store.Attempts) == 0 {
+		return false
+	}
+	last := store.Attempts[len(store.Attempts)-1]
+	return last.Outcome == "passed" && last.RemediatesEvidenceRevision == evidenceRevision
+}
+
 // ─── Begin ───────────────────────────────────────────────────────────────────
 
 // BeginParams define a new attempt.

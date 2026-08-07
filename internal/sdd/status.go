@@ -9,18 +9,160 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
 )
 
+// StatusSchemaName identifies the SDD status document emitted by biggz-ai.
+const StatusSchemaName = "biggz-ai.sdd-status"
+
+// StatusSchemaVersion is the version of the StatusSchemaName document.
+const StatusSchemaVersion = 1
+
+// ArtifactState describes the content state of one SDD artifact.
+type ArtifactState string
+
+const (
+	ArtifactMissing ArtifactState = "missing"
+	ArtifactPartial ArtifactState = "partial"
+	ArtifactDone    ArtifactState = "done"
+)
+
+// DependencyState describes one artifact dependency's readiness.
+type DependencyState string
+
+const (
+	DependencyBlocked DependencyState = "blocked"
+	DependencyReady   DependencyState = "ready"
+	DependencyAllDone DependencyState = "all_done"
+)
+
+// ApplyState describes the apply phase's readiness.
+type ApplyState string
+
+const (
+	ApplyBlocked ApplyState = "blocked"
+	ApplyReady   ApplyState = "ready"
+	ApplyAllDone ApplyState = "all_done"
+)
+
+// TaskProgress summarizes the markdown task checklist of tasks.md.
+type TaskProgress struct {
+	Total       int  `json:"total"`
+	Completed   int  `json:"completed"`
+	Pending     int  `json:"pending"`
+	AllComplete bool `json:"allComplete"`
+}
+
+// Dependencies reports each phase's readiness derived from artifact states.
+type Dependencies struct {
+	Proposal DependencyState `json:"proposal"`
+	Specs    DependencyState `json:"specs"`
+	Design   DependencyState `json:"design"`
+	Tasks    DependencyState `json:"tasks"`
+	Apply    DependencyState `json:"apply"`
+	Verify   DependencyState `json:"verify"`
+	Archive  DependencyState `json:"archive"`
+}
+
+// ActionContext carries the edit-authority context an apply actor needs.
+type ActionContext struct {
+	Mode             string   `json:"mode"`
+	WorkspaceRoot    string   `json:"workspaceRoot"`
+	AllowedEditRoots []string `json:"allowedEditRoots"`
+}
+
+// PlanningHome identifies the planning directory mode and path.
+type PlanningHome struct {
+	Mode string `json:"mode"`
+	Path string `json:"path"`
+}
+
+// ArtifactPaths maps each SDD artifact to its on-disk path(s).
+type ArtifactPaths struct {
+	Proposal      []string `json:"proposal"`
+	Specs         []string `json:"specs"`
+	Design        []string `json:"design"`
+	Tasks         []string `json:"tasks"`
+	ApplyProgress []string `json:"applyProgress"`
+	VerifyReport  []string `json:"verifyReport"`
+}
+
+// RemediationState describes bounded correction eligibility for a failed
+// verification verdict. Biggz runs without a review authority, so lineage,
+// generation, fix-batch and budget fields are never fabricated: correction
+// proceeds unmanaged, bounded by the native runtime attempt budget alone.
+type RemediationState struct {
+	Required               bool   `json:"required"`
+	Complete               bool   `json:"complete"`
+	FailedEvidenceRevision string `json:"failedEvidenceRevision"`
+	Reason                 string `json:"reason"`
+}
+
+// PhaseInstructions renders the per-phase guidance an orchestrator hands a
+// sub-agent. Present only when --instructions was requested.
+type PhaseInstructions struct {
+	Apply     []string `json:"apply"`
+	Verify    []string `json:"verify"`
+	Remediate []string `json:"remediate"`
+	Archive   []string `json:"archive"`
+}
+
+// blockerReasons accumulates the two blocked-reason buckets the derivation
+// finalizes into the emitted BlockedReasons list.
+type blockerReasons struct {
+	expectedPlanning []string
+	genuine          []string
+}
+
+// finalize emits only genuine reasons for planning phases (missing planning
+// artifacts are the expected output of planning, not blockers) and
+// expectedPlanning + genuine for every other next recommendation.
+func (reasons blockerReasons) finalize(nextRecommended string) []string {
+	switch nextRecommended {
+	case "propose", "spec", "design", "tasks":
+		return append([]string{}, reasons.genuine...)
+	default:
+		return append(append([]string{}, reasons.expectedPlanning...), reasons.genuine...)
+	}
+}
+
 // StatusOptions configures status output.
 type StatusOptions struct {
 	ReviewDisabled bool
+	// IncludeInstructions requests the phaseInstructions block on every
+	// derived ChangeStatus (renderPhaseInstructions).
+	IncludeInstructions bool
 }
 
 // ChangeStatus represents the state of an SDD change.
+//
+// The untagged legacy fields (Name, HasProposal, HasSpecs, HasDesign,
+// HasTasks, TasksTotal, TasksDone, HasApply, HasVerify, IsArchived) serialize
+// under their PascalCase names exactly as before the derivation port; they
+// remain the file-probe read-compatibility surface. The camelCase fields
+// below are the derived authority (schemaName, artifacts, taskProgress,
+// dependencies, applyState, actionContext, remediationState,
+// nextRecommended, blockedReasons, phaseInstructions).
 type ChangeStatus struct {
+	SchemaName    string           `json:"schemaName,omitempty"`
+	SchemaVersion int              `json:"schemaVersion,omitempty"`
+	ChangeRoot    string           `json:"changeRoot,omitempty"`
+	PlanningHome  PlanningHome     `json:"planningHome,omitempty"`
+	ArtifactPaths ArtifactPaths    `json:"artifactPaths,omitempty"`
+	ContextFiles  ArtifactPaths    `json:"contextFiles,omitempty"`
+	Artifacts     map[string]ArtifactState `json:"artifacts,omitempty"`
+	TaskProgress  TaskProgress     `json:"taskProgress,omitempty"`
+	Dependencies  Dependencies     `json:"dependencies,omitempty"`
+	ApplyState    ApplyState       `json:"applyState,omitempty"`
+	ActionContext ActionContext    `json:"actionContext,omitempty"`
+	RemediationState RemediationState `json:"remediationState,omitempty"`
+	NextRecommended string         `json:"nextRecommended,omitempty"`
+	BlockedReasons []string        `json:"blockedReasons,omitempty"`
+	PhaseInstructions *PhaseInstructions `json:"phaseInstructions,omitempty"`
+
 	Name        string
 	HasProposal bool
 	HasSpecs    bool
@@ -46,6 +188,14 @@ type ChangeStatus struct {
 // Status scans the openspec/changes directory and returns the status
 // of all active (non-archived) changes, plus the most recent archived ones.
 func Status(openspecRoot string) (active []ChangeStatus, archived []ChangeStatus, err error) {
+	return StatusWithOptions(openspecRoot, StatusOptions{})
+}
+
+// StatusWithOptions scans like Status, deriving the structured status
+// (artifacts, taskProgress, dependencies, applyState, nextRecommended,
+// blockedReasons) for every change. IncludeInstructions additionally renders
+// the phaseInstructions block on each derived ChangeStatus.
+func StatusWithOptions(openspecRoot string, opts StatusOptions) (active []ChangeStatus, archived []ChangeStatus, err error) {
 	workspaceRoot := filepath.Dir(openspecRoot)
 	changesDir := filepath.Join(openspecRoot, "changes")
 	archiveDir := filepath.Join(changesDir, "archive")
@@ -59,7 +209,7 @@ func Status(openspecRoot string) (active []ChangeStatus, archived []ChangeStatus
 		if !entry.IsDir() || entry.Name() == "archive" {
 			continue
 		}
-		cs, err := readChange(filepath.Join(changesDir, entry.Name()), entry.Name(), false, workspaceRoot)
+		cs, err := readChange(filepath.Join(changesDir, entry.Name()), entry.Name(), false, workspaceRoot, opts.IncludeInstructions)
 		if err != nil {
 			continue
 		}
@@ -81,7 +231,7 @@ func Status(openspecRoot string) (active []ChangeStatus, archived []ChangeStatus
 		if !entry.IsDir() {
 			continue
 		}
-		cs, err := readChange(filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot)
+		cs, err := readChange(filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot, opts.IncludeInstructions)
 		if err != nil {
 			continue
 		}
@@ -91,7 +241,7 @@ func Status(openspecRoot string) (active []ChangeStatus, archived []ChangeStatus
 	return active, archived, nil
 }
 
-func readChange(dir, name string, isArchived bool, workspaceRoot string) (ChangeStatus, error) {
+func readChange(dir, name string, isArchived bool, workspaceRoot string, includeInstructions bool) (ChangeStatus, error) {
 	cs := ChangeStatus{Name: name, IsArchived: isArchived}
 
 	// Check artifacts
@@ -173,7 +323,332 @@ func readChange(dir, name string, isArchived bool, workspaceRoot string) (Change
 		cs.GrantedRoots = granted
 	}
 
+	if err := deriveChangeStatus(&cs, dir, workspaceRoot, includeInstructions); err != nil {
+		return cs, err
+	}
 	return cs, nil
+}
+
+// deriveChangeStatus ports gentle-ai's sdd-status derivation authority:
+// artifact states, task progress, spec counts, verify evaluation, apply
+// state, edit-authority blocking, reduced (unmanaged) remediation,
+// dependencies, nextRecommended, blocked reasons, and phase instructions.
+// It runs at the END of readChange, after the legacy file probe and the
+// change-instance/grant read, and is skipped for archived changes.
+func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, includeInstructions bool) error {
+	if cs.IsArchived {
+		cs.NextRecommended = "done"
+		return nil
+	}
+
+	artifactPaths := resolveArtifactPaths(changeDir)
+	artifacts := map[string]ArtifactState{
+		"proposal":      singleArtifactState(artifactPaths.Proposal),
+		"specs":         multiArtifactState(artifactPaths.Specs, filepath.Join(changeDir, "specs")),
+		"design":        singleArtifactState(artifactPaths.Design),
+		"tasks":         singleArtifactState(artifactPaths.Tasks),
+		"applyProgress": singleArtifactState(artifactPaths.ApplyProgress),
+		"verifyReport":  singleArtifactState(artifactPaths.VerifyReport),
+	}
+	taskProgress := countTaskProgressText(readText(firstPath(artifactPaths.Tasks)))
+	specCounts, err := readSpecCounts(artifactPaths.Specs)
+	if err != nil {
+		return err
+	}
+	verifyResult := readVerifyResult(firstPath(artifactPaths.VerifyReport), specCounts)
+
+	coreReady := artifacts["proposal"] == ArtifactDone && artifacts["specs"] == ArtifactDone &&
+		artifacts["design"] == ArtifactDone && artifacts["tasks"] == ArtifactDone && taskProgress.Total > 0
+	applyState := resolveApplyState(coreReady, taskProgress)
+	blockedReasons := artifactBlockedReasons(artifacts, taskProgress)
+
+	allowedEditRoots := make([]string, 0, 1+len(cs.GrantedRoots))
+	allowedEditRoots = append(allowedEditRoots, workspaceRoot)
+	allowedEditRoots = append(allowedEditRoots, cs.GrantedRoots...)
+	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, readText(firstPath(artifactPaths.Tasks)), workspaceRoot, allowedEditRoots)
+
+	// Reduced remediation: no review authority, no lineage/generation/
+	// fix-batch/budget machinery, and no resolve-review exit. A failed
+	// current verification report with apply complete requires unmanaged
+	// remediation bounded by the native runtime attempt budget alone, unless
+	// the ledger already records a passed correction of the exact failed
+	// evidence revision.
+	verifyReportCurrent := artifacts["verifyReport"] == ArtifactDone
+	instance, err := readChangeInstanceMarker(changeDir)
+	if err != nil {
+		return fmt.Errorf("read change-instance marker for %s: %w", cs.Name, err)
+	}
+	remediationComplete := sddattempt.RemediationComplete(cs.Name, workspaceRoot, instance, verifyResult.EvidenceRevision)
+	remediationState := RemediationState{}
+	if verifyReportCurrent && !verifyResult.Passing && applyState == ApplyAllDone && !remediationComplete {
+		remediationState = RemediationState{
+			Required:               true,
+			FailedEvidenceRevision: verifyResult.EvidenceRevision,
+			Reason: fmt.Sprintf(
+				"verify evidence requires unmanaged remediation for %s: %s; receipt-driven review is disabled, so this correction is bounded by the native runtime attempt budget alone",
+				verifyResult.EvidenceRevision, verifyResult.Reason,
+			),
+		}
+	}
+	if remediationState.Reason != "" {
+		blockedReasons.genuine = append(blockedReasons.genuine, remediationState.Reason)
+	}
+
+	dependencies := resolveDependencies(artifacts, taskProgress, applyState, coreReady, verifyReportCurrent, verifyResult.Passing, remediationComplete)
+	nextRecommended := resolveNextRecommended(dependencies, applyState, verifyReportCurrent, remediationState)
+
+	cs.SchemaName = StatusSchemaName
+	cs.SchemaVersion = StatusSchemaVersion
+	cs.ChangeRoot = changeDir
+	cs.PlanningHome = PlanningHome{Mode: "repo-local", Path: filepath.Join(workspaceRoot, "openspec")}
+	cs.ArtifactPaths = artifactPaths
+	cs.ContextFiles = artifactPaths
+	cs.Artifacts = artifacts
+	cs.TaskProgress = taskProgress
+	cs.Dependencies = dependencies
+	cs.ApplyState = applyState
+	cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: allowedEditRoots}
+	cs.RemediationState = remediationState
+	cs.NextRecommended = nextRecommended
+	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
+	if includeInstructions {
+		instructions := renderPhaseInstructions(*cs)
+		cs.PhaseInstructions = &instructions
+	}
+	return nil
+}
+
+// resolveArtifactPaths maps every SDD artifact to its existing on-disk
+// location; specs/ is walked for files named spec.md (sorted).
+func resolveArtifactPaths(changeRoot string) ArtifactPaths {
+	paths := ArtifactPaths{
+		Proposal:      existingPath(filepath.Join(changeRoot, "proposal.md")),
+		Design:        existingPath(filepath.Join(changeRoot, "design.md")),
+		Tasks:         existingPath(filepath.Join(changeRoot, "tasks.md")),
+		ApplyProgress: existingPath(filepath.Join(changeRoot, "apply-progress.md")),
+		VerifyReport:  existingPath(filepath.Join(changeRoot, "verify-report.md")),
+	}
+	specFiles := findSpecFiles(filepath.Join(changeRoot, "specs"))
+	paths.Specs = specFiles
+	return paths
+}
+
+func existingPath(path string) []string {
+	if _, err := os.Stat(path); err == nil {
+		return []string{path}
+	}
+	return []string{}
+}
+
+func findSpecFiles(specsRoot string) []string {
+	var files []string
+	err := filepath.WalkDir(specsRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if !entry.IsDir() && entry.Name() == "spec.md" {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		return []string{}
+	}
+	sort.Strings(files)
+	return files
+}
+
+// singleArtifactState is missing when the path is absent, partial when the
+// file exists but has no trimmed content, done otherwise.
+func singleArtifactState(paths []string) ArtifactState {
+	if len(paths) == 0 {
+		return ArtifactMissing
+	}
+	if hasContent(paths[0]) {
+		return ArtifactDone
+	}
+	return ArtifactPartial
+}
+
+// multiArtifactState is missing when no spec.md was found, done when every
+// found spec.md has content, and partial when the specs directory is
+// non-empty but some (or all) spec.md files are empty.
+func multiArtifactState(paths []string, root string) ArtifactState {
+	if len(paths) == 0 {
+		if entries, err := os.ReadDir(root); err == nil && len(entries) > 0 {
+			return ArtifactPartial
+		}
+		return ArtifactMissing
+	}
+	for _, path := range paths {
+		if !hasContent(path) {
+			return ArtifactPartial
+		}
+	}
+	return ArtifactDone
+}
+
+func hasContent(path string) bool {
+	content, err := os.ReadFile(path)
+	return err == nil && strings.TrimSpace(string(content)) != ""
+}
+
+func readText(path string) string {
+	if path == "" {
+		return ""
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(content)
+}
+
+func firstPath(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	return paths[0]
+}
+
+// countTaskProgressText counts markdown task checkboxes with the unified
+// taskCheckbox pattern (also used by edit-authority detection). Total>0 with
+// zero pending means all complete; a missing tasks file yields the zero
+// struct.
+func countTaskProgressText(content string) TaskProgress {
+	var progress TaskProgress
+	for _, line := range strings.Split(content, "\n") {
+		matches := taskCheckbox.FindStringSubmatch(line)
+		if len(matches) == 0 {
+			continue
+		}
+		progress.Total++
+		if matches[1] == "x" || matches[1] == "X" {
+			progress.Completed++
+		} else {
+			progress.Pending++
+		}
+	}
+	progress.AllComplete = progress.Total > 0 && progress.Pending == 0
+	return progress
+}
+
+// artifactBlockedReasons buckets the expected planning reasons (missing or
+// partial artifacts) separately from genuine anomalies (no checkboxes, edit
+// authority, remediation).
+func artifactBlockedReasons(artifacts map[string]ArtifactState, taskProgress TaskProgress) blockerReasons {
+	var reasons blockerReasons
+	if artifacts["proposal"] != ArtifactDone {
+		reasons.expectedPlanning = append(reasons.expectedPlanning, "proposal.md is missing or partial.")
+	}
+	if artifacts["specs"] != ArtifactDone {
+		reasons.expectedPlanning = append(reasons.expectedPlanning, "specs/**/spec.md is missing or partial.")
+	}
+	if artifacts["design"] != ArtifactDone {
+		reasons.expectedPlanning = append(reasons.expectedPlanning, "design.md is missing or partial.")
+	}
+	if artifacts["tasks"] != ArtifactDone {
+		reasons.expectedPlanning = append(reasons.expectedPlanning, "tasks.md is missing or partial.")
+	}
+	if artifacts["tasks"] == ArtifactDone && taskProgress.Total == 0 {
+		reasons.genuine = append(reasons.genuine, "tasks.md has no markdown task checkboxes.")
+	}
+	return reasons
+}
+
+// resolveApplyState: planning must be fully done with a non-empty task list
+// before apply is ready; an all-complete checklist makes it all_done.
+func resolveApplyState(coreReady bool, taskProgress TaskProgress) ApplyState {
+	if !coreReady {
+		return ApplyBlocked
+	}
+	if taskProgress.AllComplete {
+		return ApplyAllDone
+	}
+	return ApplyReady
+}
+
+// resolveDependencies derives the phase dependency states from artifact
+// states, apply state, and the verify evaluation.
+func resolveDependencies(artifacts map[string]ArtifactState, taskProgress TaskProgress, applyState ApplyState, coreReady, verifyReportCurrent, verifyReportPassing, remediationComplete bool) Dependencies {
+	dependencies := Dependencies{
+		Proposal: artifactDependency(artifacts["proposal"]),
+		Specs:    artifactDependency(artifacts["specs"]),
+		Design:   artifactDependency(artifacts["design"]),
+		Tasks:    artifactDependency(artifacts["tasks"]),
+		Apply:    DependencyBlocked,
+		Verify:   DependencyBlocked,
+		Archive:  DependencyBlocked,
+	}
+	if applyState == ApplyReady {
+		dependencies.Apply = DependencyReady
+	} else if applyState == ApplyAllDone {
+		dependencies.Apply = DependencyAllDone
+	}
+
+	if verifyReportCurrent && coreReady && taskProgress.AllComplete && verifyReportPassing {
+		dependencies.Verify = DependencyAllDone
+	} else if coreReady && applyState == ApplyAllDone && (!verifyReportCurrent || remediationComplete) {
+		dependencies.Verify = DependencyReady
+	}
+	if dependencies.Verify == DependencyAllDone && taskProgress.AllComplete {
+		dependencies.Archive = DependencyReady
+	}
+	return dependencies
+}
+
+func artifactDependency(state ArtifactState) DependencyState {
+	if state == ArtifactDone {
+		return DependencyAllDone
+	}
+	return DependencyBlocked
+}
+
+// resolveNextRecommended routes in exact priority order: apply over verify,
+// verify over archive, planning artifacts in dependency order, and
+// resolve-blockers only for genuine anomalies. Biggz divergence from
+// gentle-ai: the apply-done-with-current-verify-but-not-all-done case has no
+// review authority to resolve, so the resolve-review exit is skipped and the
+// routing falls through to the remaining rules (archive / planning /
+// resolve-blockers).
+func resolveNextRecommended(dependencies Dependencies, applyState ApplyState, verifyReportDone bool, remediation RemediationState) string {
+	if dependencies.Apply == DependencyReady {
+		return "apply"
+	}
+	if dependencies.Verify == DependencyReady {
+		return "verify"
+	}
+	if applyState == ApplyAllDone && verifyReportDone && dependencies.Verify != DependencyAllDone {
+		if remediation.Required {
+			return "remediate"
+		}
+		// biggz divergence: no review authority — skip resolve-review and
+		// fall through to the archive/planning/blocker rules below.
+	}
+	if dependencies.Verify == DependencyAllDone && applyState == ApplyAllDone {
+		return "archive"
+	}
+
+	// Route toward the next missing planning artifact in dependency order.
+	// Missing planning artifacts are the expected output of planning phases,
+	// not genuine blockers. Reserve resolve-blockers for genuine anomalies.
+	if dependencies.Proposal != DependencyAllDone {
+		return "propose"
+	}
+	if dependencies.Specs != DependencyAllDone {
+		return "spec"
+	}
+	if dependencies.Design != DependencyAllDone {
+		return "design"
+	}
+	if dependencies.Tasks != DependencyAllDone {
+		return "tasks"
+	}
+
+	return "resolve-blockers"
 }
 
 func fileExists(path string) bool {
@@ -212,34 +687,52 @@ func FormatStatus(active, archived []ChangeStatus, opts StatusOptions) string {
 func formatOne(cs ChangeStatus, archived bool) string {
 	icon := map[bool]string{true: "✅", false: "⬜"}
 
-	phase := ""
-	switch {
-	case !cs.HasProposal:
-		phase = "explore/proposal"
-	case !cs.HasSpecs:
-		phase = "spec"
-	case !cs.HasDesign:
-		phase = "design"
-	case !cs.HasTasks:
-		phase = "tasks"
-	case cs.TasksDone < cs.TasksTotal:
-		phase = fmt.Sprintf("apply (%d/%d tasks)", cs.TasksDone, cs.TasksTotal)
-	case !cs.HasVerify:
-		phase = "verify"
-	default:
-		phase = "archive-ready"
-	}
-
 	status := fmt.Sprintf("  %s %s", icon[cs.HasProposal && cs.TasksDone == cs.TasksTotal], cs.Name)
 	if archived {
-		return fmt.Sprintf("  • %s (%s)\n", cs.Name, phase)
+		return fmt.Sprintf("  • %s (%s)\n", cs.Name, phaseLabel(cs))
 	}
 	if cs.EditAuthorityBlocked {
-		status += fmt.Sprintf(" — [%s]\n    %s\n", phase, editAuthorityBlockedReason(cs.MissingRoots))
+		status += fmt.Sprintf(" — [%s]\n    %s\n", phaseLabel(cs), editAuthorityBlockedReason(cs.MissingRoots))
 		if cs.Consent != nil && len(cs.Consent.Choices) > 0 {
 			status += fmt.Sprintf("    consent grant: %s\n", cs.Consent.Choices[0].Invocation)
 		}
 		return status
 	}
-	return fmt.Sprintf("%s — [%s]\n", status, phase)
+	return fmt.Sprintf("%s — [%s]\n", status, phaseLabel(cs))
+}
+
+// phaseLabel renders the human phase bracket. When the derivation has run,
+// it is nextRecommended-aware (e.g. "[next: spec]"); resolve-blockers lists
+// the blocked reasons themselves. The legacy file-probe chain remains the
+// fallback for ChangeStatus values built without derivation.
+func phaseLabel(cs ChangeStatus) string {
+	if cs.NextRecommended != "" {
+		switch cs.NextRecommended {
+		case "done":
+			return "done"
+		case "resolve-blockers":
+			if len(cs.BlockedReasons) > 0 {
+				return "resolve-blockers: " + strings.Join(cs.BlockedReasons, " ")
+			}
+			return "resolve-blockers"
+		default:
+			return "next: " + cs.NextRecommended
+		}
+	}
+	switch {
+	case !cs.HasProposal:
+		return "explore/proposal"
+	case !cs.HasSpecs:
+		return "spec"
+	case !cs.HasDesign:
+		return "design"
+	case !cs.HasTasks:
+		return "tasks"
+	case cs.TasksDone < cs.TasksTotal:
+		return fmt.Sprintf("apply (%d/%d tasks)", cs.TasksDone, cs.TasksTotal)
+	case !cs.HasVerify:
+		return "verify"
+	default:
+		return "archive-ready"
+	}
 }

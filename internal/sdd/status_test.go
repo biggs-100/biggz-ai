@@ -16,7 +16,7 @@ func TestReadChange(t *testing.T) {
 	os.WriteFile(filepath.Join(changeDir, "proposal.md"), []byte("# Proposal"), 0644)
 	os.WriteFile(filepath.Join(changeDir, "tasks.md"), []byte("- [x] Task 1\n- [ ] Task 2\n- [x] Task 3\n"), 0644)
 
-	cs, err := readChange(changeDir, "test-change", false, dir)
+	cs, err := readChange(changeDir, "test-change", false, dir, false)
 	if err != nil {
 		t.Fatalf("readChange() error: %v", err)
 	}

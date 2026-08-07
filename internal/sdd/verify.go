@@ -18,6 +18,7 @@ type VerifyReport struct {
 	Scenarios        string
 	TestExitCode     int
 	BuildExitCode    int
+	EvidenceRevision string
 }
 
 // parseYAMLEnvelope extracts key:value pairs from the YAML block.
@@ -53,9 +54,189 @@ func parseYAMLEnvelope(yamlContent string) (*VerifyReport, error) {
 			r.TestExitCode, _ = strconv.Atoi(val)
 		case "build_exit_code":
 			r.BuildExitCode, _ = strconv.Atoi(val)
+		case "evidence_revision":
+			r.EvidenceRevision = val
 		}
 	}
 	return r, nil
+}
+
+// ─── Derivation evaluation (status.go consumes this) ─────────────────────────
+
+// SpecCounts holds the authoritative requirement and scenario counts derived
+// from the change's specs/**/spec.md files.
+type SpecCounts struct {
+	Requirements int
+	Scenarios    int
+}
+
+type verifyCompletion struct {
+	Completed int
+	Total     int
+}
+
+// verifyResultEvaluation is the status-layer verdict on a verify report:
+// Passing is true only when every archive-readiness condition holds, and
+// Reason names the first failing condition.
+type verifyResultEvaluation struct {
+	Passing          bool
+	Reason           string
+	EvidenceRevision string
+}
+
+// sha256IdentityPattern matches a canonical sha256: identity, the only
+// accepted form for evidence revisions.
+var sha256IdentityPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// requirementHeadingPattern and scenarioHeadingPattern count spec content.
+// Requirements are `### Requirement: ...` or historical numeric
+// `### REQ-<n>: ...` headings; scenarios are `#### Scenario: ...` headings.
+// Malformed or arbitrary headings are excluded.
+var requirementHeadingPattern = regexp.MustCompile(`(?m)^### (?:Requirement|REQ-[0-9]+):\s+\S`)
+var scenarioHeadingPattern = regexp.MustCompile(`(?m)^#### Scenario:\s+\S`)
+
+// countSpecRequirementsAndScenarios sums requirement and scenario headings
+// over the given spec contents.
+func countSpecRequirementsAndScenarios(specs []string) SpecCounts {
+	var counts SpecCounts
+	for _, spec := range specs {
+		counts.Requirements += len(requirementHeadingPattern.FindAllStringIndex(spec, -1))
+		counts.Scenarios += len(scenarioHeadingPattern.FindAllStringIndex(spec, -1))
+	}
+	return counts
+}
+
+// readSpecCounts loads and counts every spec path.
+func readSpecCounts(paths []string) (SpecCounts, error) {
+	contents := make([]string, 0, len(paths))
+	for _, path := range paths {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return SpecCounts{}, err
+		}
+		contents = append(contents, string(content))
+	}
+	return countSpecRequirementsAndScenarios(contents), nil
+}
+
+// readVerifyResult evaluates the verify report at path, or reports
+// "verify result is missing" when no report exists.
+func readVerifyResult(path string, counts SpecCounts) verifyResultEvaluation {
+	if path == "" {
+		return verifyResultEvaluation{Reason: "verify result is missing"}
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return verifyResultEvaluation{Reason: "verify result is missing"}
+	}
+	return parseVerifyResult(string(content), counts)
+}
+
+// parseVerifyResult evaluates a verify report envelope against the
+// authoritative spec counts, accepting both the legacy gentle-ai schema and
+// the biggz-native schema. Failing conditions are checked IN ORDER:
+// envelope/schema/field errors, test_exit_code, build_exit_code, requirement
+// and scenario totals, blockers, critical findings, requirement and scenario
+// completion, and finally the verdict. The evidence_revision is extracted
+// when it is a canonical sha256: identity.
+func parseVerifyResult(text string, expected SpecCounts) verifyResultEvaluation {
+	yamlRe := regexp.MustCompile("(?s)```yaml\\s+(.*?)```")
+	matches := yamlRe.FindStringSubmatch(text)
+	if len(matches) < 2 {
+		return verifyResultEvaluation{Reason: "verify result: missing YAML envelope (```yaml ... ```)"}
+	}
+	report, err := parseYAMLEnvelope(matches[1])
+	if err != nil {
+		return verifyResultEvaluation{Reason: "verify result: parse envelope: " + err.Error()}
+	}
+	if report.Schema != VerifyResultSchema && report.Schema != BiggzVerifyResultSchema {
+		return verifyResultEvaluation{Reason: fmt.Sprintf("verify result: unknown schema %q", report.Schema)}
+	}
+	evaluation := verifyResultEvaluation{}
+	if report.EvidenceRevision != "" {
+		if !sha256IdentityPattern.MatchString(report.EvidenceRevision) {
+			return verifyResultEvaluation{Reason: "invalid evidence_revision in verify result envelope"}
+		}
+		evaluation.EvidenceRevision = report.EvidenceRevision
+	}
+	requirements, ok := parseVerifyCompletion(report.Requirements)
+	if !ok {
+		return verifyResultEvaluation{Reason: "invalid requirements in verify result envelope"}
+	}
+	scenarios, ok := parseVerifyCompletion(report.Scenarios)
+	if !ok {
+		return verifyResultEvaluation{Reason: "invalid scenarios in verify result envelope"}
+	}
+	if report.TestExitCode != 0 {
+		evaluation.Reason = "test_exit_code must be zero for archive readiness"
+		return evaluation
+	}
+	if report.BuildExitCode != 0 {
+		evaluation.Reason = "build_exit_code must be zero for archive readiness"
+		return evaluation
+	}
+	if requirements.Total != expected.Requirements {
+		evaluation.Reason = fmt.Sprintf("verify result total %d does not match actual requirement count %d", requirements.Total, expected.Requirements)
+		return evaluation
+	}
+	if scenarios.Total != expected.Scenarios {
+		evaluation.Reason = fmt.Sprintf("verify result total %d does not match actual scenario count %d", scenarios.Total, expected.Scenarios)
+		return evaluation
+	}
+	if report.Blockers != 0 {
+		evaluation.Reason = "blockers must be zero for archive readiness"
+		return evaluation
+	}
+	if report.CriticalFindings != 0 {
+		evaluation.Reason = "critical_findings must be zero for archive readiness"
+		return evaluation
+	}
+	if requirements.Completed != requirements.Total {
+		evaluation.Reason = "requirements are incomplete"
+		return evaluation
+	}
+	if scenarios.Completed != scenarios.Total {
+		evaluation.Reason = "scenarios are incomplete"
+		return evaluation
+	}
+	switch report.Verdict {
+	case "pass", "pass_with_warnings":
+	case "fail":
+		evaluation.Reason = "verdict requires remediation"
+		return evaluation
+	default:
+		return verifyResultEvaluation{Reason: fmt.Sprintf("verify result: unknown verdict %q", report.Verdict)}
+	}
+	evaluation.Passing = true
+	return evaluation
+}
+
+// parseVerifyCompletion parses a "N/M" completion field into its completed
+// and total counts, rejecting malformed values and completed > total.
+func parseVerifyCompletion(value string) (verifyCompletion, bool) {
+	completedRaw, totalRaw, ok := strings.Cut(value, "/")
+	if !ok || strings.Contains(totalRaw, "/") {
+		return verifyCompletion{}, false
+	}
+	completed, completedOK := parseNonnegativeInt(completedRaw)
+	total, totalOK := parseNonnegativeInt(totalRaw)
+	if !completedOK || !totalOK || completed > total {
+		return verifyCompletion{}, false
+	}
+	return verifyCompletion{Completed: completed, Total: total}, true
+}
+
+func parseNonnegativeInt(value string) (int, bool) {
+	if value == "" {
+		return 0, false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return 0, false
+		}
+	}
+	parsed, err := strconv.Atoi(value)
+	return parsed, err == nil
 }
 
 // ─── Remediation Result ──────────────────────────────────────────────────────
