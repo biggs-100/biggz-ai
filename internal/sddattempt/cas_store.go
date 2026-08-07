@@ -57,6 +57,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/review"
 )
@@ -84,6 +85,72 @@ type Store struct {
 	Change     string
 	LegacyPath string // legacy home-dir single-file location (migration source)
 	Scope      string // ScopeClone or ScopeMachine
+}
+
+// grantClock renders the GrantedAt timestamp of grant records; a package
+// variable so tests can pin it. Production records UTC.
+var grantClock = func() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+
+// RuntimeGrant is one immutable per-change edit-authority grant in the
+// append-only audit history. Roots are canonical absolute symlink-evaluated
+// paths exactly as normalized before the request digest was computed.
+// GrantedAt is the ledger's wall-clock audit field (UTC RFC3339Nano); it is
+// excluded from determinism expectations, which only require it to parse.
+type RuntimeGrant struct {
+	Roots     []string `json:"roots"`
+	Actor     string   `json:"actor"`
+	Reason    string   `json:"reason"`
+	GrantedAt string   `json:"granted_at"`
+	// Instance is the change-instance identity this grant belongs to: replay
+	// projects a grant only for the same identity, which is what makes an
+	// archived name's reuse unable to resurrect the archived change's
+	// authority.
+	Instance string `json:"instance"`
+}
+
+// validateBoundedText rejects values that cannot be recorded as ledger text:
+// empty, over the maximum length, untrimmed, or multi-line.
+func validateBoundedText(value string, maximum int) error {
+	if value == "" || len(value) > maximum || strings.TrimSpace(value) != value || strings.ContainsAny(value, "\r\n\x00") {
+		return errors.New("value must be non-empty, trimmed, single-line, and bounded")
+	}
+	return nil
+}
+
+// validateChangeInstance rejects identities that cannot be bound to a grant:
+// empty, untrimmed, multi-line, or over 128 bytes.
+func validateChangeInstance(instance string) error {
+	if err := validateBoundedText(instance, 128); err != nil {
+		return fmt.Errorf("invalid change-instance identity: %w", err)
+	}
+	return nil
+}
+
+// grantedRootsFor projects the canonical granted roots of one change
+// instance from the append-only grant history, in grant order,
+// deduplicating already-granted roots. An empty instance — every reader that
+// has not declared which change instance it serves — projects nothing (the
+// conservative containment). It is never persisted: the projection is
+// derived read-time, so the snapshot content address stays stable.
+func grantedRootsFor(store *RuntimeStore, instance string) []string {
+	if instance == "" {
+		return nil
+	}
+	var roots []string
+	seen := make(map[string]struct{})
+	for _, grant := range store.Grants {
+		if grant.Instance != instance {
+			continue
+		}
+		for _, root := range grant.Roots {
+			if _, duplicate := seen[root]; duplicate {
+				continue
+			}
+			seen[root] = struct{}{}
+			roots = append(roots, root)
+		}
+	}
+	return roots
 }
 
 // validateChangeName rejects change names that would escape the ledger

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -80,6 +81,11 @@ type RuntimeStore struct {
 	// outcome. A replay of the same request ID returns the SAME result
 	// without mutating the ledger.
 	Requests map[string]RuntimeRequestRecord `json:"requests,omitempty"`
+
+	// Grants is the append-only per-change edit-authority audit history.
+	// GrantedRoots is never persisted: it is derived read-time by
+	// grantedRootsFor, so the snapshot hash stays stable.
+	Grants []RuntimeGrant `json:"grants,omitempty"`
 
 	// created_at / updated_at
 	CreatedAt string `json:"created_at"`
@@ -143,10 +149,12 @@ const (
 	requestDigestDomainBegin  = "biggz-ai.sdd-runtime-begin-request/v1"
 	requestDigestDomainFinish = "biggz-ai.sdd-runtime-finish-request/v1"
 	requestDigestDomainReset  = "biggz-ai.sdd-runtime-reset-request/v1"
+	requestDigestDomainGrant  = "biggz-ai.sdd-runtime-grant-request/v1"
 
 	opBegin  = "begin"
 	opFinish = "finish"
 	opReset  = "reset"
+	opGrant  = "grant"
 )
 
 // requestDigest hashes the canonical JSON of a request under a schema domain,
@@ -197,6 +205,12 @@ type RuntimeStatus struct {
 	// (no-git home fallback, see ScopeMachine).
 	Scope string `json:"scope,omitempty"`
 
+	// GrantedRoots projects the canonical granted edit roots for the
+	// change-instance identity the read declared (see StatusWithInstance).
+	// omitempty is load-bearing: grant-free chains and undeclared reads
+	// serialize byte-identically to before the field existed.
+	GrantedRoots []string `json:"granted_roots,omitempty"`
+
 	// Optional binding info (only when a binding revision is set)
 	BindingRevision  string `json:"binding_revision,omitempty"`
 	BindingLineage   string `json:"binding_lineage,omitempty"`
@@ -206,6 +220,16 @@ type RuntimeStatus struct {
 // Status reads the runtime ledger and returns a status response.
 // Returns an empty status (NextAction="begin") if no ledger exists yet.
 func Status(changeName, repoRoot string) (*RuntimeStatus, error) {
+	return StatusWithInstance(changeName, repoRoot, "")
+}
+
+// StatusWithInstance reads the runtime ledger like Status, scoped to one
+// change-instance identity: granted roots are projected only when they were
+// recorded for exactly this instance, in grant order, deduplicated. An empty
+// instance (a reader that declared no identity) behaves exactly like today's
+// Status: no granted roots are projected and the response serializes
+// byte-identically.
+func StatusWithInstance(changeName, repoRoot, instance string) (*RuntimeStatus, error) {
 	s, err := resolveStore(changeName, repoRoot)
 	if err != nil {
 		return nil, err
@@ -235,6 +259,7 @@ func Status(changeName, repoRoot string) (*RuntimeStatus, error) {
 			AttemptCount:     len(store.Attempts),
 			Migrated:         migrated,
 			Scope:            s.Scope,
+			GrantedRoots:     grantedRootsFor(store, instance),
 			BindingRevision:  store.BindingRevision,
 			BindingLineage:   store.BindingLineage,
 			EvidenceRevision: store.EvidenceRevision,
@@ -756,6 +781,206 @@ func Reset(params ResetParams) (*ResetResult, error) {
 	result.Migrated = migrated
 	result.Scope = s.Scope
 	return result, nil
+}
+
+// ─── Grant ───────────────────────────────────────────────────────────────────
+
+// maximumGrantRoots bounds one grant's root list.
+const maximumGrantRoots = 32
+
+// GrantParams record a per-change edit-authority grant: maintainer-authorized
+// permission for this change's apply actor to edit the named repository
+// roots. Roots are canonicalized (absolute, symlink-evaluated) before the
+// request digest is computed, so the digest binds the exact identities the
+// record carries. ChangeInstance is required and is the single source of the
+// grant's instance identity — the CLI always passes the persisted change
+// marker token.
+type GrantParams struct {
+	ChangeName     string
+	RepoRoot       string
+	ExpectedRev    string // CAS: expected current revision; empty on a fresh pre-attempt ledger
+	Roots          []string
+	Reason         string
+	Actor          string
+	RequestID      string // idempotency key: replaying the same request id returns the recorded result
+	ChangeInstance string // required; the change-instance identity this grant authorizes
+}
+
+// GrantResult describes the result of a grant.
+type GrantResult struct {
+	Revision     string   `json:"revision"`
+	Scope        string   `json:"scope,omitempty"`
+	GrantedRoots []string `json:"granted_roots,omitempty"`
+	Migrated     bool     `json:"migrated,omitempty"`
+}
+
+// Grant records a per-change edit-authority grant and commits a new snapshot
+// with the grant appended to the audit history. It has NO structural
+// precondition: authorizing roots is orthogonal to attempt state, and on a
+// fresh pre-attempt ledger the grant creates the store exactly like Begin
+// does. The CAS guard is re-checked as every sibling mutation: an
+// ExpectedRev that does not match the current revision refuses.
+//
+// When a RequestID is supplied, the operation is idempotent: a replay
+// returns the recorded outcome without mutating the ledger. A request ID
+// reused with different inputs fails.
+func Grant(params GrantParams) (*GrantResult, error) {
+	if err := validateChangeInstance(params.ChangeInstance); err != nil {
+		return nil, err
+	}
+	params, err := normalizeGrantRootsRequest(params)
+	if err != nil {
+		return nil, err
+	}
+	if params.RequestID != "" && !requestIDPattern.MatchString(params.RequestID) {
+		return nil, errors.New("request_id must be a canonical lowercase identifier")
+	}
+	digest := requestDigest(requestDigestDomainGrant, params)
+	grantedAt := grantClock()
+
+	s, err := resolveStore(params.ChangeName, params.RepoRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	var result *GrantResult
+	var migrated bool
+	err = s.withStoreLock(func() error {
+		loaded, mig, err := s.replay()
+		if err != nil {
+			return err
+		}
+		migrated = mig
+
+		// First access: create a fresh store carrying the grant (the record's
+		// content address is its revision), exactly like Begin's fresh-store
+		// path but with no attempt started.
+		if loaded == nil {
+			store := &RuntimeStore{
+				ChangeName: params.ChangeName,
+				CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+				UpdatedAt:  time.Now().UTC().Format(time.RFC3339),
+				NextAction: "begin",
+				Grants: []RuntimeGrant{{
+					Roots:     params.Roots,
+					Actor:     params.Actor,
+					Reason:    params.Reason,
+					GrantedAt: grantedAt,
+					Instance:  params.ChangeInstance,
+				}},
+			}
+			outcome := &GrantResult{GrantedRoots: grantedRootsFor(store, params.ChangeInstance), Scope: s.Scope}
+			recordRequest(store, params.RequestID, opGrant, digest, outcome)
+			if params.RequestID != "" {
+				setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
+			}
+			if err := s.commit(store); err != nil {
+				return fmt.Errorf("save store: %w", err)
+			}
+			result = &GrantResult{
+				Revision:     store.Revision,
+				GrantedRoots: grantedRootsFor(store, params.ChangeInstance),
+				Scope:        s.Scope,
+			}
+			return nil
+		}
+		store := loaded
+
+		// Idempotent replay: the request ID already applied once. Return the
+		// recorded outcome for that request without touching the current state.
+		if params.RequestID != "" && store.Requests != nil {
+			if record, exists := store.Requests[params.RequestID]; exists {
+				if record.Operation != opGrant || record.Digest != digest {
+					return fmt.Errorf("request_id %q was reused with different inputs", params.RequestID)
+				}
+				var replayed GrantResult
+				if err := json.Unmarshal(record.Outcome, &replayed); err != nil {
+					return fmt.Errorf("replay request %q: %w", params.RequestID, err)
+				}
+				result = &replayed
+				return nil
+			}
+		}
+
+		// CAS check
+		if params.ExpectedRev != "" && store.Revision != params.ExpectedRev {
+			return fmt.Errorf("CAS conflict: expected revision %s, got %s", params.ExpectedRev, store.Revision)
+		}
+
+		// Append the grant to the audit history and commit a new snapshot.
+		store.Grants = append(store.Grants, RuntimeGrant{
+			Roots:     params.Roots,
+			Actor:     params.Actor,
+			Reason:    params.Reason,
+			GrantedAt: grantedAt,
+			Instance:  params.ChangeInstance,
+		})
+		store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		outcome := &GrantResult{GrantedRoots: grantedRootsFor(store, params.ChangeInstance), Scope: s.Scope}
+		recordRequest(store, params.RequestID, opGrant, digest, outcome)
+		if params.RequestID != "" {
+			setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
+		}
+		if err := s.commit(store); err != nil {
+			return fmt.Errorf("save store: %w", err)
+		}
+		result = &GrantResult{
+			Revision:     store.Revision,
+			GrantedRoots: grantedRootsFor(store, params.ChangeInstance),
+			Scope:        s.Scope,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.Migrated = migrated
+	result.Scope = s.Scope
+	return result, nil
+}
+
+// normalizeGrantRootsRequest mirrors the sibling operations' CAS/audit-field
+// validation and canonicalizes every requested root: absolute, then
+// symlink-evaluated, so a link and its target record one identity. Canonical
+// duplicates collapse before the request digest is computed, keeping the
+// digest identical to the event.
+func normalizeGrantRootsRequest(params GrantParams) (GrantParams, error) {
+	if len(params.Roots) < 1 || len(params.Roots) > maximumGrantRoots {
+		return GrantParams{}, fmt.Errorf("grant requires between 1 and %d roots", maximumGrantRoots)
+	}
+	canonical := make([]string, 0, len(params.Roots))
+	seen := make(map[string]struct{}, len(params.Roots))
+	for _, root := range params.Roots {
+		if err := validateBoundedText(root, 4096); err != nil {
+			return GrantParams{}, fmt.Errorf("invalid grant root: %w", err)
+		}
+		resolved, err := filepath.Abs(root)
+		if err == nil {
+			resolved, err = filepath.EvalSymlinks(resolved)
+		}
+		if err != nil {
+			return GrantParams{}, fmt.Errorf("resolve grant root %q: %w", root, err)
+		}
+		if err := validateBoundedText(resolved, 4096); err != nil {
+			return GrantParams{}, fmt.Errorf("invalid canonical grant root: %w", err)
+		}
+		if _, duplicate := seen[resolved]; duplicate {
+			continue
+		}
+		seen[resolved] = struct{}{}
+		canonical = append(canonical, resolved)
+	}
+	params.Roots = canonical
+	if err := validateBoundedText(params.Reason, 500); err != nil {
+		return GrantParams{}, fmt.Errorf("invalid grant reason: %w", err)
+	}
+	if err := validateBoundedText(params.Actor, 128); err != nil {
+		return GrantParams{}, fmt.Errorf("invalid grant actor: %w", err)
+	}
+	if err := validateChangeInstance(params.ChangeInstance); err != nil {
+		return GrantParams{}, err
+	}
+	return params, nil
 }
 
 // ─── Store I/O ───────────────────────────────────────────────────────────────
