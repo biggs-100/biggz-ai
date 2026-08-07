@@ -805,6 +805,9 @@ func sddAttemptRun() int {
 	cleanupEv := ""
 	processEv := ""
 	remediatesEv := ""
+	actor := ""
+	changeInstance := ""
+	var roots []string
 
 	for i := 2; i < len(args); i++ {
 		switch args[i] {
@@ -812,6 +815,25 @@ func sddAttemptRun() int {
 			if i+1 < len(args) {
 				i++
 				expectedRev = args[i]
+			}
+		case "--root":
+			if i+1 < len(args) {
+				i++
+				// The consent envelope quotes paths for copy-paste into a
+				// shell; a shell strips the quotes, but an in-process rerun
+				// of the invocation passes them through, so tolerate them
+				// here (mirrors gentle-ai's CLI quote trimming).
+				roots = append(roots, strings.Trim(strings.TrimSpace(args[i]), `"`))
+			}
+		case "--change-instance":
+			if i+1 < len(args) {
+				i++
+				changeInstance = args[i]
+			}
+		case "--actor":
+			if i+1 < len(args) {
+				i++
+				actor = args[i]
 			}
 		case "--expected-binding-revision":
 			if i+1 < len(args) {
@@ -903,7 +925,17 @@ func sddAttemptRun() int {
 
 	switch operation {
 	case "status":
-		status, err := sddattempt.Status(change, cwd)
+		// An optional --change-instance scopes the granted-roots projection
+		// to that instance; without it, status projects no granted roots at
+		// all, which is the conservative containment for readers that have
+		// not declared which change instance they serve.
+		var status *sddattempt.RuntimeStatus
+		var err error
+		if changeInstance != "" {
+			status, err = sddattempt.StatusWithInstance(change, cwd, changeInstance)
+		} else {
+			status, err = sddattempt.Status(change, cwd)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
@@ -921,11 +953,56 @@ func sddAttemptRun() int {
 		fmt.Printf("Attempts:         %d\n", status.AttemptCount)
 		fmt.Printf("Decision needed:  %v\n", status.DecisionRequired)
 		fmt.Printf("Complete:         %v\n", status.Complete)
+		if len(status.GrantedRoots) > 0 {
+			fmt.Printf("Granted roots:    %s\n", strings.Join(status.GrantedRoots, ", "))
+		}
 		if status.BindingRevision != "" {
 			fmt.Printf("Binding revision: %s\n", status.BindingRevision)
 		}
 		if status.BindingLineage != "" {
 			fmt.Printf("Binding lineage:  %s\n", status.BindingLineage)
+		}
+
+	case "grant":
+		var missing []string
+		if len(roots) == 0 {
+			missing = append(missing, "--root")
+		}
+		if changeInstance == "" {
+			missing = append(missing, "--change-instance")
+		}
+		if requestID == "" {
+			missing = append(missing, "--request-id")
+		}
+		if actor == "" {
+			missing = append(missing, "--actor")
+		}
+		if reason == "" {
+			missing = append(missing, "--reason")
+		}
+		if len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "error: sdd-attempt grant requires %s; rerun `biggz sdd-attempt grant` with those missing flags\n", strings.Join(missing, ", "))
+			return 1
+		}
+		result, err := sddattempt.Grant(sddattempt.GrantParams{
+			ChangeName:     change,
+			RepoRoot:       cwd,
+			ExpectedRev:    expectedRev,
+			Roots:          roots,
+			Reason:         reason,
+			Actor:          actor,
+			RequestID:      requestID,
+			ChangeInstance: changeInstance,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(result); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
 		}
 
 	case "begin":
@@ -1025,7 +1102,7 @@ func sddAttemptRun() int {
 		}
 
 	default:
-		fmt.Fprintf(os.Stderr, "unknown operation %q (use: status, begin, finish, reset)\n", operation)
+		fmt.Fprintf(os.Stderr, "unknown operation %q (use: status, begin, finish, reset, grant)\n", operation)
 		return 1
 	}
 

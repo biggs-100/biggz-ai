@@ -1098,21 +1098,31 @@ repository the ledger falls back to a machine-scoped store
 (~/.biggz/sdd-runtime-nogit/v1/<change>/) with the same semantics.
 
 Usage:
-  biggz sdd-attempt status <change>              — show current attempt state
+  biggz sdd-attempt status <change> [--change-instance <token>] — show current attempt state
   biggz sdd-attempt begin <change> [flags]       — start a new attempt
   biggz sdd-attempt finish <change> [flags]      — finish current attempt
   biggz sdd-attempt reset <change> [flags]       — reset ledger (requires reason)
+  biggz sdd-attempt grant <change> [flags]       — record per-change edit authority for roots
 
 Flags:
   --expected-revision <hash>    CAS guard: fail if current revision differs
+                                (optional for grant: empty on a fresh
+                                pre-attempt ledger, otherwise sha256)
   --objective-id <id>           Objective identifier for scope tracking
-  --request-id <id>             Idempotency key (begin/finish/reset): replaying
-                                the same request id returns the recorded result
-                                without mutating the ledger
+  --request-id <id>             Idempotency key (begin/finish/reset/grant):
+                                replaying the same request id returns the
+                                recorded result without mutating the ledger
   --outcome <passed|failed|interrupted>  Result of the attempt (finish)
   --diagnosis <text>            Human-readable diagnosis (finish/reset)
-  --reason <text>               Reset reason (reset, required)
+  --reason <text>               Reset reason (reset, required) or grant reason
+                                (grant, required)
   --reset-by <name>             Who authorized the reset
+  --actor <name>                Who authorized the grant (grant, required)
+  --change-instance <token>     Change-instance identity: scopes the granted
+                                roots projection of status; required for grant
+                                (pass the change's persisted marker token)
+  --root <path>                 Repository root to grant edit authority over
+                                (grant, required and repeatable, 1..32 roots)
   --max-attempts <n>            Maximum allowed attempts
   --max-lines <n>               Maximum changed lines
   --work-unit <id>              Work unit identifier
