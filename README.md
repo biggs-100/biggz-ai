@@ -69,6 +69,19 @@ proposal → spec → design → tasks → apply → verify → archive
 
 Each phase is a skill (`/sdd-propose`, `/sdd-spec`, etc.) that the orchestrator delegates to sub-agents. Lenses run in parallel via the DAG graph executor (SGH-inspired multi-ready-unit scheduling).
 
+### Edit authority for multi-repository changes
+
+A change whose `tasks.md` targets repositories outside the planning repository reports
+`blocked(edit_authority_missing)` from `biggz sdd-status` and carries a typed consent envelope
+(`biggz-ai.edit-authority-consent/v1`) whose granted choice is the exact runnable
+`biggz sdd-attempt grant <change> --root <path>... --change-instance <token>` invocation. The
+grant is recorded in the change's runtime ledger, scoped to the change-instance identity
+persisted in the change's own directory (`.biggz-instance`), and dies with archive.
+
+Apply-side enforcement — an outside-root guard in `biggz sdd-apply` that consumes
+`granted_roots` — is a deliberate follow-up: biggz has no apply gate today, so the block is
+surfaced at `sdd-status` only.
+
 ## Review Pipeline
 
 ```
