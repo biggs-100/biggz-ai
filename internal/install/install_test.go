@@ -77,6 +77,18 @@ func TestInstall_AgentDetected(t *testing.T) {
 	if _, err := os.Stat(reviewPlugin); os.IsNotExist(err) {
 		t.Error("review-result-artifacts.ts was not deployed to the agent plugins directory")
 	}
+	// All 3 OpenCode plugins ship (parity with gentle-ai): the reviewer
+	// transport + SDD phase hooks, the startup skill-registry refresh, and
+	// the model-variants cache writer.
+	for _, name := range []string{
+		"review-result-artifacts.ts",
+		"skill-registry.ts",
+		"model-variants.ts",
+	} {
+		if _, err := os.Stat(filepath.Join(pluginsDir, name)); os.IsNotExist(err) {
+			t.Errorf("%s was not deployed to the agent plugins directory", name)
+		}
+	}
 	if got := result.PluginsDeployed; got != len(pluginFiles) {
 		t.Errorf("PluginsDeployed = %d, want %d plugin files on disk", got, len(pluginFiles))
 	}
@@ -210,6 +222,35 @@ func TestDeployPlugins_EmbeddedAssetWritten(t *testing.T) {
 		}
 		if !bytes.Equal(got, want) {
 			t.Errorf("deployed %s content differs from the embedded asset", name)
+		}
+	}
+}
+
+// TestDeployPlugins_AllThreeParityPluginsEmbedded verifies the full 3/3
+// OpenCode plugin parity set with gentle-ai is embedded and deployed with
+// identical bytes: review-result-artifacts, skill-registry, model-variants.
+func TestDeployPlugins_AllThreeParityPluginsEmbedded(t *testing.T) {
+	tmpDir := t.TempDir()
+	pluginsDir := filepath.Join(tmpDir, ".config", "opencode", "plugins")
+
+	count, err := install.DeployPlugins(pluginsDir, assets.FS, false)
+	if err != nil {
+		t.Fatalf("DeployPlugins error = %v", err)
+	}
+	embedded, err := fs.Glob(assets.FS, "opencode/plugins/*.ts")
+	if err != nil {
+		t.Fatalf("glob embedded plugins: %v", err)
+	}
+	if count != len(embedded) {
+		t.Errorf("DeployPlugins count = %d, want %d embedded plugins", count, len(embedded))
+	}
+	names := make(map[string]bool)
+	for _, name := range embedded {
+		names[filepath.Base(name)] = true
+	}
+	for _, want := range []string{"review-result-artifacts.ts", "skill-registry.ts", "model-variants.ts"} {
+		if !names[want] {
+			t.Errorf("embedded plugins missing %q", want)
 		}
 	}
 }

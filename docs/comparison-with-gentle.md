@@ -52,6 +52,21 @@
 | **Skills** | 22+ skills | 35 skills (same content) |
 | **Skill registry** | `.atl/skill-registry.md` | ✅ Same |
 | **Relative paths** | Absolute (C:\Users\...) | ✅ Relative |
+| **Agent builder** | `internal/agentbuilder` + TUI flow | ✅ Ported: same engines, parser, installer, registry (`~/.config/biggz/custom-agents.json`), SDD phase support |
+| **SDD phase hooks** | SDD task-result failures → terminal `GENTLE_AI_SDD_FAILURE` handoff | ✅ Ported (schema `biggz-ai.sdd-task-result-failure/v1`, continuation `biggz sdd-status --cwd <dir> --json`) |
+
+## OpenCode Plugins (3/3 parity)
+
+| Plugin | gentle-ai | biggz-ai |
+|---|---|---|
+| `review-result-artifacts.ts` | Reviewer transport + SDD hooks, schema `gentle-ai.sdd-task-result-failure/v1` | ✅ Same + biggz schema; keeps deliberate quarantine-to-file divergence (raw payload → `.git/biggz/preserved-results/`) and scrubbed native causes (env/email/abs-path redaction, 512-char cap) |
+| `skill-registry.ts` | `gentle-ai skill-registry refresh` at startup | ✅ `biggz skill-registry refresh --quiet --no-gitignore --cwd <dir>` (fire-and-forget, 30s timeout) |
+| `model-variants.ts` | Writes `~/.gentle-ai/cache/model-variants.json` | ✅ Writes `~/.biggz/cache/model-variants.json` (same atomic tmp+rename contract) |
+
+Deferred from gentle-ai: the `internal/opencode` Go package (biggz's model
+picker is still a static stub; the plugin cache is written but not yet read
+from Go) and the SDDNewPhase agent-builder mode (standalone + phase-support
+are wired).
 
 ## Memory (BigMem)
 
@@ -67,8 +82,9 @@
 | Feature | Why missing |
 |---|---|
 | 14 more agent adapters | Not needed — 3 covers the major agents |
-| TUI | Not needed — UI is the agent itself |
-| Self-update | Not needed — agent manages itself |
+| `internal/opencode` Go package | Deferred — the model-variants plugin cache is written but the model picker is still a static stub |
+| SDDNewPhase agent-builder mode | Deferred — standalone + phase-support SDD modes are wired; new-phase graph wiring is not |
+| Multi-agent install targets (claude/gemini/codex skills dirs in agent builder) | Deferred — agent builder installs to the available generation engines' skills dirs |
 | Platform detection | Not needed — agent knows its OS |
 | Store locks | Not needed — in-memory + BigMem |
 | Legacy compatibility | Intentional — no legacy debt |

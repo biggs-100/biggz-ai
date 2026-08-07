@@ -21,7 +21,8 @@ cmd/
 
 internal/
 ├── agents/          — Agent adapters (opencode, claude, qwen)
-├── assets/          — Embedded skills + configs
+├── agentbuilder/    — Custom SDD agent generation (engines, parser, installer, registry)
+├── assets/          — Embedded skills + configs + OpenCode plugins
 ├── backup/          — tar.gz snapshot/restore
 ├── BigMem/          — Persistent observation store + MCP tools
 ├── contracts/       — Wire-envelope formalization engine (test-only validation)
@@ -139,6 +140,32 @@ Kill switch stored in:
 - **Clone-local**: `.git/rdd-mode.json` (can only disable)
 
 Any "off" wins. Status is read-only. Re-enabling applies to future candidates only.
+
+## OpenCode Plugins
+
+biggz ships 3 OpenCode plugins (full parity with gentle-ai), all embedded
+under `internal/assets/opencode/plugins/` and auto-deployed to
+`~/.config/opencode/plugins/` by `install.DeployPlugins` (OpenCode auto-loads
+local plugin files; no `plugin: []` registration needed):
+
+| Plugin | Job |
+|---|---|
+| `review-result-artifacts.ts` | Reviewer transport (`biggz review capture-result`) + SDD phase task-result failure handoffs (`biggz-ai.sdd-task-result-failure/v1`) |
+| `skill-registry.ts` | On startup runs `biggz skill-registry refresh --quiet --no-gitignore --cwd <dir>` (fingerprint-cached, fire-and-forget) |
+| `model-variants.ts` | Writes `~/.biggz/cache/model-variants.json` (atomic tmp+rename) for the effort-level picker |
+
+## Agent Builder
+
+`internal/agentbuilder/` + the TUI `[A]gent builder` flow generate custom
+sub-agent SKILL.md files with an AI CLI engine (claude / opencode / gemini /
+codex), parse them into kebab-case agents, install them to the engine skills
+dirs with rollback, and persist entries to
+`~/.config/biggz/custom-agents.json`. SDD-integrated agents additionally get
+a `<!-- biggz:custom-agent:<name> -->` reference block injected into the
+target agent's system prompt via the same `InjectByMarker` mechanism the
+install pipeline uses. Standalone and phase-support SDD modes are wired;
+SDDNewPhase mode and the `internal/opencode` Go package (model picker reads
+the cache from Go) are deferred.
 
 ## Contracts Formalization Layer
 
