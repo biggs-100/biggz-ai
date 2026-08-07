@@ -597,19 +597,23 @@ func installRun() int {
 
 // sddStatusRun handles the "biggz sdd-status" subcommand.
 // It scans the openspec/changes directory and reports active/archived changes.
-// Usage: biggz sdd-status [--cwd <dir>] [--json]
+// Usage: biggz sdd-status [--cwd <dir>] [--json] [--instructions]
 //   --json emits the sdd.Status payload (active + archived + review_disabled)
 //   as JSON, consumed by the SDD phase failure handoff
 //   (biggz-ai.sdd-task-result-failure/v1 continuation command).
+//   --instructions adds the phaseInstructions block to every derived change.
 func sddStatusRun() int {
 	// Look for openspec/ relative to the current working dir
 	args := os.Args[2:]
 	emitJSON := false
+	includeInstructions := false
 	cwd := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--json":
 			emitJSON = true
+		case "--instructions":
+			includeInstructions = true
 		case "--cwd":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "error: --cwd requires a directory")
@@ -648,7 +652,10 @@ func sddStatusRun() int {
 		}
 	}
 
-	active, archived, err := sdd.Status(openspecRoot)
+	active, archived, err := sdd.StatusWithOptions(openspecRoot, sdd.StatusOptions{
+		ReviewDisabled:      reviewDisabled,
+		IncludeInstructions: includeInstructions,
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
@@ -4117,7 +4124,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "Usage: biggz <command> [args...]")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  install                    Install biggz-ai in your AI agent")
-	fmt.Fprintln(os.Stderr, "  sdd-status                 Show SDD change status")
+	fmt.Fprintln(os.Stderr, "  sdd-status                 Show SDD change status [--cwd <dir>] [--json] [--instructions]")
 	fmt.Fprintln(os.Stderr, "  sdd-verify-validate        Validate verify reports")
 	fmt.Fprintln(os.Stderr, "  sdd-attempt                Manage attempt budgets")
 	fmt.Fprintln(os.Stderr, "  sdd-continue <change>      Determine next SDD phase")
