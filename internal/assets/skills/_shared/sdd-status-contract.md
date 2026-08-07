@@ -7,7 +7,9 @@ routing from free text.
 ## Native Dispatcher Projection
 
 `biggz sdd-status` runs from the repo root and scans `openspec/changes/`
-(no arguments, no JSON flags). It emits a human-readable projection:
+(`--cwd <dir>` selects a different root). It emits a human-readable
+projection; `--json` emits the structured envelope below, and
+`--instructions` additionally renders the per-phase instruction blocks.
 
 ```
 RDD status: disabled (unmanaged)              # only when review is disabled
@@ -20,21 +22,27 @@ Recent archived:
   • <name> (phase)
 ```
 
-Phase values emitted by the engine (derived from artifact existence):
+Phase values emitted by the engine are nextRecommended-aware: planning
+routes render as `[next: propose|spec|design|tasks]`, runtime phases as
+`[next: apply|verify|remediate|archive]`, archived as `(done)`, and
+`resolve-blockers` lists the blocked reasons inline. The historical
+file-probe chain (`explore/proposal` → `spec` → `design` → `tasks` →
+`apply (N/M tasks)` → `verify` → `archive-ready`) remains the fallback when
+no derivation ran.
 
-| Phase string | Meaning |
-|---|---|
-| `explore/proposal` | `proposal.md` missing |
-| `spec` | proposal exists, specs missing |
-| `design` | specs exist, `design.md` missing |
-| `tasks` | design exists, `tasks.md` missing |
-| `apply (N/M tasks)` | tasks exist, `N` of `M` checklist items marked `[x]` |
-| `verify` | all tasks done, `verify-report.md` missing |
-| `archive-ready` | all artifacts present |
+### Legacy read-compat fields
 
-The engine computes this from per-change booleans/counters:
-`name`, `has_proposal`, `has_specs`, `has_design`, `has_tasks`,
-`tasks_total`, `tasks_done`, `has_apply`, `has_verify`, `is_archived`.
+The per-change booleans/counters `Name`, `HasProposal`, `HasSpecs`,
+`HasDesign`, `HasTasks`, `TasksTotal`, `TasksDone`, `HasApply`, `HasVerify`,
+`IsArchived` (PascalCase wire names; documented historically as
+`has_proposal`, `tasks_total`, `tasks_done`, `has_verify`, `is_archived`)
+plus `granted_roots`, `edit_authority_blocked`, `missing_roots`, `consent`
+remain emitted for read-compatibility with existing consumers. They are
+file-probe approximations: `HasSpecs` is true for any non-empty `specs/`
+directory and the legacy task counters recognize only `- [` checkbox
+prefixes. **Do not route on them** — route ONLY on the derived fields
+below, which are the authority.
+
 Archives are `openspec/changes/archive/<name>/`; the engine shows the last 3.
 
 `biggz sdd-continue <change>` (from the repo root) confirms the same phase
@@ -51,78 +59,100 @@ resolve status entirely from BigMem using the manual schema below.
 
 ## Derived Structured Status (what prompts consume)
 
-The orchestrator derives this structured status and forwards it to sub-agents.
+`biggz sdd-status --cwd <root> --json` derives the structured status natively
+in Go (ported from gentle-ai's `sdd-status --json --instructions` derivation
+authority) and emits every active change plus the last 3 archived:
+`{"active": [...], "archived": [...], "review_disabled": ...}`.
 Schema name: `biggz-ai.sdd-status/v1`.
+
+Derived fields emitted per change (camelCase):
 
 | Field | Type | Meaning |
 |---|---|---|
-| `change_name` | string | change directory name |
 | `schemaName` | string | `biggz-ai.sdd-status/v1` |
-| `planningHome` | string | `openspec/` root relative to the workspace |
-| `changeRoot` | string | `openspec/changes/<change_name>/` (file store) or BigMem namespace |
-| `artifactPaths` | map | artifact → path (file store) or topic key `sdd/{change}/{type}` (BigMem) |
-| `contextFiles` | list | paths/topic keys to read before acting |
-| `applyState` | string | `not_started` \| `ready` \| `blocked` \| `all_done` |
-| dependency states | map | per artifact: `missing` \| `exists` \| `complete` \| `blocked` |
+| `schemaVersion` | int | `1` |
+| `changeName` / `Name` | string | change directory name (legacy `Name` key) |
+| `changeRoot` | string | `openspec/changes/<change_name>/` |
+| `planningHome` | object | `{mode: repo-local, path: openspec/ root}` |
+| `artifactPaths` | object | artifact → path list (proposal, specs, design, tasks, applyProgress, verifyReport) |
+| `contextFiles` | object | same as `artifactPaths` — read these before acting |
+| `artifacts` | map | artifact → `missing` \| `partial` \| `done` |
+| `taskProgress` | object | `{total, completed, pending, allComplete}` |
+| `dependencies` | object | per phase: `blocked` \| `ready` \| `all_done` |
+| `applyState` | string | `blocked` \| `ready` \| `all_done` |
+| `actionContext` | object | `{mode: repo-local, workspaceRoot, allowedEditRoots}` |
+| `remediationState` | object | `{required, complete, failedEvidenceRevision, reason}` |
+| `nextRecommended` | string | see routing below |
 | `blockedReasons` | list | non-empty ⇒ stop; never proceed to apply/archive/terminal work |
-| `actionContext` | object | `{mode: workspace-planning \| change-local, workspaceRoot, allowedEditRoots}` |
-| `reviewGate` | object | `{result: allow \| missing \| pending \| scope-changed \| invalidated \| escalated \| delivery: disabled/unmanaged}` |
-| `nextRecommended` | string | `sdd-new` \| `propose` \| `spec` \| `design` \| `tasks` \| `apply` \| `verify` \| `review` \| `archive` \| `resolve-blockers` \| `done` |
-| task progress | map | `{total, completed, pending, allComplete}` |
+| `phaseInstructions` | object | `--instructions` only; `{apply, verify, remediate, archive}` lists |
+
+### artifact state derivation
+
+| Value | Rule |
+|---|---|
+| `missing` | artifact path absent (specs: no `spec.md` found under `specs/`) |
+| `partial` | exists but trimmed content empty (specs: any found `spec.md` empty) |
+| `done` | non-empty content (specs: every found `spec.md` non-empty) |
+
+`tasks.md` checkboxes count with the unified pattern
+`^\s*(?:[-*]|\d+[.)])\s+\[([ xX])\]` (same pattern edit-authority detection
+uses). `allComplete` is true iff total > 0 and pending == 0.
+
+Spec counts are derived from `specs/**/spec.md` headings:
+`### Requirement: ...` or `### REQ-<n>: ...` count as requirements,
+`#### Scenario: ...` as scenarios. The verify report's totals must match.
 
 ### applyState derivation
 
 | Value | Rule |
 |---|---|
-| `not_started` | `tasks.md` exists, `tasks_done == 0` |
-| `ready` | tasks exist and `0 < tasks_done < tasks_total`, or all done but `verify-report.md` missing |
-| `all_done` | `tasks_done == tasks_total` AND `verify-report.md` exists |
-| `blocked` | any dependency missing for the current phase, or `blockedReasons` non-empty |
+| `blocked` | proposal/specs/design/tasks not all done, or tasks list empty, or blocked by edit authority |
+| `ready` | planning done, `0 < tasks_total` and pending > 0 |
+| `all_done` | planning done and every checkbox complete |
+
+`blocked` when any dependency missing for the current phase, or
+`blockedReasons` non-empty.
 
 ### actionContext values
 
-| `mode` | Meaning | `allowedEditRoots` |
-|---|---|---|
-| `change-local` | implementation edits allowed inside the change's edit roots | non-empty; edit ONLY under these roots |
-| `workspace-planning` | planning context only; apply/verify/archive must NOT run | empty ⇒ STOP before any implementation edit |
+`mode: repo-local` with `workspaceRoot` (the openspec parent) and
+`allowedEditRoots` = `[workspaceRoot] + granted_roots` (the per-change
+granted edit authority). Apply edits are authorized only inside those roots.
 
 ### nextRecommended derivation (priority order)
 
-1. No active change matches → `sdd-new`
-2. `proposal.md` missing → `propose`
-3. specs missing → `spec`
-4. `design.md` missing → `design`
-5. `tasks.md` missing → `tasks`
-6. tasks exist, not all complete → `apply`
-7. all tasks complete, `verify-report.md` missing → `verify`
-8. verified, review binding/`reviewGate.result` not `allow` → `review`
-9. `reviewGate.result == allow` (or delivery `disabled/unmanaged`) → `archive`
+1. `dependencies.apply == ready` → `apply`
+2. `dependencies.verify == ready` → `verify`
+3. apply `all_done` with a current verify report that is not `all_done` → `remediate` when `remediationState.required`; otherwise fall through (biggz has no review authority, so there is no `resolve-review` value)
+4. `dependencies.verify == all_done` and apply `all_done` → `archive`
+5. proposal not `all_done` → `propose`
+6. specs not `all_done` → `spec`
+7. design not `all_done` → `design`
+8. tasks not `all_done` → `tasks`
+9. otherwise → `resolve-blockers`
 10. archived → `done`
 
-`blockedReasons` non-empty overrides every value above: report the reasons and
-STOP. Never proceed to apply, archive, or terminal work while it is non-empty.
+`blockedReasons` non-empty overrides every value above: report the reasons
+and STOP. Never proceed to apply, archive, or terminal work while it is
+non-empty. Blocked reasons split into expected planning reasons (missing or
+partial `proposal.md` / `specs/**/spec.md` / `design.md` / `tasks.md`),
+which are hidden for planning routes and shown otherwise, and genuine
+reasons (`tasks.md has no markdown task checkboxes.`,
+`blocked(edit_authority_missing): ...`, and the remediation reason), which
+are always shown.
 
-### reviewGate derivation
+### remediationState derivation
 
-Native review authority comes from the biggz review CLI:
-
-- `biggz review list` — lineages and their last operation/state.
-- `biggz review status <lineage> --json` — `lineage_id`, `head_hash`,
-  `event_count`, `chain_valid`, `receipt` (present ⇒ approved),
-  `integrity_verdict`, `budget_counters`. No `next_transition` is returned;
-  route only from the returned state.
-- `biggz review gate pre-pr|pre-push <lineage> --json [--dry-run]` — `gate`,
-  `passed`, `reasons`, `dry_run`; exit 1 when not passed.
-- `biggz review bind-sdd <change> <lineage> <revision>` — records the
-  governing approved lineage in the change's runtime ledger
-  (`.biggz/sdd-runtime/`); archive requires this binding.
-
-Derive `reviewGate.result`: `allow` when an approved receipt exists and the
-binding matches the change; `missing`/`pending` when no binding or no receipt;
-`invalidated` when `chain_valid` is false; `escalated` when the change is
-`Complete` or a successor lineage supersedes the binding. When RDD reports
-`disabled (unmanaged)` and no review governs the change, use
-`reviewGate.delivery: disabled/unmanaged`.
+Unmanaged only (biggz has no review authority): when apply is `all_done`
+and the current verify report fails evaluation,
+`required: true` with `failedEvidenceRevision` (the report's
+`evidence_revision`) and reason `verify evidence requires unmanaged
+remediation for <rev>: <verify reason>; receipt-driven review is disabled,
+so this correction is bounded by the native runtime attempt budget alone`.
+Correction is bounded by the native runtime attempt ledger alone: when the
+ledger's last attempt passed with `--remediates-evidence-revision` matching
+the failed revision, the state clears, `dependencies.verify` becomes
+`ready`, and next becomes `verify`.
 
 ## Routing Rules
 
@@ -134,10 +164,33 @@ binding matches the change; `missing`/`pending` when no binding or no receipt;
 - `nextRecommended: resolve-blockers` → report `blockedReasons` and stop.
 - `nextRecommended` planning token (`propose`, `spec`, `design`, `tasks`) →
   launch the corresponding planning phase.
-- `actionContext.mode: workspace-planning` with no `allowedEditRoots` → never
-  launch apply/verify/archive work that would infer repo-local ownership.
+- `nextRecommended: remediate` → run the bounded correction declared by
+  `remediationState` (bind to `failedEvidenceRevision`, finish with
+  `--remediates-evidence-revision`).
+- `actionContext.mode: repo-local` with `allowedEditRoots` → apply edits are
+  authorized only inside those roots; never launch apply/verify/archive work
+  that would infer ownership outside them.
 - If status cannot be resolved safely, return `status: blocked` with the
   missing information.
+
+## Divergences from gentle-ai
+
+- **No `select-change` value**: biggz lists EVERY change in the envelope
+  (active + archived) with its own derived status, so there is no ambiguity
+  point and no `select-change` `nextRecommended`; consumers pick by change
+  name from `active`/`archived`.
+- **No `sdd-new` value**: an empty changes directory yields an empty
+  `active` list, not a status object.
+- **No `review`, `resolve-review`, or `reviewGate` values**: biggz has no
+  review authority on the SDD path; apply-done-with-failed-verify routes to
+  `remediate` (unmanaged, bounded by the runtime attempt ledger) and the
+  resolve-review exit is skipped entirely.
+- **No stale-evidence machinery**: a totals mismatch against the current
+  spec counts is simply a failing verify evaluation (`does not match actual
+  requirement/scenario count`), not a separate "stale" classification.
+- **`state.yaml` is deprecated**: `sdd-new` still writes it for
+  skill-documentation compatibility, but status derivation NEVER reads it —
+  every derived state comes from the file artifacts themselves.
 
 ## Manual Status Schema (BigMem fallback)
 
@@ -158,7 +211,7 @@ change's topic keys (prefix `sdd/{change-name}/`):
 | verify report | `sdd/{change-name}/verify-report` |
 | archive report | `sdd/{change-name}/archive-report` |
 | review artifacts | `sdd/{change-name}/review/{transaction,ledger,receipt,gate-context}` |
-| DAG state | `sdd/{change-name}/state` |
+| DAG state | `sdd/{change-name}/state` (legacy; never read by the native derivation) |
 
 Field derivation is identical to the native projection:
 
@@ -179,8 +232,11 @@ active → `phase: archive`, `state: completed`, `nextRecommended: done`.
 
 ## Binary Availability
 
-- `biggz sdd-status` / `biggz sdd-continue <change>` — run from the repo root
-  (both read `openspec/` in the current directory; neither supports `--cwd`).
+- `biggz sdd-status [--cwd <dir>] [--json] [--instructions]` — scans
+  `openspec/` (current directory, or the `--cwd` root); `--json` emits the
+  derived envelope, `--instructions` adds `phaseInstructions`.
+- `biggz sdd-continue <change>` — legacy phase-chain projection for one
+  change.
 - `biggz sdd-attempt status <change>` — runtime ledger: revision, next action,
   active attempt, decision-required, complete, binding lineage/revision.
 - `biggz sdd-verify-validate --input <path> [--requirements N] [--scenarios N]`
