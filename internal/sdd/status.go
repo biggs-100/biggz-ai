@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/biggs-100/biggz-ai/internal/sddattempt"
 )
 
 // StatusOptions configures status output.
@@ -19,21 +21,32 @@ type StatusOptions struct {
 
 // ChangeStatus represents the state of an SDD change.
 type ChangeStatus struct {
-	Name       string
+	Name        string
 	HasProposal bool
-	HasSpecs   bool
-	HasDesign  bool
-	HasTasks   bool
-	TasksTotal int
-	TasksDone  int
-	HasApply   bool
-	HasVerify  bool
-	IsArchived bool
+	HasSpecs    bool
+	HasDesign   bool
+	HasTasks    bool
+	TasksTotal  int
+	TasksDone   int
+	HasApply    bool
+	HasVerify   bool
+	IsArchived  bool
+
+	// Edit-authority surface (all omitempty / zero-value empty): a change
+	// whose task plan targets repository roots outside the authorized edit
+	// roots reports the block, the missing roots, the granted roots the
+	// ledger projects for its change-instance identity, and the typed
+	// consent envelope naming the runnable grant invocation.
+	GrantedRoots         []string                    `json:"granted_roots,omitempty"`
+	EditAuthorityBlocked bool                        `json:"edit_authority_blocked,omitempty"`
+	MissingRoots         []string                    `json:"missing_roots,omitempty"`
+	Consent              *EditAuthorityConsentResult `json:"consent,omitempty"`
 }
 
 // Status scans the openspec/changes directory and returns the status
 // of all active (non-archived) changes, plus the most recent archived ones.
 func Status(openspecRoot string) (active []ChangeStatus, archived []ChangeStatus, err error) {
+	workspaceRoot := filepath.Dir(openspecRoot)
 	changesDir := filepath.Join(openspecRoot, "changes")
 	archiveDir := filepath.Join(changesDir, "archive")
 
@@ -46,7 +59,7 @@ func Status(openspecRoot string) (active []ChangeStatus, archived []ChangeStatus
 		if !entry.IsDir() || entry.Name() == "archive" {
 			continue
 		}
-		cs, err := readChange(filepath.Join(changesDir, entry.Name()), entry.Name(), false)
+		cs, err := readChange(filepath.Join(changesDir, entry.Name()), entry.Name(), false, workspaceRoot)
 		if err != nil {
 			continue
 		}
@@ -68,7 +81,7 @@ func Status(openspecRoot string) (active []ChangeStatus, archived []ChangeStatus
 		if !entry.IsDir() {
 			continue
 		}
-		cs, err := readChange(filepath.Join(archiveDir, entry.Name()), entry.Name(), true)
+		cs, err := readChange(filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot)
 		if err != nil {
 			continue
 		}
@@ -78,7 +91,7 @@ func Status(openspecRoot string) (active []ChangeStatus, archived []ChangeStatus
 	return active, archived, nil
 }
 
-func readChange(dir, name string, isArchived bool) (ChangeStatus, error) {
+func readChange(dir, name string, isArchived bool, workspaceRoot string) (ChangeStatus, error) {
 	cs := ChangeStatus{Name: name, IsArchived: isArchived}
 
 	// Check artifacts
@@ -94,11 +107,13 @@ func readChange(dir, name string, isArchived bool) (ChangeStatus, error) {
 	}
 
 	// Parse tasks
+	tasksText := ""
 	cs.HasTasks = fileExists(filepath.Join(dir, "tasks.md"))
 	if cs.HasTasks {
 		data, err := os.ReadFile(filepath.Join(dir, "tasks.md"))
 		if err == nil {
-			lines := strings.Split(string(data), "\n")
+			tasksText = string(data)
+			lines := strings.Split(tasksText, "\n")
 			for _, line := range lines {
 				trimmed := strings.TrimSpace(line)
 				if strings.HasPrefix(trimmed, "- [") {
@@ -109,6 +124,53 @@ func readChange(dir, name string, isArchived bool) (ChangeStatus, error) {
 				}
 			}
 		}
+	}
+
+	if tasksText != "" {
+		// The change-instance marker is never minted for an ordinary status:
+		// a change without a marker has no identity to project grants for,
+		// so the ledger is not even read (zero footprint).
+		instance, err := readChangeInstanceMarker(dir)
+		if err != nil {
+			return cs, fmt.Errorf("read change-instance marker for %s: %w", name, err)
+		}
+		var granted []string
+		var expectedRevision string
+		readGranted := func() {
+			if instance == "" {
+				return
+			}
+			status, statusErr := sddattempt.StatusWithInstance(name, workspaceRoot, instance)
+			if statusErr != nil {
+				// A ledger that cannot be read projects nothing: detection
+				// falls back to the conservative planning-only authority.
+				return
+			}
+			granted = status.GrantedRoots
+			expectedRevision = status.Revision
+		}
+		readGranted()
+
+		allowed := make([]string, 0, 1+len(granted))
+		allowed = append(allowed, workspaceRoot)
+		allowed = append(allowed, granted...)
+		missing := detectUnauthorizedEditRoots(tasksText, workspaceRoot, allowed)
+		if len(missing) > 0 {
+			// A blocked status needs a token to embed: mint (or reuse) the
+			// change-instance marker, then re-read the ledger scoped to the
+			// real identity so the envelope chains the exact ledger head.
+			if instance == "" {
+				instance, err = ensureChangeInstanceMarker(dir)
+				if err != nil {
+					return cs, fmt.Errorf("mint change-instance marker for %s: %w", name, err)
+				}
+				readGranted()
+			}
+			cs.EditAuthorityBlocked = true
+			cs.MissingRoots = missing
+			cs.Consent = newEditAuthorityConsent(name, workspaceRoot, missing, instance, expectedRevision)
+		}
+		cs.GrantedRoots = granted
 	}
 
 	return cs, nil
@@ -172,5 +234,12 @@ func formatOne(cs ChangeStatus, archived bool) string {
 	if archived {
 		return fmt.Sprintf("  • %s (%s)\n", cs.Name, phase)
 	}
-	return fmt.Sprintf("  %s — [%s]\n", status, phase)
+	if cs.EditAuthorityBlocked {
+		status += fmt.Sprintf(" — [%s]\n    %s\n", phase, editAuthorityBlockedReason(cs.MissingRoots))
+		if cs.Consent != nil && len(cs.Consent.Choices) > 0 {
+			status += fmt.Sprintf("    consent grant: %s\n", cs.Consent.Choices[0].Invocation)
+		}
+		return status
+	}
+	return fmt.Sprintf("%s — [%s]\n", status, phase)
 }
