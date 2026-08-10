@@ -32,6 +32,19 @@ func MergeJSONC(existing, overlay []byte) ([]byte, error) {
 	return json.MarshalIndent(base, "", "  ")
 }
 
+// UnmarshalJSONObject decodes a JSON object using the same JSONC normalization
+// MergeJSONC accepts: comments are stripped and trailing commas are removed
+// before strict JSON decoding. It is the JSONC-safe way to inspect an existing
+// opencode.json without re-marshaling it.
+func UnmarshalJSONObject(raw []byte) (map[string]any, error) {
+	raw = stripComments(stripTrailingCommas(raw))
+	var object map[string]any
+	if err := json.Unmarshal(raw, &object); err != nil {
+		return nil, err
+	}
+	return object, nil
+}
+
 // deepMerge recursively merges overlay into base. Both must be non-nil maps.
 // Arrays in overlay replace existing arrays. Nested maps merge recursively.
 // If an overlay map contains "__replace__": true, the target is replaced entirely

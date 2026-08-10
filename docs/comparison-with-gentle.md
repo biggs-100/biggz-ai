@@ -93,8 +93,8 @@ are wired).
 | Bench journeys (`bench/` + `gentle-ai bench`) | Absent |
 | Package-manager installers (apt/pacman/dnf/zypper/scoop) + Android/Termux | Absent — brew formula + goreleaser only |
 | `update`/`upgrade` split + beta/stable channels + `--all` ecosystem | Single `update` (with automatic asset reconcile, `--no-reconcile`) |
-| Full management TUI (model picker, Configure Models, agent set editing) | Agent-builder TUI only |
-| `internal/opencode` Go model picker | Deferred — the model-variants plugin cache is written but not read from Go |
+| Full management TUI (model picker, Configure Models, agent set editing) | Agent-builder TUI + 4-mode model picker (19 agents, variants cache) — 2026-08-10 |
+| `internal/opencode` Go model picker | Ported (2026-08-10) — reads the model-variants cache, JSONC-safe assignment read/write |
 | Release policy attestation (`releasepolicy` run-marker) | CLI `release status\|tag\|verify` verbs instead |
 | Legacy v1 authority compatibility (`review-*` commands) | Deliberate — no legacy debt |
 | Path identity packages (`pathidentity`/`pathquote`) | Ad-hoc `quotePath` in sdd |

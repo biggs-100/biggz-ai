@@ -406,3 +406,23 @@ func TestMergeJSONC_JSONCWithComments(t *testing.T) {
 		t.Error("sub_agents key missing from merged result")
 	}
 }
+
+func TestUnmarshalJSONObject_JSONC(t *testing.T) {
+	raw := []byte("{\n  // comment line\n  \"name\": \"test\",\n  \"nested\": { \"enabled\": true, },\n}")
+	object, err := UnmarshalJSONObject(raw)
+	if err != nil {
+		t.Fatalf("UnmarshalJSONObject() error = %v", err)
+	}
+	if object["name"] != "test" {
+		t.Errorf("name = %v, want test", object["name"])
+	}
+	if nested, ok := object["nested"].(map[string]any); !ok || nested["enabled"] != true {
+		t.Errorf("nested = %v, want {enabled: true}", object["nested"])
+	}
+}
+
+func TestUnmarshalJSONObject_Invalid(t *testing.T) {
+	if _, err := UnmarshalJSONObject([]byte("not json")); err == nil {
+		t.Error("UnmarshalJSONObject() invalid input: expected error, got nil")
+	}
+}

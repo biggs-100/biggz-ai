@@ -4,8 +4,8 @@ import "github.com/biggs-100/biggz-ai/internal/tui/styles"
 
 // HelpContent describes the help for a screen.
 type HelpContent struct {
-	Title    string
-	Keys     []HelpKey
+	Title     string
+	Keys      []HelpKey
 	Paragraph string
 }
 
@@ -198,6 +198,15 @@ var helpData = map[int]HelpContent{
 			{"ESC", "Back one step"},
 		},
 		Paragraph: "Create custom sub-agent skills with AI: choose a generation engine, describe the agent, optionally attach it to an SDD phase, preview the generated SKILL.md, then install it to your agents.",
+	},
+	15: {
+		Title: "Model Picker",
+		Keys: []HelpKey{
+			{"↑↓ / j k", "Navigate agents, providers, models, efforts"},
+			{"ENTER", "Select / assign model"},
+			{"ESC", "Back one step / main menu"},
+		},
+		Paragraph: "Assign AI models to every configurable agent: the orchestrator, SDD phases, Judgment Day agents, and review agents. Driven by the OpenCode model cache; effort levels come from the biggz model-variants plugin cache. Changes are persisted to opencode.json.",
 	},
 }
 
