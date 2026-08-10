@@ -1,6 +1,9 @@
 ---
 name: sdd-onboard
 description: Guide users through the full SDD workflow on their real codebase. Step-by-step walkthrough of all 8 phases with explanations. Trigger: orchestrator launches onboarding for the full SDD cycle.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
 ---
 ## Language Domain Contract
 
