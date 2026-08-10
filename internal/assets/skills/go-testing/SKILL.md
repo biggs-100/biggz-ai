@@ -2,9 +2,6 @@
 name: go-testing
 description: "Trigger: Go tests, go test coverage, Bubbletea teatest, golden files. Apply focused Go testing patterns."
 license: Apache-2.0
-metadata:
-  author: gentleman-programming
-  version: "1.0"
 ---
 
 ## Activation Contract

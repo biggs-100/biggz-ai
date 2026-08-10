@@ -2,9 +2,6 @@
 name: skill-improver
 description: "Trigger: improve skills, audit skills, refactor skills, skill quality. Audit and upgrade existing LLM-first skills."
 license: Apache-2.0
-metadata:
-  author: gentleman-programming
-  version: "1.0"
 ---
 
 ## Activation Contract
