@@ -6,20 +6,37 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
 
+// moduleRoot returns the repository root containing this package, located
+// via runtime.Caller instead of a hardcoded absolute path so the tests run
+// on every OS and checkout location.
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed to locate main_test.go")
+	}
+	// main_test.go lives in cmd/biggz; the module root is three parents up.
+	return filepath.Dir(filepath.Dir(filepath.Dir(file)))
+}
+
+// goRunBiggz builds the `go run ./cmd/biggz` invocation rooted at the module
+// root, so the binary resolves regardless of the test's working directory.
+func goRunBiggz(t *testing.T, args ...string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command("go", append([]string{"run", "./cmd/biggz"}, args...)...)
+	cmd.Dir = moduleRoot(t)
+	return cmd
+}
+
 // TestMain_InvalidJSONInput verifies that malformed JSON input causes the CLI
 // to exit with code 1 and print an error message to stderr.
 func TestMain_InvalidJSONInput(t *testing.T) {
-	cmd := exec.Command("go", "run", ".")
-	cmd.Dir = t.TempDir() // Use a temp dir to avoid side effects; the binary is run from the package dir
-
-	// Actually, go run needs to be invoked from the package directory.
-	// Let's use the proper approach: build and run a test binary.
-	// Recreate: we must call from cmd/biggz directory
-	cmd = exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz")
+	cmd := goRunBiggz(t)
 	cmd.Stdin = strings.NewReader("this is not json")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -75,7 +92,7 @@ func TestMain_ValidJSONInput(t *testing.T) {
 	runGit(t, repoDir, "commit", "-m", "second commit")
 
 	jsonSubject := fmt.Sprintf(`{"repository":"%s","commit_sha":"HEAD"}`, filepath.ToSlash(repoDir))
-	cmd := exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz")
+	cmd := goRunBiggz(t)
 	cmd.Stdin = strings.NewReader(jsonSubject)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -91,7 +108,7 @@ func TestMain_ValidJSONInput(t *testing.T) {
 func TestSync_DryRun(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	cmd := exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz", "sync", "--dry-run", "--home", tmpDir)
+	cmd := goRunBiggz(t, "sync", "--dry-run", "--home", tmpDir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -134,7 +151,7 @@ func TestSync_DryRun(t *testing.T) {
 func TestSync_SelectiveFlags(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	cmd := exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz", "sync", "--dry-run", "--skills", "--config", "--home", tmpDir)
+	cmd := goRunBiggz(t, "sync", "--dry-run", "--skills", "--config", "--home", tmpDir)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -163,7 +180,7 @@ func TestSync_SelectiveFlags(t *testing.T) {
 
 // TestSync_Help verifies that "biggz sync --help" prints usage and exits with 0.
 func TestSync_Help(t *testing.T) {
-	cmd := exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz", "sync", "--help")
+	cmd := goRunBiggz(t, "sync", "--help")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
@@ -180,7 +197,7 @@ func TestSync_Help(t *testing.T) {
 // TestSync_UnknownFlag verifies that "biggz sync --unknown" exits with non-zero
 // and prints an error to stderr.
 func TestSync_UnknownFlag(t *testing.T) {
-	cmd := exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz", "sync", "--unknown")
+	cmd := goRunBiggz(t, "sync", "--unknown")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
@@ -207,7 +224,7 @@ func runGit(t *testing.T, dir string, args ...string) {
 // TestMain_InvalidJSONInput_ErrorMessage verifies that the stderr message is
 // descriptive enough to identify the problem.
 func TestMain_InvalidJSONInput_ErrorMessage(t *testing.T) {
-	cmd := exec.Command("go", "run", "C:\\Users\\USER\\Desktop\\biggz-ai\\cmd\\biggz")
+	cmd := goRunBiggz(t)
 	cmd.Stdin = strings.NewReader("{broken}")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

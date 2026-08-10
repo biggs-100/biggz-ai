@@ -44,6 +44,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          autocrlf: false
 
       - uses: actions/setup-go@v5
         with:
@@ -56,15 +57,21 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # -short skips the e2e suite (it needs the prebuilt binary and runs in
+      # its own matrix job below) and a slow store integration test.
       - name: Test
-        run: go test ./... -count=1 -timeout 180s
+        run: go test ./... -short -count=1 -timeout 180s
 
   e2e:
-    name: E2E
+    name: E2E (${{ matrix.os }})
     needs: format
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - name: Require successful format
         if: needs.format.result != 'success'
@@ -73,40 +80,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          autocrlf: false
 
       - uses: actions/setup-go@v5
         with:
           go-version: stable
           cache: true
 
+      # biggz.exe is the discovery name the e2e suite probes on every OS;
+      # -o biggz.exe keeps the three matrix legs byte-identical.
       - name: Build
-        run: go build ./cmd/biggz
+        run: go build -o biggz.exe ./cmd/biggz
 
       - name: Run E2E tests
         run: go test ./e2e/... -count=1 -timeout 10m -v
-
-  windows-release-blockers:
-    name: Windows Release Blockers
-    needs: format
-    if: always()
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - name: Require successful format
-        if: needs.format.result != 'success'
-        run: exit 1
-
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: stable
-          cache: true
-
-      - name: Build
-        run: go build ./cmd/biggz
-
-      - name: Run platform-specific tests
-        shell: pwsh
-        run: go test ./... -count=1 -timeout 10m
-        env:
-          BIGGZ_TEST_PLATFORM: "windows"
