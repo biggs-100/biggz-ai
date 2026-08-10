@@ -18,7 +18,7 @@ HARD GATES:
 3. Resolve the active change using the status contract. If `$ARGUMENTS` is missing or ambiguous, ask the user to choose and STOP. Do not guess.
 4. Produce structured status before acting and use it to confirm the active change has spec, design, and tasks artifacts in the selected artifact store.
 5. Review workload guard must have passed. If task forecast exceeds the session review budget or needs a chained-PR decision, ASK and STOP unless the preflight strategy already resolves it.
-6. actionContext must allow implementation edits. If status reports `workspace-planning` with no allowed edit roots, STOP before launching apply.
+6. actionContext must allow implementation edits. If status reports `workspace-planning` with no allowed edit roots, STOP before launching apply. The native guard enforces this at apply time: run `biggz sdd-apply <change>` before editing; if it exits non-zero with `blocked(edit_authority_missing)`, relay the consent envelope complete to the human (granted → run the exact `consent grant:` invocation → re-run the guard; declined → keep the change blocked) and do NOT launch apply until the guard exits 0.
 
 DEPENDENCY CHECK:
 

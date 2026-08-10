@@ -140,6 +140,8 @@ func main() {
 			os.Exit(installRun())
 		case "sdd-status":
 			os.Exit(sddStatusRun())
+		case "sdd-apply":
+			os.Exit(sddApplyRun())
 		case "sdd-verify-validate":
 			os.Exit(sddVerifyValidateRun())
 		case "sdd-attempt":
@@ -678,6 +680,99 @@ func sddStatusRun() int {
 
 	fmt.Print(sdd.FormatStatus(active, archived, sdd.StatusOptions{ReviewDisabled: reviewDisabled}))
 	return 0
+}
+
+// sddApplyRun handles the "biggz sdd-apply" subcommand.
+// Usage: biggz sdd-apply <change>
+// It is a GUARD/validation verb, not the apply phase itself: it validates
+// edit authority for the change (the workspace root plus the roots the
+// runtime ledger grants for this change's instance, against the repository
+// roots the task plan targets) and reports allow/block. On a block it
+// renders the same blocked(edit_authority_missing) reason and the typed
+// consent envelope's granted invocation that sdd-status prints (mirroring
+// formatOne) and exits non-zero, so an apply actor can relay the envelope
+// and rerun the exact grant invocation before any edit happens.
+func sddApplyRun() int {
+	args := os.Args[2:]
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz sdd-apply <change>")
+		fmt.Fprintln(os.Stderr, "  <change> — name of the SDD change whose edit authority to validate")
+		fmt.Fprintln(os.Stderr, "Validates edit authority for apply and reports allow/block. On")
+		fmt.Fprintln(os.Stderr, "blocked(edit_authority_missing) it prints the consent envelope and exits 1.")
+		return 0
+	}
+	change := args[0]
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	openspecRoot := filepath.Join(cwd, "openspec")
+	if _, err := os.Stat(openspecRoot); os.IsNotExist(err) {
+		fmt.Fprintf(os.Stderr, "error: no openspec/ directory found in %s\n", cwd)
+		return 1
+	}
+
+	active, archived, err := sdd.StatusWithOptions(openspecRoot, sdd.StatusOptions{})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	var cs *sdd.ChangeStatus
+	for i := range active {
+		if active[i].Name == change {
+			cs = &active[i]
+			break
+		}
+	}
+	if cs == nil {
+		for i := range archived {
+			if archived[i].Name == change {
+				cs = &archived[i]
+				break
+			}
+		}
+	}
+	if cs == nil {
+		fmt.Fprintf(os.Stderr, "error: no such SDD change %q in %s\n", change, filepath.Join(openspecRoot, "changes"))
+		return 1
+	}
+
+	if cs.EditAuthorityBlocked {
+		fmt.Println(sddApplyBlockedReason(cs.MissingRoots))
+		if cs.Consent != nil && len(cs.Consent.Choices) > 0 {
+			fmt.Printf("consent grant: %s\n", cs.Consent.Choices[0].Invocation)
+		}
+		return 1
+	}
+	allowed := append([]string{cwd}, cs.GrantedRoots...)
+	fmt.Printf("edit authority OK — allowed roots: %s\n", strings.Join(allowed, ", "))
+	return 0
+}
+
+// sddApplyBlockedReason renders the blocked(edit_authority_missing) reason
+// line byte-identically to internal/sdd's editAuthorityBlockedReason, which
+// is what sdd-status prints (formatOne) for the same blocked change. It is a
+// deliberate copy: the guard lives in cmd/biggz and must not modify
+// internal/sdd, and the blocked-status CLI tests in both layers pin the
+// string.
+func sddApplyBlockedReason(roots []string) string {
+	quoted := make([]string, 0, len(roots))
+	for _, root := range roots {
+		quoted = append(quoted, quotePathCLI(root))
+	}
+	return fmt.Sprintf(
+		"blocked(edit_authority_missing): tasks.md targets repositories outside the authorized edit roots: %s; edit tasks.md so every work unit stays inside the authorized edit roots, or grant this change edit authority for those repositories",
+		strings.Join(quoted, ", "),
+	)
+}
+
+// quotePathCLI wraps a filesystem path in double quotes for copy-paste into
+// a shell, mirroring internal/sdd's quotePath: fmt's %q would escape Windows
+// separators and break the copied command.
+func quotePathCLI(path string) string {
+	return `"` + strings.ReplaceAll(path, `"`, `\"`) + `"`
 }
 
 // sddVerifyValidateRun handles the "biggz sdd-verify-validate" subcommand.
@@ -4125,6 +4220,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  install                    Install biggz-ai in your AI agent")
 	fmt.Fprintln(os.Stderr, "  sdd-status                 Show SDD change status [--cwd <dir>] [--json] [--instructions]")
+	fmt.Fprintln(os.Stderr, "  sdd-apply <change>         Validate edit authority for apply (allow/block)")
 	fmt.Fprintln(os.Stderr, "  sdd-verify-validate        Validate verify reports")
 	fmt.Fprintln(os.Stderr, "  sdd-attempt                Manage attempt budgets")
 	fmt.Fprintln(os.Stderr, "  sdd-continue <change>      Determine next SDD phase")

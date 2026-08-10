@@ -39,6 +39,18 @@ Before reading implementation files or writing code, consume the structured stat
 - If `actionContext.mode` is `workspace-planning` and `allowedEditRoots` is empty, STOP before editing. Treat linked repos and folders as read-only planning context.
 - If `allowedEditRoots` is present, edit only files under those roots. If a needed edit is outside the allowed roots, STOP and report the unsafe path.
 
+### Native Edit-Authority Guard (enforcement)
+
+Before editing ANY file, run the native guard and obey its verdict:
+
+1. Run `biggz sdd-apply <change>`.
+2. If it exits 0 (`edit authority OK`), edit only under the allowed roots it prints.
+3. If it exits non-zero with `blocked(edit_authority_missing)`, STOP before editing and relay the consent envelope complete to the human. The `consent grant:` line is the EXACT grant invocation:
+   - Answer `granted`: run that exact grant invocation, then re-run `biggz sdd-apply <change>`. If it now exits 0, proceed under the confirmed allowed roots.
+   - Answer `declined`: stop. The change stays blocked; either edit its tasks.md so no work unit targets an unauthorized root (then re-run the guard), or leave the change blocked.
+
+Never substitute your own invocation for the one the guard prints, and never edit a file outside the roots the guard confirms.
+
 ## What to Do
 
 ### Step 1: Load Skills
