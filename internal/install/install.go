@@ -41,7 +41,86 @@ type Result struct {
 	ConfigMerged    bool   // whether the config file was merged and written
 	CommandsWritten int    // number of command files written (or would be written in dry-run)
 	PluginsDeployed int    // number of plugin files written (or would be written in dry-run)
+	PromptsDeployed int    // number of prompt files written (or would be written in dry-run)
+	MCPDeployed     bool   // whether the MCP server binary and config were deployed
 	DryRun          bool   // whether this was a dry-run (no files written)
+}
+
+// AssetRelPaths returns the relative paths (embedded asset layout) of every
+// file install deploys to agent-owned locations, so callers such as
+// uninstall can enumerate exactly what install wrote. AgentSkills excludes
+// skills shared with gentle-ai (those only live in ~/.biggz/skills/).
+type AssetRelPaths struct {
+	AgentSkills []string // relative paths under the agent skills dir
+	Prompts     []string // relative paths under prompts/sdd
+	Commands    []string // relative paths under the opencode/commands dir
+	Plugins     []string // relative paths under the opencode/plugins dir
+}
+
+// AgentAssetPaths walks the embedded assets and returns the relative path of
+// every file install deploys, mirroring the exact skip rules of the deploy
+// functions (shared skills are not copied to the agent skills dir).
+func AgentAssetPaths() (AssetRelPaths, error) {
+	var out AssetRelPaths
+
+	err := fs.WalkDir(assets.FS, "skills", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		relPath := strings.TrimPrefix(path, "skills/")
+		if sharedSkillNames[filepath.Dir(relPath)] {
+			return nil
+		}
+		out.AgentSkills = append(out.AgentSkills, relPath)
+		return nil
+	})
+	if err != nil {
+		return out, err
+	}
+
+	err = fs.WalkDir(assets.FS, "prompts/sdd", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			out.Prompts = append(out.Prompts, strings.TrimPrefix(path, "prompts/sdd/"))
+		}
+		return nil
+	})
+	if err != nil {
+		return out, err
+	}
+
+	err = fs.WalkDir(assets.FS, "opencode/commands", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			out.Commands = append(out.Commands, strings.TrimPrefix(path, "opencode/commands/"))
+		}
+		return nil
+	})
+	if err != nil {
+		return out, err
+	}
+
+	err = fs.WalkDir(assets.FS, "opencode/plugins", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			out.Plugins = append(out.Plugins, strings.TrimPrefix(path, "opencode/plugins/"))
+		}
+		return nil
+	})
+	if err != nil {
+		return out, err
+	}
+
+	return out, nil
 }
 
 // Run discovers the agent via adapter, deploys skills, merges config, and
@@ -83,6 +162,12 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	if err := DeployPrompts(promptsDir, assets.FS, cfg.DryRun); err != nil {
 		return result, fmt.Errorf("deploy prompts: %w", err)
 	}
+	fs.WalkDir(assets.FS, "prompts/sdd", func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			result.PromptsDeployed++
+		}
+		return nil
+	})
 
 	// Deploy config overlay with absolute paths to ~/.biggz/
 	merged, err := DeployBiggzConfig(adapter, homeDir, assets.FS, cfg.DryRun)
@@ -133,6 +218,7 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 			return result, fmt.Errorf("deploy mcp config: %w", err)
 		}
 	}
+	result.MCPDeployed = mcpBinPath != ""
 
 	// Ensure biggz binary is on PATH for terminal use
 	if !cfg.DryRun {
@@ -190,12 +276,12 @@ func DeploySkills(skillsDir string, ffs fs.FS, dryRun bool) (int, error) {
 // These are deployed to ~/.biggz/skills/ (canonical store) but NOT to the
 // agent's skills directory to avoid overwriting gentle-ai's versions.
 var sharedSkillNames = map[string]bool{
-	"branch-pr":             true,
-	"chained-pr":            true,
-	"cognitive-doc-design":  true,
-	"comment-writer":        true,
-	"issue-creation":        true,
-	"work-unit-commits":     true,
+	"branch-pr":            true,
+	"chained-pr":           true,
+	"cognitive-doc-design": true,
+	"comment-writer":       true,
+	"issue-creation":       true,
+	"work-unit-commits":    true,
 }
 
 // DeploySkillsToAgentDir copies biggz-only embedded skill files to the agent's
@@ -815,7 +901,7 @@ func deployMCPMergeIntoSettings(adapter plugin.AgentAdapter, homeDir, mcpBinaryP
 	mcpOverlay := map[string]any{
 		"mcp": map[string]any{
 			"biggz": map[string]any{
-			"command": []string{mcpBinaryPath, "--tools=agent", "--prefix=biggz"},
+				"command": []string{mcpBinaryPath, "--tools=agent", "--prefix=biggz"},
 				"type":    "local",
 				"enabled": true,
 			},
@@ -947,5 +1033,3 @@ func deploySelfToPath(homeDir string) error {
 	os.Setenv("PATH", biggzDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return nil
 }
-
-

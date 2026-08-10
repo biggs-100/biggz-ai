@@ -21,22 +21,6 @@ import (
 	"github.com/biggs-100/biggz-ai/registry"
 	"github.com/google/uuid"
 
-	"github.com/biggs-100/biggz-ai/internal/agents/antigravity"
-	"github.com/biggs-100/biggz-ai/internal/agents/claude"
-	"github.com/biggs-100/biggz-ai/internal/agents/codex"
-	"github.com/biggs-100/biggz-ai/internal/agents/cursor"
-	"github.com/biggs-100/biggz-ai/internal/agents/gemini"
-	"github.com/biggs-100/biggz-ai/internal/agents/hermes"
-	"github.com/biggs-100/biggz-ai/internal/agents/kilocode"
-	"github.com/biggs-100/biggz-ai/internal/agents/kimi"
-	"github.com/biggs-100/biggz-ai/internal/agents/kiro"
-	"github.com/biggs-100/biggz-ai/internal/agents/openclaw"
-	"github.com/biggs-100/biggz-ai/internal/agents/opencode"
-	"github.com/biggs-100/biggz-ai/internal/agents/pi"
-	"github.com/biggs-100/biggz-ai/internal/agents/qwen"
-	"github.com/biggs-100/biggz-ai/internal/agents/trae"
-	"github.com/biggs-100/biggz-ai/internal/agents/vscode"
-	"github.com/biggs-100/biggz-ai/internal/agents/windsurf"
 	"github.com/biggs-100/biggz-ai/internal/assets"
 	"github.com/biggs-100/biggz-ai/internal/backup"
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
@@ -138,6 +122,8 @@ func main() {
 		switch os.Args[1] {
 		case "install":
 			os.Exit(installRun())
+		case "uninstall":
+			os.Exit(uninstallRun())
 		case "sdd-status":
 			os.Exit(sddStatusRun())
 		case "sdd-apply":
@@ -356,25 +342,8 @@ func syncRun() int {
 	}
 
 	// Build adapter map
-	adapters := map[string]plugin.AgentAdapter{
-		"opencode":    opencode.NewAdapter(),
-		"qwen":        qwen.NewAdapter(),
-		"claude":      claude.NewAdapter(),
-		"cursor":      cursor.NewAdapter(),
-		"windsurf":    windsurf.NewAdapter(),
-		"gemini":      gemini.NewAdapter(),
-		"codex":       codex.NewAdapter(),
-		"pi":          pi.NewAdapter(),
-		"vscode":      vscode.NewAdapter(),
-		"kiro":        kiro.NewAdapter(),
-		"antigravity": antigravity.NewAdapter(),
-		"hermes":      hermes.NewAdapter(),
-		"kimi":        kimi.NewAdapter(),
-		"kilocode":    kilocode.NewAdapter(),
-		"trae":        trae.NewAdapter(),
-		"openclaw":    openclaw.NewAdapter(),
-	}
-	priority := []string{"opencode", "claude", "qwen", "cursor", "windsurf", "gemini", "codex", "pi", "vscode", "kiro"}
+	adapters := agentAdapters()
+	priority := priorityAgents()
 
 	// Determine which adapter to use
 	toTry := priority
@@ -527,25 +496,8 @@ func installRun() int {
 	}
 
 	// Build adapter map
-	adapters := map[string]plugin.AgentAdapter{
-		"opencode":    opencode.NewAdapter(),
-		"qwen":        qwen.NewAdapter(),
-		"claude":      claude.NewAdapter(),
-		"cursor":      cursor.NewAdapter(),
-		"windsurf":    windsurf.NewAdapter(),
-		"gemini":      gemini.NewAdapter(),
-		"codex":       codex.NewAdapter(),
-		"pi":          pi.NewAdapter(),
-		"vscode":      vscode.NewAdapter(),
-		"kiro":        kiro.NewAdapter(),
-		"antigravity": antigravity.NewAdapter(),
-		"hermes":      hermes.NewAdapter(),
-		"kimi":        kimi.NewAdapter(),
-		"kilocode":    kilocode.NewAdapter(),
-		"trae":        trae.NewAdapter(),
-		"openclaw":    openclaw.NewAdapter(),
-	}
-	priority := []string{"opencode", "claude", "qwen", "cursor", "windsurf", "gemini", "codex", "pi", "vscode", "kiro"}
+	adapters := agentAdapters()
+	priority := priorityAgents()
 
 	// Determine which adapters to try
 	toTry := priority
@@ -600,10 +552,11 @@ func installRun() int {
 // sddStatusRun handles the "biggz sdd-status" subcommand.
 // It scans the openspec/changes directory and reports active/archived changes.
 // Usage: biggz sdd-status [--cwd <dir>] [--json] [--instructions]
-//   --json emits the sdd.Status payload (active + archived + review_disabled)
-//   as JSON, consumed by the SDD phase failure handoff
-//   (biggz-ai.sdd-task-result-failure/v1 continuation command).
-//   --instructions adds the phaseInstructions block to every derived change.
+//
+//	--json emits the sdd.Status payload (active + archived + review_disabled)
+//	as JSON, consumed by the SDD phase failure handoff
+//	(biggz-ai.sdd-task-result-failure/v1 continuation command).
+//	--instructions adds the phaseInstructions block to every derived change.
 func sddStatusRun() int {
 	// Look for openspec/ relative to the current working dir
 	args := os.Args[2:]
@@ -2239,7 +2192,8 @@ func releaseRun() int {
 
 // skillRegistryRun handles the "biggz skill-registry" subcommand.
 // Usage: biggz skill-registry refresh [--force] [--quiet] [--cwd <dir>] [--no-gitignore]
-//   — regenerate skill registry
+//
+//	— regenerate skill registry
 func skillRegistryRun() int {
 	args := os.Args[2:]
 
@@ -2430,7 +2384,8 @@ func tddRun() int {
 
 	// Detect the agent
 	var agent plugin.AgentAdapter
-	for _, a := range []plugin.AgentAdapter{opencode.NewAdapter(), claude.NewAdapter(), qwen.NewAdapter(), cursor.NewAdapter(), windsurf.NewAdapter()} {
+	for _, name := range priorityAgents() {
+		a := agentAdapters()[name]
 		installed, _, _, _, _ := a.Detect(context.Background(), home)
 		if installed {
 			agent = a
@@ -2438,7 +2393,7 @@ func tddRun() int {
 		}
 	}
 	if agent == nil {
-		agent = opencode.NewAdapter() // default fallback
+		agent = agentAdapters()["opencode"] // default fallback
 	}
 
 	switch op {
@@ -4219,6 +4174,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "Usage: biggz <command> [args...]")
 	fmt.Fprintln(os.Stderr, "Commands:")
 	fmt.Fprintln(os.Stderr, "  install                    Install biggz-ai in your AI agent")
+	fmt.Fprintln(os.Stderr, "  uninstall [--yes] [--purge]  Remove biggz-ai from your system (agent configs + ~/.biggz)")
 	fmt.Fprintln(os.Stderr, "  sdd-status                 Show SDD change status [--cwd <dir>] [--json] [--instructions]")
 	fmt.Fprintln(os.Stderr, "  sdd-apply <change>         Validate edit authority for apply (allow/block)")
 	fmt.Fprintln(os.Stderr, "  sdd-verify-validate        Validate verify reports")
@@ -4417,12 +4373,15 @@ func updateRun() int {
 
 	// Parse flags
 	dryRun := false
+	noReconcile := false
 	explicitVersion := ""
 	args := os.Args[2:]
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--dry-run":
 			dryRun = true
+		case "--no-reconcile":
+			noReconcile = true
 		case "--version":
 			if i+1 < len(args) {
 				i++
@@ -4573,6 +4532,7 @@ func updateRun() int {
 	if err := update.ReplaceBinary(extractedPath, currentPath); err != nil {
 		if err == update.ErrWindowsBinaryLock {
 			fmt.Println(update.ReplaceHint("github.com/biggs-100/biggz-ai"))
+			fmt.Println("The running binary was not replaced. Run 'biggz update' again after installing the new binary to reconcile managed assets.")
 			return 0
 		}
 		fmt.Fprintf(os.Stderr, "error: replacing binary: %v\n", err)
@@ -4580,6 +4540,12 @@ func updateRun() int {
 	}
 
 	fmt.Printf("✓ Updated to %s\n", rel.TagName)
+
+	// Re-deploy managed assets so they match the new binary. Reconcile
+	// problems are a warning, never a failed update: the binary updated
+	// fine and `biggz sync --all` is the manual fallback.
+	home, _ := os.UserHomeDir()
+	fmt.Println(postUpdateReconcile(ctx, agentAdapters(), home, noReconcile))
 	return 0
 }
 
@@ -4595,14 +4561,17 @@ func channelName(ch update.Channel) string {
 
 // printUpdateHelp prints the update subcommand help text.
 func printUpdateHelp() {
-	fmt.Fprintln(os.Stderr, "Usage: biggz update [--dry-run] [--version <tag>]")
+	fmt.Fprintln(os.Stderr, "Usage: biggz update [--dry-run] [--version <tag>] [--no-reconcile]")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Update biggz-ai to the latest release.")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  --dry-run           Check for updates without downloading")
 	fmt.Fprintln(os.Stderr, "  --version <tag>     Install a specific version (e.g., v1.0.0)")
+	fmt.Fprintln(os.Stderr, "  --no-reconcile      Skip re-deploying managed assets after the update")
 	fmt.Fprintln(os.Stderr, "  --help, -h          Show this help message")
 	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "After a successful update, managed assets (skills, prompts, commands,")
+	fmt.Fprintln(os.Stderr, "plugins, config, MCP) are re-deployed for the detected agent.")
 	fmt.Fprintln(os.Stderr, "Channel selection: set BIGGZ_CHANNEL=beta for prerelease versions")
 }
 

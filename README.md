@@ -25,6 +25,7 @@ echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
 |---------|-------------|
 | `biggz` | Run review pipeline (stdin → JSON) |
 | `biggz install` | Install skills + config in agent |
+| `biggz uninstall` | Remove managed assets (keeps memory data unless `--purge`) |
 | `biggz sdd-status` | Show active/archived SDD changes |
 | `biggz sdd-verify-validate` | Validate verify reports |
 | `biggz sdd-attempt` | Manage attempt budgets |
@@ -34,7 +35,12 @@ echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
 | `biggz backup create|list|restore` | Snapshot/restore state |
 | `biggz release status|tag|verify` | Version management |
 | `biggz skill-registry refresh` | Regenerate skill registry |
-| `biggz rdd enable|disable|status` | Review-Driven Development kill switch |
+| `biggz sync` | Deploy skills, config, prompts, and commands |
+| `biggz update` | Update the binary and reconcile managed agent assets (`--no-reconcile` to skip) |
+| `biggz doctor` | Run system health checks (`--json`, `--fix`) |
+| `biggz pr create <change>` | Auto-generate branch and PR from SDD apply |
+| `biggz recovery list\|show\|generate` | Recovery trace ledger |
+| `biggz rdd enable\|disable\|status` | Review-Driven Development kill switch |
 | `biggz-mcp` | MCP server for agent memory tools |
 
 ## Architecture
