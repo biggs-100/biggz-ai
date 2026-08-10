@@ -8,8 +8,8 @@
 | Test Go lines | 200,631 | 24,060 | **88%** |
 | Production Go files | 424 | 186 | **56%** |
 | Test files | 606 | 105 | **83%** |
-| Agent adapters | 17 | 3 | **82%** |
-| Internal packages | ~29 | 28 | — |
+| Agent adapters | 16 (17 dirs incl. manifest) | 16 (ported, same set) | — |
+| Internal packages | 33 | 28 | — |
 
 Measured 2026-08-10. gentle-ai counts are from a filtered clone of `cmd/` and
 `internal/` (no testdata); biggz-ai counts are the full module.
@@ -30,7 +30,7 @@ Measured 2026-08-10. gentle-ai counts are from a filtered clone of `cmd/` and
 
 | Aspect | gentle-ai | biggz-ai |
 |---|---|---|
-| **Agent adapters** | 17 with capability manifests, contract IDs, digests | 3 (OpenCode, Claude, Qwen) ~50 lines each |
+| **Agent adapters** | 16 with capability manifests, contract IDs, digests | 16 ported (single-file full adapters, same set) |
 | **Detection** | Complex: binary + config file checks | Simple: `exec.LookPath()` |
 | **Install** | Multi-step: download, extract, configure | Single command: `biggz install` |
 
@@ -51,8 +51,8 @@ Measured 2026-08-10. gentle-ai counts are from a filtered clone of `cmd/` and
 
 | Feature | gentle-ai | biggz-ai |
 |---|---|---|
-| **Native commands** | sdd-status, sdd-verify-validate, sdd-attempt, sdd-continue | ✅ Same 4 commands |
-| **Skills** | 22+ skills | 35 skills (same content) |
+| **Native commands** | sdd-status, sdd-verify-validate, sdd-attempt, sdd-continue | ✅ Same + `sdd-apply` guard (5 verbs) |
+| **Skills** | 29 unique (38 SKILL.md files) | 26: 8 verbatim, 10 thin-equivalent, 1 adapted, judgment-day 1.7, rdd-defect-workflow ported |
 | **Skill registry** | `.atl/skill-registry.md` | ✅ Same |
 | **Relative paths** | Absolute (C:\Users\...) | ✅ Relative |
 | **Agent builder** | `internal/agentbuilder` + TUI flow | ✅ Ported: same engines, parser, installer, registry (`~/.config/biggz/custom-agents.json`), SDD phase support |
@@ -81,17 +81,24 @@ are wired).
 | **Protocol** | Full with proactive saves, session summaries | ✅ Full |
 | **MCP server** | `BigMem mcp` (external binary) | `biggz-mcp` (native Go) |
 
-## What gentle-ai has that biggz-ai doesn't
+## What gentle-ai has that biggz-ai doesn't (verified 2026-08-10)
 
-| Feature | Why missing |
+| Feature | Status in biggz-ai |
 |---|---|
-| 14 more agent adapters | Not needed — 3 covers the major agents |
-| `internal/opencode` Go package | Deferred — the model-variants plugin cache is written but the model picker is still a static stub |
-| SDDNewPhase agent-builder mode | Deferred — standalone + phase-support SDD modes are wired; new-phase graph wiring is not |
-| Multi-agent install targets (claude/gemini/codex skills dirs in agent builder) | Deferred — agent builder installs to the available generation engines' skills dirs |
-| Platform detection | Not needed — agent knows its OS |
-| Store locks | Not needed — in-memory + BigMem |
-| Legacy compatibility | Intentional — no legacy debt |
+| Advisory review transport (`advisoryreview`) | Absent — no third runtime gets advisory-only verdicts today |
+| Engram Cloud sync (tokens, autosync, self-hosted) | Absent — BigMem is local JSON |
+| GGA (Guardian Angel git-hook guardian) | Absent — proposal pending; biggz has event hooks (`.biggz/hooks.yaml`) and native gates (`review gate`), not git hooks |
+| Pi runtime integration (answer-consent, organic routing) | Absent — pi adapter only |
+| CodeGraph integration + `codegraph` verb | Absent |
+| Bench journeys (`bench/` + `gentle-ai bench`) | Absent |
+| Package-manager installers (apt/pacman/dnf/zypper/scoop) + Android/Termux | Absent — brew formula + goreleaser only |
+| `update`/`upgrade` split + beta/stable channels + `--all` ecosystem | Single `update` (with automatic asset reconcile, `--no-reconcile`) |
+| Full management TUI (model picker, Configure Models, agent set editing) | Agent-builder TUI only |
+| `internal/opencode` Go model picker | Deferred — the model-variants plugin cache is written but not read from Go |
+| Release policy attestation (`releasepolicy` run-marker) | CLI `release status\|tag\|verify` verbs instead |
+| Legacy v1 authority compatibility (`review-*` commands) | Deliberate — no legacy debt |
+| Path identity packages (`pathidentity`/`pathquote`) | Ad-hoc `quotePath` in sdd |
+| `consentenvelope` standalone package | Logic embedded in sdd/review + schemas in contracts/ |
 
 ## What biggz-ai has that gentle-ai doesn't
 
@@ -104,6 +111,22 @@ are wired).
 | Atomic config merge | `filemerge.WriteFile` (temp → rename) |
 | MCP server in Go | No external binary dependency |
 | Contracts-dir walk test | gentle validates schemas ad hoc in CLI tests; biggz compiles EVERY schema and validates EVERY fixture (`internal/contracts/walk_test.go`) |
+| Native `sdd-apply` edit-authority guard | CLI verb consuming `granted_roots`, wired into the apply phase assets |
+| Surgical `uninstall` | Per-op failure collection, JSONC key deletion (`RemoveKeysJSONC`), keeps memory/backups unless `--purge` |
+| `update` with automatic asset reconcile | Re-deploys skills/prompts/commands/plugins/config/MCP after binary swap (`--no-reconcile`) |
+| CLI verbs gentle lacks | `backup create/list`, `release status/tag/verify`, `pr create`, `recovery` ledger, `mcp` server, `bigmem`, `rdd`, `sdd-apply`, `sdd-new` wizard |
+| 10 phase prompts | `internal/assets/prompts/sdd/*` — gentle has no prompts/ dir |
+| Manifest-freeze excludes untracked files | Credential-disclosure class designed out (gate.go:834): untracked paths are outside the candidate |
+| Multi-OS e2e CI matrix | ubuntu/windows/macos green lane (2026-08-10); gentle shipped 19-27 Windows failures unseen |
+
+## Risk profile (2026-08-10)
+
+Of gentle's 20 documented root causes (~250 open issues, meta #2471), biggz-ai
+eliminates ~9 by architecture (single state machine, manifest-freeze,
+per-repo CAS, no transport matrix), mitigates ~7 by discipline (real e2e,
+read-backs, per-op uninstall), and shares ~4 as standing watch items: prose
+contracts, agent enums, update post-condition verification, and gate identity
+equality.
 
 ## Wire-Envelope Formalization
 

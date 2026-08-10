@@ -137,6 +137,9 @@ Any "off" wins: clone-local override beats global enable.
 | Claude Code | `exec.LookPath("claude")` | `~/.claude/` | ✅ |
 | Qwen | `exec.LookPath("qwen")` | `~/.qwen/` | ✅ |
 
+Plus 13 more adapters ported for parity (cursor, windsurf, gemini, codex, pi,
+vscode, kiro, antigravity, hermes, kimi, kilocode, trae, openclaw).
+
 ## Comparison with gentle-ai
 
 | Dimension | gentle-ai | biggz-ai |
@@ -147,7 +150,7 @@ Any "off" wins: clone-local override beats global enable.
 | Integrity | 8+ hashes | Evidence chain + MerkleRoot |
 | Business rules | Embedded in FSM | PolicyEvaluator interface |
 | Lenses | Constants in type system | LensPlugin interface |
-| Agent adapters | 17 with manifests | 3 simple adapters |
+| Agent adapters | 16 with manifests | 16 (ported, same set) |
 | Testing | Golden files (fragile) | Property-based (rapid) |
 | Human in loop | Optional | Always |
 
