@@ -4,7 +4,7 @@
 
 biggz-ai is a lightweight, self-contained harness for AI coding agents (OpenCode, Claude Code, Qwen). It provides SDD (Spec-Driven Development) workflow orchestration, code review pipelines with 6 lenses (R1-R4 + performance, dependencies), persistent memory (BigMem), and full lifecycle management — all with the human always in control.
 
-Inspired by gentle-ai, but rebuilt from scratch with 95% less code, a cleaner architecture, and no legacy debt.
+Inspired by gentle-ai, but rebuilt from scratch with roughly 80% less code (measured 2026-08-10: ~60K vs ~313K Go lines including tests), a cleaner architecture, and no legacy debt.
 
 ## Quick Start
 
@@ -29,6 +29,7 @@ echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
 | `biggz sdd-verify-validate` | Validate verify reports |
 | `biggz sdd-attempt` | Manage attempt budgets |
 | `biggz sdd-continue <change>` | Determine next SDD phase |
+| `biggz sdd-apply <change>` | Validate edit authority for the apply phase (guard) |
 | `biggz BigMem save|search|get` | Persistent memory |
 | `biggz backup create|list|restore` | Snapshot/restore state |
 | `biggz release status|tag|verify` | Version management |
@@ -78,9 +79,12 @@ A change whose `tasks.md` targets repositories outside the planning repository r
 grant is recorded in the change's runtime ledger, scoped to the change-instance identity
 persisted in the change's own directory (`.biggz-instance`), and dies with archive.
 
-Apply-side enforcement — an outside-root guard in `biggz sdd-apply` that consumes
-`granted_roots` — is a deliberate follow-up: biggz has no apply gate today, so the block is
-surfaced at `sdd-status` only.
+Apply-side enforcement is native: `biggz sdd-apply <change>` is a guard that consumes
+`granted_roots` from the change's runtime ledger and exits 0 with the allowed roots when
+every `tasks.md` target stays inside them, or prints the same `blocked(edit_authority_missing)`
+reason plus the consent envelope's grant invocation and exits 1 when it does not. The apply
+phase assets (`sdd-apply` prompt and skill) run this guard before any edit and relay the
+consent envelope when it blocks.
 
 ## Review Pipeline
 
@@ -131,8 +135,8 @@ Any "off" wins: clone-local override beats global enable.
 
 | Dimension | gentle-ai | biggz-ai |
 |---|---|---|
-| Lines of code | ~254K | ~6.3K |
-| Files | 770 | 64 |
+| Lines of code (Go, measured) | ~313K | ~60K |
+| Files (Go, measured) | 1,030 | 291 |
 | State machine | 2 parallel (Transaction + CompactState) | 1 (ReviewState + SchemaVersion) |
 | Integrity | 8+ hashes | Evidence chain + MerkleRoot |
 | Business rules | Embedded in FSM | PolicyEvaluator interface |

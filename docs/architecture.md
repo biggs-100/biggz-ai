@@ -9,14 +9,14 @@ biggz-ai is an **AI agent harness** — it runs inside AI coding agents (OpenCod
 1. **Harness, not an agent** — biggz-ai doesn't call AI APIs. The agent IS the AI.
 2. **Human-in-the-loop** — the orchestrator delegates, the human decides every phase transition.
 3. **Protocol-first** — designed with a single data model from day one (unlike gentle-ai's evolved architecture).
-4. **Minimal surface area** — ~6.3K lines vs gentle-ai's ~254K lines for equivalent functionality.
+4. **Minimal surface area** — ~36K production Go lines vs gentle-ai's ~112K, and ~60K vs ~313K including tests (measured 2026-08-10).
 5. **Under-demand loading** — skills, tools, and memory are loaded only when needed.
 
 ## Package Map
 
 ```
 cmd/
-├── biggz/           — CLI entry point (10 subcommands)
+├── biggz/           — CLI entry point (SDD, review, RDD, memory, backup, release verbs)
 ├── biggz-mcp/       — MCP server for BigMem protocol
 
 internal/

@@ -4,12 +4,15 @@
 
 | Metric | gentle-ai | biggz-ai | Reduction |
 |---|---|---|---|
-| Production lines | 95,684 | 2,993 | **97%** |
-| Test lines | 158,757 | 3,329 | **98%** |
-| Production files | 331 | 36 | **89%** |
-| Test files | 439 | 28 | **94%** |
+| Production Go lines (no tests) | 112,037 | 36,307 | **68%** |
+| Test Go lines | 200,631 | 24,060 | **88%** |
+| Production Go files | 424 | 186 | **56%** |
+| Test files | 606 | 105 | **83%** |
 | Agent adapters | 17 | 3 | **82%** |
-| Go packages | ~29 internal | 23 | **21%** |
+| Internal packages | ~29 | 28 | — |
+
+Measured 2026-08-10. gentle-ai counts are from a filtered clone of `cmd/` and
+`internal/` (no testdata); biggz-ai counts are the full module.
 
 ## Architecture
 
@@ -54,6 +57,7 @@
 | **Relative paths** | Absolute (C:\Users\...) | ✅ Relative |
 | **Agent builder** | `internal/agentbuilder` + TUI flow | ✅ Ported: same engines, parser, installer, registry (`~/.config/biggz/custom-agents.json`), SDD phase support |
 | **SDD phase hooks** | SDD task-result failures → terminal `GENTLE_AI_SDD_FAILURE` handoff | ✅ Ported (schema `biggz-ai.sdd-task-result-failure/v1`, continuation `biggz sdd-status --cwd <dir> --json`) |
+| **Apply edit-authority guard** | Apply gates + consent relay (S6 of #2540) | ✅ Native `biggz sdd-apply <change>` guard consuming `granted_roots`, wired into the `sdd-apply` prompt and skill (2026-08-10) |
 
 ## OpenCode Plugins (3/3 parity)
 
