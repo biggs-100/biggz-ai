@@ -8,6 +8,22 @@ import (
 	"testing"
 )
 
+// newFakeGitDir creates a minimal but plausible git directory under a fresh
+// temp dir and returns its path. Production receives git-dir paths from
+// `git rev-parse`, which always point at genuine git directories, and the
+// state writers validate that contract before touching disk.
+func newFakeGitDir(t *testing.T) string {
+	t.Helper()
+	gitDir := filepath.Join(t.TempDir(), ".git")
+	if err := os.MkdirAll(filepath.Join(gitDir, "objects"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return gitDir
+}
+
 func TestRDDStatus_Default(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -62,9 +78,7 @@ func TestRDDDisable_CloneLocal(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 
 	status, err := RDDDisable(gitDir, gitDir, "clone")
 	if err != nil {
@@ -96,9 +110,7 @@ func TestRDD_AnyOffWins(t *testing.T) {
 	RDDEnable("", "")
 
 	// Disable via clone
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 	RDDDisable(gitDir, gitDir, "clone")
 
 	// Should be disabled (clone off wins over global on)
@@ -194,9 +206,7 @@ func TestAuthorizeRDDOperation_CloneDisabledSource(t *testing.T) {
 	RDDEnable("", "")
 
 	// Disable via clone
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 	RDDDisable(gitDir, gitDir, "clone")
 
 	err := AuthorizeRDDOperation(RDDOperationStart, gitDir, gitDir)
@@ -218,9 +228,7 @@ func TestRDDDisable_CloneLocalGenerations(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 
 	// First disable — creates gen-0000000000.json
 	status, err := RDDDisable(gitDir, gitDir, "clone")
@@ -259,9 +267,7 @@ func TestRDDDisable_GenerationRevisions(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 
 	// First disable — should create gen-0000000000.json with empty previous_revision
 	_, err := RDDDisable(gitDir, gitDir, "clone")
@@ -321,9 +327,7 @@ func TestVerifyCloneRevision(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 
 	// No generation yet — VerifyCloneRevision should return error
 	err := VerifyCloneRevision(gitDir, "any")
@@ -473,9 +477,7 @@ func TestRDDRecordedAt_CloneOverridesGlobal(t *testing.T) {
 
 	RDDEnable("", "")
 
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 	RDDDisable(gitDir, gitDir, "clone")
 
 	status, _ := RDDStatus(gitDir, gitDir)
@@ -496,9 +498,7 @@ func TestWriteCloneMode_RejectsEnabled(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 
 	err := writeRDDMode(gitDir, RDDModeEnabled)
 	if err == nil {
@@ -514,9 +514,7 @@ func TestWriteCloneMode_RejectsEnabled(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCheckConsent_NotFound(t *testing.T) {
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 
 	given, err := CheckConsent(gitDir)
 	if err != nil {
@@ -528,9 +526,7 @@ func TestCheckConsent_NotFound(t *testing.T) {
 }
 
 func TestRecordConsent_CreatesFile(t *testing.T) {
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 
 	if err := RecordConsent(gitDir); err != nil {
 		t.Fatalf("RecordConsent: %v", err)
@@ -543,9 +539,7 @@ func TestRecordConsent_CreatesFile(t *testing.T) {
 }
 
 func TestCheckConsent_Found(t *testing.T) {
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 
 	if err := RecordConsent(gitDir); err != nil {
 		t.Fatalf("RecordConsent: %v", err)
@@ -561,9 +555,7 @@ func TestCheckConsent_Found(t *testing.T) {
 }
 
 func TestRecordConsent_Idempotent(t *testing.T) {
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 
 	if err := RecordConsent(gitDir); err != nil {
 		t.Fatalf("first RecordConsent: %v", err)
@@ -580,9 +572,7 @@ func TestRecordConsent_Idempotent(t *testing.T) {
 }
 
 func TestPromptConsent_LowRiskAutoConsents(t *testing.T) {
-	cloneDir := t.TempDir()
-	gitDir := filepath.Join(cloneDir, ".git")
-	os.MkdirAll(gitDir, 0755)
+	gitDir := newFakeGitDir(t)
 
 	err := PromptConsent(ConsentRequest{
 		Risk:   "low",
@@ -595,5 +585,79 @@ func TestPromptConsent_LowRiskAutoConsents(t *testing.T) {
 	given, _ := CheckConsent(gitDir)
 	if !given {
 		t.Fatal("expected consent recorded after low-risk prompt")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Bogus git-dir guard tests
+// ---------------------------------------------------------------------------
+
+func TestPlausibleGitDir(t *testing.T) {
+	if plausibleGitDir("") {
+		t.Error("empty path must not be plausible")
+	}
+	if plausibleGitDir(t.TempDir()) {
+		t.Error("plain directory without git markers must not be plausible")
+	}
+	if !plausibleGitDir(newFakeGitDir(t)) {
+		t.Error("HEAD + objects directory must be plausible")
+	}
+
+	// Linked-worktree private dir: HEAD plus commondir/gitdir pointer files,
+	// no objects/ or refs/ of its own.
+	wt := t.TempDir()
+	for name, content := range map[string]string{
+		"HEAD":      "ref: refs/heads/main\n",
+		"commondir": "../..\n",
+		"gitdir":    "repo/.git\n",
+	} {
+		if err := os.WriteFile(filepath.Join(wt, name), []byte(content), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !plausibleGitDir(wt) {
+		t.Error("linked-worktree private dir (HEAD + commondir/gitdir) must be plausible")
+	}
+}
+
+func TestRDDDisable_RejectsNonGitDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	bogus := t.TempDir() // exists, but is not a git directory
+	if _, err := RDDDisable(bogus, bogus, "clone"); err == nil {
+		t.Fatal("expected error disabling into a non-git directory")
+	}
+	if _, err := os.Stat(filepath.Join(bogus, "biggz")); !os.IsNotExist(err) {
+		t.Errorf("expected no biggz/ tree created inside %s", bogus)
+	}
+}
+
+func TestRDDEnable_SkipsNonGitDirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	bogus := t.TempDir() // exists, but is not a git directory
+	status, err := RDDEnable(bogus, bogus)
+	if err != nil {
+		t.Fatalf("expected enable to tolerate a non-git dir, got %v", err)
+	}
+	if status.EffectiveMode != RDDModeEnabled {
+		t.Errorf("expected enabled after global enable, got %s", status.EffectiveMode)
+	}
+	if _, err := os.Stat(filepath.Join(bogus, "biggz")); !os.IsNotExist(err) {
+		t.Errorf("expected no biggz/ tree created inside %s", bogus)
+	}
+}
+
+func TestRecordConsent_RejectsNonGitDirectory(t *testing.T) {
+	bogus := t.TempDir() // exists, but is not a git directory
+	if err := RecordConsent(bogus); err == nil {
+		t.Fatal("expected error recording consent into a non-git directory")
+	}
+	if _, err := os.Stat(filepath.Join(bogus, "biggz")); !os.IsNotExist(err) {
+		t.Errorf("expected no biggz/ tree created inside %s", bogus)
 	}
 }

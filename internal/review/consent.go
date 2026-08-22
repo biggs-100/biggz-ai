@@ -38,6 +38,11 @@ func CheckConsent(gitDir string) (bool, error) {
 // <git-dir>/biggz/rdd-mode/asked.json. If the file already exists it is a
 // no-op (one-time consent).
 func RecordConsent(gitDir string) error {
+	if !plausibleGitDir(gitDir) {
+		return fmt.Errorf(
+			"%s is not a git directory (missing HEAD or objects/refs): refusing to record review consent there; run from inside a repository",
+			gitDir)
+	}
 	dir := filepath.Join(gitDir, rddGenerationsDir)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err

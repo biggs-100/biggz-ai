@@ -265,9 +265,40 @@ func RDDDisable(worktreeGitDir, commonGitDir, scope string) (*RDDStatusReport, e
 	return RDDStatus(worktreeGitDir, commonGitDir)
 }
 
+// plausibleGitDir reports whether path looks like a genuine git directory.
+//
+// Production flows receive git-dir paths from `git rev-parse`, which always
+// resolve to real git directories. A blind MkdirAll here once created a
+// stray .git/biggz tree inside a source checkout when a bogus path was
+// passed in, so every writer validates before touching disk: HEAD must
+// exist and at least one structural marker must be present — objects/ or
+// refs/ (normal and bare repos), or the commondir/gitdir pointer files of
+// linked-worktree private dirs.
+func plausibleGitDir(path string) bool {
+	if path == "" {
+		return false
+	}
+	if fi, err := os.Stat(filepath.Join(path, "HEAD")); err != nil || fi.IsDir() {
+		return false
+	}
+	for _, marker := range []string{"objects", "refs"} {
+		if fi, err := os.Stat(filepath.Join(path, marker)); err == nil && fi.IsDir() {
+			return true
+		}
+	}
+	for _, marker := range []string{"commondir", "gitdir"} {
+		if _, err := os.Stat(filepath.Join(path, marker)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 // clearGenerations removes the CAS generation directory for the given git dir.
+// A path that is not a plausible git directory never held legitimate state,
+// so it is left untouched.
 func clearGenerations(gitDir string) {
-	if gitDir != "" {
+	if gitDir != "" && plausibleGitDir(gitDir) {
 		os.RemoveAll(filepath.Join(gitDir, rddGenerationsDir))
 	}
 }
@@ -442,6 +473,11 @@ func readRDDModeDir(gitDir string) (RDDMode, error) {
 func writeRDDMode(gitDir string, m RDDMode) error {
 	if m == RDDModeEnabled {
 		return ErrRDDModeRepositoryForcedOn
+	}
+	if !plausibleGitDir(gitDir) {
+		return fmt.Errorf(
+			"%s is not a git directory (missing HEAD or objects/refs): refusing to write review mode state there; run from inside a repository or use 'biggz rdd disable --scope=global'",
+			gitDir)
 	}
 	genDir := filepath.Join(gitDir, rddGenerationsDir)
 	if err := os.MkdirAll(genDir, 0755); err != nil {
