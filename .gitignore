@@ -30,5 +30,7 @@ Thumbs.db
 .biggz/
 coverage/
 /coverage
-# Untracked sync export from agent sync runs (user data, not referenced by code)
-/bg-sync/
+# Local sync exports from agent sync runs (user data, not referenced by code)
+.bg-sync/
+# Local BigMem runtime data
+.bigmem/
