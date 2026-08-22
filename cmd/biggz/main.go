@@ -265,7 +265,7 @@ func main() {
 		"lens-resilience", "lens-performance", "lens-dependencies")
 
 	// Use DAG orchestrator for parallel lens execution
-	orch := orchestrator.NewWithGraph(reg, pGraph)
+	orch := orchestrator.NewWithGraph(pGraph)
 	state, err := orch.Execute(context.Background(), subject)
 	if err != nil {
 		// The orchestrator returns partial state on pipeline failure.

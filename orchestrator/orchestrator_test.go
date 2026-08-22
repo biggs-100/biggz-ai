@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/biggs-100/biggz-ai/model"
-	"github.com/biggs-100/biggz-ai/registry"
 )
 
 // errStageFailure is a sentinel error used by the failing stage test.
@@ -29,9 +28,8 @@ func (s *failingStage) Rollback(ctx context.Context, state *model.ReviewState) e
 // orchestration, the returned ReviewState has Status=Failed and the error
 // is non-nil.
 func TestOrchestrator_PipelineFailure(t *testing.T) {
-	reg := registry.New()
 	stage := &failingStage{}
-	orch := New(reg, stage)
+	orch := New(stage)
 
 	subject := model.ReviewSubject{
 		Repository: "test/repo",
