@@ -1,9 +1,8 @@
 // Package plugin defines the interfaces for extending biggz-ai capabilities.
 //
-// LensPlugin provides domain-specific code analysis. AgentAdapter enables
-// discovery and integration with AI coding agents (OpenCode, Claude Code, etc.)
-// that are installed on the system. Both are registered at build time via
-// the registry package.
+// AgentAdapter enables discovery and integration with AI coding agents
+// (OpenCode, Claude Code, Cursor, etc.) that are installed on the system.
+// Adapters are wired at build time by the CLI (cmd/biggz/adapters.go).
 package plugin
 
 import (
@@ -11,50 +10,6 @@ import (
 
 	"github.com/biggs-100/biggz-ai/model"
 )
-
-// LensResult contains the findings produced by a LensPlugin after analysis.
-type LensResult struct {
-	LensID   string    `json:"lens_id"`
-	Findings []Finding `json:"findings"`
-}
-
-// Finding represents a single observation from a lens analysis.
-type Finding struct {
-	ID       string `json:"id"`
-	Severity string `json:"severity"`
-	Message  string `json:"message"`
-	File     string `json:"file"`
-	Line     int    `json:"line"`
-}
-
-// Policy describes a policy that a lens enforces or recommends.
-// Lenses return their associated policies via the Policies() method.
-type Policy struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-}
-
-// LensPlugin defines the interface for a code review analysis lens.
-// Each lens is identified by a unique ID and can analyze a ReviewSubject
-// to produce structured findings.
-type LensPlugin interface {
-	// ID returns the unique identifier for this lens.
-	ID() string
-
-	// Name returns a human-readable name for this lens.
-	Name() string
-
-	// Version returns the version string for this lens.
-	Version() string
-
-	// Analyze runs the lens analysis against the given subject.
-	// It returns a LensResult containing findings, or an error if the
-	// analysis could not be completed.
-	Analyze(ctx context.Context, subject model.ReviewSubject) (*LensResult, error)
-
-	// Policies returns the list of policies associated with this lens.
-	Policies() []Policy
-}
 
 // AgentAdapter defines the interface for discovering and integrating with
 // an AI coding agent installed on the system (e.g., OpenCode, Claude Code,
