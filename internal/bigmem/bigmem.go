@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -67,6 +68,11 @@ type Store struct {
 	db      *sql.DB
 	rootDir string
 }
+
+// globalIDSeq ensures obs IDs are unique even when time.Now().UnixNano()
+// collides (Windows clock resolution ~15ms causes rapid Saves to share the
+// same timestamp and ON CONFLICT would overwrite the previous row).
+var globalIDSeq int64
 
 // SearchOptions filter search results, matching engram's interface.
 type SearchOptions struct {
@@ -435,7 +441,7 @@ func (s *Store) Save(obs *Observation) error {
 	defer s.mu.Unlock()
 
 	if obs.ID == "" {
-		obs.ID = fmt.Sprintf("obs-%d", time.Now().UnixNano())
+		obs.ID = fmt.Sprintf("obs-%d-%d", time.Now().UnixNano(), atomic.AddInt64(&globalIDSeq, 1))
 	}
 	now := time.Now().UTC()
 	if obs.CreatedAt.IsZero() {
@@ -711,7 +717,7 @@ func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error)
 			o.topic_key, o.project, o.scope, o.normalized_hash, o.revision_count, o.duplicate_count,
 			o.last_seen_at, o.review_after, o.pinned, o.created_at, o.updated_at, o.deleted_at
 			FROM observations_fts fts
-			JOIN observations o ON o.id = fts.rowid
+			JOIN observations o ON o.rowid = fts.rowid
 			WHERE observations_fts MATCH ? AND o.deleted_at IS NULL`
 
 		args := []any{ftsQuery}
