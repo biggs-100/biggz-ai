@@ -310,6 +310,7 @@ func ReviewPhases() []string {
 		"review-reliability",
 		"review-resilience",
 		"review-refuter",
+		"review-validator",
 	}
 }
 

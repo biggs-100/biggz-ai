@@ -222,10 +222,10 @@ func TestPhaseLists(t *testing.T) {
 	if len(JDPhases()) != 3 {
 		t.Errorf("JDPhases() len = %d, want 3", len(JDPhases()))
 	}
-	if len(ReviewPhases()) != 5 {
-		t.Errorf("ReviewPhases() len = %d, want 5", len(ReviewPhases()))
+	if len(ReviewPhases()) != 6 {
+		t.Errorf("ReviewPhases() len = %d, want 6", len(ReviewPhases()))
 	}
-	if len(ConfigurableAgentPhases()) != 19 {
-		t.Errorf("ConfigurableAgentPhases() len = %d, want 19", len(ConfigurableAgentPhases()))
+	if len(ConfigurableAgentPhases()) != 20 {
+		t.Errorf("ConfigurableAgentPhases() len = %d, want 20", len(ConfigurableAgentPhases()))
 	}
 }
