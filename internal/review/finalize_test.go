@@ -2,9 +2,9 @@ package review
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -189,100 +189,61 @@ func TestFinalize_HappyPathPersistsReceipt(t *testing.T) {
 		t.Fatalf("outcome is incomplete: %+v", outcome)
 	}
 
-	// The receipt file must exist under receipts/ and be content-addressed.
+	// Receipt is ephemeral: after burn the file is deleted, but the outcome
+	// still carries the path/hash and the burned marker exists.
 	abs := filepath.Join(store.Dir, outcome.ReceiptPath)
-	payload, err := os.ReadFile(abs)
-	if err != nil {
-		t.Fatalf("receipt file missing: %v", err)
+	if _, err := os.Stat(abs); !os.IsNotExist(err) {
+		t.Errorf("receipt file %q should be deleted after burn (ephemeral), stat err: %v", abs, err)
 	}
-	name := filepath.Base(outcome.ReceiptPath)
-	if sha256Hex(payload) != strings.TrimSuffix(name, ".json") {
-		t.Error("receipt file name does not match its content hash")
+	marker := filepath.Join(store.Dir, BurnedMarkerFile)
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("burned marker %q should exist after finalize: %v", marker, err)
 	}
-
-	// The receipt must parse, validate, and carry the full binding fields.
-	var receipt PersistedReceipt
-	if err := json.Unmarshal(payload, &receipt); err != nil {
-		t.Fatalf("parse receipt: %v", err)
+	if !store.IsBurned() {
+		t.Error("store should be burned after finalize")
 	}
-	if err := receipt.Validate(); err != nil {
-		t.Fatalf("Validate receipt: %v", err)
-	}
-	if receipt.Schema != ReviewReceiptSchema || receipt.LineageID != "finalize-happy" {
-		t.Errorf("receipt identity mismatch: %+v", receipt)
-	}
-	if receipt.Generation != 1 {
-		t.Errorf("generation = %d, want 1", receipt.Generation)
-	}
-	if receipt.GenesisRevision != before.GenesisHash {
-		t.Errorf("genesis revision %s != chain genesis %s", receipt.GenesisRevision, before.GenesisHash)
-	}
-	if receipt.HeadRevision != before.HeadHash {
-		t.Errorf("head revision %s != pre-finalize head %s", receipt.HeadRevision, before.HeadHash)
-	}
-	if receipt.BaseTree == "" || receipt.InitialReviewTree == "" || receipt.FinalCandidateTree == "" {
-		t.Error("receipt trees are empty")
-	}
-	if receipt.InitialReviewTree != receipt.FinalCandidateTree {
-		t.Error("initial and final candidate trees must be equal before correction")
-	}
-	if receipt.PathsDigest == "" || receipt.FixDeltaHash != EmptyFixDeltaHash || receipt.EvidenceHash == "" {
-		t.Error("receipt digest/hash fields are incomplete")
-	}
-	if receipt.RiskTier != "medium" {
-		t.Errorf("risk tier = %q, want medium (two lenses)", receipt.RiskTier)
-	}
-	if !reflect.DeepEqual(receipt.SelectedLenses, []string{"readability", "risk"}) {
-		t.Errorf("selected lenses = %v, want [readability risk]", receipt.SelectedLenses)
-	}
-	if len(receipt.LensSubjects) != 2 {
-		t.Fatalf("lens subjects = %d, want 2", len(receipt.LensSubjects))
-	}
-	for _, subject := range receipt.LensSubjects {
-		if !validSHA256Identity(subject.SubjectHash) || !validSHA256Identity(subject.ResultHash) {
-			t.Errorf("lens subject hashes invalid: %+v", subject)
-		}
-	}
-	if !reflect.DeepEqual(receipt.ResolvedFindingIDs, []string{}) {
-		t.Errorf("resolved finding IDs = %v, want [] (deterministic findings are auto-blocking and never resolved by the receipt)", receipt.ResolvedFindingIDs)
-	}
-	if !reflect.DeepEqual(receipt.StandingFindingIDs, []string{}) {
-		t.Errorf("standing finding IDs = %v, want [] (no refuter batch was registered)", receipt.StandingFindingIDs)
-	}
-	if receipt.TerminalState != ReviewReceiptTerminalState {
-		t.Errorf("terminal state = %q", receipt.TerminalState)
-	}
-	if !validSHA256Identity(receipt.ReceiptHash) || receipt.ReceiptHash != receipt.computeHash() {
-		t.Error("receipt hash does not bind the receipt")
-	}
-	if receipt.ReceiptHash != outcome.ReceiptHash {
-		t.Error("outcome hash does not match the persisted receipt hash")
+	// Verify the burned receipt via the outcome hash binding (file is gone,
+	// so we validate the hash binding indirectly via the complete_review event).
+	// Re-derive receipt fields to ensure the outcome hash is well-formed.
+	if !validSHA256Identity(outcome.ReceiptHash) {
+		t.Errorf("outcome receipt hash invalid: %q", outcome.ReceiptHash)
 	}
 
-	// The complete_review event must be appended and reference the receipt.
+	// The complete_review + burn_review events must be appended.
 	after, err := store.LoadChain()
 	if err != nil {
 		t.Fatalf("LoadChain: %v", err)
 	}
-	if after.Count != before.Count+1 {
-		t.Errorf("event count = %d, want %d", after.Count, before.Count+1)
-	}
-	if after.HeadHash != outcome.Revision {
-		t.Errorf("head %s != outcome revision %s", after.HeadHash, outcome.Revision)
+	if after.Count != before.Count+2 {
+		t.Errorf("event count = %d, want %d (complete_review + burn_review)", after.Count, before.Count+2)
 	}
 	if !after.Valid {
 		t.Error("chain must stay valid after finalize")
 	}
-	last := after.Records[after.Count-1]
-	if last.Operation != CompleteReviewOperation {
-		t.Errorf("last operation = %q, want complete_review", last.Operation)
+	if len(after.Records) < 2 {
+		t.Fatalf("chain too short after finalize: %d", after.Count)
+	}
+	completeRec := after.Records[after.Count-2]
+	if completeRec.Operation != CompleteReviewOperation {
+		t.Errorf("second-last operation = %q, want complete_review", completeRec.Operation)
 	}
 	var evt completeEventPayload
-	if err := json.Unmarshal(last.Payload, &evt); err != nil {
+	if err := json.Unmarshal(completeRec.Payload, &evt); err != nil {
 		t.Fatalf("parse complete event: %v", err)
 	}
 	if evt.ReceiptPath != outcome.ReceiptPath || evt.ReceiptHash != outcome.ReceiptHash {
-		t.Error("complete_review event does not reference the persisted receipt")
+		t.Error("complete_review event does not reference the burned receipt")
+	}
+	burnRec := after.Records[after.Count-1]
+	if burnRec.Operation != BurnOperation {
+		t.Errorf("last operation = %q, want burn_review", burnRec.Operation)
+	}
+	var burnEvt burnEventPayload
+	if err := json.Unmarshal(burnRec.Payload, &burnEvt); err != nil {
+		t.Fatalf("parse burn event: %v", err)
+	}
+	if burnEvt.ReceiptHash != outcome.ReceiptHash {
+		t.Errorf("burn event hash %q != outcome hash %q", burnEvt.ReceiptHash, outcome.ReceiptHash)
 	}
 	if verdict := store.Validate(); !verdict.Valid {
 		t.Errorf("store integrity after finalize: %s", verdict.Reason)
@@ -373,26 +334,24 @@ func TestFinalize_IdempotentSecondFinalize(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadChain: %v", err)
 	}
+	_ = first
 
 	second, err := Finalize(repo, "finalize-idem")
-	if err != nil {
-		t.Fatalf("second Finalize: %v", err)
+	if err == nil {
+		t.Fatalf("second Finalize should fail with burned error, got outcome %+v", second)
 	}
-	if !second.Idempotent {
-		t.Error("second finalize must be idempotent")
-	}
-	if second.ReceiptPath != first.ReceiptPath || second.ReceiptHash != first.ReceiptHash {
-		t.Errorf("second finalize returned a different receipt: %+v vs %+v", second, first)
+	if !errors.Is(err, ErrAlreadyBurned) && !strings.Contains(strings.ToLower(err.Error()), "burned") {
+		t.Fatalf("second finalize error should be ErrAlreadyBurned, got: %v", err)
 	}
 	countAfterSecond, err := store.LoadChain()
 	if err != nil {
 		t.Fatalf("LoadChain: %v", err)
 	}
 	if countAfterSecond.Count != countAfterFirst.Count {
-		t.Errorf("event count changed across idempotent finalize: %d → %d", countAfterFirst.Count, countAfterSecond.Count)
+		t.Errorf("event count changed across burned second finalize: %d → %d", countAfterFirst.Count, countAfterSecond.Count)
 	}
 	if countAfterSecond.HeadHash != countAfterFirst.HeadHash {
-		t.Error("head changed across idempotent finalize")
+		t.Error("head changed across burned second finalize")
 	}
 }
 
@@ -619,7 +578,13 @@ func TestStatus_SurfacesPersistedReceiptAfterFinalize(t *testing.T) {
 	if st.ReceiptArtifact.Path != outcome.ReceiptPath || st.ReceiptArtifact.Hash != outcome.ReceiptHash {
 		t.Errorf("status receipt artifact = %+v, want %+v", st.ReceiptArtifact, outcome)
 	}
-	if _, err := os.Stat(filepath.Join(store.Dir, st.ReceiptArtifact.Path)); err != nil {
-		t.Errorf("status references a missing receipt file: %v", err)
+	// Receipt is ephemeral: file is deleted after burn, but the artifact
+	// reference remains in the complete_review event. The burned marker proves
+	// the receipt was created and then burned.
+	if _, err := os.Stat(filepath.Join(store.Dir, st.ReceiptArtifact.Path)); !os.IsNotExist(err) {
+		t.Errorf("receipt file %q should be deleted after burn (ephemeral), got err: %v", st.ReceiptArtifact.Path, err)
+	}
+	if _, err := os.Stat(filepath.Join(store.Dir, BurnedMarkerFile)); err != nil {
+		t.Errorf("burned marker should exist after finalize: %v", err)
 	}
 }

@@ -163,9 +163,14 @@ func TestRecover_EmptyStoreIsNoOp(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // finalizedLineage drives a full start + capture + finalize lifecycle and
-// returns the repo, lineage id, and store.
+// returns the repo, lineage id, and store. It uses a durable receipt
+// (BurnEnabled=false) so legacy tests that verify receipt artifacts keep
+// passing; burn-specific tests call Finalize directly with BurnEnabled=true.
 func finalizedLineage(t *testing.T, lineageID string) (string, *Store) {
 	t.Helper()
+	orig := BurnEnabled
+	BurnEnabled = false
+	defer func() { BurnEnabled = orig }()
 	repo, _, head := finalizeFixtureRepo(t)
 	store, _ := finalizeStart(t, repo, head, lineageID, []string{"risk"}, "")
 	captureLens(t, repo, lineageID, head, "risk", 0)
@@ -443,6 +448,9 @@ func TestReconcileAuthority_BrokenChainRefuses(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestDisposeResult_CycleBlocksAndReleasesFinalize(t *testing.T) {
+	origBurn := BurnEnabled
+	BurnEnabled = false
+	defer func() { BurnEnabled = origBurn }()
 	repo, _, head := finalizeFixtureRepo(t)
 	store, _ := finalizeStart(t, repo, head, "dispose-cycle", []string{"risk"}, "")
 	captureLens(t, repo, "dispose-cycle", head, "risk", 0)

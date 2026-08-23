@@ -437,9 +437,9 @@ func reviewGateRun() int {
 		}
 	}
 
-	// Exit zero for the disabled disposition (delivery follows ordinary
+	// Exit zero for the disabled/burned dispositions (delivery follows ordinary
 	// repository policy, never an approval) and under --dry-run.
-	if result.Delivery == review.DeliveryDisabledUnmanaged || result.DryRun {
+	if result.Delivery == review.DeliveryDisabledUnmanaged || result.Delivery == review.DeliveryBurned || result.DryRun {
 		return 0
 	}
 	if !result.Passed {

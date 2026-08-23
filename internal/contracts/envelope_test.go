@@ -167,6 +167,8 @@ func payloadSchemaID(operation string) string {
 		return disposeEventID
 	case review.ReopenOperation:
 		return reopenEventID
+	case review.BurnOperation:
+		return "" // burn payload is ephemeral and not formalized in contracts; skip
 	}
 	return ""
 }
@@ -262,6 +264,9 @@ func TestEnvelopeConformance_CapturedArtifact(t *testing.T) {
 // TestEnvelopeConformance_PersistedReceipt validates the receipt artifact
 // Finalize materializes under receipts/<sha256>.json.
 func TestEnvelopeConformance_PersistedReceipt(t *testing.T) {
+	origBurn := review.BurnEnabled
+	review.BurnEnabled = false
+	defer func() { review.BurnEnabled = origBurn }()
 	repo, head := fixtureRepo(t)
 	store := startLineage(t, repo, head, "env-receipt", []string{"risk", "readability"})
 	captureLensClean(t, repo, "env-receipt", head, "risk", 0)
@@ -306,6 +311,9 @@ func TestEnvelopeConformance_PersistedReceipt(t *testing.T) {
 // against record.schema.json — the schema that governs every content-
 // addressed event file.
 func TestEnvelopeConformance_ChainEventsAndRecords(t *testing.T) {
+	origBurn := review.BurnEnabled
+	review.BurnEnabled = false
+	defer func() { review.BurnEnabled = origBurn }()
 	repo, head := fixtureRepo(t)
 	store := startLineage(t, repo, head, "env-chain", []string{"risk"})
 	captureLensClean(t, repo, "env-chain", head, "risk", 0)
@@ -325,6 +333,10 @@ func TestEnvelopeConformance_ChainEventsAndRecords(t *testing.T) {
 	}
 	for index := range chain.Records {
 		rec := chain.Records[index]
+		// Burn is ephemeral and not formalized in contracts; skip.
+		if rec.Operation == review.BurnOperation {
+			continue
+		}
 		recordBytes, err := json.Marshal(rec)
 		if err != nil {
 			t.Fatalf("record %d marshal: %v", index, err)

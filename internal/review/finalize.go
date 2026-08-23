@@ -44,6 +44,15 @@ const (
 	ReviewReceiptTerminalState   = "completed"
 )
 
+// ErrAlreadyBurned reports that the lineage receipt is already burned
+// (ephemeral receipt consumed). It prevents replay of the same receipt.
+var ErrAlreadyBurned = errors.New("review: lineage already burned after successful finalize")
+
+// BurnEnabled controls whether Finalize burns the receipt after successful
+// finalize. It is true by default (ephemeral receipt). Tests that need a
+// durable receipt for gate parity can temporarily set it false.
+var BurnEnabled = true
+
 // EmptyFixDeltaHash is the honest empty-input fix delta identity, mirroring
 // gentle-ai: SHA-256 of zero bytes. It is frozen until a correction binds a
 // real fix delta.
@@ -537,6 +546,13 @@ func Finalize(repo, lineageID string) (FinalizeOutcome, error) {
 		if chain.Count == 0 {
 			return errors.New("finalize: lineage has no events")
 		}
+		// Burned check: ephemeral receipt already consumed — prevent replay.
+		if IsChainBurned(chain) {
+			return fmt.Errorf("finalize: %w", ErrAlreadyBurned)
+		}
+		if _, err := os.Stat(filepath.Join(store.Dir, BurnedMarkerFile)); err == nil {
+			return fmt.Errorf("finalize: %w", ErrAlreadyBurned)
+		}
 		// Terminal state (Phase C2): an invalidated/withdrawn lineage must
 		// not be finalizable — a receipt would fabricate reviewed history
 		// the lineage has explicitly disowned.
@@ -562,6 +578,9 @@ func Finalize(repo, lineageID string) (FinalizeOutcome, error) {
 		last := chain.Records[chain.Count-1]
 		if last.Operation == CompleteReviewOperation {
 			return finalizeIdempotent(store, repo, chain, revisions, plan, &outcome)
+		}
+		if last.Operation == BurnOperation {
+			return fmt.Errorf("finalize: %w", ErrAlreadyBurned)
 		}
 		data, err := deriveFinalizeData(repo, chain, plan)
 		if err != nil {
@@ -591,12 +610,65 @@ func Finalize(repo, lineageID string) (FinalizeOutcome, error) {
 		if err != nil {
 			return fmt.Errorf("finalize: append complete_review event: %w", err)
 		}
+		// Burn after successful finalize: ephemeral receipt.
+		// Make receipt ephemeral by deleting the receipt file, persisting a
+		// burned marker, and appending a burn_review event that invalidates
+		// further finalize/gate reuse.
+		if BurnEnabled {
+			if err := burnReceiptLocked(store, receipt, path, revision); err != nil {
+				return fmt.Errorf("finalize: burn receipt: %w", err)
+			}
+		}
 		outcome = FinalizeOutcome{
 			LineageID: lineageID, ReceiptPath: path, ReceiptHash: receipt.ReceiptHash, Revision: revision,
 		}
 		return nil
 	})
 	return outcome, err
+}
+
+// burnEventPayload is the durable burn_review event payload.
+type burnEventPayload struct {
+	Schema      string `json:"schema"`
+	ReceiptHash string `json:"receipt_hash"`
+	ReceiptPath string `json:"receipt_path"`
+}
+
+// burnReceiptLocked burns the persisted receipt: appends a burn_review event,
+// writes the burned marker, and deletes the receipt file so it becomes
+// ephemeral. The caller holds the lineage file lock.
+func burnReceiptLocked(store *Store, receipt PersistedReceipt, receiptPath, completeRevision string) error {
+	payload, err := json.Marshal(burnEventPayload{
+		Schema: BurnEventSchema, ReceiptHash: receipt.ReceiptHash, ReceiptPath: receiptPath,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal burn event: %w", err)
+	}
+	if _, err := store.appendLocked(completeRevision, Record{
+		Operation: BurnOperation,
+		Role:      string(model.RoleLead),
+		Actor:     string(model.RoleLead),
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Payload:   payload,
+	}); err != nil {
+		return fmt.Errorf("append burn_review event: %w", err)
+	}
+	markerPath := filepath.Join(store.Dir, BurnedMarkerFile)
+	markerPayload, _ := json.Marshal(map[string]string{
+		"receipt_hash": receipt.ReceiptHash,
+		"receipt_path": receiptPath,
+		"burned_at":    time.Now().Format(time.RFC3339Nano),
+	})
+	if err := os.WriteFile(markerPath, markerPayload, 0644); err != nil {
+		return fmt.Errorf("write burned marker: %w", err)
+	}
+	// Delete the receipt file to make it ephemeral. Genealogical reference
+	// remains in the complete_review event, but the artifact is gone.
+	fullPath := filepath.Join(store.Dir, receiptPath)
+	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove receipt file: %w", err)
+	}
+	return nil
 }
 
 // finalizeIdempotent handles a second finalize on an already-terminal

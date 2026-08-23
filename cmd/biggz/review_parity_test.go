@@ -585,6 +585,9 @@ func refutationSmoke(t *testing.T, verdicts any) (gateCode int, gateReason strin
 	FollowUp int `json:"follow_up"`
 }, lineageID string) {
 	t.Helper()
+	origBurn := review.BurnEnabled
+	review.BurnEnabled = false
+	defer func() { review.BurnEnabled = origBurn }()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)

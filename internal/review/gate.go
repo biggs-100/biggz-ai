@@ -70,6 +70,9 @@ const (
 	DeliveryDisabledUnmanaged = "disabled/unmanaged"
 	// DeliveryUnmanaged is delivery with the switch on but no receipt yet.
 	DeliveryUnmanaged = "unmanaged"
+	// DeliveryBurned is delivery after a burned ephemeral receipt: the gate
+	// becomes informational and ordinary repository policy governs.
+	DeliveryBurned = "burned/unmanaged"
 )
 
 // supportedGateKind reports whether the kind is one of the five publication
@@ -604,6 +607,18 @@ func EvaluateGate(kind GateKind, repo, lineageID string, opts GateOptions) (Gate
 	chain, err := store.LoadChain()
 	if err != nil {
 		return GateResult{}, fmt.Errorf("gate: load chain: %w", err)
+	}
+
+	// Burned check: ephemeral receipt already consumed — gate becomes
+	// informational (non-deciding, like gentle's review validate). It never
+	// blocks delivery; ordinary repository policy governs.
+	if IsChainBurned(chain) || store.IsBurned() {
+		result.Delivery = DeliveryBurned
+		result.Reason = "review burned: receipt is ephemeral and burned after finalize; delivery via ordinary repository policy"
+		result.Reasons = []string{result.Reason}
+		result.Allowed = true
+		result.Passed = false
+		return result, nil
 	}
 
 	var reasons []string

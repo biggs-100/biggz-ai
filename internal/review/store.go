@@ -34,6 +34,16 @@ import (
 
 const recordSchemaVersion = "biggz-ai.review-record/v1"
 
+// Burn semantics: ephemeral receipt — after successful finalize the receipt
+// is burned (deleted) and a burn_review event marks the lineage burned.
+// Burns prevent replay; gates become informational (non-deciding).
+const (
+	BurnOperation        = "burn_review"
+	BurnEventSchema      = "biggz-ai.review-burn-event/v1"
+	BurnedMarkerFile     = "burned.json"
+	BurnedReceiptDirName = "burned"
+)
+
 // Record is a single event in the content-addressed review store.
 // The revision IS the file name — it is not stored in the Record itself.
 type Record struct {
@@ -276,6 +286,30 @@ func (s *Store) Validate() IntegrityVerdict {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+// IsBurned reports whether the lineage is burned (ephemeral receipt
+// already consumed). A lineage is burned if a burned.json marker exists
+// or any record carries BurnOperation.
+func (s *Store) IsBurned() bool {
+	if _, err := os.Stat(filepath.Join(s.Dir, BurnedMarkerFile)); err == nil {
+		return true
+	}
+	chain, err := s.LoadChain()
+	if err != nil {
+		return false
+	}
+	return IsChainBurned(chain)
+}
+
+// IsChainBurned reports whether the validated chain contains a burn event.
+func IsChainBurned(chain ValidatedChain) bool {
+	for _, rec := range chain.Records {
+		if rec.Operation == BurnOperation {
+			return true
+		}
+	}
+	return false
+}
 
 // readHEAD reads the HEAD file and returns the trimmed hash.
 // Returns ("", nil) if the HEAD file does not exist (empty lineage).

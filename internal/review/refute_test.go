@@ -148,6 +148,9 @@ func twoInferentialFindings() []map[string]any {
 // ---------------------------------------------------------------------------
 
 func TestRefute_HappyPathRefutedAndStands(t *testing.T) {
+	origBurn := BurnEnabled
+	BurnEnabled = false
+	defer func() { BurnEnabled = origBurn }()
 	repo, head, lineageID := refuteFixture(t, twoInferentialFindings())
 
 	// Finalize must refuse until the refuter batch covers every inferential
@@ -222,6 +225,9 @@ func TestRefute_HappyPathRefutedAndStands(t *testing.T) {
 }
 
 func TestRefute_AllRefutedGatePasses(t *testing.T) {
+	origBurn := BurnEnabled
+	BurnEnabled = false
+	defer func() { BurnEnabled = origBurn }()
 	repo, _, lineageID := refuteFixture(t, twoInferentialFindings())
 	refuteVerdicts(t, repo, lineageID,
 		refuteVerdict("R1-001", "refuted", "counterexample reproduced at a.txt:2"),
@@ -588,6 +594,9 @@ func TestStatus_RefutationsSurface(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestReceipt_ResolvedAndStandingMustBeDisjoint(t *testing.T) {
+	origBurn := BurnEnabled
+	BurnEnabled = false
+	defer func() { BurnEnabled = origBurn }()
 	repo, _, head := finalizeFixtureRepo(t)
 	lineageID := "refute-receipt"
 	store, _ := finalizeStart(t, repo, head, lineageID, []string{"risk"}, "")
