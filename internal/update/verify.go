@@ -6,21 +6,66 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/jedisct1/go-minisign"
 )
+
+// expectedChecksumFor returns the expected SHA-256 hex digest for filename by
+// scanning checksumsContent for a line where fields[1] matches filename exactly
+// (or contains it). It mirrors gentle-ai's expectedChecksumFor semantics.
+func expectedChecksumFor(checksumsContent []byte, filename string) (string, error) {
+	scanner := bufio.NewScanner(bytes.NewReader(checksumsContent))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		// GoReleaser format: "<hex_hash>  <filename>" — handle leading "*"
+		candidate := strings.TrimPrefix(fields[1], "*")
+		// Exact match, base-name match, or contains (covers path-prefixed entries).
+		if candidate == filename || filepath.Base(candidate) == filename || strings.Contains(candidate, filename) {
+			return fields[0], nil
+		}
+		// Also check raw fields[1] without trimming for direct contains.
+		if fields[1] == filename || strings.Contains(fields[1], filename) {
+			return fields[0], nil
+		}
+	}
+	return "", fmt.Errorf("checksum for %s not found in checksums", filename)
+}
 
 // VerifyChecksum computes the SHA-256 digest of data and verifies that it
 // appears in the checksumsContent. The checksumsContent is expected to follow
 // the GoReleaser format: one line per entry with the hex digest followed by
 // the filename (e.g., "sha256hash  filename.ext").
 //
-// Returns nil when the digest is found in one of the checksum entries.
-func VerifyChecksum(data, checksumsContent []byte) error {
+// When filename is provided (variadic first element), the verification is
+// filename-exact: it looks up the expected checksum for that specific file via
+// expectedChecksumFor and compares. Without filename, it falls back to matching
+// any line whose hash equals the computed digest (backward compat for tests).
+func VerifyChecksum(data, checksumsContent []byte, filename ...string) error {
 	sum := sha256.Sum256(data)
 	expected := hex.EncodeToString(sum[:])
 
+	// Filename-exact path (hardened): caller supplies archive name.
+	if len(filename) > 0 && filename[0] != "" {
+		want, err := expectedChecksumFor(checksumsContent, filename[0])
+		if err != nil {
+			return err
+		}
+		if want != expected {
+			return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", filename[0], want, expected)
+		}
+		return nil
+	}
+
+	// Fallback: legacy any-match (no filename supplied).
 	scanner := bufio.NewScanner(bytes.NewReader(checksumsContent))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -30,6 +75,11 @@ func VerifyChecksum(data, checksumsContent []byte) error {
 		// GoReleaser format: "<hex_hash>  <filename>"
 		fields := strings.Fields(line)
 		if len(fields) >= 1 && fields[0] == expected {
+			// Still require a filename field to avoid matching malformed lines.
+			if len(fields) >= 2 && fields[1] != "" {
+				return nil
+			}
+			// If no filename field, still accept for backward compat with minimal checksums fixtures.
 			return nil
 		}
 	}

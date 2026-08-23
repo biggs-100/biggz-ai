@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/assets"
+	"github.com/biggs-100/biggz-ai/internal/backup"
 	"github.com/biggs-100/biggz-ai/internal/doctor"
 	"github.com/biggs-100/biggz-ai/internal/install"
 	"github.com/biggs-100/biggz-ai/internal/recoverytrace"
@@ -427,8 +428,8 @@ func upgradeRun() int {
 		return 1
 	}
 
-	// Verify checksum.
-	if err := update.VerifyChecksum(archiveData, checksumsData); err != nil {
+	// Verify checksum (filename-exact when archive name is known).
+	if err := update.VerifyChecksum(archiveData, checksumsData, archiveAsset.Name); err != nil {
 		fmt.Fprintf(os.Stderr, "error: checksum verification failed: %v\n", err)
 		return 1
 	}
@@ -448,6 +449,24 @@ func upgradeRun() int {
 		return 1
 	}
 	fmt.Println("✓ Binary extracted")
+
+	// Pre-mutation snapshot (best-effort, never fails the upgrade).
+	// Skip entirely when --no-reconcile/--no-backup.
+	if !noReconcile {
+		home, _ := os.UserHomeDir()
+		if b, err := createUpgradeSnapshot(home); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: snapshot before upgrade failed: %v (continuing)\n", err)
+		} else if b != nil {
+			fmt.Printf("✓ Snapshot created: %s\n", b.ID)
+			backupDir := filepath.Join(home, ".biggz", "backups")
+			if home == "" {
+				backupDir = ""
+			}
+			if err := backup.Prune(backupDir, 10); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: prune backups failed: %v\n", err)
+			}
+		}
+	}
 
 	// Replace current binary.
 	currentPath, err := os.Executable()
@@ -474,6 +493,39 @@ func upgradeRun() int {
 	home, _ := os.UserHomeDir()
 	fmt.Println(postUpdateReconcile(ctx, agentAdapters(), home, noReconcile))
 	return 0
+}
+
+// createUpgradeSnapshot snapshots managed paths under ~/.biggz before mutation.
+// It is best-effort: returns (nil,nil) when nothing to snapshot.
+func createUpgradeSnapshot(home string) (*backup.Backup, error) {
+	if home == "" {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil || home == "" {
+			return nil, nil
+		}
+	}
+	biggzDir := filepath.Join(home, ".biggz")
+	if _, err := os.Stat(biggzDir); err != nil {
+		return nil, nil
+	}
+	var paths []string
+	entries, err := os.ReadDir(biggzDir)
+	if err != nil {
+		return nil, nil
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if name == "backups" || name == "cache" {
+			continue
+		}
+		paths = append(paths, filepath.Join(biggzDir, name))
+	}
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	backupDir := filepath.Join(home, ".biggz", "backups")
+	return backup.Create(backupDir, paths)
 }
 
 // recoveryRun handles the "biggz recovery" subcommand.

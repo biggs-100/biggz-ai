@@ -72,8 +72,12 @@ func Create(rootDir string, paths []string) (*Backup, error) {
 				if err != nil {
 					return err
 				}
-				if fi.IsDir() && fi.Name() == ".git" {
-					return filepath.SkipDir
+				if fi.IsDir() {
+					// Skip VCS and backup/cache dirs to avoid bloat and recursion.
+					switch fi.Name() {
+					case ".git", "backups", "cache":
+						return filepath.SkipDir
+					}
 				}
 
 				rel, err := filepath.Rel(base, path)
@@ -181,6 +185,36 @@ func List(rootDir string) ([]Backup, error) {
 	})
 
 	return backups, nil
+}
+
+// Prune removes old backups keeping only the newest keep entries.
+// rootDir defaults to ~/.biggz/backups when empty. keep defaults to 10 when <=0.
+func Prune(rootDir string, keep int) error {
+	if keep <= 0 {
+		keep = 10
+	}
+	if rootDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("home dir: %w", err)
+		}
+		rootDir = filepath.Join(home, ".biggz", "backups")
+	}
+	backups, err := List(rootDir)
+	if err != nil {
+		return err
+	}
+	if len(backups) <= keep {
+		return nil
+	}
+	// List returns newest first; remove oldest beyond keep.
+	for i := keep; i < len(backups); i++ {
+		p := filepath.Join(rootDir, backups[i].ID+".tar.gz")
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("prune %s: %w", backups[i].ID, err)
+		}
+	}
+	return nil
 }
 
 // Restore extracts a backup to the given target directory.

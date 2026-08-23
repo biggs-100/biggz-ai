@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/biggs-100/biggz-ai/internal/backup"
 	"github.com/biggs-100/biggz-ai/internal/update"
 )
 
@@ -88,7 +91,6 @@ func TestUpgrade_HelpPrintsUsage(t *testing.T) {
 
 func TestUpdate_CheckOnlyDoesNotCreateBackup(t *testing.T) {
 	tmpHome := t.TempDir()
-	// Set both HOME and USERPROFILE for cross-platform isolation.
 	cmd := goRunBiggz(t, "update", "--help")
 	cmd.Env = append(os.Environ(),
 		"HOME="+tmpHome,
@@ -100,12 +102,10 @@ func TestUpdate_CheckOnlyDoesNotCreateBackup(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("update --help: %v", err)
 	}
-	// Check no backup was created (check-only must never mutate).
 	backupDir := filepath.Join(tmpHome, ".biggz", "backups")
 	if entries, err := os.ReadDir(backupDir); err == nil && len(entries) > 0 {
 		t.Errorf("update --help should not create backup, found %d entries in %s", len(entries), backupDir)
 	}
-	// Also verify that running plain update (which will error 404) does not create backup.
 	cmd2 := goRunBiggz(t, "update")
 	cmd2.Env = append(os.Environ(),
 		"HOME="+tmpHome,
@@ -114,7 +114,7 @@ func TestUpdate_CheckOnlyDoesNotCreateBackup(t *testing.T) {
 	var stdout2, stderr2 bytes.Buffer
 	cmd2.Stdout = &stdout2
 	cmd2.Stderr = &stderr2
-	_ = cmd2.Run() // may error due to 404, ignore exit
+	_ = cmd2.Run()
 	if entries, err := os.ReadDir(backupDir); err == nil && len(entries) > 0 {
 		t.Errorf("biggz update (no flags) should not create backup, found %d entries", len(entries))
 	}
@@ -126,7 +126,6 @@ func TestUpdate_CheckOnlyDoesNotCreateBackup(t *testing.T) {
 
 func TestUpgrade_DryRunDoesNotMutate(t *testing.T) {
 	tmpHome := t.TempDir()
-	// Run upgrade --help to verify flag is recognized without mutation.
 	cmd := goRunBiggz(t, "upgrade", "--help")
 	cmd.Env = append(os.Environ(),
 		"HOME="+tmpHome,
@@ -141,7 +140,6 @@ func TestUpgrade_DryRunDoesNotMutate(t *testing.T) {
 	if entries, err := os.ReadDir(backupDir); err == nil && len(entries) > 0 {
 		t.Errorf("upgrade --help should not create backup, found %d entries", len(entries))
 	}
-	// Run upgrade --dry-run (will 404 due to no real releases) — still should not create backup.
 	cmd2 := goRunBiggz(t, "upgrade", "--dry-run")
 	cmd2.Env = append(os.Environ(),
 		"HOME="+tmpHome,
@@ -157,9 +155,6 @@ func TestUpgrade_DryRunDoesNotMutate(t *testing.T) {
 }
 
 func TestUpgrade_DryRunPrintsPendingWhenUpdateAvailable(t *testing.T) {
-	// Use httptest to provide a fake release newer than current version.
-	// This test exercises the dry-run early return path (discoverRelease + up-to-date check + pending hint)
-	// without downloading. It runs the CLI via env var injection to mock GitHub.
 	releases := []update.Release{
 		{TagName: "v9.9.9", Prerelease: false, Assets: []update.Asset{
 			{Name: "checksums.txt", URL: "http://example.com/checksums.txt"},
@@ -192,12 +187,10 @@ func TestUpgrade_DryRunPrintsPendingWhenUpdateAvailable(t *testing.T) {
 	if !strings.Contains(combined, "1 upgrade(s) pending") {
 		t.Errorf("expected pending count, got %q", combined)
 	}
-	// Ensure no backup was created on dry-run (dry-run must not mutate).
 	backupDir := filepath.Join(tmpHome, ".biggz", "backups")
 	if entries, err := os.ReadDir(backupDir); err == nil && len(entries) > 0 {
 		t.Errorf("upgrade --dry-run should not create backup, found %d entries", len(entries))
 	}
-	// Ensure no download occurred (no snapshot message either — dry-run skips snapshot)
 	if strings.Contains(combined, "Snapshot created") {
 		t.Errorf("dry-run should not create snapshot, got %q", combined)
 	}
@@ -229,9 +222,96 @@ func TestUpdate_CheckPrintsAvailableWithFakeRelease(t *testing.T) {
 	if !strings.Contains(combined, "Run 'biggz upgrade'") {
 		t.Errorf("expected upgrade hint, got %q", combined)
 	}
-	// Ensure update did not create backup.
 	backupDir := filepath.Join(tmpHome, ".biggz", "backups")
 	if entries, err := os.ReadDir(backupDir); err == nil && len(entries) > 0 {
 		t.Errorf("update should not create backup, found %d entries", len(entries))
+	}
+}
+
+func TestVerifyChecksum_FilenameExact(t *testing.T) {
+	data := []byte("test-binary-content")
+	sum := sha256.Sum256(data)
+	h := hex.EncodeToString(sum[:])
+	// Mismatched filename should fail when filename is supplied.
+	checksums := []byte(h + "  other-file.tar.gz\n")
+	if err := update.VerifyChecksum(data, checksums, "target.tar.gz"); err == nil {
+		t.Error("VerifyChecksum with mismatched filename should fail")
+	}
+	// Correct filename should pass.
+	checksums2 := []byte(h + "  target.tar.gz\n")
+	if err := update.VerifyChecksum(data, checksums2, "target.tar.gz"); err != nil {
+		t.Errorf("VerifyChecksum with matching filename should pass: %v", err)
+	}
+	// Without filename, legacy any-match should still pass even with mismatched filename.
+	if err := update.VerifyChecksum(data, checksums); err != nil {
+		t.Errorf("legacy VerifyChecksum without filename should pass when hash present: %v", err)
+	}
+	// Also test that missing checksum fails.
+	if err := update.VerifyChecksum([]byte("different"), checksums2, "target.tar.gz"); err == nil {
+		t.Error("VerifyChecksum with wrong data should fail")
+	}
+}
+
+func TestBackupPruneKeepsNewest(t *testing.T) {
+	dir := t.TempDir()
+	// Create 3 fake backup files with different mod times.
+	for i := 0; i < 3; i++ {
+		p := filepath.Join(dir, "backup-2020010"+string(rune('1'+i))+"-000000.tar.gz")
+		if err := os.WriteFile(p, []byte("x"), 0644); err != nil {
+			t.Fatalf("write fake backup: %v", err)
+		}
+	}
+	list, err := backup.List(dir)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 3 {
+		t.Fatalf("expected 3 backups, got %d", len(list))
+	}
+	if err := backup.Prune(dir, 2); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	remaining, err := backup.List(dir)
+	if err != nil {
+		t.Fatalf("List after prune: %v", err)
+	}
+	if len(remaining) != 2 {
+		t.Errorf("expected 2 backups after prune, got %d", len(remaining))
+	}
+}
+
+func TestCreateUpgradeSnapshot(t *testing.T) {
+	home := t.TempDir()
+	biggzDir := filepath.Join(home, ".biggz")
+	if err := os.MkdirAll(filepath.Join(biggzDir, "skills"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(biggzDir, "skills", "a.md"), []byte("hi"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(biggzDir, "rdd-mode.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(biggzDir, "backups"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(biggzDir, "backups", "old.tar.gz"), []byte("old"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := createUpgradeSnapshot(home)
+	if err != nil {
+		t.Fatalf("createUpgradeSnapshot: %v", err)
+	}
+	if b == nil {
+		t.Fatal("expected backup, got nil")
+	}
+	if b.ID == "" {
+		t.Error("expected non-empty ID")
+	}
+	if _, err := os.Stat(filepath.Join(biggzDir, "backups", b.ID+".tar.gz")); err != nil {
+		t.Fatalf("backup file not found: %v", err)
+	}
+	if err := backup.Prune(filepath.Join(biggzDir, "backups"), 10); err != nil {
+		t.Fatalf("prune: %v", err)
 	}
 }
