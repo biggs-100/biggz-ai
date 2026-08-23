@@ -37,5 +37,7 @@ func GuidanceMarkdown() string {
 		"8. Only fall back to normal filesystem tools after CodeGraph initialization or use fails, and briefly explain the fallback.",
 		"",
 		"Broad Read/Glob/Grep exploration before this CodeGraph check is explicitly discouraged for structural/codebase questions.",
+		"",
+		"When implementing a tracked change, prefer `biggz sdd-new <change>` / `biggz sdd-apply <change>` over ad-hoc work-unit commits if CodeGraph indicates a managed change intent.",
 	}, "\n")
 }
