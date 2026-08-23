@@ -95,9 +95,9 @@ are wired).
 | `update`/`upgrade` split + beta/stable channels + `--all` ecosystem | ✅ Split `update` (check) / `upgrade` (execute + snapshot + verify hardening) |
 | Full management TUI (model picker, Configure Models, agent set editing) | Agent-builder TUI + 4-mode model picker (19 agents, variants cache) — 2026-08-10 |
 | `internal/opencode` Go model picker | Ported (2026-08-10) — reads the model-variants cache, JSONC-safe assignment read/write |
-| Release policy attestation (`releasepolicy` run-marker) | CLI `release status\|tag\|verify` verbs instead |
+| Release policy attestation (`releasepolicy` run-marker) | ✅ Minimal `Validate` + `directoryContains` + `validateSnapshotFile` (full YAML/artifact pin omitted) |
 | Legacy v1 authority compatibility (`review-*` commands) | Deliberate — no legacy debt |
-| Path identity packages (`pathidentity`/`pathquote`) | Ad-hoc `quotePath` in sdd |
+| Path identity packages (`pathidentity`/`pathquote`) | ✅ `pathidentity.Contains` + `pathquote.Quote` (3× `quotePath` deduped, `ShellWord` omitted) |
 | `consentenvelope` standalone package | Logic embedded in sdd/review + schemas in contracts/ |
 
 ## What biggz-ai has that gentle-ai doesn't
