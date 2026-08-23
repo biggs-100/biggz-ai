@@ -91,9 +91,9 @@ func TestPicker_InitialState_PhaseList(t *testing.T) {
 	if len(m.assignments) != 0 {
 		t.Errorf("assignments = %v, want empty", m.assignments)
 	}
-	// 19 agents + 3 separators.
-	if len(mpAgentRows) != 22 {
-		t.Errorf("mpAgentRows len = %d, want 22", len(mpAgentRows))
+	// 20 agents + 3 separators (review-validator added).
+	if len(mpAgentRows) != 23 {
+		t.Errorf("mpAgentRows len = %d, want 23", len(mpAgentRows))
 	}
 }
 
