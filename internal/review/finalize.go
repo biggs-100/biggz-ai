@@ -129,13 +129,22 @@ func frozenBudgetOf(chain ValidatedChain) *FrozenBudgetInfo {
 // ---------------------------------------------------------------------------
 
 // DeriveCorrectionBudget freezes the maximum correction size from the
-// original authored candidate, mirroring gentle-ai's CorrectionBudget:
-// min(200, ceil(originalChangedLines / 2)).
+// original authored candidate, mirroring gentle-ai's CorrectionBudget with
+// the floor_two policy (issue #2247): min(200, max(2, ceil(lines/2))).
+// Every non-negative input admits at least two changed lines so a single-line
+// replacement (one addition + one deletion) is always correctable.
 func DeriveCorrectionBudget(originalChangedLines int) (int, error) {
 	if originalChangedLines < 0 {
 		return 0, errors.New("original changed lines cannot be negative")
 	}
-	return min(CorrectionBudgetCap, originalChangedLines/2+originalChangedLines%2), nil
+	ceil := (originalChangedLines + 1) / 2
+	if ceil < 2 {
+		ceil = 2
+	}
+	if ceil > CorrectionBudgetCap {
+		ceil = CorrectionBudgetCap
+	}
+	return ceil, nil
 }
 
 // DeriveOriginalChangedLines computes the authored changed-line count of the

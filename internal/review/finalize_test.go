@@ -415,11 +415,40 @@ func TestBudget_DerivationCap(t *testing.T) {
 		t.Errorf("budget(401) = %d, %v; want capped 200", budget, err)
 	}
 	budget, err = DeriveCorrectionBudget(1)
-	if err != nil || budget != 1 {
-		t.Errorf("budget(1) = %d, %v; want 1", budget, err)
+	if err != nil || budget != 2 {
+		t.Errorf("budget(1) = %d, %v; want 2 (floor_two)", budget, err)
 	}
 	if _, err := DeriveCorrectionBudget(-1); err == nil {
 		t.Error("expected rejection for negative changed lines")
+	}
+}
+
+func TestBudget_FloorTwo(t *testing.T) {
+	cases := []struct {
+		lines int
+		want  int
+	}{
+		{0, 2},
+		{1, 2},
+		{2, 2},
+		{3, 2},
+		{4, 2},
+		{5, 3},
+		{6, 3},
+		{400, 200},
+		{401, 200},
+	}
+	for _, tt := range cases {
+		tt := tt
+		t.Run("", func(t *testing.T) {
+			budget, err := DeriveCorrectionBudget(tt.lines)
+			if err != nil {
+				t.Fatalf("DeriveCorrectionBudget(%d): %v", tt.lines, err)
+			}
+			if budget != tt.want {
+				t.Errorf("DeriveCorrectionBudget(%d) = %d, want %d", tt.lines, budget, tt.want)
+			}
+		})
 	}
 }
 
