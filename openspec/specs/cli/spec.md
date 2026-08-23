@@ -2,63 +2,44 @@
 
 ## Purpose
 
-The CLI domain defines the command-line entry point for biggz-ai. It reads a ReviewSubject from standard input, invokes the pipeline orchestrator, and writes the resulting ReviewState as JSON to standard output.
+The CLI domain defines the command-line entry point for biggz-ai. It is a switch-based verb dispatcher: each subcommand parses its own flags and delegates to its own run function. A bare interactive invocation launches the TUI; piped stdin without a subcommand is rejected with the help text and a non-zero exit code.
 
 ## Requirements
 
-### Requirement: Stdin Input
+### Requirement: Verb Dispatch
 
-The system MUST read a ReviewSubject from standard input. The input MUST be a JSON object conforming to the ReviewSubject schema.
+The CLI MUST dispatch the first argument to a run function via a switch-based router covering all supported verbs (install, uninstall, sdd-*, bigmem, backup, release, skill-registry, rdd, tdd, review, doctor, update, sync, plugin, mcp, pr, export, hooks, recovery, version).
 
-#### Scenario: Happy path — valid JSON input
+#### Scenario: Recognized verb
 
-- GIVEN a valid ReviewSubject JSON on stdin with repository URL and commit SHA
+- GIVEN the CLI is invoked with a supported verb as the first argument
+- WHEN main() dispatches
+- THEN the matching xxxRun() function MUST be invoked
+- AND the process exit code MUST be the value that function returns
+
+#### Scenario: Unknown first argument without --help
+
+- GIVEN the CLI is invoked with an unrecognized first argument
+- WHEN no case matches in the router
+- THEN help text MUST be printed to stderr
+- AND the exit code MUST be non-zero
+
+### Requirement: Bare Invocation Behavior
+
+On bare invocation with an interactive terminal, the CLI MUST launch the TUI. When stdin is piped (not a character device) and no subcommand was given, the CLI MUST print help to stderr and exit non-zero instead of consuming the pipe.
+
+#### Scenario: Interactive terminal
+
+- GIVEN stdin is a character device
+- WHEN the CLI starts with no arguments
+- THEN the TUI MUST launch
+
+#### Scenario: Piped stdin without a subcommand
+
+- GIVEN stdin is a pipe and no subcommand was given
 - WHEN the CLI starts
-- THEN the subject MUST be parsed successfully
-- AND the pipeline MUST execute with the parsed subject
-
-#### Scenario: Invalid JSON input
-
-- GIVEN malformed JSON on stdin
-- WHEN the CLI starts
-- THEN the CLI MUST exit with a non-zero exit code
-- AND print an error message to stderr
-
-### Requirement: Pipeline Execution
-
-The CLI MUST invoke the Orchestrator's Execute method with the parsed ReviewSubject. The CLI MUST use the configured Registry with at least one LensPlugin registered.
-
-#### Scenario: Happy path — successful review
-
-- GIVEN valid JSON input on stdin
-- WHEN the pipeline completes successfully
-- THEN the ReviewState MUST have Status set to Completed
-- AND the CLI MUST NOT print errors to stderr
-
-#### Scenario: Pipeline failure
-
-- GIVEN valid JSON input on stdin
-- WHEN the pipeline fails (e.g., provider error)
-- THEN the ReviewState MUST have Status set to Failed
-- AND the CLI MUST exit with a non-zero exit code
-
-### Requirement: JSON Output
-
-The CLI MUST print the resulting ReviewState to standard output as a JSON object. The output MUST include all ReviewState fields: Status, Evidence, MerkleRoot, SchemaVersion.
-
-#### Scenario: Happy path — complete output
-
-- GIVEN a completed pipeline execution
-- WHEN the CLI prints the ReviewState to stdout
-- THEN the JSON MUST contain Status, Evidence, MerkleRoot, and SchemaVersion fields
-- AND the JSON MUST be valid
-
-#### Scenario: Empty evidence chain output
-
-- GIVEN a pipeline that completes with no evidence entries
-- WHEN the CLI prints the ReviewState to stdout
-- THEN the Evidence field MUST be an empty array in the JSON output
-- AND MerkleRoot MUST be an empty string
+- THEN help MUST be printed to stderr
+- AND the exit code MUST be non-zero
 
 ### Requirement: Exit Codes
 
@@ -66,27 +47,26 @@ The CLI MUST exit with code 0 on success and non-zero on any error condition.
 
 #### Scenario: Success exit
 
-- GIVEN a successful pipeline execution
+- GIVEN a successful command execution
 - WHEN the CLI exits
 - THEN the exit code MUST be 0
 
 #### Scenario: Error exit
 
-- GIVEN any error during parsing, execution, or output
+- GIVEN any error during flag parsing or execution
 - WHEN the CLI exits
 - THEN the exit code MUST be non-zero
 - AND an error description MUST be written to stderr
 
 ### Requirement: Doctor Subcommand
 
-The CLI MUST add a "doctor" subcommand dispatched via the existing switch-based router. The subcommand MUST NOT read or parse a ReviewSubject from stdin — it operates independently of the review pipeline.
+The CLI MUST add a "doctor" subcommand dispatched via the existing switch-based router.
 
 #### Scenario: Doctor dispatch
 
 - GIVEN the CLI is invoked as `biggz doctor`
 - WHEN the router matches the "doctor" command
 - THEN doctorRun() MUST be invoked
-- AND no stdin review parsing MUST occur
 
 ### Requirement: --json Flag
 
@@ -177,7 +157,7 @@ The CLI MUST add an `update` subcommand dispatched via the existing switch-based
 
 ### Requirement: Sync Subcommand
 
-The CLI MUST add a `sync` subcommand dispatched via the existing switch-based router. The system MUST accept the flags `--skills`, `--config`, `--prompts`, `--commands`, `--all`, and `--dry-run`. When `--all` is provided or no category flag is provided, the system MUST deploy all four categories. When specific category flags are provided, the system MUST deploy only those categories. When `--dry-run` is provided, the system MUST NOT write any files and MUST report the sync plan. The subcommand MUST NOT read or parse a `ReviewSubject` from stdin. Each category walks its source directory and calls `WriteFileAtomic` for each file.
+The CLI MUST add a `sync` subcommand dispatched via the existing switch-based router. The system MUST accept the flags `--skills`, `--config`, `--prompts`, `--commands`, `--all`, and `--dry-run`. When `--all` is provided or no category flag is provided, the system MUST deploy all four categories. When specific category flags are provided, the system MUST deploy only those categories. When `--dry-run` is provided, the system MUST NOT write any files and MUST report the sync plan. Each category walks its source directory and calls `WriteFileAtomic` for each file.
 
 #### Scenario: Sync all categories
 
@@ -185,7 +165,6 @@ The CLI MUST add a `sync` subcommand dispatched via the existing switch-based ro
 - WHEN the router matches the "sync" command
 - THEN `syncRun()` MUST be invoked
 - AND all four categories (skills, config, prompts, commands) MUST be deployed
-- AND no stdin review parsing MUST occur
 
 #### Scenario: Selective sync
 

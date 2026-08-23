@@ -23,7 +23,7 @@ Measured 2026-08-10. gentle-ai counts are from a filtered clone of `cmd/` and
 | **Integrity** | 8+ individual SHA-256 hashes cross-validated | Evidence chain with linked hashes + MerkleRoot |
 | **Business rules** | Embedded in FSM transition checks | PolicyEvaluator external interface |
 | **Corrections** | 7+ fields in model (budget, cumulative, attempts...) | 1 struct (files, lines, reason, hashes) |
-| **Lenses** | Constants in type system (R1-R4 prefix maps, counter fields) | LensPlugin interface (register any lens) |
+| **Lenses** | Constants in type system (R1-R4 prefix maps, counter fields) | ✅ Same model — lens names as constants; embedded static-analysis lenses removed |
 | **Orchestrator** | 70 lines, underdeveloped | Balanceado con review system + DAG graph |
 
 ## Agent Integration
@@ -40,8 +40,8 @@ Measured 2026-08-10. gentle-ai counts are from a filtered clone of `cmd/` and
 |---|---|---|
 | State machine | transaction.go (1785 lines) | model/review.go + fsm.go |
 | Evidence chain | Scattered hashes | model/hash.go |
-| Lenses | Hardcoded in transaction types | 4 separate packages in internal/lens/ |
-| Pipeline | Sequential stages | Sequential + DAG graph (parallel lenses) |
+| Lenses | Hardcoded in transaction types | ✅ Hardcoded lens names; external reviewer CLIs execute them |
+| Pipeline | Sequential stages | ✅ Sequential stages (DAG removed with legacy engine) |
 | Judgment Day | rdd_mode.go | internal/review/judgment.go |
 | Ledger | ledger.go | internal/review/ledger.go |
 | Snapshots | snapshot.go | internal/review/snapshot.go |
@@ -104,7 +104,6 @@ are wired).
 
 | Feature | Why better |
 |---|---|
-| DAG graph execution | Parallel lenses (SGH multi-ready-unit) |
 | Human-in-the-loop by design | Not optional — always requires human decision |
 | No legacy flags | Zero `legacy*` fields |
 | Property-based testing | FSM invariants via `rapid` |

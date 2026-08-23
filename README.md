@@ -47,7 +47,6 @@ echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
 
 ```
 CLI (cmd/biggz)
-  ├── Orchestrator ──► Pipeline/DAG ──► Lenses (R1-R4, Performance, Dependencies)
   ├── Install ──► Agent Detection ──► Skill Deploy ──► Config Merge
   ├── SDD ──► Status, Verify, Attempt, Continue
   ├── BigMem ──► MCP Server ──► 22 memory tools
@@ -61,10 +60,10 @@ CLI (cmd/biggz)
 
 - **Single ReviewState**: No parallel state machines (unlike gentle-ai's Transaction + CompactState)
 - **Merkle root over evidence chain**: Single integrity check instead of 8+ individual hashes
-- **13-state FSM with role guards and budget counters**: Policy evaluation is external (PolicyEvaluator interface)
-- **Lenses as plugins**: LensPlugin interface, register via Registry
+- **13-state FSM with role guards and budget counters**: transition legality, roles, and budget enforcement validated by a single stateless FSM
+- **One review engine**: receipt-driven RDD workflow; reviewers run as external provider CLIs (no embedded static-analysis engine)
 - **Agent adapters as interfaces**: AgentAdapter for detection + deploy
-- **Human-in-the-loop**: Orchestrator delegates, human decides
+- **Human-in-the-loop**: the tool surfaces consent envelopes and gates; the human decides
 
 ## SDD Workflow
 

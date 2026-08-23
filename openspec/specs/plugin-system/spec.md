@@ -2,27 +2,9 @@
 
 ## Purpose
 
-The Plugin System domain defines the plugin interfaces and registry for extending review capabilities. It specifies LensPlugin for analysis, AgentAdapter for agent discovery and integration, the build-time Registry, and the Pipeline execution model with rollback support.
+The Plugin System domain defines the plugin interfaces for extending biggz-ai capabilities. It specifies the AgentAdapter interface for agent discovery and integration, and the sequential Pipeline execution model with rollback support used by the review engine. (The legacy LensPlugin interface, lens registry, DAG graph, and Orchestrator were removed along with the embedded static-analysis engine; reviews run external reviewer CLIs.)
 
 ## Requirements
-
-### Requirement: LensPlugin Interface
-
-The system MUST define a LensPlugin interface with ID() returning string, Name() returning string, Version() returning string, Analyze(ctx, subject) returning LensResult, and Policies() returning []Policy.
-
-#### Scenario: Happy path — lens analysis
-
-- GIVEN a LensPlugin registered with ID "dummy-lens" and a valid ReviewSubject
-- WHEN Analyze is called with the subject
-- THEN the LensResult MUST contain findings relevant to the subject
-- AND Policies() MUST return at least one Policy
-
-#### Scenario: Invalid subject
-
-- GIVEN a LensPlugin
-- WHEN Analyze is called with a nil or empty subject
-- THEN the plugin MUST return an error
-- AND NOT panic or hang
 
 ### Requirement: AgentAdapter Interface
 
@@ -72,24 +54,6 @@ The system MUST define an AgentAdapter interface with these methods: ID() model.
 - THEN it MUST return one of the 6 known SystemPromptStrategy values
 - AND the value MUST match the adapter's prompt injection model
 
-### Requirement: Build-Time Registry
-
-The system MUST provide a Registry with RegisterLens(plugin), RegisterAdapter(adapter), GetLens(id), GetAdapter(id), and ListAll() returning []CatalogEntry methods. Registration MUST happen at build time via explicit wiring. The Registry MUST NOT support dynamic loading.
-
-#### Scenario: Happy path — register and retrieve agent
-
-- GIVEN an empty Registry
-- WHEN an AgentAdapter with ID "test-agent" is registered via RegisterAdapter
-- THEN GetAdapter("test-agent") MUST return the registered adapter
-- AND GetAdapter("unknown") MUST return nil
-
-#### Scenario: Duplicate agent registration
-
-- GIVEN a Registry with a registered AgentAdapter "test-agent"
-- WHEN RegisterAdapter is called again with the same ID "test-agent"
-- THEN the Registry MUST return an error or replace the existing registration
-- AND the behavior MUST be documented and consistent
-
 ### Requirement: Pipeline Stage Execution
 
 The system MUST define a Stage interface with Name() returning string, Execute(ctx, state) returning error, and Rollback(ctx, state) returning error. Pipeline MUST execute stages sequentially and run reverse-ordered rollback on any stage failure.
@@ -110,24 +74,6 @@ The system MUST define a Stage interface with Name() returning string, Execute(c
 - AND stage A's Rollback MUST be called
 - AND stage C's Rollback MUST NOT be called (stage C did not execute)
 - AND the pipeline MUST return the error from stage B
-
-### Requirement: Orchestrator
-
-The system MUST define an Orchestrator with a single Execute(ctx, subject) method that runs the full pipeline and returns *ReviewState and error.
-
-#### Scenario: Happy path — full execution
-
-- GIVEN an Orchestrator with a configured pipeline and registry
-- WHEN Execute is called with a valid ReviewSubject
-- THEN a *ReviewState MUST be returned with Status set to Completed
-- AND the evidence chain MUST contain entries from each pipeline stage
-
-#### Scenario: Pipeline failure
-
-- GIVEN an Orchestrator with a configured pipeline
-- WHEN Execute is called and a stage fails
-- THEN *ReviewState MUST be returned with Status set to Failed
-- AND the error MUST be non-nil
 
 ## Added Requirements
 
@@ -206,17 +152,6 @@ The AgentAdapter Capabilities() method MUST return `[]string` instead of `[]Capa
 - WHEN Capabilities() is called
 - THEN it MUST return a slice with "review" and "install"
 - AND each entry MUST be a plain string
-
-### Requirement: Registry Integration with Catalog
-
-The Registry MUST expose a `ListAll() []CatalogEntry` method. This method MUST construct CatalogEntry values from each registered adapter's metadata. This bridges the agent registry with the component catalog.
-
-#### Scenario: Happy path — registry returns catalog entries
-
-- GIVEN a Registry with 3 registered adapters
-- WHEN ListAll() is called
-- THEN it MUST return exactly 3 CatalogEntry values
-- AND each entry's ID MUST match the corresponding adapter's ID
 
 ### Requirement: Tier on AgentAdapter
 
