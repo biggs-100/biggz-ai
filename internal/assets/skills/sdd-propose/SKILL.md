@@ -1,6 +1,13 @@
 ---
 name: sdd-propose
 description: Create an SDD change proposal with intent, scope, approach, and rollback plan. Trigger: orchestrator launches proposal work for a change.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
 ---
 ## Language Domain Contract
 

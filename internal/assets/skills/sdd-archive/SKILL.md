@@ -1,6 +1,13 @@
 ---
 name: sdd-archive
 description: Archive a completed SDD change by syncing delta specs, moving to archive, and producing archive report. Trigger: orchestrator launches archive after implementation and verification.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
 ---
 ## Language Domain Contract
 

@@ -1,6 +1,13 @@
 ---
 name: sdd-spec
 description: Write SDD delta specs with functional requirements and GIVEN/WHEN/THEN scenarios. Trigger: orchestrator launches spec work for a change.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
 ---
 ## Language Domain Contract
 

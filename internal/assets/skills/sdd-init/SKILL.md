@@ -1,6 +1,13 @@
 ---
 name: sdd-init
 description: Initialize SDD context, testing capabilities, registry, and persistence for a project. Trigger: sdd init, iniciar sdd, openspec init; also called automatically by the orchestrator when no openspec/ directory exists.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "3.0"
+  delegate_only: true
 ---
 ## Language Domain Contract
 

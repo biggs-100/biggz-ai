@@ -1,6 +1,13 @@
 ---
 name: sdd-tasks
 description: Break an SDD change into implementation tasks with dependencies, test evidence, and work units. Trigger: orchestrator launches task planning for a change.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
 ---
 ## Language Domain Contract
 
