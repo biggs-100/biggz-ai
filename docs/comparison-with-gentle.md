@@ -77,7 +77,7 @@ are wired).
 | Feature | gentle-ai | biggz-ai |
 |---|---|---|
 | **MCP tools** | 22 | ✅ 22 (same) |
-| **Storage** | `~/.BigMem/` (SQLite) | `~/.biggz/BigMem/` (JSON) |
+| **Storage** | `~/.BigMem/` (SQLite) | `~/.biggz/bigmem/` (SQLite) |
 | **Protocol** | Full with proactive saves, session summaries | ✅ Full |
 | **MCP server** | `BigMem mcp` (external binary) | `biggz-mcp` (native Go) |
 
@@ -86,7 +86,7 @@ are wired).
 | Feature | Status in biggz-ai |
 |---|---|
 | Advisory review transport (`advisoryreview`) | Absent — no third runtime gets advisory-only verdicts today |
-| Engram Cloud sync (tokens, autosync, self-hosted) | Absent — BigMem is local JSON |
+| Engram Cloud sync (tokens, autosync, self-hosted) | Absent — BigMem is local-only (SQLite at `~/.biggz/bigmem`) |
 | GGA (Guardian Angel git-hook guardian) | Absent — proposal pending; biggz has event hooks (`.biggz/hooks.yaml`) and native gates (`review gate`), not git hooks |
 | Pi runtime integration (answer-consent, organic routing) | Absent — pi adapter only |
 | CodeGraph integration + `codegraph` verb | Absent |

@@ -61,7 +61,7 @@ CLI (cmd/biggz)
 
 - **Single ReviewState**: No parallel state machines (unlike gentle-ai's Transaction + CompactState)
 - **Merkle root over evidence chain**: Single integrity check instead of 8+ individual hashes
-- **5 coarse FSM states**: Policy evaluation is external (PolicyEvaluator interface)
+- **13-state FSM with role guards and budget counters**: Policy evaluation is external (PolicyEvaluator interface)
 - **Lenses as plugins**: LensPlugin interface, register via Registry
 - **Agent adapters as interfaces**: AgentAdapter for detection + deploy
 - **Human-in-the-loop**: Orchestrator delegates, human decides
