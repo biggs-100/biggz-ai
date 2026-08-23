@@ -6,6 +6,7 @@ package bigmem
 import (
 	"crypto/sha256"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -840,6 +841,10 @@ func (s *Store) DeleteObservation(id string, hard bool) error {
 
 // ─── Conflict Surfacing (memory_relations) ───────────────────────────────────
 
+// ErrCrossProjectRelation is returned when source and target observations belong
+// to different projects.
+var ErrCrossProjectRelation = errors.New("cross-project relation not allowed")
+
 // Candidate represents a potentially conflicting observation.
 type Candidate struct {
 	ID         string  `json:"id"`
@@ -850,13 +855,27 @@ type Candidate struct {
 	TopicKey   string  `json:"topic_key,omitempty"`
 }
 
-// FindCandidates searches for similar observations and creates pending
-// memory_relations entries. Returns candidates for the caller to judge.
-func (s *Store) FindCandidates(savedID, title, project, scope string) ([]Candidate, error) {
+// FindOptions controls FindCandidatesWithOptions filtering.
+type FindOptions struct {
+	Project   string   `json:"project,omitempty"`
+	Scope     string   `json:"scope,omitempty"`
+	Limit     int      `json:"limit,omitempty"`
+	BM25Floor *float64 `json:"bm25_floor,omitempty"` // nil = no floor; -2.0 = default engram floor
+}
+
+// FindCandidatesWithOptions searches for similar observations using FTS5 BM25
+// ranking and creates pending memory_relations entries.
+//
+// BM25Floor filtering: when non-nil, candidates are fetched ordered by
+// bm25(observations_fts) rank and only those with rank >= *BM25Floor are kept
+// (BM25 scores are negative; closer to 0 = better). To allow filtering, up to
+// limit*3 rows are fetched then filtered in Go until limit is reached.
+// When BM25Floor is nil, no score filtering is applied (just LIMIT).
+// Default floor for backward compatibility is -2.0 like engram.
+func (s *Store) FindCandidatesWithOptions(savedID, title string, opts FindOptions) ([]Candidate, error) {
 	if title == "" {
 		return nil, nil
 	}
-
 	terms := strings.Fields(title)
 	if len(terms) == 0 {
 		return nil, nil
@@ -866,51 +885,145 @@ func (s *Store) FindCandidates(savedID, title, project, scope string) ([]Candida
 	}
 	ftsQuery := strings.Join(terms, " OR ")
 
-	var conditions []string
-	var args []any
-	conditions = append(conditions, "o.rowid IN (SELECT rowid FROM observations_fts WHERE observations_fts MATCH ?)")
-	args = append(args, ftsQuery)
-	if project != "" {
-		conditions = append(conditions, "o.project = ?")
-		args = append(args, project)
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 5
 	}
-	if scope != "" {
-		conditions = append(conditions, "o.scope = ?")
-		args = append(args, scope)
+
+	// Determine BM25 floor filtering.
+	var doFilter bool
+	var floorVal float64
+	fetchLimit := limit
+	if opts.BM25Floor != nil {
+		doFilter = true
+		floorVal = *opts.BM25Floor
+		fetchLimit = limit * 3
+		if fetchLimit <= 0 {
+			fetchLimit = limit
+		}
 	}
-	conditions = append(conditions, "o.id != ? AND o.deleted_at IS NULL")
-	args = append(args, savedID)
 
-	where := "WHERE " + strings.Join(conditions, " AND ")
+	// Build FTS5 query ordered by BM25 rank (fts.rank is bm25).
+	// We SELECT rank so we can filter by floor in Go.
+	query := `SELECT o.id, o.title, o.type, o.topic_key, fts.rank
+		FROM observations_fts fts
+		JOIN observations o ON o.rowid = fts.rowid
+		WHERE fts MATCH ? AND o.id != ? AND o.deleted_at IS NULL`
+	args := []any{ftsQuery, savedID}
+	if opts.Project != "" {
+		query += " AND o.project = ?"
+		args = append(args, opts.Project)
+	}
+	if opts.Scope != "" {
+		query += " AND o.scope = ?"
+		args = append(args, opts.Scope)
+	}
+	query += " ORDER BY fts.rank LIMIT ?"
+	args = append(args, fetchLimit)
 
-	rows, err := s.db.Query(fmt.Sprintf(
-		`SELECT o.id, o.title, o.type, o.topic_key
-		FROM observations o %s ORDER BY o.updated_at DESC LIMIT 5`, where),
-		append(args, 5)...)
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		return nil, err
+		// Fallback: try bm25() function if fts.rank column is not available
+		// (modernc sqlite variation). This keeps vet/build clean on different builds.
+		if strings.Contains(err.Error(), "no such column") || strings.Contains(err.Error(), "rank") {
+			fallbackQuery := `SELECT o.id, o.title, o.type, o.topic_key, bm25(observations_fts)
+				FROM observations_fts
+				JOIN observations o ON o.rowid = observations_fts.rowid
+				WHERE observations_fts MATCH ? AND o.id != ? AND o.deleted_at IS NULL`
+			fbArgs := []any{ftsQuery, savedID}
+			if opts.Project != "" {
+				fallbackQuery += " AND o.project = ?"
+				fbArgs = append(fbArgs, opts.Project)
+			}
+			if opts.Scope != "" {
+				fallbackQuery += " AND o.scope = ?"
+				fbArgs = append(fbArgs, opts.Scope)
+			}
+			fallbackQuery += " ORDER BY bm25(observations_fts) LIMIT ?"
+			fbArgs = append(fbArgs, fetchLimit)
+			rows, err = s.db.Query(fallbackQuery, fbArgs...)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer rows.Close()
 
 	var candidates []Candidate
 	for rows.Next() {
 		c := Candidate{}
-		if err := rows.Scan(&c.ID, &c.Title, &c.Type, &c.TopicKey); err != nil {
+		var score float64
+		if err := rows.Scan(&c.ID, &c.Title, &c.Type, &c.TopicKey, &score); err != nil {
+			continue
+		}
+		c.Score = score
+		if doFilter && score < floorVal {
 			continue
 		}
 		relID := fmt.Sprintf("rel-%d", time.Now().UnixNano())
 		now := time.Now().UTC().Format(time.RFC3339)
-		s.db.Exec(`INSERT INTO memory_relations (id, source_id, target_id, relation, judgment_status, session_id, created_at, updated_at)
+		_, _ = s.db.Exec(`INSERT INTO memory_relations (id, source_id, target_id, relation, judgment_status, session_id, created_at, updated_at)
 			VALUES (?, ?, ?, 'pending', 'pending', '', ?, ?)
 			ON CONFLICT(id) DO NOTHING`,
 			relID, savedID, c.ID, now, now)
 		c.JudgmentID = relID
 		candidates = append(candidates, c)
+		if len(candidates) >= limit {
+			break
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return candidates, err
 	}
 	return candidates, nil
 }
 
+// FindCandidates searches for similar observations and creates pending
+// memory_relations entries. Returns candidates for the caller to judge.
+// Backward compatible wrapper: delegates to FindCandidatesWithOptions with
+// default limit 5 and BM25Floor -2.0 (engram default).
+func (s *Store) FindCandidates(savedID, title, project, scope string) ([]Candidate, error) {
+	floor := -2.0
+	return s.FindCandidatesWithOptions(savedID, title, FindOptions{
+		Project:   project,
+		Scope:     scope,
+		Limit:     5,
+		BM25Floor: &floor,
+	})
+}
+
+// validateCrossProjectGuard checks whether the observations referenced by
+// judgmentID belong to the same project. Returns ErrCrossProjectRelation if
+// they differ and both projects are non-empty. Missing observations are treated
+// as empty project and do not trigger the guard (to allow orphan handling).
+func (s *Store) validateCrossProjectGuard(judgmentID string) error {
+	var sourceID, targetID string
+	if err := s.db.QueryRow(`SELECT source_id, target_id FROM memory_relations WHERE id = ?`, judgmentID).Scan(&sourceID, &targetID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		return nil
+	}
+	var srcProject, tgtProject string
+	// Direct project lookup (via o.project). Fallback to session project if empty
+	// is handled implicitly by the coalesce query when sessions exist — but for
+	// BigMem the simple lookup suffices for the guard.
+	_ = s.db.QueryRow(`SELECT COALESCE(project,'') FROM observations WHERE id = ?`, sourceID).Scan(&srcProject)
+	if srcProject == "" {
+		_ = s.db.QueryRow(`SELECT COALESCE(s.project,'') FROM observations o LEFT JOIN sessions s ON s.id = o.session_id WHERE o.id = ?`, sourceID).Scan(&srcProject)
+	}
+	_ = s.db.QueryRow(`SELECT COALESCE(project,'') FROM observations WHERE id = ?`, targetID).Scan(&tgtProject)
+	if tgtProject == "" {
+		_ = s.db.QueryRow(`SELECT COALESCE(s.project,'') FROM observations o LEFT JOIN sessions s ON s.id = o.session_id WHERE o.id = ?`, targetID).Scan(&tgtProject)
+	}
+	if srcProject != "" && tgtProject != "" && srcProject != tgtProject {
+		return ErrCrossProjectRelation
+	}
+	return nil
+}
+
 // JudgeRelation updates a pending memory_relation with a verdict.
+// Returns ErrCrossProjectRelation if source and target belong to different projects.
 func (s *Store) JudgeRelation(judgmentID, relation, reason, evidence string, confidence float64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -921,6 +1034,10 @@ func (s *Store) JudgeRelation(judgmentID, relation, reason, evidence string, con
 	}
 	if !validRelations[relation] {
 		return fmt.Errorf("invalid relation: %s", relation)
+	}
+
+	if err := s.validateCrossProjectGuard(judgmentID); err != nil {
+		return err
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
