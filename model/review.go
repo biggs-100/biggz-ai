@@ -114,15 +114,6 @@ type Evidence struct {
 	Hash      string    `json:"hash"`
 }
 
-// PolicyVerdict represents the result of evaluating a single policy
-// against a ReviewState.
-type PolicyVerdict struct {
-	Policy   string `json:"policy"`
-	Passed   bool   `json:"passed"`
-	Reason   string `json:"reason"`
-	Severity string `json:"severity"`
-}
-
 // Correction represents a single correction applied during a review.
 type Correction struct {
 	ID        string    `json:"id"`
