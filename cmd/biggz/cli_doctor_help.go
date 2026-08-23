@@ -25,6 +25,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "  sdd-new [change-name]      Interactive wizard to create new SDD change")
 	fmt.Fprintln(os.Stderr, "  bigmem save|search|get     Persistent memory")
 	fmt.Fprintln(os.Stderr, "  backup create|list|restore Snapshot/restore state")
+	fmt.Fprintln(os.Stderr, "  codegraph init --cwd <dir> Initialize CodeGraph index for a project")
 	fmt.Fprintln(os.Stderr, "  release status|tag|verify  Version management")
 	fmt.Fprintln(os.Stderr, "  skill-registry refresh     Regenerate skill registry [--force] [--quiet] [--cwd <dir>] [--no-gitignore]")
 	fmt.Fprintln(os.Stderr, "  review list|status|gate|start|resume|validate|repair|recover|reclaim|reconcile-authority|dispose-result|reopen-results|inspect|schema|retry-final-verification|invalidate|abandon|export|import  Review lineage commands")

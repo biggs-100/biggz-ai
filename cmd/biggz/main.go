@@ -38,6 +38,8 @@ func main() {
 			os.Exit(bigmemRun())
 		case "backup":
 			os.Exit(backupRun())
+		case "codegraph":
+			os.Exit(codegraphRun())
 		case "release":
 			os.Exit(releaseRun())
 		case "skill-registry":
