@@ -452,9 +452,37 @@ func TestReplaceBinary_Windows(t *testing.T) {
 		t.Skip("Windows-specific test")
 	}
 
-	err := update.ReplaceBinary("src", "dst")
-	if err != update.ErrWindowsBinaryLock {
-		t.Errorf("ReplaceBinary on Windows = %v, want ErrWindowsBinaryLock", err)
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	srcPath := filepath.Join(srcDir, "new-binary.exe")
+	if err := os.WriteFile(srcPath, []byte("new-content"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	dstPath := filepath.Join(dstDir, "old-binary.exe")
+	if err := os.WriteFile(dstPath, []byte("old-content"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := update.ReplaceBinary(srcPath, dstPath); err != nil {
+		t.Fatalf("ReplaceBinary on Windows: %v", err)
+	}
+
+	// On Windows the binary may be staged as dst+".new" with async mover;
+	// accept either direct replace or staged file.
+	if data, err := os.ReadFile(dstPath); err == nil {
+		if string(data) != "new-content" {
+			t.Errorf("dst content = %q, want %q", string(data), "new-content")
+		}
+	} else {
+		staged := dstPath + ".new"
+		data, err := os.ReadFile(staged)
+		if err != nil {
+			t.Fatalf("neither dst nor staged file exists after ReplaceBinary: dst err %v, staged err %v", err, err)
+		}
+		if string(data) != "new-content" {
+			t.Errorf("staged content = %q, want %q", string(data), "new-content")
+		}
 	}
 }
 
