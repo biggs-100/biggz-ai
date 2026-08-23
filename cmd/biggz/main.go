@@ -54,6 +54,8 @@ func main() {
 			os.Exit(doctorRun())
 		case "update":
 			os.Exit(updateRun())
+		case "upgrade":
+			os.Exit(upgradeRun())
 		case "sync":
 			os.Exit(syncRun())
 		case "plugin":

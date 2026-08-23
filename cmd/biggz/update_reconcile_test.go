@@ -71,8 +71,8 @@ func TestPostUpdateReconcile_FailureIsNonFatal(t *testing.T) {
 	}
 }
 
-// TestUpdate_HelpNoReconcile verifies --no-reconcile appears in the update
-// help (no network involved).
+// TestUpdate_HelpNoReconcile verifies the update (check-only) help does not
+// expose mutating flags like --no-reconcile — those belong to upgrade.
 func TestUpdate_HelpNoReconcile(t *testing.T) {
 	cmd := goRunBiggz(t, "update", "--help")
 	var stderr bytes.Buffer
@@ -81,7 +81,36 @@ func TestUpdate_HelpNoReconcile(t *testing.T) {
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("update --help exited with error: %v", err)
 	}
-	if !strings.Contains(stderr.String(), "--no-reconcile") {
-		t.Errorf("expected update help to mention --no-reconcile, got: %s", stderr.String())
+	out := stderr.String()
+	if strings.Contains(out, "--no-reconcile") {
+		t.Errorf("update (check-only) help should not mention --no-reconcile, got: %s", out)
+	}
+	if !strings.Contains(out, "Check for available updates") {
+		t.Errorf("expected update help to mention check, got: %s", out)
+	}
+	if !strings.Contains(out, "biggz upgrade") {
+		t.Errorf("expected update help to hint at 'biggz upgrade', got: %s", out)
+	}
+}
+
+// TestUpgrade_HelpNoReconcile verifies --no-reconcile and --no-backup appear
+// in the upgrade help (no network involved).
+func TestUpgrade_HelpNoReconcile(t *testing.T) {
+	cmd := goRunBiggz(t, "upgrade", "--help")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("upgrade --help exited with error: %v", err)
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "--no-reconcile") {
+		t.Errorf("expected upgrade help to mention --no-reconcile, got: %s", out)
+	}
+	if !strings.Contains(out, "--no-backup") {
+		t.Errorf("expected upgrade help to mention --no-backup alias, got: %s", out)
+	}
+	if !strings.Contains(out, "--dry-run") {
+		t.Errorf("expected upgrade help to mention --dry-run, got: %s", out)
 	}
 }

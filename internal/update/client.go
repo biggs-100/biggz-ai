@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 )
 
@@ -22,13 +23,29 @@ type Asset struct {
 	URL  string `json:"browser_download_url"`
 }
 
+// GitHubAPIBase is the GitHub API base URL. Overridable in tests via httptest.
+var GitHubAPIBase = "https://api.github.com"
+
+// githubAPIBase retains backward compat for internal callers; prefer GitHubAPIBase.
+var githubAPIBase = GitHubAPIBase
+
 // ListReleases fetches all releases for the given GitHub repository.
 //
 // The caller is responsible for respecting rate limits. Unauthenticated
 // requests are limited to 60 requests per hour. Check the X-RateLimit-Remaining
 // response header for the remaining quota.
 func ListReleases(ctx context.Context, owner, repo string) ([]Release, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases", owner, repo)
+	base := GitHubAPIBase
+	if env := os.Getenv("BIGGZ_GITHUB_API_BASE"); env != "" {
+		base = env
+	}
+	if base == "" {
+		base = githubAPIBase
+	}
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	url := fmt.Sprintf("%s/repos/%s/%s/releases", base, owner, repo)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
@@ -58,7 +75,17 @@ func ListReleases(ctx context.Context, owner, repo string) ([]Release, error) {
 
 // GetRelease fetches a single release by tag from the given GitHub repository.
 func GetRelease(ctx context.Context, owner, repo, tag string) (*Release, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/tags/%s", owner, repo, tag)
+	base := GitHubAPIBase
+	if env := os.Getenv("BIGGZ_GITHUB_API_BASE"); env != "" {
+		base = env
+	}
+	if base == "" {
+		base = githubAPIBase
+	}
+	if base == "" {
+		base = "https://api.github.com"
+	}
+	url := fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s", base, owner, repo, tag)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)

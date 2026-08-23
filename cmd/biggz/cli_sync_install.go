@@ -279,16 +279,17 @@ func installRun() int {
 }
 
 // ---------------------------------------------------------------------------
-// Update Command
+// Upgrade Command (mutating) — split from check-only update
 // ---------------------------------------------------------------------------
 
-// updateRun handles the "biggz update" subcommand.
-// Usage: biggz update [--dry-run] [--version <tag>]
+// upgradeRun handles the "biggz upgrade" subcommand.
+// Usage: biggz upgrade [--dry-run] [--version <tag>] [--no-reconcile] [--no-backup]
 //
 // It discovers the latest release matching the BIGGZ_CHANNEL env var,
 // downloads the archive, verifies its checksum and minisig signature,
-// extracts the binary, and replaces the current executable.
-func updateRun() int {
+// snapshots managed state, extracts the binary, and replaces the current
+// executable.
+func upgradeRun() int {
 	ctx := context.Background()
 
 	// Parse flags
@@ -300,55 +301,67 @@ func updateRun() int {
 		switch args[i] {
 		case "--dry-run":
 			dryRun = true
-		case "--no-reconcile":
+		case "--no-reconcile", "--no-backup":
 			noReconcile = true
 		case "--version":
 			if i+1 < len(args) {
 				i++
 				explicitVersion = args[i]
+			} else {
+				fmt.Fprintln(os.Stderr, "error: --version requires a tag")
+				printUpgradeHelp()
+				return 1
 			}
 		case "--help", "-h":
-			printUpdateHelp()
+			printUpgradeHelp()
 			return 0
 		default:
 			fmt.Fprintf(os.Stderr, "unknown flag: %s\n", args[i])
-			printUpdateHelp()
+			printUpgradeHelp()
 			return 1
 		}
 	}
 
 	ch := update.ParseChannel()
 
-	// Discover the release.
-	var rel *update.Release
-	if explicitVersion != "" {
-		var err error
-		rel, err = update.GetRelease(ctx, "biggz-ai", "biggz", explicitVersion)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: getting release %s: %v\n", explicitVersion, err)
-			return 1
-		}
-	} else {
-		releases, err := update.ListReleases(ctx, "biggz-ai", "biggz")
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: listing releases: %v\n", err)
-			return 1
-		}
-		rel = update.SelectRelease(releases, ch)
-		if rel == nil {
-			fmt.Fprintln(os.Stderr, "error: no releases found")
-			return 1
-		}
+	rel, err := discoverRelease(ctx, ch, explicitVersion)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
 	}
 
-	// Check if already up to date.
+	// Check if already up to date (same logic as update check).
+	isUpToDate := false
 	if explicitVersion == "" && doctor.BuildVersion != "" && doctor.BuildVersion != "dev" {
 		current := strings.TrimPrefix(doctor.BuildVersion, "v")
 		latest := strings.TrimPrefix(rel.TagName, "v")
 		if current == latest {
-			fmt.Printf("Already up to date (%s)\n", rel.TagName)
-			return 0
+			isUpToDate = true
 		}
+	} else if explicitVersion != "" && doctor.BuildVersion != "" && doctor.BuildVersion != "dev" {
+		current := strings.TrimPrefix(doctor.BuildVersion, "v")
+		requested := strings.TrimPrefix(explicitVersion, "v")
+		if current == requested {
+			isUpToDate = true
+		}
+	}
+
+	if isUpToDate {
+		fmt.Printf("Already up to date (%s)\n", rel.TagName)
+		return 0
+	}
+
+	if dryRun {
+		// Dry-run: run check phase only and report pending count before any download.
+		cv := doctor.BuildVersion
+		if cv == "" {
+			cv = "dev"
+		}
+		fmt.Printf("Update available: %s (current: %s)\n", rel.TagName, cv)
+		fmt.Println("Run 'biggz upgrade' to install")
+		fmt.Printf("Upgrade (dry-run) — 1 upgrade(s) pending\n")
+		fmt.Printf("Channel: %s\n", channelName(ch))
+		return 0
 	}
 
 	// Find assets by name.
@@ -383,12 +396,6 @@ func updateRun() int {
 	if archiveAsset == nil {
 		fmt.Fprintln(os.Stderr, "error: no archive found for "+runtime.GOOS+"/"+runtime.GOARCH+" in release assets")
 		return 1
-	}
-
-	if dryRun {
-		fmt.Printf("Update would install: %s (%s)\n", rel.TagName, archiveAsset.Name)
-		fmt.Printf("Channel: %s\n", channelName(ch))
-		return 0
 	}
 
 	fmt.Printf("Downloading %s for %s/%s...\n", rel.TagName, runtime.GOOS, runtime.GOARCH)
@@ -452,7 +459,7 @@ func updateRun() int {
 	if err := update.ReplaceBinary(extractedPath, currentPath); err != nil {
 		if err == update.ErrWindowsBinaryLock {
 			fmt.Println(update.ReplaceHint("github.com/biggs-100/biggz-ai"))
-			fmt.Println("The running binary was not replaced. Run 'biggz update' again after installing the new binary to reconcile managed assets.")
+			fmt.Println("The running binary was not replaced. Run 'biggz upgrade' again after installing the new binary to reconcile managed assets.")
 			return 0
 		}
 		fmt.Fprintf(os.Stderr, "error: replacing binary: %v\n", err)
@@ -467,32 +474,6 @@ func updateRun() int {
 	home, _ := os.UserHomeDir()
 	fmt.Println(postUpdateReconcile(ctx, agentAdapters(), home, noReconcile))
 	return 0
-}
-
-// channelName returns the human-readable name of a channel.
-func channelName(ch update.Channel) string {
-	switch ch {
-	case update.ChannelBeta:
-		return "beta"
-	default:
-		return "stable"
-	}
-}
-
-// printUpdateHelp prints the update subcommand help text.
-func printUpdateHelp() {
-	fmt.Fprintln(os.Stderr, "Usage: biggz update [--dry-run] [--version <tag>] [--no-reconcile]")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "Update biggz-ai to the latest release.")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "  --dry-run           Check for updates without downloading")
-	fmt.Fprintln(os.Stderr, "  --version <tag>     Install a specific version (e.g., v1.0.0)")
-	fmt.Fprintln(os.Stderr, "  --no-reconcile      Skip re-deploying managed assets after the update")
-	fmt.Fprintln(os.Stderr, "  --help, -h          Show this help message")
-	fmt.Fprintln(os.Stderr, "")
-	fmt.Fprintln(os.Stderr, "After a successful update, managed assets (skills, prompts, commands,")
-	fmt.Fprintln(os.Stderr, "plugins, config, MCP) are re-deployed for the detected agent.")
-	fmt.Fprintln(os.Stderr, "Channel selection: set BIGGZ_CHANNEL=beta for prerelease versions")
 }
 
 // recoveryRun handles the "biggz recovery" subcommand.
