@@ -16,6 +16,7 @@ This skill guides public collaboration. It does not grant issue approval, label,
 - Require an approved issue (`status:approved`) and clean current `main` reproduction before implementation. Audit existing PRs for supersession or conflict; stop or narrow stale claims.
 - Group by causal authority invariant. Use one issue and one PR or explicit chain per independent invariant and rollback boundary. Split independent causes; never merge a superseded or conflicting authority line.
 - Inventory every operator flow claimed by the issue or PR, including entry, mode, environment, expectation, and negative controls. Require actual runtime E2E or integration proof per affected CLI or lifecycle flow (see the `e2e` suite in the repository). Synthetic proxy coverage never proves another runtime.
+# biggz adaptation: no bench/ corpus — black-box bench journeys are replaced by e2e suite proof. Do not claim bench journeys.
 - Map impact across code, tests, evidence, docs, distribution, and registration before editing. Use a dedicated worktree and behavior-first tests. Run source-mutating normalization before candidate freeze.
 - Forecast authored changes before edits. The hard limit is 400 additions plus deletions; above it, STOP for a chain or explicit maintainer-approved exception.
 - Only when RDD is enabled, bind receipts, lineage, correction, recovery, and delivery gates to the exact candidate. Keep bounded review defects in one correction transaction.
