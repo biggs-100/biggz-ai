@@ -87,12 +87,12 @@ are wired).
 |---|---|
 | Advisory review transport (`advisoryreview`) | Absent — no third runtime gets advisory-only verdicts today |
 | Engram Cloud sync (tokens, autosync, self-hosted) | Absent — BigMem is local-only (SQLite at `~/.biggz/bigmem`) |
-| GGA (Guardian Angel git-hook guardian) | Absent — proposal pending; biggz has event hooks (`.biggz/hooks.yaml`) and native gates (`review gate`), not git hooks |
+| GGA (Guardian Angel git-hook guardian) | Discarded — RDD kill switch + native gates (`review gate`) cover the same need; no git hooks needed |
 | Pi runtime integration (answer-consent, organic routing) | Absent — pi adapter only |
-| CodeGraph integration + `codegraph` verb | Absent |
+| CodeGraph integration + `codegraph` verb | ✅ `biggz codegraph init --cwd` + guidance (safe-root validation) |
 | Bench journeys (`bench/` + `gentle-ai bench`) | Absent |
 | Package-manager installers (apt/pacman/dnf/zypper/scoop) + Android/Termux | Absent — brew formula + goreleaser only |
-| `update`/`upgrade` split + beta/stable channels + `--all` ecosystem | Single `update` (with automatic asset reconcile, `--no-reconcile`) |
+| `update`/`upgrade` split + beta/stable channels + `--all` ecosystem | ✅ Split `update` (check) / `upgrade` (execute + snapshot + verify hardening) |
 | Full management TUI (model picker, Configure Models, agent set editing) | Agent-builder TUI + 4-mode model picker (19 agents, variants cache) — 2026-08-10 |
 | `internal/opencode` Go model picker | Ported (2026-08-10) — reads the model-variants cache, JSONC-safe assignment read/write |
 | Release policy attestation (`releasepolicy` run-marker) | CLI `release status\|tag\|verify` verbs instead |
