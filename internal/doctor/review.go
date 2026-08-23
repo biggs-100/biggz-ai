@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/platform"
 	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
@@ -51,9 +52,12 @@ func NewReviewCheckWithCustom(
 	}
 }
 
-// execCommand wraps os/exec for testability.
+// execCommand wraps os/exec for testability and ensures the child command
+// inherits a valid working directory via platform.EnsureCommandDir.
 var execCommand = func(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).Output()
+	cmd := exec.Command(name, args...)
+	platform.EnsureCommandDir(cmd)
+	return cmd.Output()
 }
 
 // ID returns the check identifier.

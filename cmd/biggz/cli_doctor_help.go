@@ -70,9 +70,10 @@ func doctorRun() int {
 		}
 	}
 
-	// Build runner with all 9 checks.
+	// Build runner with all checks — platform gate first.
 	runner := &doctor.Runner{
 		Checks: []doctor.Check{
+			doctor.NewPlatformCheck(),
 			doctor.NewBigmemCheck(),
 			doctor.NewBinaryCheck(),
 			doctor.NewConfigCheck(),

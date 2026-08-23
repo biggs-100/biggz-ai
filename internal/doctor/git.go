@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/biggs-100/biggz-ai/internal/platform"
 )
 
 const (
@@ -63,6 +65,11 @@ func (c *GitCheck) Run(ctx context.Context) *Result {
 			Error:    err.Error(),
 		}
 	}
+
+	// CWD safety: ensure any git subprocess inherits a valid directory
+	// (mirrors gentle-ai deps.go:146 and powershell.go:37).
+	probeCmd := exec.CommandContext(ctx, "git", "rev-parse", "--git-dir")
+	platform.EnsureCommandDir(probeCmd)
 
 	// Check 2: Is this a git repository?
 	// Try git rev-parse to verify.
