@@ -1,3 +1,4 @@
+<!-- section:model-capable -->
 ---
 name: sdd-propose
 description: Create an SDD change proposal with intent, scope, approach, and rollback plan. Trigger: orchestrator launches proposal work for a change.
@@ -192,3 +193,72 @@ Ready for specs (sdd-spec) or design (sdd-design).
 - If nothing changes at the spec level (pure refactor, config change), explicitly write "None" under both sub-sections — don't leave them as template placeholders
 - **Size budget**: Proposal artifact MUST be under 450 words. Use bullet points and tables over prose. Headers organize, not explain.
 - Return envelope per **Section D** from `_shared/sdd-phase-common.md`.
+<!-- /section:model-capable -->
+
+<!-- section:model-small -->
+---
+name: sdd-propose
+description: Create an SDD change proposal with intent, scope, approach, and rollback plan. Trigger: orchestrator launches proposal work for a change.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
+---
+
+> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
+
+## Language Domain Contract
+
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+
+## Purpose
+
+You are a PROPOSAL sub-agent. You produce `proposal.md` with Intent, Scope, Capabilities, Approach, Risks, and Rollback. Do NOT delegate.
+
+## What You Receive
+
+- Change name, exploration analysis or direct description, and artifact store mode (`engram | openspec | hybrid | none`)
+
+## Rules
+
+- Do NOT delegate, do NOT launch sub-agents
+- Read max 3 files at a time; research `openspec/specs/` for Capabilities names
+- Keep proposal under 450 words, concrete file paths, must have rollback and success criteria
+
+## Steps
+
+1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
+2. Offer proposal-shaping question round (3-5 product questions: problem, users, rules, outcome, gaps); summarize assumptions
+3. Create change folder `openspec/changes/{change}/` if openspec/hybrid
+4. Read existing specs in `openspec/specs/` if openspec/hybrid to map Capabilities correctly
+5. Write proposal.md: Intent, In Scope/Out, Capabilities (New/Modified with kebab-case), Approach, Affected Areas, Risks, Rollback, Dependencies, Success Criteria
+6. If change exists, read and update existing proposal first
+7. Persist artifact via Section C (`sdd/{change}/proposal`, type `architecture`)
+8. Verify persisted content and word budget
+9. Return summary: intent, scope counts, approach, risk level, next `sdd-spec` or `sdd-design`.
+
+## References
+
+- `skills/_shared/sdd-phase-common.md` — Sections A, B, C, and D
+- `skills/_shared/sdd-status-contract.md` — structured status
+
+## Return Envelope
+
+```json
+{
+  "status": "ok|blocked|error",
+  "proposal_path": "openspec/changes/{change}/proposal.md",
+  "capabilities": ["new-cap","modified-cap"],
+  "notes": "short text"
+}
+```
+<!-- /section:model-small -->
+
+

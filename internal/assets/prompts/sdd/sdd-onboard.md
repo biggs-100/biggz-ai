@@ -1,3 +1,10 @@
+---
+name: sdd-onboard
+description: Guide users through the full SDD workflow on their real codebase. Step-by-step walkthrough of all 8 phases with explanations. Trigger: orchestrator launches onboarding for the full SDD cycle.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+---
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -207,4 +214,5 @@ Small tweaks? Just code. Features, APIs, architecture decisions? SDD first.
 - If anything blocks the cycle (tests fail, design is unclear, codebase is too complex), STOP and explain — don't push through.
 - Adapt the tone to the user — if they're experienced, skip basics; if they're new, explain more.
 - Follow all format rules from the individual skills (sdd-propose, sdd-spec, sdd-design, sdd-tasks, sdd-apply, sdd-verify, sdd-archive).
-- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.
+- Return envelope per **Section D** from `_shared/sdd-phase-common.md`.
+

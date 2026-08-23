@@ -1,3 +1,14 @@
+---
+name: sdd-apply
+description: Implement SDD tasks from specs, design, and task plan. Write code, run tests, and produce apply-progress report. Trigger: orchestrator launches apply for one or more change tasks.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "3.0"
+  delegate_only: true
+---
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -16,15 +27,15 @@ From the orchestrator:
 - Change name
 - The specific task(s) to implement (e.g., "Phase 1, tasks 1.1-1.3")
 - Artifact store mode (`engram | openspec | hybrid | none`)
-- Structured status from `skills/_shared/sdd-status-contract.md`: `schemaName`, `planningHome`, `changeRoot`, `artifactPaths`, `contextFiles`, `applyState`, task progress, dependency states, and `actionContext`
+- Structured status from `_shared/sdd-status-contract.md`: `schemaName`, `planningHome`, `changeRoot`, `artifactPaths`, `contextFiles`, `applyState`, task progress, dependency states, and `actionContext`
 - Delivery strategy and resolved workload decision (`ask-on-risk | auto-chain | single-pr | exception-ok`, plus PR slice or `size:exception` when applicable)
 
 ## Execution and Persistence Contract
 
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `skills/_shared/sdd-phase-common.md`.
+> Follow **Section B** (retrieval) and **Section C** (persistence) from `_shared/sdd-phase-common.md`.
 
 - **engram**: Read `sdd/{change-name}/proposal`, `sdd/{change-name}/spec`, `sdd/{change-name}/design`, `sdd/{change-name}/tasks` (all required — keep tasks ID for updates). Mark tasks complete via `biggz_mem_update(id: {tasks-observation-id}, content: "...")`. Save progress as `sdd/{change-name}/apply-progress`.
-- **openspec**: Read and follow `skills/_shared/openspec-convention.md`. Update `tasks.md` with `[x]` marks.
+- **openspec**: Read and follow `_shared/openspec-convention.md`. Update `tasks.md` with `[x]` marks.
 - **hybrid**: Follow BOTH conventions — persist progress to Engram (`biggz_mem_update` for tasks) AND update `tasks.md` with `[x]` marks on filesystem.
 - **none**: Return progress only. Do not update project artifacts.
 
@@ -54,7 +65,7 @@ Never substitute your own invocation for the one the guard prints, and never edi
 ## What to Do
 
 ### Step 1: Load Skills
-Follow **Section A** from `skills/_shared/sdd-phase-common.md`.
+Follow **Section A** from `_shared/sdd-phase-common.md`.
 
 ### Step 2: Read Context
 
@@ -113,7 +124,7 @@ Read testing capabilities from:
 Resolve mode:
 ├── IF strict_tdd: true AND test runner exists
 │   └── STRICT TDD MODE → Load and follow strict-tdd.md module
-│       (read the file: skills/sdd-apply/strict-tdd.md)
+│       (read the file: strict-tdd.md)
 │       Run the RED → GREEN → REFACTOR cycle and state the test runner
 │       in your apply-progress artifact and return summary
 │
@@ -182,7 +193,7 @@ Update `tasks.md` — change `- [ ]` to `- [x]` for completed tasks:
 
 **This step is MANDATORY — do NOT skip it.**
 
-Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
+Follow **Section C** from `_shared/sdd-phase-common.md`.
 - artifact: `apply-progress`
 - topic_key: `sdd/{change-name}/apply-progress`
 - type: `architecture`
@@ -261,4 +272,5 @@ If none, say "None."}
 - Apply any `rules.apply` from `openspec/config.yaml`
 - If Strict TDD Mode is active (Step 3), load `strict-tdd.md` and follow its cycle INSTEAD of Step 4
 - When Strict TDD is active, the `strict-tdd.md` module's rules OVERRIDE Step 4 entirely
-- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.
+- Return envelope per **Section D** from `_shared/sdd-phase-common.md`.
+

@@ -1,3 +1,4 @@
+<!-- section:model-capable -->
 ---
 name: sdd-tasks
 description: Break an SDD change into implementation tasks with dependencies, test evidence, and work units. Trigger: orchestrator launches task planning for a change.
@@ -245,3 +246,72 @@ Return to the orchestrator:
 - **Review workload guard**: ALWAYS include the Review Workload Forecast. If likely above 400 changed lines, recommend chained PRs and honor the received delivery strategy for whether a decision/exception is needed before apply.
 - **Work-unit evidence**: every suggested work unit MUST name its Focused test command, Runtime harness command/scenario (or explicit `N/A` reason), and Rollback boundary.
 - Return envelope per **Section D** from `_shared/sdd-phase-common.md`.
+<!-- /section:model-capable -->
+
+<!-- section:model-small -->
+---
+name: sdd-tasks
+description: Break an SDD change into implementation tasks with dependencies, test evidence, and work units. Trigger: orchestrator launches task planning for a change.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
+---
+
+> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
+
+## Language Domain Contract
+
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+
+## Purpose
+
+You are a TASKS sub-agent. You break specs and design into concrete, checkable tasks with Review Workload Forecast and work units. Do NOT delegate.
+
+## What You Receive
+
+- Change name, artifact store mode (`engram | openspec | hybrid | none`), and delivery strategy (`ask-on-risk | auto-chain | single-pr | exception-ok`)
+
+## Rules
+
+- Do NOT delegate; tasks must be Specific, Actionable, Verifiable, Small (one file/logical unit)
+- Read max 3 files at a time; order tasks by dependency
+- ALWAYS include Review Workload Forecast plain-text lines for guard matching
+
+## Steps
+
+1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
+2. Analyze design: files to create/modify/delete, dependency order, testing needs, threat-matrix RED tests
+3. Estimate changed lines; mark `400-line budget risk`, `Chained PRs recommended`, split into work units with test/harness/rollback per unit
+4. Honor delivery strategy: `ask-on-risk` needs decision, `auto-chain` proceeds, `single-pr` needs exception, `exception-ok` continues
+5. Write tasks.md: Forecast table + plain-text lines, Suggested Work Units table, Phases 1-5 with `- [ ] 1.1` tasks (hierarchical, 1-2 lines each)
+6. Enforce size budget: under 530 words, checklist format, plain-text guard lines included verbatim
+7. Persist artifact via Section C (`sdd/{change}/tasks`, type `architecture`)
+8. Verify persisted content and forecast lines
+9. Return summary: breakdown by phase, implementation order, forecast, next `sdd-apply` or ask for chain strategy.
+
+## References
+
+- `skills/_shared/sdd-phase-common.md` — Sections A, B, C, and D
+- `skills/_shared/sdd-status-contract.md` — structured status
+
+## Return Envelope
+
+```json
+{
+  "status": "ok|blocked|error",
+  "tasks_count": 8,
+  "forecast": {"risk": "Low|Medium|High", "chained": "Yes|No"},
+  "notes": "short text"
+}
+```
+<!-- /section:model-small -->
+
+

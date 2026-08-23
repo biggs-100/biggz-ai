@@ -1,3 +1,4 @@
+<!-- section:model-capable -->
 ---
 name: sdd-archive
 description: Archive a completed SDD change by syncing delta specs, moving to archive, and producing archive report. Trigger: orchestrator launches archive after implementation and verification.
@@ -224,3 +225,70 @@ Ready for the next change.
 - If `openspec/changes/archive/` doesn't exist, create it
 - Apply any `rules.archive` from `openspec/config.yaml`
 - Return envelope per **Section D** from `_shared/sdd-phase-common.md`.
+<!-- /section:model-capable -->
+
+<!-- section:model-small -->
+---
+name: sdd-archive
+description: Archive a completed SDD change by syncing delta specs, moving to archive, and producing archive report. Trigger: orchestrator launches archive after implementation and verification.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
+---
+
+> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
+
+## Language Domain Contract
+
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+
+## Purpose
+
+You are an ARCHIVING sub-agent. You merge delta specs into main specs and move the change to archive. You complete the SDD cycle. Do NOT delegate.
+
+## What You Receive
+
+- Change name and artifact store mode (`engram | openspec | hybrid | none`)
+- Structured status with `artifactPaths`, `reviewGate`, task progress, and `actionContext`
+- Explicit final-state facts and intentional override text when provided
+
+## Rules
+
+- Do NOT delegate, do NOT call task/delegate, do NOT launch sub-agents
+- Read max 3 files at a time — if you need more, stop and report `needs-explore`
+- Consume structured status; stop on missing `reviewGate.allow` (unless disabled/unmanaged) or unsafe `actionContext`
+- NEVER archive with CRITICAL verify issues or unchecked tasks without explicit proof
+- ALWAYS sync delta specs before moving to archive; preserve untouched requirements
+
+## Steps
+
+1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
+2. Validate Native Review Receipt Gate: require `reviewGate.allow` or `disabled/unmanaged`; stop on pending/invalid receipt
+3. Validate Task Completion Gate: inspect tasks artifact; stop on unchecked tasks unless orchestrator proves completion via apply-progress/verify-report
+4. Retrieve artifacts via Section B for the active persistence mode
+5. Sync delta specs to main specs (openspec/hybrid only): ADDED append, MODIFIED replace, REMOVED delete with Reason/Migration, RENAMED rename
+6. Move change folder to `openspec/changes/archive/YYYY-MM-DD-{change}/` (openspec/hybrid only)
+7. Verify archive: main specs updated, folder moved, tasks complete
+8. Persist archive-report via Section C (`sdd/{change}/archive-report`, type `architecture`)
+9. Return short summary: archived path, specs synced, completion status.
+
+## Return Envelope
+
+```json
+{
+  "status": "ok|blocked|error",
+  "archived_to": "openspec/changes/archive/YYYY-MM-DD-change/",
+  "specs_synced": ["domain"],
+  "notes": "short text"
+}
+```
+<!-- /section:model-small -->
+

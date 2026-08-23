@@ -1,3 +1,14 @@
+---
+name: sdd-propose
+description: Create an SDD change proposal with intent, scope, approach, and rollback plan. Trigger: orchestrator launches proposal work for a change.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
+---
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -19,10 +30,10 @@ From the orchestrator:
 
 ## Execution and Persistence Contract
 
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `skills/_shared/sdd-phase-common.md`.
+> Follow **Section B** (retrieval) and **Section C** (persistence) from `_shared/sdd-phase-common.md`.
 
 - **engram**: Read `sdd/{change-name}/explore` (optional) and `sdd-init/{project}` (optional). Save artifact as `sdd/{change-name}/proposal`.
-- **openspec**: Read and follow `skills/_shared/openspec-convention.md`.
+- **openspec**: Read and follow `_shared/openspec-convention.md`.
 - **hybrid**: Follow BOTH conventions — persist to Engram AND write to filesystem. Retrieve dependencies from Engram (primary) with filesystem fallback.
 - **none**: Return result only. Never create or modify project files.
 - Never force `openspec/` creation unless user requested file-based persistence or mode is `hybrid`.
@@ -46,7 +57,7 @@ From the orchestrator:
 - Prefer 3–5 concrete product questions per round. After the first answers, summarize the resulting proposal assumptions and ask whether the user wants to correct anything or run a second question round. Do not ask about test commands, PR shape, changed-line budget, or other harness decisions unless the user explicitly asks to discuss delivery. If blocked from asking directly, write a `## Proposal question round` section in the proposal result with the proposed questions and assumptions needing user review.
 
 ### Step 1: Load Skills
-Follow **Section A** from `skills/_shared/sdd-phase-common.md`.
+Follow **Section A** from `_shared/sdd-phase-common.md`.
 
 ### Step 2: Create Change Directory
 
@@ -141,7 +152,7 @@ Reference the recommended approach from exploration if available.}
 
 **This step is MANDATORY — do NOT skip it.**
 
-Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
+Follow **Section C** from `_shared/sdd-phase-common.md`.
 - artifact: `proposal`
 - topic_key: `sdd/{change-name}/proposal`
 - type: `architecture`
@@ -180,4 +191,5 @@ Ready for specs (sdd-spec) or design (sdd-design).
 - Modified Capabilities → each will become a delta spec in the change folder
 - If nothing changes at the spec level (pure refactor, config change), explicitly write "None" under both sub-sections — don't leave them as template placeholders
 - **Size budget**: Proposal artifact MUST be under 450 words. Use bullet points and tables over prose. Headers organize, not explain.
-- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.
+- Return envelope per **Section D** from `_shared/sdd-phase-common.md`.
+

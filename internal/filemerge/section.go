@@ -76,3 +76,146 @@ func ReplaceSection(content string, sectionName string, newSection []byte) ([]by
 
 	return []byte(b.String()), nil
 }
+
+// ExtractHTMLCommentSection extracts the content between a paired
+// <!-- section:NAME --> ... <!-- /section:NAME --> marker pair. A missing,
+// lone, or reversed marker pair returns the full content unchanged.
+func ExtractHTMLCommentSection(content, name string) string {
+	openMarker := "<!-- section:" + name + " -->"
+	closeMarker := "<!-- /section:" + name + " -->"
+	start := strings.Index(content, openMarker)
+	end := strings.Index(content, closeMarker)
+	if start == -1 || end == -1 || end <= start {
+		return content
+	}
+	afterOpen := start + len(openMarker)
+	return strings.TrimLeft(content[afterOpen:end], " \t\r\n")
+}
+
+const (
+	markerPrefix = "<!-- biggz:"
+	markerSuffix = " -->"
+	closePrefix  = "<!-- /biggz:"
+)
+
+// openMarker returns the opening marker for a section ID.
+func openMarker(sectionID string) string {
+	return markerPrefix + sectionID + markerSuffix
+}
+
+// closeMarker returns the closing marker for a section ID.
+func closeMarker(sectionID string) string {
+	return closePrefix + sectionID + markerSuffix
+}
+
+// stripOrphanMarkers removes unpaired opening or closing markers for the given
+// sectionID from content before injection logic runs.
+func stripOrphanMarkers(content, open, close string) string {
+	for {
+		openIdx := strings.Index(content, open)
+		closeIdx := strings.Index(content, close)
+
+		switch {
+		case openIdx < 0 && closeIdx < 0:
+			return content
+		case openIdx < 0 && closeIdx >= 0:
+			content = content[:closeIdx] + content[closeIdx+len(close):]
+		case openIdx >= 0 && closeIdx < 0:
+			content = content[:openIdx] + content[openIdx+len(open):]
+		case closeIdx < openIdx:
+			content = content[:closeIdx] + content[closeIdx+len(close):]
+		default:
+			return content
+		}
+	}
+}
+
+// InjectMarkdownSection replaces or appends a marked section in a markdown file.
+// Markers use HTML comments: <!-- biggz:SECTION_ID --> ... <!-- /biggz:SECTION_ID -->
+// If the section already exists, its content is replaced.
+// If it doesn't exist, it's appended at the end.
+// Content outside markers is never touched.
+// If content is empty, the section (including markers) is removed.
+func InjectMarkdownSection(existing, sectionID, content string) string {
+	open := openMarker(sectionID)
+	close := closeMarker(sectionID)
+
+	existing = stripOrphanMarkers(existing, open, close)
+
+	openIdx := strings.Index(existing, open)
+	closeIdx := strings.Index(existing, close)
+
+	if openIdx >= 0 && closeIdx >= 0 && closeIdx > openIdx {
+		before := existing[:openIdx]
+		after := existing[closeIdx+len(close):]
+
+		var preservedAfter strings.Builder
+		for {
+			duplicateOpen := strings.Index(after, open)
+			if duplicateOpen < 0 {
+				preservedAfter.WriteString(after)
+				break
+			}
+			bodyStart := duplicateOpen + len(open)
+			duplicateCloseOffset := strings.Index(after[bodyStart:], close)
+			if duplicateCloseOffset < 0 {
+				preservedAfter.WriteString(after)
+				break
+			}
+			duplicateEnd := bodyStart + duplicateCloseOffset + len(close)
+			preservedAfter.WriteString(after[:duplicateOpen])
+			after = after[duplicateEnd:]
+		}
+		after = preservedAfter.String()
+
+		if content == "" {
+			if len(after) > 0 && after[0] == '\n' {
+				after = after[1:]
+			}
+			result := strings.TrimRight(before, "\n")
+			if after != "" {
+				if result != "" {
+					result += "\n"
+				}
+				result += after
+			} else if result != "" {
+				result += "\n"
+			}
+			return result
+		}
+
+		var sb strings.Builder
+		sb.WriteString(before)
+		sb.WriteString(open)
+		sb.WriteString("\n")
+		sb.WriteString(content)
+		if !strings.HasSuffix(content, "\n") {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(close)
+		sb.WriteString(after)
+		return sb.String()
+	}
+
+	if content == "" {
+		return existing
+	}
+
+	var sb strings.Builder
+	sb.WriteString(existing)
+	if existing != "" && !strings.HasSuffix(existing, "\n") {
+		sb.WriteString("\n")
+	}
+	if existing != "" {
+		sb.WriteString("\n")
+	}
+	sb.WriteString(open)
+	sb.WriteString("\n")
+	sb.WriteString(content)
+	if !strings.HasSuffix(content, "\n") {
+		sb.WriteString("\n")
+	}
+	sb.WriteString(close)
+	sb.WriteString("\n")
+	return sb.String()
+}

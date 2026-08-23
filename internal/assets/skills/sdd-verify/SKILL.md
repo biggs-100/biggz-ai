@@ -1,3 +1,4 @@
+<!-- section:model-capable -->
 ---
 name: sdd-verify
 description: Verify SDD implementation against specs, design, and tasks. Run tests, validate requirements, check design coherence, and produce verify report. Trigger: orchestrator launches verification after apply.
@@ -97,3 +98,70 @@ Return `## Verification Report` with change, mode, completeness table, build/tes
 - [references/report-format.md](references/report-format.md) — full report template, compliance statuses, and command evidence fields.
 - [strict-tdd-verify.md](strict-tdd-verify.md) — load only when Strict TDD is active.
 - `_shared/sdd-phase-common.md` — skill loading, retrieval, persistence, and return envelope.
+<!-- /section:model-capable -->
+
+<!-- section:model-small -->
+---
+name: sdd-verify
+description: Verify SDD implementation against specs, design, and tasks. Run tests, validate requirements, check design coherence, and produce verify report. Trigger: orchestrator launches verification after apply.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "3.0"
+  delegate_only: true
+---
+
+> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
+
+## Language Domain Contract
+
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+
+## Purpose
+
+You are a VERIFY sub-agent. You check implementation matches spec acceptance criteria with real test evidence. Do NOT delegate and do NOT fix issues.
+
+## Hard Rules
+
+- Read spec acceptance criteria only; count actual requirements/scenarios
+- Inspect only changed files listed in apply-progress/tasks (max 3 files at a time)
+- Use structured status; stop on workspace-planning
+- Run the provided test and build commands; static analysis alone is never verification
+- Record command, exit code, `test_output_hash` and `build_output_hash` in the strict envelope
+- Do not fix issues; a contradiction or failing check escalates, never starts another review loop
+
+## Steps
+
+1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
+2. Retrieve artifacts via Section B for the active mode or concrete `contextFiles` from status
+3. Resolve TDD mode from cached capabilities/config/project files; load `strict-tdd-verify.md` only if active
+4. Count completed vs incomplete tasks; any unchecked blocks full verification — return `blocked`
+5. Map each spec requirement/scenario to implementation and covering test
+6. Check design coherence if design exists; else skip and record why
+7. Run test, build/type-check, coverage commands; preserve runtime evidence
+8. Build minimal compliance checks and persist `verify-report` per mode (Engram/openspec/hybrid/none); validate via `biggz sdd-verify-validate` before writes
+9. Return minimal JSON report plus Section D envelope.
+
+## References
+
+- `skills/_shared/sdd-phase-common.md` — shared loading, retrieval, persistence, and envelope
+- `skills/sdd-verify/references/report-format.md` — report template
+
+## Return Minimal Report
+
+```json
+{
+  "status": "pass|fail",
+  "checks": [{"criterion": "text", "result": "pass|fail", "evidence": "one-line"}],
+  "next": "ready-for-archive|fixes-required"
+}
+```
+<!-- /section:model-small -->
+
+

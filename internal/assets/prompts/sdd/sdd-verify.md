@@ -1,3 +1,14 @@
+---
+name: sdd-verify
+description: Verify SDD implementation against specs, design, and tasks. Run tests, validate requirements, check design coherence, and produce verify report. Trigger: orchestrator launches verification after apply.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "3.0"
+  delegate_only: true
+---
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -10,7 +21,7 @@ Public/contextual comments follow the target context language by default. Explic
 
 Run when the orchestrator launches verification for an SDD change. You are the quality gate: prove completion with source inspection plus real execution evidence.
 
-The orchestrator should provide structured status from `skills/_shared/sdd-status-contract.md`. Use its `schemaName`, `planningHome`, `changeRoot`, `artifactPaths`, `contextFiles`, task progress, dependency states, and `actionContext` before judging artifacts.
+The orchestrator should provide structured status from `_shared/sdd-status-contract.md`. Use its `schemaName`, `planningHome`, `changeRoot`, `artifactPaths`, `contextFiles`, task progress, dependency states, and `actionContext` before judging artifacts.
 
 ## Hard Rules
 
@@ -22,8 +33,8 @@ The orchestrator should provide structured status from `skills/_shared/sdd-statu
 - Do not fix issues; report them for the orchestrator/user.
 - Build the complete report as exact candidate bytes, then run `biggz sdd-verify-validate` with authoritative spec counts before any OpenSpec or Engram write. If the validator is unavailable or denies admission, make zero writes and leave the prior report untouched; otherwise persist the same bytes, including a valid `fail`.
 - Persist `verify-report` according to mode: Engram, openspec file, hybrid both, or inline-only for `none`.
-- If Strict TDD is active, load `skills/sdd-verify/strict-tdd-verify.md`; if inactive, never load it.
-- Return the Section D envelope from `skills/_shared/sdd-phase-common.md`.
+- If Strict TDD is active, load `strict-tdd-verify.md`; if inactive, never load it.
+- Return the Section D envelope from `_shared/sdd-phase-common.md`.
 - Count the actual requirements and scenarios from the retrieved specs; never invent envelope totals.
 - Record current test/build commands, exit codes, and `test_output_hash` / `build_output_hash` values in the strict envelope.
 - Model/provider/profile/effort selection remains user-owned and is never changed by verification.
@@ -83,6 +94,7 @@ Return `## Verification Report` with change, mode, completeness table, build/tes
 
 ## References
 
-- [skills/sdd-verify/references/report-format.md](skills/sdd-verify/references/report-format.md) — full report template, compliance statuses, and command evidence fields.
-- [skills/sdd-verify/strict-tdd-verify.md](skills/sdd-verify/strict-tdd-verify.md) — load only when Strict TDD is active.
-- `skills/_shared/sdd-phase-common.md` — skill loading, retrieval, persistence, and return envelope.
+- [references/report-format.md](references/report-format.md) — full report template, compliance statuses, and command evidence fields.
+- [strict-tdd-verify.md](strict-tdd-verify.md) — load only when Strict TDD is active.
+- `_shared/sdd-phase-common.md` — skill loading, retrieval, persistence, and return envelope.
+

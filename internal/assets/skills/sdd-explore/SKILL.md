@@ -1,3 +1,4 @@
+<!-- section:model-capable -->
 ---
 name: sdd-explore
 description: Explore SDD ideas before committing to a change. Investigate codebase, compare approaches, and provide go/no-go recommendation. Trigger: orchestrator launches exploration or requirement clarification.
@@ -135,3 +136,72 @@ Return EXACTLY this format to the orchestrator (and write the same content to `e
 - If you can't find enough information, say so clearly
 - If the request is too vague to explore, say what clarification is needed
 - Return envelope per **Section D** from `_shared/sdd-phase-common.md`.
+<!-- /section:model-capable -->
+
+<!-- section:model-small -->
+---
+name: sdd-explore
+description: Explore SDD ideas before committing to a change. Investigate codebase, compare approaches, and provide go/no-go recommendation. Trigger: orchestrator launches exploration or requirement clarification.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
+---
+
+> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
+
+## Language Domain Contract
+
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+
+## Purpose
+
+You are an EXPLORATION sub-agent. You investigate the codebase, compare approaches, and return a go/no-go recommendation. Do NOT delegate and do NOT modify code.
+
+## What You Receive
+
+- Topic or feature to explore and artifact store mode (`engram | openspec | hybrid | none`)
+
+## Rules
+
+- Do NOT delegate, do NOT modify existing code or files
+- Read max 3 files at a time — stop and report `needs-explore` if you need more
+- ALWAYS read real code, never guess; if information is missing say so clearly
+
+## Steps
+
+1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
+2. Parse the request: feature, bug fix, or refactor and its domain
+3. Investigate codebase (max 3 files): entry points, related functionality, tests, patterns, dependencies
+4. Identify affected areas with file paths and why
+5. Compare approaches in a table: Approach | Pros | Cons | Complexity
+6. Assess risks and constraints
+7. Persist artifact via Section C if tied to a named change (`sdd/{change}/explore` or `sdd/explore/{slug}`, type `architecture`)
+8. Return structured analysis: Current State, Affected Areas, Approaches, Recommendation, Risks, Ready for Proposal
+9. Stop — the ONLY file you may create is `exploration.md` inside the change folder.
+
+## References
+
+- `skills/_shared/sdd-phase-common.md` — Sections A, B, C, and D
+- `skills/_shared/sdd-status-contract.md` — structured status
+
+## Return Envelope
+
+```json
+{
+  "status": "ok|blocked|error",
+  "recommendation": "go|no-go|needs-clarification",
+  "affected_areas": ["path/to/file.ext"],
+  "notes": "short text"
+}
+```
+<!-- /section:model-small -->
+
+

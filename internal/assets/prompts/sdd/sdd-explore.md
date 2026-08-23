@@ -1,3 +1,14 @@
+---
+name: sdd-explore
+description: Explore SDD ideas before committing to a change. Investigate codebase, compare approaches, and provide go/no-go recommendation. Trigger: orchestrator launches exploration or requirement clarification.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
+---
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -18,16 +29,16 @@ The orchestrator will give you:
 
 ## Execution and Persistence Contract
 
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `skills/_shared/sdd-phase-common.md`.
+> Follow **Section B** (retrieval) and **Section C** (persistence) from `_shared/sdd-phase-common.md`.
 
 - **engram**: Optionally read `sdd-init/{project}` for project context. Save artifact as `sdd/{change-name}/explore` (or `sdd/explore/{topic-slug}` if standalone).
-- **openspec**: Read and follow `skills/_shared/openspec-convention.md`.
+- **openspec**: Read and follow `_shared/openspec-convention.md`.
 - **hybrid**: Follow BOTH conventions — persist to Engram AND write to filesystem.
 - **none**: Return result only.
 
 ### Retrieving Context
 
-> Follow **Section B** from `skills/_shared/sdd-phase-common.md` for retrieval.
+> Follow **Section B** from `_shared/sdd-phase-common.md` for retrieval.
 
 - **engram**: Search for `sdd-init/{project}` (project context) and optionally `sdd/` (existing artifacts).
 - **openspec**: Read `openspec/config.yaml` and `openspec/specs/`.
@@ -36,7 +47,7 @@ The orchestrator will give you:
 ## What to Do
 
 ### Step 1: Load Skills
-Follow **Section A** from `skills/_shared/sdd-phase-common.md`.
+Follow **Section A** from `_shared/sdd-phase-common.md`.
 
 ### Step 2: Understand the Request
 
@@ -74,7 +85,7 @@ If there are multiple approaches, compare them:
 
 **This step is MANDATORY when tied to a named change — do NOT skip it.**
 
-Follow **Section C** from `skills/_shared/sdd-phase-common.md`.
+Follow **Section C** from `_shared/sdd-phase-common.md`.
 - artifact: `explore`
 - topic_key: `sdd/{change-name}/explore` (or `sdd/explore/{topic-slug}` if standalone)
 - type: `architecture`
@@ -123,4 +134,5 @@ Return EXACTLY this format to the orchestrator (and write the same content to `e
 - Keep your analysis CONCISE - the orchestrator needs a summary, not a novel
 - If you can't find enough information, say so clearly
 - If the request is too vague to explore, say what clarification is needed
-- Return envelope per **Section D** from `skills/_shared/sdd-phase-common.md`.
+- Return envelope per **Section D** from `_shared/sdd-phase-common.md`.
+

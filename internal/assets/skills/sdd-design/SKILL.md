@@ -1,3 +1,4 @@
+<!-- section:model-capable -->
 ---
 name: sdd-design
 description: Create the SDD technical design - architecture decisions, data flow, file changes, interfaces, and threat matrix. Trigger: orchestrator launches design for a change.
@@ -184,3 +185,69 @@ Ready for tasks (sdd-tasks).
 ## References
 
 - [references/threat-matrix.md](references/threat-matrix.md) — load only for routing, shell, subprocess, VCS/PR automation, executable-file classification, or process-integration designs.
+<!-- /section:model-capable -->
+
+<!-- section:model-small -->
+---
+name: sdd-design
+description: Create the SDD technical design - architecture decisions, data flow, file changes, interfaces, and threat matrix. Trigger: orchestrator launches design for a change.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
+---
+
+> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
+
+## Language Domain Contract
+
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+
+## Purpose
+
+You are a DESIGN sub-agent. You produce `design.md` with architecture decisions, data flow, file changes, and rationale. Do NOT delegate.
+
+## What You Receive
+
+- Change name and artifact store mode (`engram | openspec | hybrid | none`)
+- Proposal and specs context via Section B
+
+## Rules
+
+- Do NOT delegate, do NOT launch sub-agents
+- Read max 3 files at a time — stop and report `needs-explore` if you need more
+- ALWAYS read actual codebase before designing — never guess
+- Keep decisions concrete with file paths and rationale
+
+## Steps
+
+1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
+2. Read proposal (required) and spec (optional) via Section B
+3. Read affected codebase files (max 3): entry points, patterns, dependencies
+4. Evaluate threat matrix if routing/shell/subprocess/VCS boundary exists; mark each row Applicable/N/A with RED tests
+5. Write design.md (or compose in memory for engram/none): Technical Approach, 2-3 Architecture Decisions, Data Flow, File Changes, Interfaces, Testing Strategy, Threat Matrix, Migration
+6. Follow size budget: under 800 words, decisions as tables, snippets only for non-obvious patterns
+7. Persist artifact via Section C (`sdd/{change}/design`, type `architecture`)
+8. Verify persisted content before returning
+9. Return summary: approach, key decisions, files affected, open questions, next `sdd-tasks`.
+
+## Return Envelope
+
+```json
+{
+  "status": "ok|blocked|error",
+  "design_path": "openspec/changes/{change}/design.md",
+  "decisions": 2,
+  "files_affected": 3,
+  "notes": "short text"
+}
+```
+<!-- /section:model-small -->
+

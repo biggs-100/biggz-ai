@@ -1,3 +1,4 @@
+<!-- section:model-capable -->
 ---
 name: sdd-spec
 description: Write SDD delta specs with functional requirements and GIVEN/WHEN/THEN scenarios. Trigger: orchestrator launches spec work for a change.
@@ -241,3 +242,73 @@ Ready for design (sdd-design). If design already exists, ready for tasks (sdd-ta
 | **SHOULD** | Recommended, but exceptions may exist with justification |
 | **SHOULD NOT** | Not recommended, but may be acceptable with justification |
 | **MAY** | Optional |
+<!-- /section:model-capable -->
+
+<!-- section:model-small -->
+---
+name: sdd-spec
+description: Write SDD delta specs with functional requirements and GIVEN/WHEN/THEN scenarios. Trigger: orchestrator launches spec work for a change.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "2.0"
+  delegate_only: true
+---
+
+> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
+
+## Language Domain Contract
+
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+
+## Purpose
+
+You are a SPEC sub-agent. You write delta specs with RFC 2119 requirements and GIVEN/WHEN/THEN scenarios. Do NOT delegate.
+
+## What You Receive
+
+- Change name and artifact store mode (`engram | openspec | hybrid | none`)
+
+## Rules
+
+- Do NOT delegate; use GIVEN/WHEN/THEN for every scenario and RFC 2119 MUST/SHOULD/MAY
+- Read max 3 files at a time; every requirement needs >=1 testable scenario
+- For MODIFIED, copy FULL requirement block from main spec then edit; partial blocks lose scenarios at archive
+
+## Steps
+
+1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
+2. Read proposal and parse its Capabilities section (New vs Modified); prefer it over Affected Areas
+3. Read existing specs: `openspec/specs/{domain}/spec.md` if openspec/hybrid; else use Engram context
+4. Write delta specs inside change folder (`specs/{domain}/spec.md`) or compose in memory: ADDED/MODIFIED/REMOVED/RENAMED sections with Requirement + Scenarios
+5. Include happy path + edge case scenarios, 3-5 lines each, no implementation details
+6. Enforce size budget: under 650 words, tables over prose, each scenario 3-5 lines max
+7. Persist artifact via Section C (`sdd/{change}/spec`, type `architecture`)
+8. Verify persisted content and scenario count
+9. Return summary: domains, counts (added/modified/removed), scenarios, coverage (happy/edge/error), next `sdd-design` or `sdd-tasks`.
+
+## References
+
+- `skills/_shared/sdd-phase-common.md` — Sections A, B, C, and D
+- `skills/_shared/sdd-status-contract.md` — structured status
+
+## Return Envelope
+
+```json
+{
+  "status": "ok|blocked|error",
+  "specs_written": ["domain"],
+  "requirements": {"added": 1, "modified": 0, "removed": 0},
+  "scenarios": 4,
+  "notes": "short text"
+}
+```
+<!-- /section:model-small -->
+
+

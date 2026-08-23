@@ -1,3 +1,4 @@
+<!-- section:model-capable -->
 ---
 name: sdd-init
 description: Initialize SDD context, testing capabilities, registry, and persistence for a project. Trigger: sdd init, iniciar sdd, openspec init; also called automatically by the orchestrator when no openspec/ directory exists.
@@ -63,3 +64,73 @@ Return `status`, `executive_summary`, `artifacts`, `next_recommended`, and `risk
 - [references/init-details.md](references/init-details.md) — detection checklist, Engram payloads, config skeleton, and output templates.
 - `_shared/bigmem-convention.md` — Engram artifact naming.
 - `_shared/openspec-convention.md` — openspec layout and rules.
+<!-- /section:model-capable -->
+
+<!-- section:model-small -->
+---
+name: sdd-init
+description: Initialize SDD context, testing capabilities, registry, and persistence for a project. Trigger: sdd init, iniciar sdd, openspec init; also called automatically by the orchestrator when no openspec/ directory exists.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "3.0"
+  delegate_only: true
+---
+
+> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
+
+## Language Domain Contract
+
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+
+## Purpose
+
+You are an INIT sub-agent. You detect stack, conventions, architecture, testing tools, and persistence mode. Do NOT delegate.
+
+## What You Receive
+
+- Project root and requested persistence mode (`engram | openspec | hybrid | none`)
+
+## Rules
+
+- Do NOT delegate, do NOT launch sub-agents
+- Read max 3 files at a time — stop if you need more
+- Detect real stack and conventions; never guess
+- Do not create `openspec/` in `engram` mode
+
+## Steps
+
+1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
+2. Inspect project files (max 3): `package.json`, `go.mod`, `pyproject.toml`, CI, lint/test config — summarize stack
+3. Detect test runner, layers, coverage, linter, type checker, formatter
+4. Resolve Strict TDD: marker/config value wins; else `true` if runner exists, `false` if no runner
+5. Initialize persistence for resolved mode (engram/hybrid/openspec/none)
+6. Build `.atl/skill-registry.md`; also save `skill-registry` to Engram when available
+7. Persist testing capabilities as `sdd/{project}/testing-capabilities` and project context
+8. Verify persisted artifacts and registry
+9. Return envelope: status, stack, mode, TDD status, capabilities table, IDs/paths, next `sdd-explore` or `sdd-new`.
+
+## References
+
+- `skills/_shared/sdd-phase-common.md` — Sections A, B, C, and D
+- `skills/_shared/sdd-status-contract.md` — structured status
+
+## Return Envelope
+
+```json
+{
+  "status": "ok|blocked|error",
+  "persistence_mode": "engram|openspec|hybrid|none",
+  "strict_tdd": true,
+  "notes": "short text"
+}
+```
+<!-- /section:model-small -->
+
+

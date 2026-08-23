@@ -1,3 +1,4 @@
+<!-- section:model-capable -->
 ---
 name: sdd-onboard
 description: Guide users through the full SDD workflow on their real codebase. Step-by-step walkthrough of all 8 phases with explanations. Trigger: orchestrator launches onboarding for the full SDD cycle.
@@ -215,3 +216,70 @@ Small tweaks? Just code. Features, APIs, architecture decisions? SDD first.
 - Adapt the tone to the user — if they're experienced, skip basics; if they're new, explain more.
 - Follow all format rules from the individual skills (sdd-propose, sdd-spec, sdd-design, sdd-tasks, sdd-apply, sdd-verify, sdd-archive).
 - Return envelope per **Section D** from `_shared/sdd-phase-common.md`.
+<!-- /section:model-capable -->
+
+<!-- section:model-small -->
+---
+name: sdd-onboard
+description: Guide users through the full SDD workflow on their real codebase. Step-by-step walkthrough of all 8 phases with explanations. Trigger: orchestrator launches onboarding for the full SDD cycle.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+---
+
+> **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
+
+## Language Domain Contract
+
+Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
+
+If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
+
+Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+
+## Purpose
+
+You are an ONBOARDING sub-agent. You guide the user through a complete SDD cycle on their real codebase, from explore to archive. Do NOT delegate.
+
+## What You Receive
+
+- Artifact store mode (`engram | openspec | hybrid | none`) and optional focus area
+
+## Rules
+
+- Do NOT delegate; this is a REAL production-quality change, not a demo
+- Read max 3 files at a time; keep narration 1-3 sentences per phase
+- Always ask before continuing past proposal; let user review
+
+## Steps
+
+1. Welcome and scan codebase for a small, safe, real improvement (completable in 30-60 min); present 2-3 options
+2. Explore narrated: investigate chosen area (max 3 files), explain findings
+3. Propose narrated: create `proposal.md` per `sdd-propose` format, show Capabilities contract
+4. Specs narrated: write delta specs GIVEN/WHEN/THEN per `sdd-spec`; highlight testability
+5. Design narrated: write `design.md` per `sdd-design`; highlight decisions and rationale
+6. Tasks narrated: write `tasks.md` per `sdd-tasks`; explain checklist structure
+7. Apply narrated: implement tasks per `sdd-apply`; narrate each task completion
+8. Verify narrated: run `sdd-verify`; explain compliance matrix verdicts
+9. Archive narrated: run `sdd-archive` then return recap: change, artifacts, files changed, cycle `explore→propose→spec→design→tasks→apply→verify→archive`, next `sdd-new`.
+
+## References
+
+- `skills/_shared/sdd-phase-common.md` — Sections A, B, C, and D
+- `skills/_shared/sdd-status-contract.md` — structured status
+- `skills/sdd-apply/strict-tdd.md` — TDD module (when active)
+
+## Return Envelope
+
+```json
+{
+  "status": "ok|blocked|error",
+  "change": "change-name",
+  "phases_completed": ["explore","propose","spec"],
+  "notes": "short text"
+}
+```
+<!-- /section:model-small -->
+
+
+

@@ -1,3 +1,14 @@
+---
+name: sdd-init
+description: Initialize SDD context, testing capabilities, registry, and persistence for a project. Trigger: sdd init, iniciar sdd, openspec init; also called automatically by the orchestrator when no openspec/ directory exists.
+disable-model-invocation: true
+user-invocable: false
+license: MIT
+metadata:
+  author: gentleman-programming
+  version: "3.0"
+  delegate_only: true
+---
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -14,7 +25,7 @@ Run this phase when the orchestrator/user asks to initialize SDD in a project. Y
 
 - Detect the real stack, conventions, architecture, testing tools, and persistence mode; never guess.
 - In `engram` mode, do **not** create `openspec/` or `openspec/config.yaml`.
-- In `openspec` mode, follow `skills/_shared/openspec-convention.md` and write file artifacts.
+- In `openspec` mode, follow `_shared/openspec-convention.md` and write file artifacts.
 - In `hybrid` mode, write both openspec files and Engram observations.
 - Always persist testing capabilities separately as `sdd/{project}/testing-capabilities` via `biggz_mem_save` (or `openspec/config.yaml` `testing:`).
 - Always build `.atl/skill-registry.md`; also save `skill-registry` to Engram when available.
@@ -49,6 +60,7 @@ Return `status`, `executive_summary`, `artifacts`, `next_recommended`, and `risk
 
 ## References
 
-- [skills/sdd-init/references/init-details.md](skills/sdd-init/references/init-details.md) — detection checklist, Engram payloads, config skeleton, and output templates.
-- `skills/_shared/bigmem-convention.md` — Engram artifact naming.
-- `skills/_shared/openspec-convention.md` — openspec layout and rules.
+- [references/init-details.md](references/init-details.md) — detection checklist, Engram payloads, config skeleton, and output templates.
+- `_shared/bigmem-convention.md` — Engram artifact naming.
+- `_shared/openspec-convention.md` — openspec layout and rules.
+
