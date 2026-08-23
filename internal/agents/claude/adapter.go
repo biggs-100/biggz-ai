@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/biggs-100/biggz-ai/internal/agents"
+	"github.com/biggs-100/biggz-ai/internal/platform"
 	"github.com/biggs-100/biggz-ai/model"
 	"github.com/biggs-100/biggz-ai/plugin"
 )
@@ -45,10 +46,33 @@ func (a *Adapter) Detect(ctx context.Context, homeDir string) (bool, string, str
 }
 
 // InstallCommand returns the commands to install Claude Code.
+// If the platform npm prefix is not writable, it returns a sudo variant with
+// --ignore-scripts; otherwise it returns the plain npm install command.
+// The profile may be a platform.Profile, *platform.Profile, or nil (in which
+// case platform.Detect is called).
 func (a *Adapter) InstallCommand(profile interface{}) ([][]string, error) {
+	p := resolveProfile(profile)
+	if !p.NpmWritable {
+		return [][]string{
+			{"sudo", "npm", "install", "-g", "--ignore-scripts", "@anthropic-ai/claude-code"},
+		}, nil
+	}
 	return [][]string{
 		{"npm", "install", "-g", "@anthropic-ai/claude-code"},
 	}, nil
+}
+
+func resolveProfile(profile interface{}) platform.Profile {
+	if profile != nil {
+		if pp, ok := profile.(platform.Profile); ok {
+			return pp
+		}
+		if pp, ok := profile.(*platform.Profile); ok && pp != nil {
+			return *pp
+		}
+	}
+	detected, _ := platform.Detect(context.Background())
+	return detected
 }
 
 // Capabilities returns the list of capabilities Claude Code supports.

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/biggs-100/biggz-ai/internal/agents"
+	"github.com/biggs-100/biggz-ai/internal/platform"
 	"github.com/biggs-100/biggz-ai/model"
 	"github.com/biggs-100/biggz-ai/plugin"
 )
@@ -49,10 +50,30 @@ func (a *Adapter) Detect(ctx context.Context, homeDir string) (bool, string, str
 }
 
 // InstallCommand returns the commands to install OpenCode.
+// If Go is not available on the platform, it returns a hint error instead of
+// a go install command. The profile may be a platform.Profile, *platform.Profile,
+// or nil (in which case platform.Detect is called).
 func (a *Adapter) InstallCommand(profile interface{}) ([][]string, error) {
+	p := resolveProfile(profile)
+	if !p.GoAvailable {
+		return nil, fmt.Errorf("Install Go 1.24+ from go.dev")
+	}
 	return [][]string{
 		{"go", "install", "github.com/opencode-ai/opencode@latest"},
 	}, nil
+}
+
+func resolveProfile(profile interface{}) platform.Profile {
+	if profile != nil {
+		if pp, ok := profile.(platform.Profile); ok {
+			return pp
+		}
+		if pp, ok := profile.(*platform.Profile); ok && pp != nil {
+			return *pp
+		}
+	}
+	detected, _ := platform.Detect(context.Background())
+	return detected
 }
 
 // Capabilities returns the list of capabilities OpenCode supports.
