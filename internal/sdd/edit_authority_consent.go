@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/pathquote"
 	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
@@ -115,13 +116,9 @@ func sddConsentGrantRequestID(change, instance, expectedRevision string, roots [
 }
 
 // quotePath renders a filesystem path inside user-facing text and suggested
-// invocations: wrapped in double quotes for copy-paste into a shell while
-// preserving the path's bytes exactly (fmt's %q would escape Windows
-// separators, so a copied command would not run and strings.Contains would
-// fail on the real path). The only rewritten byte is an embedded double
-// quote, escaped as \" so the token survives a POSIX shell.
+// invocations. It delegates to pathquote.Quote to preserve bytes exactly.
 func quotePath(path string) string {
-	return `"` + strings.ReplaceAll(path, `"`, `\"`) + `"`
+	return pathquote.Quote(path)
 }
 
 // EditAuthorityConsentResult is the typed blocking consent question a

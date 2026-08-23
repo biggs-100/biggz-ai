@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/biggs-100/biggz-ai/internal/pathidentity"
 )
 
 // Edit-authority detection (#2540 S1): work units carry no structured target
@@ -130,7 +132,7 @@ func gitRootOf(path string) string {
 
 func withinAnyRoot(target string, roots []string) bool {
 	for _, root := range roots {
-		if target == root || strings.HasPrefix(target, root+string(filepath.Separator)) {
+		if pathidentity.Contains(root, target) {
 			return true
 		}
 	}

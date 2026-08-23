@@ -3,13 +3,14 @@ package main
 import (
 	"os/exec"
 	"strings"
+
+	"github.com/biggs-100/biggz-ai/internal/pathquote"
 )
 
 // quotePathCLI wraps a filesystem path in double quotes for copy-paste into
-// a shell, mirroring internal/sdd's quotePath: fmt's %q would escape Windows
-// separators and break the copied command.
+// a shell. It delegates to pathquote.Quote.
 func quotePathCLI(path string) string {
-	return `"` + strings.ReplaceAll(path, `"`, `\"`) + `"`
+	return pathquote.Quote(path)
 }
 
 // lastOperationStatus maps a chain's last event operation to a display status.
