@@ -1,96 +1,12 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 
-	"github.com/biggs-100/biggz-ai/model"
-	"github.com/biggs-100/biggz-ai/orchestrator"
-	"github.com/biggs-100/biggz-ai/pipeline"
-	"github.com/biggs-100/biggz-ai/plugin"
-	"github.com/biggs-100/biggz-ai/policy"
-
 	"github.com/biggs-100/biggz-ai/internal/doctor"
-	"github.com/biggs-100/biggz-ai/internal/lens/dependencies"
-	"github.com/biggs-100/biggz-ai/internal/lens/performance"
-	"github.com/biggs-100/biggz-ai/internal/lens/readability"
-	"github.com/biggs-100/biggz-ai/internal/lens/reliability"
-	"github.com/biggs-100/biggz-ai/internal/lens/resilience"
-	"github.com/biggs-100/biggz-ai/internal/lens/risk"
 	"github.com/biggs-100/biggz-ai/internal/tui"
 )
-
-// ---- Pipeline Stages ----
-
-// lensStage wraps a LensPlugin as a pipeline Stage.
-type lensStage struct {
-	lens plugin.LensPlugin
-}
-
-func (s *lensStage) Name() string { return "lens-" + s.lens.ID() }
-
-func (s *lensStage) Execute(ctx context.Context, state *model.ReviewState) error {
-	result, err := s.lens.Analyze(ctx, state.Subject)
-	if err != nil {
-		return fmt.Errorf("%s: %w", s.Name(), err)
-	}
-	payload, _ := json.Marshal(result)
-	state.Evidence = model.AppendEvidence(state.Evidence, "lens_result", string(payload))
-	return nil
-}
-
-func (s *lensStage) Rollback(ctx context.Context, state *model.ReviewState) error {
-	// Pure computation — no side effects to roll back
-	return nil
-}
-
-// policyStage wraps a policy.Evaluator as a pipeline Stage.
-type policyStage struct {
-	evaluator policy.Evaluator
-}
-
-func (s *policyStage) Name() string { return "policy-" + s.evaluator.Name() }
-
-func (s *policyStage) Execute(ctx context.Context, state *model.ReviewState) error {
-	verdict, err := s.evaluator.Evaluate(ctx, state)
-	if err != nil {
-		return fmt.Errorf("%s: %w", s.Name(), err)
-	}
-	payload, _ := json.Marshal(verdict)
-	state.Evidence = model.AppendEvidence(state.Evidence, "policy_verdict", string(payload))
-	return nil
-}
-
-func (s *policyStage) Rollback(ctx context.Context, state *model.ReviewState) error {
-	// Pure computation — no side effects to roll back
-	return nil
-}
-
-// ---- Inline Policy Evaluator ----
-
-// minimumEvidenceEvaluator checks that at least one evidence entry exists.
-type minimumEvidenceEvaluator struct{}
-
-func (e *minimumEvidenceEvaluator) Name() string { return "minimum-evidence" }
-
-func (e *minimumEvidenceEvaluator) Evaluate(ctx context.Context, state *model.ReviewState) (*model.PolicyVerdict, error) {
-	passed := len(state.Evidence) > 0
-	reason := "At least one evidence entry exists"
-	severity := "info"
-	if !passed {
-		reason = "No evidence entries found"
-		severity = "error"
-	}
-	return &model.PolicyVerdict{
-		Policy:   e.Name(),
-		Passed:   passed,
-		Reason:   reason,
-		Severity: severity,
-	}, nil
-}
 
 // ---- CLI Entry Point ----
 
@@ -170,69 +86,15 @@ func main() {
 		}
 	}
 
-	// No subcommand or piped input → open TUI (unless stdin has data)
+	// Interactive terminal → TUI launcher (bare-invocation parity with gentle-ai).
 	stat, _ := os.Stdin.Stat()
 	if (stat.Mode() & os.ModeCharDevice) != 0 {
-		// Interactive terminal → launch TUI
 		tui.Run()
 		return
 	}
 
-	data, err := io.ReadAll(os.Stdin)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: reading stdin: %v\n", err)
-		os.Exit(1)
-	}
-
-	var subject model.ReviewSubject
-	if err := json.Unmarshal(data, &subject); err != nil {
-		fmt.Fprintf(os.Stderr, "error: parsing JSON: %v\n", err)
-		os.Exit(1)
-	}
-
-	riskLens := &risk.RiskLens{}
-	readabilityLens := &readability.ReadabilityLens{}
-	reliabilityLens := &reliability.ReliabilityLens{}
-	resilienceLens := &resilience.ResilienceLens{}
-	performanceLens := &performance.PerformanceLens{}
-	dependenciesLens := &dependencies.DependenciesLens{}
-
-	// Build execution graph — lenses are independent (run in PARALLEL),
-	// then policy evaluation runs after all lenses complete.
-	minEvEval := &minimumEvidenceEvaluator{}
-	pGraph := pipeline.NewGraph()
-	pGraph.AddNode(&lensStage{lens: riskLens})
-	pGraph.AddNode(&lensStage{lens: readabilityLens})
-	pGraph.AddNode(&lensStage{lens: reliabilityLens})
-	pGraph.AddNode(&lensStage{lens: resilienceLens})
-	pGraph.AddNode(&lensStage{lens: performanceLens})
-	pGraph.AddNode(&lensStage{lens: dependenciesLens})
-	// Policy depends on all lenses
-	pGraph.AddNode(&policyStage{evaluator: minEvEval},
-		"lens-risk", "lens-readability", "lens-reliability",
-		"lens-resilience", "lens-performance", "lens-dependencies")
-
-	// Use DAG orchestrator for parallel lens execution
-	orch := orchestrator.NewWithGraph(pGraph)
-	state, err := orch.Execute(context.Background(), subject)
-	if err != nil {
-		// The orchestrator returns partial state on pipeline failure.
-		// Output partial state + error to stderr.
-		if state != nil {
-			state.MerkleRoot = model.MerkleRoot(state.Evidence)
-			if encErr := json.NewEncoder(os.Stdout).Encode(state); encErr != nil {
-				fmt.Fprintf(os.Stderr, "error: encoding output: %v\n", encErr)
-			}
-		}
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Compute MerkleRoot from the evidence chain before output
-	state.MerkleRoot = model.MerkleRoot(state.Evidence)
-
-	if err := json.NewEncoder(os.Stdout).Encode(state); err != nil {
-		fmt.Fprintf(os.Stderr, "error: encoding output: %v\n", err)
-		os.Exit(1)
-	}
+	// Piped stdin without a subcommand has no consumer: fail loudly instead
+	// of silently draining the pipe.
+	printHelp()
+	os.Exit(1)
 }
