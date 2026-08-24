@@ -179,7 +179,7 @@ Hard gate rules:
 
 ### SDD Entry Routing (MANDATORY)
 
-For a new product/code change request that says to use SDD, start at preflight -> init guard -> explore/proposal. Never launch `sdd-apply` just because the user asked to implement a feature.
+For a new product/code change request that says to use SDD, start at preflight -> init guard -> explore/proposal. Never launch `sdd-apply` just because the user asked to implement a feature. If intent is unclear, run sdd-research before sdd-propose; its denial/partial blocks proposal.
 
 Only launch `sdd-apply` when all are true:
 
