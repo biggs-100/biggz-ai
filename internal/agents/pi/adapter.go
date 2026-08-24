@@ -91,16 +91,22 @@ func (a *Adapter) Detect(_ context.Context, homeDir string) (bool, string, strin
 // scout/researcher/worker/reviewer/oracle/delegate + workflowScript/worktree
 // isolation. Without it pi has only read/bash/edit/write (user reported
 // "No tengo disponible el mecanismo para lanzar sub-agentes").
-// npm install is idempotent, so a single 2-package install suffices;
-// BigMem MCP is provisioned separately via ProvisionBigMemMCP (biggz-mcp).
+// npm install is idempotent; BigMem MCP is provisioned separately via
+// ProvisionBigMemMCP (biggz-mcp).
+// Additionally, biggz deploys SDD skills as pi-native agents at
+// ~/.pi/agent/agents/sdd-*.md (like gentle-pi's npm:gentle-pi subagents at
+// ~/.pi/agent/node_modules/gentle-pi/subagents/* → ~/.pi/agent/agents/).
+// This gives pi `sdd-apply`, `sdd-research`, `sdd-spec`, etc. as native
+// agents visible via `/agents` and the model assignment modal.
 func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
-	return [][]string{{"npm", "install", "-g", "@inflection/pi", "pi-subagents"}}, nil
+	return [][]string{{"npm", "install", "-g", "pi-subagents"}}, nil
 }
 
 func (a *Adapter) Capabilities() []string {
 	// Gentle pi: Skills:false, MCP:true, SystemPrompt:true (APPEND_SYSTEM.md via AppendToFile).
-	// Biggz manifest mirrors that (capabilitymanifest/manifest.go).
-	return []string{plugin.CapMCP, plugin.CapSystemPrompt}
+	// Biggz manifest mirrors that (capabilitymanifest/manifest.go) plus FileSubAgents
+	// for pi-native SDD agents at ~/.pi/agent/agents/sdd-*.md (like gentle-pi).
+	return []string{plugin.CapMCP, plugin.CapSystemPrompt, plugin.CapSubAgents}
 }
 
 func (a *Adapter) SupportsAutoInstall() bool  { return true }
@@ -109,7 +115,7 @@ func (a *Adapter) SupportsSystemPrompt() bool { return true }
 func (a *Adapter) SupportsMCP() bool          { return true }
 func (a *Adapter) SupportsOutputStyles() bool { return false }
 func (a *Adapter) SupportsSlashCommands() bool { return false }
-func (a *Adapter) SupportsSubAgents() bool     { return false }
+func (a *Adapter) SupportsSubAgents() bool     { return true }
 
 func (a *Adapter) SystemPromptStrategy() model.SystemPromptStrategy {
 	return agents.StrategyAppendToFile
@@ -123,7 +129,7 @@ func (a *Adapter) SystemPromptFile(homeDir string) string {
 }
 func (a *Adapter) SkillsDir(_ string) string   { return "" }
 func (a *Adapter) CommandsDir(_ string) string { return "" }
-func (a *Adapter) SubAgentsDir(_ string) string { return "" }
+func (a *Adapter) SubAgentsDir(homeDir string) string { return filepath.Join(AgentConfigPath(homeDir), "agents") }
 func (a *Adapter) EmbeddedSubAgentsDir() string { return "" }
 func (a *Adapter) OutputStyleDir(_ string) string { return "" }
 func (a *Adapter) SettingsPath(homeDir string) string {

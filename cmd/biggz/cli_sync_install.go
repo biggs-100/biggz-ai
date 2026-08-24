@@ -270,6 +270,9 @@ func installRun() int {
 		fmt.Printf("  Config merge: %v\n", result.ConfigMerged)
 		fmt.Printf("  Commands: %d\n", result.CommandsWritten)
 		fmt.Printf("  Plugins: %d\n", result.PluginsDeployed)
+		if usedAdapter != nil && usedAdapter.ID() == "pi" {
+			fmt.Printf("  Pi agents: %d would be deployed\n", result.PiAgentsDeployed)
+		}
 		if usedAdapter != nil {
 			if cmds, err := usedAdapter.InstallCommand(nil); err == nil && len(cmds) > 0 {
 				for _, cmd := range cmds {
@@ -286,6 +289,9 @@ func installRun() int {
 		fmt.Printf("  Config merged: %v\n", result.ConfigMerged)
 		fmt.Printf("  Commands written: %d\n", result.CommandsWritten)
 		fmt.Printf("  Plugins deployed: %d\n", result.PluginsDeployed)
+		if usedAdapter != nil && usedAdapter.ID() == "pi" {
+			fmt.Printf("  Pi agents deployed: %d\n", result.PiAgentsDeployed)
+		}
 	}
 	return 0
 }

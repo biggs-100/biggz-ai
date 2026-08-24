@@ -37,15 +37,16 @@ type Config struct {
 
 // Result describes what happened during an install run.
 type Result struct {
-	AgentDetected   bool   // whether the agent binary was found on PATH
-	BinaryPath      string // full path to the agent binary (empty if not detected)
-	SkillsDeployed  int    // number of skill files written (or would be written in dry-run)
-	ConfigMerged    bool   // whether the config file was merged and written
-	CommandsWritten int    // number of command files written (or would be written in dry-run)
-	PluginsDeployed int    // number of plugin files written (or would be written in dry-run)
-	PromptsDeployed int    // number of prompt files written (or would be written in dry-run)
-	MCPDeployed     bool   // whether the MCP server binary and config were deployed
-	DryRun          bool   // whether this was a dry-run (no files written)
+	AgentDetected    bool   // whether the agent binary was found on PATH
+	BinaryPath       string // full path to the agent binary (empty if not detected)
+	SkillsDeployed   int    // number of skill files written (or would be written in dry-run)
+	ConfigMerged     bool   // whether the config file was merged and written
+	CommandsWritten  int    // number of command files written (or would be written in dry-run)
+	PluginsDeployed  int    // number of plugin files written (or would be written in dry-run)
+	PromptsDeployed  int    // number of prompt files written (or would be written in dry-run)
+	MCPDeployed      bool   // whether the MCP server binary and config were deployed
+	PiAgentsDeployed int    // number of pi-native SDD agent files written (or would be written in dry-run)
+	DryRun           bool   // whether this was a dry-run (no files written)
 }
 
 // AssetRelPaths returns the relative paths (embedded asset layout) of every
@@ -266,6 +267,19 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 					return result, fmt.Errorf("provision bigmem mcp: %w", err)
 				}
 			}
+		}
+	}
+
+	// Deploy pi-native SDD agents (like gentle-pi's npm:gentle-pi subagents).
+	// Pi lists sdd-apply, sdd-research, sdd-spec, etc. as native agents via
+	// ~/.pi/agent/agents/*.md and /agents. This is biggz's equivalent of
+	// gentle-pi's `~/.pi/agent/node_modules/gentle-pi/subagents/*` overlay
+	// to `~/.pi/agent/agents/` or `~/.pi/agent/subagents/`.
+	if adapter.ID() == agents.AgentPi {
+		if n, err := DeployPiSubAgents(homeDir, assets.FS, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy pi agents: %w", err)
+		} else {
+			result.PiAgentsDeployed = n
 		}
 	}
 
@@ -1122,6 +1136,167 @@ func deployMCPConfigFile(adapter plugin.AgentAdapter, homeDir, mcpBinaryPath str
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
 	return nil
+}
+
+// piAgentsDir returns the pi-native agents directory (~/.pi/agent/agents),
+// respecting PI_CODING_AGENT_DIR like pi.Adapter AgentConfigPath does.
+func piAgentsDir(homeDir string) string {
+	if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
+		return filepath.Join(v, "agents")
+	}
+	return filepath.Join(homeDir, ".pi", "agent", "agents")
+}
+
+// DeployPiSubAgents deploys biggz SDD skills as pi-native subagents at
+// ~/.pi/agent/agents/sdd-*.md, mirroring gentle-pi's model where SDD
+// phases are native pi agents visible via `/agents`.
+//
+// It walks assets.FS for skills/sdd-*/SKILL.md, converts each SKILL.md
+// frontmatter (name, description) and body (without frontmatter) into pi
+// agent markdown with YAML frontmatter `name`, `description`, `tools`, and
+// writes via filemerge.WriteFileAtomic. Only sdd-* skills are deployed
+// (not all 47 skills), like gentle-pi's sdd chain.
+//
+// Dry-run is variadic to support both DeployPiSubAgents(home, fs) and
+// DeployPiSubAgents(home, fs, true) call shapes; when dryRun is true it
+// counts without writing. This keeps the 2-arg example in the task and
+// the DryRun requirement both satisfied.
+func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
+	isDry := len(dryRun) > 0 && dryRun[0]
+	agentsDir := piAgentsDir(homeDir)
+	count := 0
+	err := fs.WalkDir(ffs, "skills", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel := strings.TrimPrefix(path, "skills/")
+		dir := filepath.Dir(rel)
+		if !strings.HasPrefix(dir, "sdd-") {
+			return nil
+		}
+		if filepath.Base(path) != "SKILL.md" {
+			return nil
+		}
+		data, err := fs.ReadFile(ffs, path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		name, desc, body, err := parsePiSkillFrontmatter(string(data))
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+		if name == "" {
+			name = dir
+		}
+		if desc == "" {
+			desc = name + " SDD phase"
+		}
+		if strings.TrimSpace(body) == "" {
+			body = "See ~/.biggz/skills/" + dir + "/SKILL.md for full instructions."
+		}
+		tools := []string{"read", "edit", "bash", "write"}
+		if name == "sdd-explore" || name == "sdd-research" {
+			tools = []string{"read", "grep", "find", "ls"}
+		}
+		count++
+		if isDry {
+			return nil
+		}
+		if err := os.MkdirAll(agentsDir, 0755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", agentsDir, err)
+		}
+		escapedDesc := strings.ReplaceAll(desc, `"`, `\"`)
+		// Trim newlines from description for single-line YAML
+		escapedDesc = strings.ReplaceAll(escapedDesc, "\n", " ")
+		var sb strings.Builder
+		sb.WriteString("---\n")
+		sb.WriteString(fmt.Sprintf("name: %s\n", name))
+		sb.WriteString(fmt.Sprintf("description: \"%s\"\n", escapedDesc))
+		sb.WriteString("tools:\n")
+		for _, t := range tools {
+			sb.WriteString(fmt.Sprintf("  - %s\n", t))
+		}
+		sb.WriteString("---\n\n")
+		sb.WriteString(strings.TrimSpace(body))
+		sb.WriteString("\n")
+		targetPath := filepath.Join(agentsDir, name+".md")
+		if _, err := filemerge.WriteFileAtomic(targetPath, []byte(sb.String()), 0644); err != nil {
+			return fmt.Errorf("write %s: %w", targetPath, err)
+		}
+		return nil
+	})
+	return count, err
+}
+
+// parsePiSkillFrontmatter extracts name, description, and body from a
+// biggz SKILL.md file. It handles the dual-model capable/small wrapper:
+// if <!-- section:model-capable --> exists, it extracts only that section's
+// frontmatter/body; otherwise it parses the whole file as a single
+// frontmatter+body document.
+func parsePiSkillFrontmatter(data string) (string, string, string, error) {
+	section := data
+	if start := strings.Index(data, "<!-- section:model-capable -->"); start != -1 {
+		if end := strings.Index(data, "<!-- /section:model-capable -->"); end != -1 && end > start {
+			section = data[start+len("<!-- section:model-capable -->") : end]
+		}
+	}
+	lines := strings.Split(section, "\n")
+	startIdx := -1
+	endIdx := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == "---" {
+			if startIdx == -1 {
+				startIdx = i
+			} else {
+				endIdx = i
+				break
+			}
+		}
+	}
+	if startIdx == -1 || endIdx == -1 || endIdx <= startIdx {
+		return "", "", strings.TrimSpace(section), nil
+	}
+	frontLines := lines[startIdx+1 : endIdx]
+	bodyLines := lines[endIdx+1:]
+	body := strings.TrimSpace(strings.Join(bodyLines, "\n"))
+	// Remove trailing small-model section that may have leaked if we didn't
+	// use the capable extraction (fallback).
+	if idx := strings.Index(body, "<!-- section:model-small -->"); idx != -1 {
+		body = strings.TrimSpace(body[:idx])
+	}
+	var name, desc string
+	for i, line := range frontLines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "name:") {
+			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "name:"))
+			val = strings.Trim(val, "\"'")
+			name = val
+		} else if strings.HasPrefix(trimmed, "description:") {
+			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "description:"))
+			val = strings.Trim(val, "\"'")
+			if val == ">" || val == "|" {
+				var parts []string
+				for j := i + 1; j < len(frontLines); j++ {
+					next := frontLines[j]
+					if strings.HasPrefix(next, "  ") || strings.HasPrefix(next, "\t") {
+						parts = append(parts, strings.TrimSpace(next))
+					} else {
+						break
+					}
+				}
+				if len(parts) > 0 {
+					desc = strings.Join(parts, " ")
+					desc = strings.Trim(desc, "\"'")
+				}
+			} else {
+				desc = val
+			}
+		}
+	}
+	return name, desc, body, nil
 }
 
 // deploySelfToPath copies the running biggz binary to ~/.biggz/biggz.exe
