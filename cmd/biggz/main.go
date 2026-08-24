@@ -8,6 +8,44 @@ import (
 	"github.com/biggs-100/biggz-ai/internal/tui"
 )
 
+const nonInteractiveTUIError = "biggz tui requires both stdin and stdout to be terminals"
+
+// isattyFn reports whether fd is a terminal. It is a package-level var for
+// test injection, matching the gentle-ai port (55216cfc) and the existing
+// isTerminalFunc in cli_sdd.go. The default implementation uses Stat +
+// ModeCharDevice, which is sufficient for the dual-stream guard without
+// pulling golang.org/x/term.
+var isattyFn = func(fd uintptr) bool {
+	var file *os.File
+	switch fd {
+	case os.Stdin.Fd():
+		file = os.Stdin
+	case os.Stdout.Fd():
+		file = os.Stdout
+	case os.Stderr.Fd():
+		file = os.Stderr
+	default:
+		file = os.NewFile(fd, "")
+		if file == nil {
+			return false
+		}
+	}
+	stat, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return (stat.Mode() & os.ModeCharDevice) != 0
+}
+
+// checkTUIInteractive reports whether the current process can launch the TUI.
+// It is extracted for testability; main() prints the error and exits.
+func checkTUIInteractive() error {
+	if !isattyFn(os.Stdin.Fd()) || !isattyFn(os.Stdout.Fd()) {
+		return fmt.Errorf("%s", nonInteractiveTUIError)
+	}
+	return nil
+}
+
 // ---- CLI Entry Point ----
 
 func main() {
@@ -91,14 +129,13 @@ func main() {
 	}
 
 	// Interactive terminal → TUI launcher (bare-invocation parity with gentle-ai).
-	stat, _ := os.Stdin.Stat()
-	if (stat.Mode() & os.ModeCharDevice) != 0 {
-		tui.Run()
-		return
+	// Port 55216cfc: require BOTH stdin and stdout to be terminals, with an
+	// injectable isattyFn for the dual-stream matrix.
+	if err := checkTUIInteractive(); err != nil {
+		fmt.Fprintln(os.Stderr, nonInteractiveTUIError)
+		printHelp()
+		os.Exit(1)
 	}
-
-	// Piped stdin without a subcommand has no consumer: fail loudly instead
-	// of silently draining the pipe.
-	printHelp()
-	os.Exit(1)
+	tui.Run()
+	return
 }
