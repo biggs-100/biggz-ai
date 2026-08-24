@@ -52,6 +52,15 @@ func spinnerChar(frame int) string {
 	return abSpinnerFrames[frame%len(abSpinnerFrames)]
 }
 
+const noAnimationEnv = "BIGGZ_NO_ANIMATION"
+
+// tuiAnimationsDisabled reports whether spinner animation is disabled via
+// BIGGZ_NO_ANIMATION=1 (with GENTLE_AI_NO_ANIMATION=1 kept for compat),
+// porting gentle-ai b3dfc1ef reduced-motion fallback.
+func tuiAnimationsDisabled() bool {
+	return os.Getenv(noAnimationEnv) == "1" || os.Getenv("GENTLE_AI_NO_ANIMATION") == "1"
+}
+
 // renderOptions renders a vertical option list with a cursor marker.
 func renderOptions(options []string, cursor int) string {
 	var b strings.Builder
@@ -118,6 +127,9 @@ func (m AgentBuilderScreen) Init() tea.Cmd { return nil }
 func (m AgentBuilderScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case abTickMsg:
+		if tuiAnimationsDisabled() {
+			return m, nil
+		}
 		if m.generating || m.installing {
 			m.spinner = (m.spinner + 1) % len(abSpinnerFrames)
 			return m, tickCmd()
@@ -352,6 +364,9 @@ func backToDashboard() tea.Cmd {
 }
 
 func tickCmd() tea.Cmd {
+	if tuiAnimationsDisabled() {
+		return nil
+	}
 	return func() tea.Msg { return abTickMsg{} }
 }
 

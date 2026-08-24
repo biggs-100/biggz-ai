@@ -1,4 +1,12 @@
 // Package tui provides a terminal UI for biggz-ai configuration and management.
+//
+// Disable TUI spinner animation with:
+//
+//	BIGGZ_NO_ANIMATION=1 biggz
+//
+// GENTLE_AI_NO_ANIMATION=1 is also honoured for compatibility (port b3dfc1ef).
+// When either is set to "1", spinner ticks are suppressed and frames stay
+// static; operations (install, sync, etc.) continue normally.
 package tui
 
 import (
@@ -9,6 +17,15 @@ import (
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+const noAnimationEnv = "BIGGZ_NO_ANIMATION"
+
+// tuiAnimationsDisabled reports whether spinner animation is disabled.
+// BIGGZ_NO_ANIMATION=1 disables animation; GENTLE_AI_NO_ANIMATION=1 is kept
+// for compatibility with gentle-ai (port b3dfc1ef).
+func tuiAnimationsDisabled() bool {
+	return os.Getenv(noAnimationEnv) == "1" || os.Getenv("GENTLE_AI_NO_ANIMATION") == "1"
+}
 
 // Screen IDs
 const (
