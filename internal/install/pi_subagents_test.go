@@ -56,24 +56,30 @@ func TestDeployPiSubAgents(t *testing.T) {
 	if !strings.Contains(content, "Apply body here.") {
 		t.Errorf("sdd-apply.md missing body: %q", content)
 	}
-	// sdd-apply should have edit/bash tools (not read-only) and no task/mcp (pi has no such tools; BigMem via mcpServers.bigmem)
+	// sdd-apply should have edit/bash tools (not read-only) and no task/mcp (pi has no such tools; BigMem via allowlisted biggz_mem_* tools)
 	if !strings.Contains(content, "- edit") || !strings.Contains(content, "- bash") {
 		t.Errorf("sdd-apply.md should have edit/bash tools, got %q", content[:500])
 	}
 	if !strings.Contains(content, "- read") || !strings.Contains(content, "- write") {
 		t.Errorf("sdd-apply.md should have read/write tools, got %q", content[:500])
 	}
-	if strings.Contains(content, "- task") || strings.Contains(content, "- mcp") {
-		t.Errorf("sdd-apply.md must NOT contain unavailable tools task/mcp (BigMem via mcpServers), got %q", content[:800])
+	if !strings.Contains(content, "- biggz_mem_save") || !strings.Contains(content, "- biggz_mem_search") {
+		t.Errorf("sdd-apply.md should have BigMem tools (biggz_mem_save/search), got %q", content[:800])
 	}
-	// Ensure exact allowlist: read,edit,bash,write only
-	for _, want := range []string{"  - read\n", "  - edit\n", "  - bash\n", "  - write\n"} {
+	if !strings.Contains(content, "- biggz_mem_get_observation") || !strings.Contains(content, "- biggz_mem_context") {
+		t.Errorf("sdd-apply.md should have BigMem tools (get_observation/context), got %q", content[:800])
+	}
+	if strings.Contains(content, "- task") || strings.Contains(content, "- mcp") {
+		t.Errorf("sdd-apply.md must NOT contain unavailable tools task/mcp, got %q", content[:800])
+	}
+	// Ensure allowlist includes base tools plus BigMem tools
+	for _, want := range []string{"  - read\n", "  - edit\n", "  - bash\n", "  - write\n", "  - biggz_mem_save\n", "  - biggz_mem_search\n", "  - biggz_mem_get_observation\n", "  - biggz_mem_context\n", "  - mem_save\n"} {
 		if !strings.Contains(content, want) {
 			t.Errorf("sdd-apply.md missing expected tool %q in frontmatter, got %q", strings.TrimSpace(want), content[:800])
 		}
 	}
 
-	// sdd-research should be read-only (grep/find/ls) and no task/mcp
+	// sdd-research should be read-only (grep/find/ls) plus BigMem and no task/mcp
 	researchPath := filepath.Join(home, ".pi", "agent", "agents", "sdd-research.md")
 	rdata, err := os.ReadFile(researchPath)
 	if err != nil {
@@ -88,6 +94,9 @@ func TestDeployPiSubAgents(t *testing.T) {
 	}
 	if !strings.Contains(rcontent, "- read") || !strings.Contains(rcontent, "- ls") {
 		t.Errorf("sdd-research.md should have read/ls tools, got %q", rcontent[:800])
+	}
+	if !strings.Contains(rcontent, "- biggz_mem_save") || !strings.Contains(rcontent, "- biggz_mem_search") {
+		t.Errorf("sdd-research.md should have BigMem tools (biggz_mem_save/search), got %q", rcontent[:800])
 	}
 	if strings.Contains(rcontent, "- task") || strings.Contains(rcontent, "- mcp") {
 		t.Errorf("sdd-research.md must NOT contain unavailable tools task/mcp, got %q", rcontent[:800])
@@ -108,6 +117,9 @@ func TestDeployPiSubAgents(t *testing.T) {
 	}
 	if !strings.Contains(econtent, "- read") || !strings.Contains(econtent, "- grep") {
 		t.Errorf("sdd-explore.md should have read/grep tools, got %q", econtent[:800])
+	}
+	if !strings.Contains(econtent, "- biggz_mem_save") || !strings.Contains(econtent, "- biggz_mem_search") {
+		t.Errorf("sdd-explore.md should have BigMem tools (biggz_mem_save/search), got %q", econtent[:800])
 	}
 	if strings.Contains(econtent, "- task") || strings.Contains(econtent, "- mcp") {
 		t.Errorf("sdd-explore.md must NOT contain unavailable tools task/mcp, got %q", econtent[:800])

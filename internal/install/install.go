@@ -1333,9 +1333,16 @@ func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 		if strings.TrimSpace(body) == "" {
 			body = "See ~/.biggz/skills/" + dir + "/SKILL.md for full instructions."
 		}
-		tools := []string{"read", "edit", "bash", "write"}
+		bigmemTools := []string{
+			"biggz_mem_save", "biggz_mem_search", "biggz_mem_get_observation", "biggz_mem_update",
+			"biggz_mem_context", "biggz_mem_session_summary", "biggz_mem_save_prompt",
+			"biggz_mem_capture_passive", "biggz_mem_suggest_topic_key",
+			// also allow unprefixed fallback if server runs without prefix (some pi installs)
+			"mem_save", "mem_search", "mem_get_observation", "mem_update",
+		}
+		tools := append([]string{"read", "edit", "bash", "write"}, bigmemTools...)
 		if name == "sdd-explore" || name == "sdd-research" {
-			tools = []string{"read", "grep", "find", "ls"}
+			tools = append([]string{"read", "grep", "find", "ls"}, bigmemTools...)
 		}
 		count++
 		if isDry {
