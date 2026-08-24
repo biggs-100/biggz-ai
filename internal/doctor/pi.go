@@ -14,6 +14,8 @@ import (
 const (
 	// PiSubagentsCheckID is the check identifier for Pi subagent dispatcher.
 	PiSubagentsCheckID CheckID = "pi-subagents"
+	// PiLastModelCheckID reports whether last-model sync is active.
+	PiLastModelCheckID CheckID = "pi-last-model"
 )
 
 // PiSubagentsCheck verifies that pi-subagents (nicobailon/pi-subagents) is
@@ -170,6 +172,127 @@ func (c *PiSubagentsCheck) Remedy() *Remedy {
 			out, err := cmd.CombinedOutput()
 			if err != nil {
 				return fmt.Errorf("pi install npm:pi-subagents: %w (output: %s)", err, strings.TrimSpace(string(out)))
+			}
+			return nil
+		},
+	}
+}
+
+// PiLastModelCheck verifies that the last-model sync extension is active.
+type PiLastModelCheck struct {
+	lookPath  func(string) (string, error)
+	statFn    func(string) (os.FileInfo, error)
+	homeDirFn func() (string, error)
+}
+
+// NewPiLastModelCheck creates a PiLastModelCheck using the default environment.
+func NewPiLastModelCheck() *PiLastModelCheck {
+	return &PiLastModelCheck{
+		lookPath:  exec.LookPath,
+		statFn:    os.Stat,
+		homeDirFn: os.UserHomeDir,
+	}
+}
+
+// NewPiLastModelCheckWithCustom creates a PiLastModelCheck with injected functions for testing.
+func NewPiLastModelCheckWithCustom(
+	lookPath func(string) (string, error),
+	statFn func(string) (os.FileInfo, error),
+	homeDirFn func() (string, error),
+) *PiLastModelCheck {
+	if lookPath == nil {
+		lookPath = exec.LookPath
+	}
+	if statFn == nil {
+		statFn = os.Stat
+	}
+	if homeDirFn == nil {
+		homeDirFn = os.UserHomeDir
+	}
+	return &PiLastModelCheck{
+		lookPath:  lookPath,
+		statFn:    statFn,
+		homeDirFn: homeDirFn,
+	}
+}
+
+// ID returns the check identifier.
+func (c *PiLastModelCheck) ID() CheckID { return PiLastModelCheckID }
+
+// Run checks whether the biggz-last-model extension is installed.
+func (c *PiLastModelCheck) Run(ctx context.Context) *Result {
+	// If pi itself is not installed, skip — not relevant.
+	if _, err := c.lookPath("pi"); err != nil {
+		return &Result{
+			ID:       PiLastModelCheckID,
+			Status:   StatusPass,
+			Message:  "pi not installed — skipping pi-last-model check",
+			Severity: SeverityInfo,
+		}
+	}
+	home, err := c.homeDirFn()
+	if err != nil || home == "" {
+		return &Result{
+			ID:       PiLastModelCheckID,
+			Status:   StatusWarn,
+			Message:  "cannot determine home directory for pi-last-model check",
+			Severity: SeverityWarning,
+		}
+	}
+	candidates := []string{
+		filepath.Join(home, ".pi", "agent", "extensions", "biggz-last-model.js"),
+	}
+	if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
+		candidates = append(candidates, filepath.Join(v, "extensions", "biggz-last-model.js"))
+	}
+	for _, cand := range candidates {
+		if info, err := c.statFn(cand); err == nil && !info.IsDir() {
+			return &Result{
+				ID:       PiLastModelCheckID,
+				Status:   StatusPass,
+				Message:  fmt.Sprintf("pi last-model sync active (%s)", cand),
+				Severity: SeverityInfo,
+			}
+		}
+	}
+	return &Result{
+		ID:       PiLastModelCheckID,
+		Status:   StatusWarn,
+		Message:  "pi last-model extension not found — new sessions will start with defaultModel (run: biggz install --agent pi)",
+		Severity: SeverityWarning,
+		Error:    "biggz-last-model.js not found in ~/.pi/agent/extensions",
+	}
+}
+
+// Remedy returns a repair action that reinstalls the last-model extension.
+func (c *PiLastModelCheck) Remedy() *Remedy {
+	return &Remedy{
+		ID:          string(PiLastModelCheckID),
+		Description: "Install pi last-model extension (biggz install --agent pi)",
+		Action: func(ctx context.Context) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			// Use biggz binary via PATH or current executable directory.
+			biggzBin := "biggz"
+			if exe, err := os.Executable(); err == nil {
+				cand := filepath.Join(filepath.Dir(exe), "biggz.exe")
+				if _, err := os.Stat(cand); err == nil {
+					biggzBin = cand
+				} else {
+					cand2 := filepath.Join(filepath.Dir(exe), "biggz")
+					if _, err := os.Stat(cand2); err == nil {
+						biggzBin = cand2
+					}
+				}
+			}
+			cmd := exec.CommandContext(ctx, biggzBin, "install", "--agent", "pi")
+			platform.EnsureCommandDir(cmd)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				return fmt.Errorf("biggz install --agent pi: %w (output: %s)", err, strings.TrimSpace(string(out)))
 			}
 			return nil
 		},

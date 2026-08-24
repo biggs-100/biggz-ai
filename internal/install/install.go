@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/agents"
 	piadapter "github.com/biggs-100/biggz-ai/internal/agents/pi"
@@ -188,6 +189,15 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	}
 	result.ConfigMerged = merged
 
+	// For pi, sync defaultModel/defaultProvider from last session so new
+	// sessions start with the last used model, not the hardcoded kimi-k2.6.
+	// This complements the biggz-last-model.js extension which does the same
+	// at TUI startup; the Go sync ensures the very first install after a
+	// model switch is already correct and also populates last-model.json.
+	if adapter.ID() == agents.AgentPi && !cfg.DryRun {
+		_ = syncPiLastModel(homeDir)
+	}
+
 	// Pi has SupportsSlashCommands=false — skip commands (0 files).
 	if adapter.ID() == agents.AgentPi && !adapter.SupportsSlashCommands() {
 		result.CommandsWritten = 0
@@ -284,6 +294,9 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		}
 		if _, err := DeployPiThinkingWrap(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi thinking wrap: %w", err)
+		}
+		if _, err := DeployPiLastModel(homeDir, assets.FS, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy pi last model: %w", err)
 		}
 		// pi-pretty is auto-loaded via its package `pi.extensions` (npm:pi-pretty/dist/index.js).
 		// Do NOT deploy a custom wrapper — it would duplicate tool registrations (read/bash/find/grep)
@@ -1215,6 +1228,260 @@ func DeployPiThinkingWrap(homeDir string, ffs fs.FS, dryRun ...bool) (bool, erro
 		return false, fmt.Errorf("write %s: %w", targetPath, err)
 	}
 	return true, nil
+}
+
+// DeployPiLastModel deploys the biggz last-model extension to
+// ~/.pi/agent/extensions/biggz-last-model.js. It syncs new sessions to the
+// last used model (provider/modelId) so `pi` does not always start with the
+// hardcoded kimi-k2.6 from settings.json. Reads from embedded FS at
+// pi/biggz-last-model.js and writes atomically. Dry-run counts without writing.
+func DeployPiLastModel(homeDir string, ffs fs.FS, dryRun ...bool) (bool, error) {
+	isDry := len(dryRun) > 0 && dryRun[0]
+	extensionsDir := piExtensionsDir(homeDir)
+	targetPath := filepath.Join(extensionsDir, "biggz-last-model.js")
+
+	var data []byte
+	var err error
+	if ffs != nil {
+		data, err = fs.ReadFile(ffs, "pi/biggz-last-model.js")
+	}
+	if err != nil || len(data) == 0 {
+		data, err = fs.ReadFile(assets.FS, "pi/biggz-last-model.js")
+		if err != nil {
+			return false, fmt.Errorf("read pi last model asset: %w", err)
+		}
+	}
+	if isDry {
+		return true, nil
+	}
+	if err := os.MkdirAll(extensionsDir, 0755); err != nil {
+		return false, fmt.Errorf("mkdir %s: %w", extensionsDir, err)
+	}
+	if _, err := filemerge.WriteFileAtomic(targetPath, data, 0644); err != nil {
+		return false, fmt.Errorf("write %s: %w", targetPath, err)
+	}
+	return true, nil
+}
+
+// piLastModelCachePath returns the pi last-model cache file path.
+func piLastModelCachePath(homeDir string) string {
+	return filepath.Join(piadapter.AgentConfigPath(homeDir), "last-model.json")
+}
+
+// piSessionsDir returns the pi sessions directory.
+func piSessionsDir(homeDir string) string {
+	return filepath.Join(piadapter.AgentConfigPath(homeDir), "sessions")
+}
+
+// findPiLastModel finds the most recent model/provider used in pi sessions.
+// It checks last-model.json cache first, then scans sessions/*.jsonl by mtime
+// and parses the last model_change or assistant message.
+func findPiLastModel(homeDir string) (string, string, bool) {
+	// Check cache first — fast path maintained by the extension and installer.
+	cachePath := piLastModelCachePath(homeDir)
+	if data, err := os.ReadFile(cachePath); err == nil && len(data) > 0 {
+		var cached struct {
+			Model    string `json:"model"`
+			Provider string `json:"provider"`
+		}
+		if err := json.Unmarshal(data, &cached); err == nil {
+			if cModel := strings.TrimSpace(cached.Model); cModel != "" {
+				return cModel, strings.TrimSpace(cached.Provider), true
+			}
+		}
+	}
+
+	sessionsDir := piSessionsDir(homeDir)
+	if _, err := os.Stat(sessionsDir); err != nil {
+		return "", "", false
+	}
+
+	var latestPath string
+	var latestMod time.Time
+	foundAny := false
+	_ = filepath.WalkDir(sessionsDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Name()), ".jsonl") {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		mod := info.ModTime()
+		if !foundAny || mod.After(latestMod) {
+			latestPath = path
+			latestMod = mod
+			foundAny = true
+		}
+		return nil
+	})
+	if !foundAny || latestPath == "" {
+		return "", "", false
+	}
+
+	data, err := os.ReadFile(latestPath)
+	if err != nil || len(data) == 0 {
+		return "", "", false
+	}
+	lines := strings.Split(string(data), "\n")
+	// Scan reverse for last model_change or assistant message.
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			continue
+		}
+		t, _ := obj["type"].(string)
+		if t == "model_change" {
+			provider, _ := obj["provider"].(string)
+			modelID, _ := obj["modelId"].(string)
+			if mid := strings.TrimSpace(modelID); mid != "" {
+				return mid, strings.TrimSpace(provider), true
+			}
+		}
+		if t == "message" {
+			if msg, ok := obj["message"].(map[string]any); ok {
+				role, _ := msg["role"].(string)
+				if role == "assistant" {
+					if m, ok := msg["model"].(string); ok {
+						if mid := strings.TrimSpace(m); mid != "" {
+							provider, _ := msg["provider"].(string)
+							if provider == "" {
+								provider, _ = msg["modelProvider"].(string)
+							}
+							return mid, strings.TrimSpace(provider), true
+						}
+					}
+					if mid, ok := msg["modelId"].(string); ok {
+						if trimmed := strings.TrimSpace(mid); trimmed != "" {
+							if prov, ok := msg["provider"].(string); ok && strings.TrimSpace(prov) != "" {
+								return trimmed, strings.TrimSpace(prov), true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	return "", "", false
+}
+
+// syncPiLastModel updates settings.json defaultModel/defaultProvider from the
+// last session's model, and refreshes last-model.json cache. Best-effort;
+// errors are swallowed to not fail install.
+func syncPiLastModel(homeDir string) error {
+	modelID, provider, ok := findPiLastModel(homeDir)
+	if !ok || strings.TrimSpace(modelID) == "" {
+		return nil
+	}
+	modelID = strings.TrimSpace(modelID)
+	provider = strings.TrimSpace(provider)
+
+	settingsPath := piadapter.NewAdapter().SettingsPath(homeDir)
+	if settingsPath == "" {
+		return nil
+	}
+	// Read existing settings (may not exist yet).
+	var existingData []byte
+	if data, err := os.ReadFile(settingsPath); err == nil {
+		existingData = data
+	} else if !os.IsNotExist(err) {
+		return nil
+	}
+	if len(existingData) == 0 {
+		existingData = []byte("{}")
+	}
+	// Fast check via JSON decode to avoid unnecessary write.
+	var existing map[string]any
+	if err := json.Unmarshal(existingData, &existing); err != nil {
+		// Try JSONC-tolerant decode via filemerge.
+		if m, err2 := filemerge.UnmarshalJSONObject(existingData); err2 == nil {
+			existing = m
+		} else {
+			existing = map[string]any{}
+		}
+	}
+	if existing == nil {
+		existing = map[string]any{}
+	}
+	currModel, _ := existing["defaultModel"].(string)
+	currProvider, _ := existing["defaultProvider"].(string)
+	if currModel == modelID && (provider == "" || currProvider == provider) {
+		// Already synced — still ensure cache is fresh.
+		cachePath := piLastModelCachePath(homeDir)
+		if _, err := os.Stat(cachePath); os.IsNotExist(err) {
+			cacheObj := map[string]any{
+				"model":     modelID,
+				"provider":  provider,
+				"updatedAt": time.Now().UTC().Format(time.RFC3339),
+			}
+			if encoded, err := json.MarshalIndent(cacheObj, "", "  "); err == nil {
+				encoded = append(encoded, '\n')
+				_ = os.MkdirAll(filepath.Dir(cachePath), 0755)
+				_, _ = filemerge.WriteFileAtomic(cachePath, encoded, 0644)
+			}
+		}
+		return nil
+	}
+	// Validate model id — must be non-empty and not contain whitespace-only.
+	if modelID == "" {
+		return nil
+	}
+	overlay := map[string]any{
+		"defaultModel": modelID,
+	}
+	if provider != "" {
+		overlay["defaultProvider"] = provider
+	}
+	overlayBytes, err := json.Marshal(overlay)
+	if err != nil {
+		return nil
+	}
+	merged, err := filemerge.MergeJSONC(existingData, overlayBytes)
+	if err != nil {
+		// Fallback: direct map merge.
+		for k, v := range overlay {
+			existing[k] = v
+		}
+		if encoded, err := json.MarshalIndent(existing, "", "  "); err == nil {
+			merged = append(encoded, '\n')
+		} else {
+			return nil
+		}
+	}
+	// Ensure merged is indented with newline (MergeJSONC returns no newline,
+	// but WriteFileAtomic handles raw bytes; add newline for consistency).
+	if len(merged) > 0 && merged[len(merged)-1] != '\n' {
+		merged = append(merged, '\n')
+	}
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		return nil
+	}
+	if _, err := filemerge.WriteFileAtomic(settingsPath, merged, 0644); err != nil {
+		return nil
+	}
+	// Update cache for future startups.
+	cachePath := piLastModelCachePath(homeDir)
+	cacheObj := map[string]any{
+		"model":     modelID,
+		"provider":  provider,
+		"updatedAt": time.Now().UTC().Format(time.RFC3339),
+	}
+	if encoded, err := json.MarshalIndent(cacheObj, "", "  "); err == nil {
+		encoded = append(encoded, '\n')
+		_ = os.MkdirAll(filepath.Dir(cachePath), 0755)
+		_, _ = filemerge.WriteFileAtomic(cachePath, encoded, 0644)
+	}
+	return nil
 }
 
 // DeployPiPrettyWrapper deploys the FleetView pretty extension to
