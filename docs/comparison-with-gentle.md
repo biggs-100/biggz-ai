@@ -51,8 +51,8 @@ Measured 2026-08-10. gentle-ai counts are from a filtered clone of `cmd/` and
 
 | Feature | gentle-ai | biggz-ai |
 |---|---|---|
-| **Native commands** | sdd-status, sdd-verify-validate, sdd-attempt, sdd-continue | ✅ Same + `sdd-apply` guard (5 verbs) |
-| **Skills** | 29 unique (38 SKILL.md files) | 26: 8 verbatim, 10 thin-equivalent, 1 adapted, judgment-day 1.7, rdd-defect-workflow ported |
+| **Native commands** | sdd-status, sdd-verify-validate, sdd-attempt, sdd-continue | ✅ Same + `sdd-apply` guard (7 verbs: `acquire`/`settle` added — 3d1dd53) |
+| **Skills** | 29 unique (38 SKILL.md files) | 27: 8 verbatim, 10 thin-equivalent, 1 adapted, judgment-day 1.7, rdd-defect-workflow ported + `sdd-research` lane (3f072ca) |
 | **Skill registry** | `.atl/skill-registry.md` | ✅ Same |
 | **Relative paths** | Absolute (C:\Users\...) | ✅ Relative |
 | **Agent builder** | `internal/agentbuilder` + TUI flow | ✅ Ported: same engines, parser, installer, registry (`~/.config/biggz/custom-agents.json`), SDD phase support |
@@ -96,6 +96,9 @@ are wired).
 | Cooperative file lock (`filecoord` + `store_lock` hardening) | ✅ Minimal `BusyError` + stale detection (PID + mtime 5m) + `AcquireWithTimeout` + `LockPathFor` SHA256 (245286f) |
 | Base-equivalent correction budget (`floor_two` #3583) | ✅ `DeriveCorrectionBudget` floor 2: `min(200, max(2, ceil(lines/2)))` (3c821de) |
 | SDD archive collision handling | ✅ `ArchiveChange` with UTC timestamp suffix `20060102-150405`, no-clobber (ca97594, 56fdd57c) |
+| SDD research lane (`sdd-research` + `research-lifecycle`) | ✅ Skill + prompt (dual tier) + opencode command + orchestrator gate (3f072ca) |
+| Compact `acquire`/`settle` + admission probe (`runtimeReadiness`) | ✅ Token continuation + `BlockedReason`/`SettleObligation` freeing `verify`/`archive` from stale `decision-required` (3d1dd53) |
+| Truthful `failed`/`interrupted` remediation settle (#3422) | ✅ `interrupted` vs `failed` distinct in `RemediationState.Reason` — original vs new head (0672bc0) |
 | Full management TUI (model picker, Configure Models, agent set editing) | Agent-builder TUI + 4-mode model picker (19 agents, variants cache) — 2026-08-10 |
 | `internal/opencode` Go model picker | Ported (2026-08-10) — reads the model-variants cache, JSONC-safe assignment read/write |
 | Release policy attestation (`releasepolicy` run-marker) | ✅ Minimal `Validate` + `directoryContains` + `validateSnapshotFile` (full YAML/artifact pin omitted) |
