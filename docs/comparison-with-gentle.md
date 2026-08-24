@@ -102,7 +102,7 @@ are wired).
 | Compact `acquire`/`settle` + admission probe (`runtimeReadiness`) | ✅ Token continuation + `BlockedReason`/`SettleObligation` freeing `verify`/`archive` from stale `decision-required` (3d1dd53) |
 | Truthful `failed`/`interrupted` remediation settle (#3422) | ✅ `interrupted` vs `failed` distinct in `RemediationState.Reason` — original vs new head (0672bc0) |
 | Engram/hybrid native status derivation (`resolveEngramStatus`) | ✅ Hybrid authoritative: BigMem SQLite `sdd/*` + filesystem merge (filesystem wins), `collectBigMemChanges` wired into `StatusWithOptions` (3bd1f54) |
-| Full management TUI (model picker, Configure Models, agent set editing) | Agent-builder TUI + 4-mode model picker (19 agents, variants cache) — 2026-08-10 |
+| Full management TUI (model picker, Configure Models, agent set editing) | ✅ Harness-focused TUI (30 files vs gentle's installer-focused 104): agent-builder + 4-mode model picker with variants cache + `memory` graph (`g` toggle) + `sdd-continue` picker + `sdd-status --watch`. Both have TUIs; the focus differs: gentle's TUI installs/configures agents (agent_builder flow, per-agent pickers), biggz's operates SDD/BigMem/review inside the harness |
 | `internal/opencode` Go model picker | Ported (2026-08-10) — reads the model-variants cache, JSONC-safe assignment read/write |
 | Release policy attestation (`releasepolicy` run-marker) | ✅ Minimal `Validate` + `directoryContains` + `validateSnapshotFile` (full YAML/artifact pin omitted) |
 | Legacy v1 authority compatibility (`review-*` commands) | Deliberate — no legacy debt |
@@ -122,10 +122,12 @@ are wired).
 | Native `sdd-apply` edit-authority guard | CLI verb consuming `granted_roots`, wired into the apply phase assets |
 | Surgical `uninstall` | Per-op failure collection, JSONC key deletion (`RemoveKeysJSONC`), keeps memory/backups unless `--purge` |
 | `update` with automatic asset reconcile | Re-deploys skills/prompts/commands/plugins/config/MCP after binary swap (`--no-reconcile`) |
-| CLI verbs gentle lacks | `backup create/list`, `release status/tag/verify`, `pr create`, `recovery` ledger, `mcp` server, `bigmem`, `rdd`, `sdd-apply`, `sdd-new` wizard |
+| CLI verbs gentle lacks | `backup create/list`, `release status/tag/verify`, `pr create` (`--with-evidence` — 868f6b8), `recovery` ledger, `mcp` server, `bigmem` (+ `graph` — 306db5b), `rdd`, `sdd-apply`, `sdd-new` wizard |
 | 10 phase prompts | `internal/assets/prompts/sdd/*` — gentle has no prompts/ dir |
 | Manifest-freeze excludes untracked files | Credential-disclosure class designed out (gate.go:834): untracked paths are outside the candidate |
 | Multi-OS e2e CI matrix | ubuntu/windows/macos green lane (2026-08-10); gentle shipped 19-27 Windows failures unseen |
+| Harness TUI operations | `sdd-status --watch` (91f68a1), `sdd-continue` zero-arg picker (5fefc88), BigMem graph view (306db5b) — operate SDD/memory live; gentle's TUI targets installation, not operation |
+| Expanded `doctor --fix` | Auto-repairs BigMem FTS (REINDEX/rebuild), removes stale review locks (PID+mtime 5m), refreshes skill-registry (e7529f5) — idempotent, context-aware |
 
 ## Risk profile (2026-08-10)
 
