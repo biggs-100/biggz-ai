@@ -114,6 +114,8 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "    [--contract <schema>]       Negotiated mode: a medium/high candidate always relays its consent")
 	fmt.Fprintln(os.Stderr, "                                  envelope (never the headless error); each choice names the exact")
 	fmt.Fprintln(os.Stderr, "                                  follow-up invocation (supported: biggz-ai.review-integration/v1)")
+	fmt.Fprintln(os.Stderr, "    [--agent <name>]            Review runtime: pi requires BIGGZ_PI_REVIEW_RELAY_CONTRACT=biggz-pi.review-relay/v1")
+	fmt.Fprintln(os.Stderr, "                                  (compat: gentle-pi.review-relay/v1 via GENTLE_PI_REVIEW_RELAY_CONTRACT)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  resume <lineage>               Resume a review (Blocked/NeedsChanges -> InReview)")
 	fmt.Fprintln(os.Stderr, "    [--force]                   Skip non-critical validations")
@@ -234,7 +236,7 @@ func reviewListRun() int {
 func reviewStatusRun() int {
 	args := os.Args[3:]
 	useJSON := false
-	var lineageID, contract string
+	var lineageID, contract, agentValue string
 	nextTransition := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -249,6 +251,14 @@ func reviewStatusRun() int {
 			}
 			i++
 			contract = args[i]
+		case "--agent":
+			if i+1 < len(args) {
+				i++
+				agentValue = args[i]
+			}
+		case "--help", "-h":
+			fmt.Fprintln(os.Stderr, "Usage: biggz review status <lineage> [--json] [--contract <schema> --next-transition] [--agent <name>]")
+			return 0
 		default:
 			if lineageID == "" && !strings.HasPrefix(args[i], "--") {
 				lineageID = args[i]
@@ -256,8 +266,14 @@ func reviewStatusRun() int {
 		}
 	}
 	if lineageID == "" {
-		fmt.Fprintln(os.Stderr, "Usage: biggz review status <lineage> [--json] [--contract <schema> --next-transition]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review status <lineage> [--json] [--contract <schema> --next-transition] [--agent <name>]")
 		return 1
+	}
+	if agentValue == "pi" {
+		if err := review.ValidatePiAgent(agentValue); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 	}
 
 	if contract != "" || nextTransition {
@@ -485,7 +501,7 @@ type reviewExportData struct {
 // that answer. --consent granted/declined keep their existing behavior.
 func reviewStartRun() int {
 	args := os.Args[3:]
-	var subjectFile, lineageID, baseRef, lensesValue, consentValue, contract string
+	var subjectFile, lineageID, baseRef, lensesValue, consentValue, contract, agentValue string
 	interactive := terminalAttached(os.Stdout)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -519,9 +535,26 @@ func reviewStartRun() int {
 				i++
 				contract = args[i]
 			}
+		case "--agent":
+			if i+1 < len(args) {
+				i++
+				agentValue = args[i]
+			}
 		case "--help", "-h":
-			fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>] [--base-ref <sha>] [--lenses <list>] [--consent relay|granted|declined] [--contract <schema>]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>] [--base-ref <sha>] [--lenses <list>] [--consent relay|granted|declined] [--contract <schema>] [--agent <name>]")
 			return 0
+		}
+	}
+	// Pi host relay gate: pi is eligible only while the relay handshake is
+	// declared (BIGGZ_PI_REVIEW_RELAY_CONTRACT or gentle compat). This is the
+	// required conjunct that can only narrow the compiled boundary, never
+	// expand it. Without it, review start --agent pi refuses before any
+	// repository, target, or authority work, exactly like gentle's
+	// reviewImmutableRuntimeCapability for pi.
+	if agentValue == "pi" {
+		if err := review.ValidatePiAgent(agentValue); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
 		}
 	}
 	if contract != "" && contract != review.ContractSchema {
@@ -786,11 +819,18 @@ func reviewFinalizeRun() int {
 // reviewCaptureResultRun handles "biggz review capture-result".
 func reviewCaptureResultRun() int {
 	args := os.Args[3:]
-	var lineageID, targetID, lensName, expectedRevision, repositoryContext, subjectHash, input string
+	var lineageID, targetID, lensName, expectedRevision, repositoryContext, subjectHash, input, agentValue string
 	order := -1
 	preflight := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--agent":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --agent requires a value")
+				return 1
+			}
+			i++
+			agentValue = args[i]
 		case "--lineage":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "error: --lineage requires a value")
@@ -855,13 +895,26 @@ func reviewCaptureResultRun() int {
 		case "--preflight":
 			preflight = true
 		case "--help", "-h":
-			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight]")
 			return 0
 		default:
 			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
-			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight]")
 			return 1
 		}
+	}
+
+	if agentValue == "pi" {
+		if err := review.ValidatePiAgent(agentValue); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		// Host relay available: the capture path could materialize via
+		// PiAdapter.Review with the Go-issued opaque prompt and then submit
+		// the raw bytes through the existing --input path. The current minimal
+		// port keeps the existing file/stdin input path unchanged; the
+		// adapter is available for future materialize/execute routing when the
+		// provider prompt binding is added.
 	}
 
 	if lineageID == "" || targetID == "" || lensName == "" || order < 0 || expectedRevision == "" {

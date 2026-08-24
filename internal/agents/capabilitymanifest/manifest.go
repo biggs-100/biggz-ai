@@ -14,6 +14,15 @@ import (
 	"github.com/biggs-100/biggz-ai/model"
 )
 
+// ContractPiReviewRelay is the Biggz host relay contract Pi requires for
+// immutable receipt reviews. The gentle alias is kept for compat with a
+// gentle-pi host that still exports gentle-pi.review-relay/v1. This mirrors
+// gentle's ContractImmutableReviewExecutorV1 exposure for pi.
+const ContractPiReviewRelay = "biggz-pi.review-relay/v1"
+
+// ContractGentlePiReviewRelay is the gentle alias kept for compat.
+const ContractGentlePiReviewRelay = "gentle-pi.review-relay/v1"
+
 // AgentCapabilityManifest declares what features an AI coding agent supports.
 type AgentCapabilityManifest struct {
 	SchemaVersion string             `json:"schemaVersion"`
