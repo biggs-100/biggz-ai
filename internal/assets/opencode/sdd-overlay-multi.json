@@ -255,11 +255,19 @@
       "description": "General unstructured queries and auxiliary fallback tasks",
       "prompt": "{file:./prompts/general.md}",
       "tools": {
+        "__replace__": true,
         "read": true,
         "write": true,
         "edit": true,
         "bash": true,
         "task": false
+      },
+      "permission": {
+        "__replace__": true,
+        "task": {
+          "__replace__": true,
+          "*": "deny"
+        }
       }
     },
     "explore": {
