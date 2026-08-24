@@ -363,6 +363,7 @@ func sddAttemptRun() int {
 	remediatesEv := ""
 	actor := ""
 	changeInstance := ""
+	token := ""
 	var roots []string
 
 	for i := 2; i < len(args); i++ {
@@ -476,6 +477,11 @@ func sddAttemptRun() int {
 				i++
 				fmt.Sscanf(args[i], "%d", &maxLines)
 			}
+		case "--token":
+			if i+1 < len(args) {
+				i++
+				token = strings.TrimSpace(args[i])
+			}
 		}
 	}
 
@@ -509,6 +515,15 @@ func sddAttemptRun() int {
 		fmt.Printf("Attempts:         %d\n", status.AttemptCount)
 		fmt.Printf("Decision needed:  %v\n", status.DecisionRequired)
 		fmt.Printf("Complete:         %v\n", status.Complete)
+		if status.BlockedReason != "" {
+			fmt.Printf("Blocked reason:   %s\n", status.BlockedReason)
+		}
+		if status.BlockedExit != "" {
+			fmt.Printf("Blocked exit:     %s\n", status.BlockedExit)
+		}
+		if status.SettleObligation != nil {
+			fmt.Printf("Settle obligation: %s\n", status.SettleObligation.EvidenceRevision)
+		}
 		if len(status.GrantedRoots) > 0 {
 			fmt.Printf("Granted roots:    %s\n", strings.Join(status.GrantedRoots, ", "))
 		}
@@ -657,8 +672,108 @@ func sddAttemptRun() int {
 			fmt.Printf("Previous attempts cleared: %d\n", result.AttemptsReset)
 		}
 
+	case "acquire":
+		if requestID == "" {
+			fmt.Fprintln(os.Stderr, "error: --request-id is required for acquire")
+			return 1
+		}
+		if workUnit == "" {
+			fmt.Fprintln(os.Stderr, "error: --work-unit is required for acquire")
+			return 1
+		}
+		if evidenceGoal == "" {
+			fmt.Fprintln(os.Stderr, "error: --evidence-goal is required for acquire")
+			return 1
+		}
+		result, err := sddattempt.Acquire(sddattempt.AcquireParams{
+			ChangeName:                 change,
+			RepoRoot:                   cwd,
+			RequestID:                  requestID,
+			WorkUnit:                   workUnit,
+			EvidenceGoal:               evidenceGoal,
+			MaxAttempts:                maxAttempts,
+			MaxLines:                   maxLines,
+			Token:                      token,
+			RemediatesEvidenceRevision: remediatesEv,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if result.Scope == sddattempt.ScopeMachine {
+			fmt.Printf("runtime ledger: machine-scoped (no git repository; stored under %s)\n", sddattempt.MachineLedgerDir())
+		}
+		if result.Migrated {
+			fmt.Println("Runtime ledger migrated from the legacy home-dir store (kept untouched).")
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(result); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+
+	case "settle":
+		if token == "" {
+			fmt.Fprintln(os.Stderr, "error: --token is required for settle")
+			return 1
+		}
+		if requestID == "" {
+			fmt.Fprintln(os.Stderr, "error: --request-id is required for settle")
+			return 1
+		}
+		if outcome == "" {
+			fmt.Fprintln(os.Stderr, "error: --outcome is required for settle")
+			return 1
+		}
+		if diagnosis == "" {
+			fmt.Fprintln(os.Stderr, "error: --diagnosis is required for settle")
+			return 1
+		}
+		if harnessDisp == "" {
+			fmt.Fprintln(os.Stderr, "error: --harness-disposition is required for settle")
+			return 1
+		}
+		if cleanupEv == "" {
+			fmt.Fprintln(os.Stderr, "error: --cleanup-evidence is required for settle")
+			return 1
+		}
+		if processEv == "" {
+			fmt.Fprintln(os.Stderr, "error: --process-evidence is required for settle")
+			return 1
+		}
+		result, err := sddattempt.Settle(sddattempt.SettleParams{
+			ChangeName:                 change,
+			RepoRoot:                   cwd,
+			Token:                      token,
+			RequestID:                  requestID,
+			Outcome:                    outcome,
+			EvidenceRevision:           evidenceRev,
+			Diagnosis:                  diagnosis,
+			HarnessDisposition:         harnessDisp,
+			CleanupEvidence:            cleanupEv,
+			ProcessEvidence:            processEv,
+			RemediatesEvidenceRevision: remediatesEv,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if result.Scope == sddattempt.ScopeMachine {
+			fmt.Printf("runtime ledger: machine-scoped (no git repository; stored under %s)\n", sddattempt.MachineLedgerDir())
+		}
+		if result.Migrated {
+			fmt.Println("Runtime ledger migrated from the legacy home-dir store (kept untouched).")
+		}
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(result); err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+
 	default:
-		fmt.Fprintf(os.Stderr, "unknown operation %q (use: status, begin, finish, reset, grant)\n", operation)
+		fmt.Fprintf(os.Stderr, "unknown operation %q (use: status, begin, finish, reset, grant, acquire, settle)\n", operation)
 		return 1
 	}
 

@@ -379,8 +379,14 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 		return fmt.Errorf("read change-instance marker for %s: %w", cs.Name, err)
 	}
 	remediationComplete := sddattempt.RemediationComplete(cs.Name, workspaceRoot, instance, verifyResult.EvidenceRevision)
+	// Admission probe: if the ledger is in decision-required with a stale
+	// blocked reason (budget_exhausted / corrupt_authority) and a settle
+	// obligation, free verify/archive from the stale remediation block so
+	// they can run without being stranded, mirroring gentle-ai's
+	// applyNativeRuntimeRouting.
+	staleDecision := isStaleDecisionRequired(cs.Name, workspaceRoot, instance)
 	remediationState := RemediationState{}
-	if verifyReportCurrent && !verifyResult.Passing && applyState == ApplyAllDone && !remediationComplete {
+	if verifyReportCurrent && !verifyResult.Passing && applyState == ApplyAllDone && !remediationComplete && !staleDecision {
 		reason := fmt.Sprintf(
 			"verify evidence requires unmanaged remediation for %s: %s; receipt-driven review is disabled, so this correction is bounded by the native runtime attempt budget alone",
 			verifyResult.EvidenceRevision, verifyResult.Reason,
@@ -414,7 +420,14 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 		blockedReasons.genuine = append(blockedReasons.genuine, remediationState.Reason)
 	}
 
-	dependencies := resolveDependencies(artifacts, taskProgress, applyState, coreReady, verifyReportCurrent, verifyResult.Passing, remediationComplete)
+	// When staleDecision is true, treat remediation as complete for
+	// dependency routing so verify/archive are DependencyReady instead of
+	// blocked, even though the ledger still reports DecisionRequired.
+	effectiveRemediationComplete := remediationComplete || staleDecision
+	dependencies := resolveDependencies(artifacts, taskProgress, applyState, coreReady, verifyReportCurrent, verifyResult.Passing, effectiveRemediationComplete)
+	// Apply the stale-decision native routing to dependencies: free
+	// verify/archive when the probe says the decision block is stale.
+	dependencies = applyStaleDecisionRouting(dependencies, staleDecision)
 	nextRecommended := resolveNextRecommended(dependencies, applyState, verifyReportCurrent, remediationState)
 
 	cs.SchemaName = StatusSchemaName
@@ -674,6 +687,43 @@ func resolveNextRecommended(dependencies Dependencies, applyState ApplyState, ve
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// isStaleDecisionRequired checks the admission probe for a stale
+// decision-required. It mirrors gentle-ai's applyNativeRuntimeRouting that
+// frees verify/archive when the ledger is in decision-required but the
+// probe says BlockedReason is corrupt_authority or budget_exhausted with a
+// settle obligation, so verify/archive are not stranded by a stale
+// decision-required.
+func isStaleDecisionRequired(changeName, workspaceRoot, instance string) bool {
+	if !sddattempt.LedgerExists(changeName, workspaceRoot) {
+		return false
+	}
+	status, err := sddattempt.StatusWithInstance(changeName, workspaceRoot, instance)
+	if err != nil {
+		return false
+	}
+	if status.BlockedReason != sddattempt.BlockedReasonBudgetExhausted && status.BlockedReason != sddattempt.BlockedReasonCorruptAuthority {
+		return false
+	}
+	return status.SettleObligation != nil && status.SettleObligation.EvidenceRevision != ""
+}
+
+// applyStaleDecisionRouting frees verify/archive from a stale block. When
+// staleDecision is true, verify is forced to ready (and archive follows if
+// verify is all_done), so the change can still make progress via the
+// bounded correction path without manual reset.
+func applyStaleDecisionRouting(deps Dependencies, staleDecision bool) Dependencies {
+	if !staleDecision {
+		return deps
+	}
+	if deps.Verify == DependencyBlocked {
+		deps.Verify = DependencyReady
+	}
+	if deps.Verify == DependencyAllDone && deps.Archive == DependencyBlocked {
+		deps.Archive = DependencyReady
+	}
+	return deps
 }
 
 // FormatStatus returns a human-readable summary of SDD status.

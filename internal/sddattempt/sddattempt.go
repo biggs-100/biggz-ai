@@ -82,6 +82,12 @@ type RuntimeStore struct {
 	// without mutating the ledger.
 	Requests map[string]RuntimeRequestRecord `json:"requests,omitempty"`
 
+	// Tokens maps compact acquire tokens to attempt ordinals. Each acquire
+	// mints one token (content-address independent, persisted here) that
+	// settle later presents to close exactly that attempt. This is the
+	// bounded-path counterpart to begin/finish's active-ordinal tracking.
+	Tokens map[string]int `json:"tokens,omitempty"`
+
 	// Grants is the append-only per-change edit-authority audit history.
 	// GrantedRoots is never persisted: it is derived read-time by
 	// grantedRootsFor, so the snapshot hash stays stable.
@@ -146,15 +152,28 @@ type RuntimeRequestRecord struct {
 var requestIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
 
 const (
-	requestDigestDomainBegin  = "biggz-ai.sdd-runtime-begin-request/v1"
-	requestDigestDomainFinish = "biggz-ai.sdd-runtime-finish-request/v1"
-	requestDigestDomainReset  = "biggz-ai.sdd-runtime-reset-request/v1"
-	requestDigestDomainGrant  = "biggz-ai.sdd-runtime-grant-request/v1"
+	requestDigestDomainBegin   = "biggz-ai.sdd-runtime-begin-request/v1"
+	requestDigestDomainFinish  = "biggz-ai.sdd-runtime-finish-request/v1"
+	requestDigestDomainReset   = "biggz-ai.sdd-runtime-reset-request/v1"
+	requestDigestDomainGrant   = "biggz-ai.sdd-runtime-grant-request/v1"
+	requestDigestDomainAcquire = "biggz-ai.sdd-runtime-acquire-request/v1"
+	requestDigestDomainSettle  = "biggz-ai.sdd-runtime-settle-request/v1"
 
-	opBegin  = "begin"
-	opFinish = "finish"
-	opReset  = "reset"
-	opGrant  = "grant"
+	opBegin   = "begin"
+	opFinish  = "finish"
+	opReset   = "reset"
+	opGrant   = "grant"
+	opAcquire = "acquire"
+	opSettle  = "settle"
+)
+
+// Blocked reasons for the compact acquire/settle admission probe.
+// They mirror gentle-ai's CompactBlockReason values used by RuntimeStatus.
+const (
+	BlockedReasonBudgetExhausted = "budget_exhausted"
+	BlockedReasonCorruptAuthority = "corrupt_authority"
+	BlockedReasonActiveAttempt   = "active_attempt"
+	BlockedReasonInvalidContinuation = "invalid_continuation"
 )
 
 // requestDigest hashes the canonical JSON of a request under a schema domain,
@@ -187,6 +206,15 @@ func recordRequest(store *RuntimeStore, requestID, operation, digest string, out
 
 // ─── Status ──────────────────────────────────────────────────────────────────
 
+// SettleObligation describes what a passing settle will owe for the
+// current ledger head. It mirrors gentle-ai's runtimeSettleObligation
+// derivation: the unremediated failed evidence that a future passing
+// settle must name via RemediatesEvidenceRevision.
+type SettleObligation struct {
+	EvidenceRevision           string `json:"evidence_revision"`
+	RemediatesEvidenceRevision string `json:"remediates_evidence_revision,omitempty"`
+}
+
 // RuntimeStatus is the public-facing status response.
 type RuntimeStatus struct {
 	ChangeName       string `json:"change_name"`
@@ -215,6 +243,15 @@ type RuntimeStatus struct {
 	BindingRevision  string `json:"binding_revision,omitempty"`
 	BindingLineage   string `json:"binding_lineage,omitempty"`
 	EvidenceRevision string `json:"evidence_revision,omitempty"`
+
+	// Admission probe: answers "would this acquire be admitted?" so
+	// verify/archive never get stranded by a stale decision-required.
+	// Only StatusWithInstance populates them; plain reads remain empty
+	// for backward compatibility, matching gentle-ai's AdmissionStatus
+	// contract.
+	BlockedReason    string            `json:"blocked_reason,omitempty"`
+	BlockedExit      string            `json:"blocked_exit,omitempty"`
+	SettleObligation *SettleObligation `json:"settle_obligation,omitempty"`
 }
 
 // Status reads the runtime ledger and returns a status response.
@@ -264,6 +301,23 @@ func StatusWithInstance(changeName, repoRoot, instance string) (*RuntimeStatus, 
 			BindingLineage:   store.BindingLineage,
 			EvidenceRevision: store.EvidenceRevision,
 		}
+		// Admission probe: would an acquire be admitted against this ledger
+		// head? Populates BlockedReason/BlockedExit/SettleObligation so
+		// sdd status can free verify/archive from a stale decision-required,
+		// mirroring gentle-ai's AdmissionStatus / runtimeReadiness.
+		if reason, exit, obligation := deriveAdmissionBlocked(store); reason != "" {
+			status.BlockedReason = reason
+			status.BlockedExit = exit
+			status.SettleObligation = obligation
+		} else {
+			// Even when not blocked, expose the settle obligation so a
+			// successful acquire's caller knows what its passing settle will
+			// owe (gentle-ai's SettleObligation is always derived from the
+			// chain, not only when blocked).
+			if obligation := deriveSettleObligation(store); obligation != nil {
+				status.SettleObligation = obligation
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -292,6 +346,115 @@ func deriveNextAction(store *RuntimeStore) string {
 	}
 	return "begin"
 }
+
+// deriveSettleObligation returns the unremediated failed evidence the chain
+// still holds, if any. It mirrors gentle-ai's runtimeSettleObligation: the
+// last failed attempt whose evidence has not been discharged by a later
+// passing correction that names it via RemediatesEvidenceRevision.
+func deriveSettleObligation(store *RuntimeStore) *SettleObligation {
+	if store == nil || len(store.Attempts) == 0 {
+		return nil
+	}
+	// Find the most recent failed attempt with evidence that is still
+	// unremediated.
+	for i := len(store.Attempts) - 1; i >= 0; i-- {
+		attempt := store.Attempts[i]
+		if attempt.Outcome != "failed" || attempt.EvidenceRevision == "" {
+			continue
+		}
+		remediated := false
+		for j := i + 1; j < len(store.Attempts); j++ {
+			later := store.Attempts[j]
+			if later.Outcome == "passed" && later.RemediatesEvidenceRevision == attempt.EvidenceRevision {
+				remediated = true
+				break
+			}
+		}
+		if !remediated {
+			return &SettleObligation{
+				EvidenceRevision:           attempt.EvidenceRevision,
+				RemediatesEvidenceRevision: attempt.EvidenceRevision,
+			}
+		}
+	}
+	return nil
+}
+
+// deriveAdmissionBlocked answers "would an acquire be admitted?" in the
+// minimal runtimeReadiness style required for biggz. Returns a blocked
+// reason, a human exit, and the settle obligation that a blocked ledger
+// still carries. Empty reason means proceed.
+func deriveAdmissionBlocked(store *RuntimeStore) (string, string, *SettleObligation) {
+	if store == nil {
+		return "", "", nil
+	}
+	obligation := deriveSettleObligation(store)
+	if store.Complete {
+		return BlockedReasonCorruptAuthority, "ledger is complete; reset required to continue", obligation
+	}
+	if store.DecisionRequired {
+		// Minimal budget-exhausted mapping: decision-required with
+		// attempts at or beyond the objective's budget is the stale
+		// decision that verify/archive should be freed from when the
+		// probe reports a settle obligation.
+		if store.MaxAttempts > 0 && len(store.Attempts) >= store.MaxAttempts {
+			return BlockedReasonBudgetExhausted, "attempt budget exhausted; decision required — run sdd-attempt reset or settle the obligated evidence", obligation
+		}
+		return BlockedReasonBudgetExhausted, "decision required; run sdd-attempt reset to continue", obligation
+	}
+	if store.ActiveAttempt > 0 {
+		for _, attempt := range store.Attempts {
+			if attempt.Ordinal == store.ActiveAttempt && attempt.Outcome == "" {
+				return BlockedReasonActiveAttempt, "an attempt is already active; settle it before acquiring", obligation
+			}
+		}
+	}
+	return "", "", obligation
+}
+
+// isStaleDecisionRequired reports whether a ledger that is in
+// decision-required should no longer block verify/archive because the probe
+// says the block is stale (corrupt_authority or budget_exhausted with a
+// settle obligation), mirroring gentle-ai's applyNativeRuntimeRouting.
+func isStaleDecisionRequired(status *RuntimeStatus) bool {
+	if status == nil {
+		return false
+	}
+	if !status.DecisionRequired {
+		return false
+	}
+	if status.BlockedReason != BlockedReasonBudgetExhausted && status.BlockedReason != BlockedReasonCorruptAuthority {
+		return false
+	}
+	return status.SettleObligation != nil && status.SettleObligation.EvidenceRevision != ""
+}
+
+// BlockedError is returned by Acquire when the ledger would refuse the
+// request. It carries the same BlockedReason/BlockedExit/SettleObligation
+// that StatusWithInstance projects, so callers can route without re-reading.
+type BlockedError struct {
+	Reason           string
+	Exit             string
+	SettleObligation *SettleObligation
+}
+
+func (e *BlockedError) Error() string {
+	if e.Exit != "" {
+		return fmt.Sprintf("blocked(%s): %s", e.Reason, e.Exit)
+	}
+	return fmt.Sprintf("blocked(%s)", e.Reason)
+}
+
+func (e *BlockedError) Unwrap() error { return ErrBlocked }
+
+// IsBlocked reports whether err is a BlockedError.
+func IsBlocked(err error) bool {
+	var blocked *BlockedError
+	return errors.As(err, &blocked)
+}
+
+// ErrBlocked is the sentinel for blocked ledger state.
+var ErrBlocked = errors.New("runtime ledger blocked")
 
 // RemediationComplete reports whether the ledger's last attempt is a passed
 // correction of exactly the given failed evidence revision: the attempt was
@@ -804,6 +967,619 @@ func Reset(params ResetParams) (*ResetResult, error) {
 	return result, nil
 }
 
+// ─── Acquire / Settle (compact bounded path) ───────────────────────────────
+
+// AcquireParams define a compact acquire request. They mirror BeginParams
+// but are bounded to the token-continuation contract: the returned Token
+// identifies exactly the attempt Settle must close.
+type AcquireParams struct {
+	ChangeName   string
+	RepoRoot     string
+	RequestID    string
+	WorkUnit     string
+	EvidenceGoal string
+	MaxAttempts  int
+	MaxLines     int
+	Token        string // optional ownership proof: continue the active attempt that owns this token
+	// RemediatesEvidenceRevision declares the failed evidence this acquire
+	// intends to correct, so an unsatisfiable remediation can be refused
+	// before it spends an attempt (mirrors gentle-ai's acquire-time
+	// remediation_unsatisfiable check).
+	RemediatesEvidenceRevision string
+}
+
+// AcquireResult is the bounded orchestration projection returned by Acquire.
+type AcquireResult struct {
+	Token    string `json:"token"`
+	Revision string `json:"revision"`
+	// SettleObligation mirrors gentle-ai's acquire SettleObligation: what a
+	// passing settle of this token will already owe.
+	SettleObligation *SettleObligation `json:"settle_obligation,omitempty"`
+	Scope            string            `json:"scope,omitempty"`
+	Migrated         bool              `json:"migrated,omitempty"`
+}
+
+// SettleParams close the attempt selected by Token. They mirror FinishParams
+// but select by token, not by active ordinal.
+type SettleParams struct {
+	ChangeName                 string
+	RepoRoot                   string
+	Token                      string
+	RequestID                  string
+	Outcome                    string
+	EvidenceRevision           string
+	Diagnosis                  string
+	HarnessDisposition         string
+	CleanupEvidence            string
+	ProcessEvidence            string
+	RemediatesEvidenceRevision string
+}
+
+// SettleResult describes the result of settling an attempt.
+type SettleResult struct {
+	Revision          string `json:"revision"`
+	RemainingAttempts int    `json:"remaining_attempts,omitempty"`
+	DecisionRequired  bool   `json:"decision_required,omitempty"`
+	Complete          bool   `json:"complete,omitempty"`
+	Migrated          bool   `json:"migrated,omitempty"`
+	Scope             string `json:"scope,omitempty"`
+}
+
+// mintAcquireToken derives a deterministic token for an acquire. It is
+// content-address independent (does not include the snapshot revision) so the
+// token can be stored in Tokens without circular hashing, while remaining
+// deterministic for a given request ID and ordinal so idempotent replays
+// converge.
+func mintAcquireToken(changeName, requestID string, ordinal int) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%d|biggz-ai.acquire-token/v1", changeName, requestID, ordinal)))
+	return "tok-" + hex.EncodeToString(h[:])[:24]
+}
+
+// Acquire claims one bounded attempt and mints a token that identifies that
+// exact begin record for Settle. It shares the same snapshot store as
+// Begin/Finish but with token-based idempotency, mirroring gentle-ai's
+// requestDigestDomainAcquire/Settle pattern.
+//
+// When RequestID is supplied the operation is idempotent: replaying the same
+// request ID with identical inputs returns the same token without mutating
+// the ledger. A reused request ID with different inputs fails.
+//
+// Readiness is checked via deriveAdmissionBlocked (the minimal
+// runtimeReadiness predicate): a complete ledger or a decision-required
+// ledger is blocked with BlockedReasonCorruptAuthority or
+// BlockedReasonBudgetExhausted and the current SettleObligation. An
+// already-active attempt is blocked with BlockedReasonActiveAttempt unless
+// the caller presents the active token as ownership proof (gentle-ai's
+// Token continuation).
+func Acquire(params AcquireParams) (*AcquireResult, error) {
+	if params.RequestID != "" && !requestIDPattern.MatchString(params.RequestID) {
+		return nil, errors.New("request_id must be a canonical lowercase identifier")
+	}
+	if params.Token != "" {
+		trimmed := strings.TrimSpace(params.Token)
+		if trimmed == "" {
+			return nil, errors.New("token must be non-empty when supplied")
+		}
+		params.Token = trimmed
+	}
+	if params.RemediatesEvidenceRevision != "" {
+		// Minimal sha256:... shape validation, mirroring gentle-ai's
+		// remediation revision check: must be sha256:<64 lowercase hex>.
+		if !strings.HasPrefix(params.RemediatesEvidenceRevision, "sha256:") || len(params.RemediatesEvidenceRevision) != 7+64 {
+			return nil, errors.New("remediates_evidence_revision must be sha256:<64 lowercase hex>")
+		}
+		for _, c := range params.RemediatesEvidenceRevision[7:] {
+			if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
+				return nil, errors.New("remediates_evidence_revision must be sha256:<64 lowercase hex>")
+			}
+		}
+	}
+	// Defaults mirror Begin/Finish CLI defaults (task constraint).
+	if params.MaxAttempts == 0 {
+		params.MaxAttempts = 3
+	}
+	if params.MaxLines == 0 {
+		params.MaxLines = 400
+	}
+	digest := requestDigest(requestDigestDomainAcquire, params)
+
+	s, err := resolveStore(params.ChangeName, params.RepoRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	var result *AcquireResult
+	var migrated bool
+	err = s.withStoreLock(func() error {
+		loaded, mig, err := s.replay()
+		if err != nil {
+			return err
+		}
+		migrated = mig
+
+		// Idempotent replay: same request ID already applied.
+		if params.RequestID != "" && loaded != nil && loaded.Requests != nil {
+			if rec, exists := loaded.Requests[params.RequestID]; exists {
+				if rec.Operation != opAcquire || rec.Digest != digest {
+					return fmt.Errorf("request_id %q was reused with different inputs", params.RequestID)
+				}
+				var replayed AcquireResult
+				if err := json.Unmarshal(rec.Outcome, &replayed); err != nil {
+					return fmt.Errorf("replay request %q: %w", params.RequestID, err)
+				}
+				result = &replayed
+				result.Migrated = migrated
+				result.Scope = s.Scope
+				return nil
+			}
+		}
+
+		// Fresh ledger: create store with first attempt and mint token.
+		if loaded == nil {
+			ordinal := 1
+			token := mintAcquireToken(params.ChangeName, params.RequestID, ordinal)
+			if params.RequestID == "" {
+				// Without a request ID the token must still be unique; include
+				// a time-derived component so concurrent empty-ID acquires
+				// do not collide.
+				h := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%d", params.ChangeName, ordinal, time.Now().UnixNano())))
+				token = "tok-" + hex.EncodeToString(h[:])[:24]
+			}
+			store := &RuntimeStore{
+				ChangeName:    params.ChangeName,
+				MaxAttempts:   params.MaxAttempts,
+				MaxLines:      params.MaxLines,
+				WorkUnit:      params.WorkUnit,
+				EvidenceGoal:  params.EvidenceGoal,
+				CreatedAt:     time.Now().UTC().Format(time.RFC3339),
+				UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
+				ActiveAttempt: ordinal,
+				NextAction:    "continue",
+				Attempts: []RuntimeAttempt{{
+					Ordinal: ordinal,
+					WorkUnit: params.WorkUnit,
+					BeganAt: time.Now().UTC().Format(time.RFC3339),
+				}},
+				Tokens: map[string]int{token: ordinal},
+			}
+			// Remediation satisfiability pre-check: if the acquire declares
+			// a correction, the chain must still hold that failed evidence
+			// unremediated (minimal failedEvidenceRemediationSettleable).
+			if params.RemediatesEvidenceRevision != "" {
+				// No failed evidence yet on a fresh ledger -> unsatisfiable.
+				return &BlockedError{
+					Reason: BlockedReasonInvalidContinuation,
+					Exit:   "this acquire declares a correction for failed evidence the attempt chain does not hold unremediated",
+				}
+			}
+			outcome := &AcquireResult{Token: token, SettleObligation: deriveSettleObligation(store), Scope: s.Scope}
+			recordRequest(store, params.RequestID, opAcquire, digest, outcome)
+			if params.RequestID != "" {
+				setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
+			}
+			if err := s.commit(store); err != nil {
+				return fmt.Errorf("save store: %w", err)
+			}
+			result = &AcquireResult{Token: token, Revision: store.Revision, SettleObligation: deriveSettleObligation(store), Scope: s.Scope, Migrated: migrated}
+			if params.RequestID != "" {
+				// Patch the embedded revision on the persisted outcome.
+				// The canonical hash excludes it, so this does not invalidate
+				// the committed address; the replay path returns the same
+				// token/revision pair.
+				store.Revision = result.Revision
+			}
+			return nil
+		}
+		store := loaded
+
+		// Token continuation: presenting the active attempt's own token proves
+		// ownership and short-circuits to proceed with zero mutation, matching
+		// gentle-ai's runtimeReadiness PresentedToken path.
+		if params.Token != "" && store.ActiveAttempt > 0 {
+			if ordinal, ok := store.Tokens[params.Token]; ok && ordinal == store.ActiveAttempt {
+				// Verify the active attempt is still running (outcome == "").
+				for _, attempt := range store.Attempts {
+					if attempt.Ordinal == store.ActiveAttempt && attempt.Outcome == "" {
+						result = &AcquireResult{Token: params.Token, Revision: store.Revision, SettleObligation: deriveSettleObligation(store), Scope: s.Scope, Migrated: migrated}
+						return nil
+					}
+				}
+			}
+			// Non-matching token that claims ownership but is not the active
+			// token is still a block that names the real active token.
+			if store.Tokens != nil {
+				for tok, ord := range store.Tokens {
+					if ord == store.ActiveAttempt {
+						return &BlockedError{
+							Reason: BlockedReasonActiveAttempt,
+							Exit:   fmt.Sprintf("a distinct attempt token %s is already active; settle it before acquiring (presented token %s does not match)", tok, params.Token),
+							SettleObligation: deriveSettleObligation(store),
+						}
+					}
+				}
+			}
+		}
+
+		// Admission check: complete or decision-required or active-attempt.
+		if reason, exit, obligation := deriveAdmissionBlocked(store); reason != "" {
+			return &BlockedError{Reason: reason, Exit: exit, SettleObligation: obligation}
+		}
+
+		// Remediation satisfiability pre-check (acquire-time fail-fast,
+		// mirrors gentle-ai's CompactBlockRemediationUnsatisfiable).
+		if params.RemediatesEvidenceRevision != "" {
+			chainHasFailed := false
+			chainEvidence := ""
+			for i := len(store.Attempts) - 1; i >= 0; i-- {
+				a := store.Attempts[i]
+				if a.Outcome == "failed" && a.EvidenceRevision != "" {
+					remediated := false
+					for j := i + 1; j < len(store.Attempts); j++ {
+						later := store.Attempts[j]
+						if later.Outcome == "passed" && later.RemediatesEvidenceRevision == a.EvidenceRevision {
+							remediated = true
+							break
+						}
+					}
+					if !remediated {
+						chainHasFailed = true
+						chainEvidence = a.EvidenceRevision
+						break
+					}
+				}
+			}
+			if !chainHasFailed || chainEvidence != params.RemediatesEvidenceRevision {
+				return &BlockedError{
+					Reason: BlockedReasonInvalidContinuation,
+					Exit:   fmt.Sprintf("this acquire declares a correction for failed evidence %s but the chain's unremediated failure is %q", params.RemediatesEvidenceRevision, chainEvidence),
+					SettleObligation: deriveSettleObligation(store),
+				}
+			}
+		}
+
+		// Budget check already covered by deriveAdmissionBlocked, but also
+		// enforce maxAttempts guard for the new attempt ordinal.
+		nextOrdinal := store.ActiveAttempt + 1
+		// For a store that had an active attempt previously closed, ActiveAttempt
+		// may be 0 after a finish; the nextOrdinal should be len(Attempts)+1 in
+		// that case. Derive from history length instead.
+		if store.ActiveAttempt == 0 {
+			nextOrdinal = len(store.Attempts) + 1
+			if nextOrdinal == 1 && len(store.Attempts) > 0 {
+				nextOrdinal = store.Attempts[len(store.Attempts)-1].Ordinal + 1
+			}
+		}
+		if store.MaxAttempts == 0 {
+			store.MaxAttempts = params.MaxAttempts
+		}
+		if store.MaxLines == 0 {
+			store.MaxLines = params.MaxLines
+		}
+		if nextOrdinal > store.MaxAttempts && store.MaxAttempts > 0 {
+			store.DecisionRequired = true
+			store.NextAction = "decision-required"
+			store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			// Persist the decision-required transition so the probe sees it.
+			if err := s.commit(store); err != nil {
+				return fmt.Errorf("save store: %w", err)
+			}
+			return &BlockedError{
+				Reason: BlockedReasonBudgetExhausted,
+				Exit:   "max attempts reached, decision required",
+				SettleObligation: deriveSettleObligation(store),
+			}
+		}
+
+		// Mint token and start new attempt.
+		ordinal := nextOrdinal
+		token := mintAcquireToken(params.ChangeName, params.RequestID, ordinal)
+		if params.RequestID == "" {
+			h := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%d", params.ChangeName, ordinal, time.Now().UnixNano())))
+			token = "tok-" + hex.EncodeToString(h[:])[:24]
+		}
+		// Ensure work-unit scope does not drift without an explicit reset
+		// (minimal scope-change guard, mirroring gentle-ai's
+		// runtimeObjectiveScopeChanged check).
+		if store.WorkUnit != "" && params.WorkUnit != "" && store.WorkUnit != params.WorkUnit {
+			return &BlockedError{
+				Reason: BlockedReasonInvalidContinuation,
+				Exit:   fmt.Sprintf("work unit scope changed without reset: have %q, acquire wants %q", store.WorkUnit, params.WorkUnit),
+				SettleObligation: deriveSettleObligation(store),
+			}
+		}
+		if store.EvidenceGoal != "" && params.EvidenceGoal != "" && store.EvidenceGoal != params.EvidenceGoal {
+			return &BlockedError{
+				Reason: BlockedReasonInvalidContinuation,
+				Exit:   fmt.Sprintf("evidence goal changed without reset: have %q, acquire wants %q", store.EvidenceGoal, params.EvidenceGoal),
+				SettleObligation: deriveSettleObligation(store),
+			}
+		}
+
+		if store.Tokens == nil {
+			store.Tokens = map[string]int{}
+		}
+		store.Tokens[token] = ordinal
+		store.ActiveAttempt = ordinal
+		store.NextAction = "continue"
+		store.DecisionRequired = false
+		store.Complete = false
+		store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		if store.MaxAttempts == 0 {
+			store.MaxAttempts = params.MaxAttempts
+		}
+		if store.MaxLines == 0 {
+			store.MaxLines = params.MaxLines
+		}
+		if params.WorkUnit != "" {
+			store.WorkUnit = params.WorkUnit
+		}
+		if params.EvidenceGoal != "" {
+			store.EvidenceGoal = params.EvidenceGoal
+		}
+		store.Attempts = append(store.Attempts, RuntimeAttempt{
+			Ordinal:  ordinal,
+			WorkUnit: params.WorkUnit,
+			BeganAt: time.Now().UTC().Format(time.RFC3339),
+		})
+		outcome := &AcquireResult{Token: token, SettleObligation: deriveSettleObligation(store), Scope: s.Scope}
+		recordRequest(store, params.RequestID, opAcquire, digest, outcome)
+		if params.RequestID != "" {
+			setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
+		}
+		if err := s.commit(store); err != nil {
+			return fmt.Errorf("save store: %w", err)
+		}
+		result = &AcquireResult{Token: token, Revision: store.Revision, SettleObligation: deriveSettleObligation(store), Scope: s.Scope, Migrated: migrated}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.Migrated = migrated
+	result.Scope = s.Scope
+	return result, nil
+}
+
+// Settle closes the attempt selected by Token. It looks up token → ordinal,
+// validates the ordinal is the live active attempt, and records the outcome
+// with the same state derivation as Finish (Complete / DecisionRequired /
+// NextAction). It is the bounded-path counterpart to Finish.
+func Settle(params SettleParams) (*SettleResult, error) {
+	if params.RequestID != "" && !requestIDPattern.MatchString(params.RequestID) {
+		return nil, errors.New("request_id must be a canonical lowercase identifier")
+	}
+	if strings.TrimSpace(params.Token) == "" {
+		return nil, errors.New("token is required for settle")
+	}
+	params.Token = strings.TrimSpace(params.Token)
+	if params.Outcome == "" {
+		return nil, errors.New("outcome is required for settle")
+	}
+	switch params.Outcome {
+	case "passed", "failed", "interrupted":
+	default:
+		return nil, fmt.Errorf("invalid outcome %q; want passed, failed, or interrupted", params.Outcome)
+	}
+	if params.Outcome == "interrupted" && params.EvidenceRevision != "" {
+		return nil, errors.New("interrupted attempts must omit evidence_revision")
+	}
+	if params.RemediatesEvidenceRevision != "" {
+		if !strings.HasPrefix(params.RemediatesEvidenceRevision, "sha256:") || len(params.RemediatesEvidenceRevision) != 7+64 {
+			return nil, errors.New("remediates_evidence_revision must be sha256:<64 lowercase hex>")
+		}
+		for _, c := range params.RemediatesEvidenceRevision[7:] {
+			if !(c >= '0' && c <= '9') && !(c >= 'a' && c <= 'f') {
+				return nil, errors.New("remediates_evidence_revision must be sha256:<64 lowercase hex>")
+			}
+		}
+	}
+	digest := requestDigest(requestDigestDomainSettle, params)
+
+	s, err := resolveStore(params.ChangeName, params.RepoRoot)
+	if err != nil {
+		return nil, err
+	}
+
+	var result *SettleResult
+	var migrated bool
+	err = s.withStoreLock(func() error {
+		loaded, mig, err := s.replay()
+		if err != nil {
+			return err
+		}
+		migrated = mig
+		if loaded == nil {
+			return errors.New("no runtime ledger for this change — has sdd-attempt acquire been run?")
+		}
+		store := loaded
+
+		// Idempotent replay: same request ID already applied.
+		if params.RequestID != "" && store.Requests != nil {
+			if rec, exists := store.Requests[params.RequestID]; exists {
+				if rec.Operation != opSettle || rec.Digest != digest {
+					return fmt.Errorf("request_id %q was reused with different inputs", params.RequestID)
+				}
+				var replayed SettleResult
+				if err := json.Unmarshal(rec.Outcome, &replayed); err != nil {
+					return fmt.Errorf("replay request %q: %w", params.RequestID, err)
+				}
+				result = &replayed
+				result.Migrated = migrated
+				result.Scope = s.Scope
+				return nil
+			}
+		}
+
+		// Lookup token → ordinal.
+		ordinal, ok := store.Tokens[params.Token]
+		if !ok {
+			// Fallback: token may be the revision itself (legacy path where
+			// token == revision). Accept it if it matches the current head's
+			// active attempt.
+			if params.Token == store.Revision && store.ActiveAttempt > 0 {
+				ordinal = store.ActiveAttempt
+				ok = true
+			} else {
+				return &BlockedError{
+					Reason: BlockedReasonInvalidContinuation,
+					Exit:   fmt.Sprintf("token %q does not continue the attempt currently on record; run sdd-attempt status to see the live token", params.Token),
+					SettleObligation: deriveSettleObligation(store),
+				}
+			}
+		}
+
+		// The ordinal must be the active attempt and still running.
+		if store.ActiveAttempt != ordinal {
+			return &BlockedError{
+				Reason: BlockedReasonInvalidContinuation,
+				Exit:   fmt.Sprintf("token %q maps to attempt %d but active attempt is %d", params.Token, ordinal, store.ActiveAttempt),
+				SettleObligation: deriveSettleObligation(store),
+			}
+		}
+		var found bool
+		var idx int
+		for i := len(store.Attempts) - 1; i >= 0; i-- {
+			if store.Attempts[i].Ordinal == ordinal {
+				if store.Attempts[i].Outcome != "" {
+					return &BlockedError{
+						Reason: BlockedReasonInvalidContinuation,
+						Exit:   fmt.Sprintf("attempt %d is already finished with outcome %q", ordinal, store.Attempts[i].Outcome),
+						SettleObligation: deriveSettleObligation(store),
+					}
+				}
+				found = true
+				idx = i
+				break
+			}
+		}
+		if !found {
+			return &BlockedError{
+				Reason: BlockedReasonInvalidContinuation,
+				Exit:   fmt.Sprintf("no active attempt %d found for token %q", ordinal, params.Token),
+				SettleObligation: deriveSettleObligation(store),
+			}
+		}
+
+		// Validate remediation binding (mirrors Finish's evidence remediation
+		// checks, minimal).
+		chainFailedAttempt, chainHasFailedEvidence := findChainFailedAttempt(store.Attempts)
+		chainFailedEvidence := ""
+		if chainHasFailedEvidence {
+			chainFailedEvidence = chainFailedAttempt.EvidenceRevision
+		}
+		if params.RemediatesEvidenceRevision != "" {
+			if !chainHasFailedEvidence {
+				return &BlockedError{
+					Reason: BlockedReasonInvalidContinuation,
+					Exit:   fmt.Sprintf("this correction names failed verification %s, but the attempt chain records no failed verification", params.RemediatesEvidenceRevision),
+					SettleObligation: deriveSettleObligation(store),
+				}
+			}
+			if chainFailedEvidence != params.RemediatesEvidenceRevision {
+				return &BlockedError{
+					Reason: BlockedReasonInvalidContinuation,
+					Exit:   fmt.Sprintf("this correction names failed verification %s, but the chain's unremediated failure is %s", params.RemediatesEvidenceRevision, chainFailedEvidence),
+					SettleObligation: deriveSettleObligation(store),
+				}
+			}
+		}
+		if params.Outcome == "passed" && chainHasFailedEvidence && params.RemediatesEvidenceRevision == "" {
+			return &BlockedError{
+				Reason: BlockedReasonInvalidContinuation,
+				Exit:   fmt.Sprintf("passing correction for failed verification %q requires --remediates-evidence-revision", chainFailedEvidence),
+				SettleObligation: deriveSettleObligation(store),
+			}
+		}
+
+		// Apply settlement.
+		store.Attempts[idx].Outcome = params.Outcome
+		store.Attempts[idx].EndedAt = time.Now().UTC().Format(time.RFC3339)
+		store.Attempts[idx].EvidenceRevision = params.EvidenceRevision
+		store.Attempts[idx].Diagnosis = params.Diagnosis
+		store.Attempts[idx].HarnessDisposition = params.HarnessDisposition
+		store.Attempts[idx].CleanupEvidence = params.CleanupEvidence
+		store.Attempts[idx].ProcessEvidence = params.ProcessEvidence
+		store.Attempts[idx].RemediatesEvidenceRevision = params.RemediatesEvidenceRevision
+
+		if params.RemediatesEvidenceRevision != "" {
+			store.EvidenceRevision = params.RemediatesEvidenceRevision
+		} else if params.EvidenceRevision != "" && params.Outcome == "failed" {
+			store.EvidenceRevision = params.EvidenceRevision
+		}
+
+		store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+
+		if params.Outcome == "passed" {
+			store.Complete = true
+			store.NextAction = "complete"
+			store.ActiveAttempt = 0
+		} else {
+			if len(store.Attempts) >= store.MaxAttempts && store.MaxAttempts > 0 {
+				store.DecisionRequired = true
+				store.NextAction = "decision-required"
+			} else {
+				store.NextAction = "begin"
+				store.ActiveAttempt = 0
+			}
+		}
+
+		remaining := store.MaxAttempts - len(store.Attempts)
+		if remaining < 0 {
+			remaining = 0
+		}
+		outcome := &SettleResult{
+			RemainingAttempts: remaining,
+			DecisionRequired:  store.DecisionRequired,
+			Complete:          store.Complete,
+			Scope:             s.Scope,
+		}
+		recordRequest(store, params.RequestID, opSettle, digest, outcome)
+		if params.RequestID != "" {
+			setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
+		}
+		if err := s.commit(store); err != nil {
+			return fmt.Errorf("save store: %w", err)
+		}
+		result = &SettleResult{
+			Revision:          store.Revision,
+			RemainingAttempts: remaining,
+			DecisionRequired:  store.DecisionRequired,
+			Complete:          store.Complete,
+			Scope:             s.Scope,
+			Migrated:          migrated,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.Migrated = migrated
+	result.Scope = s.Scope
+	return result, nil
+}
+
+// findChainFailedAttempt mirrors gentle-ai's runtimeChainFailedAttempt: the
+// most recent unremediated failed attempt, if any.
+func findChainFailedAttempt(attempts []RuntimeAttempt) (RuntimeAttempt, bool) {
+	for i := len(attempts) - 1; i >= 0; i-- {
+		a := attempts[i]
+		if a.Outcome == "failed" && a.EvidenceRevision != "" {
+			remediated := false
+			for j := i + 1; j < len(attempts); j++ {
+				later := attempts[j]
+				if later.Outcome == "passed" && later.RemediatesEvidenceRevision == a.EvidenceRevision {
+					remediated = true
+					break
+				}
+			}
+			if !remediated {
+				return a, true
+			}
+		}
+	}
+	return RuntimeAttempt{}, false
+}
+
 // ─── Grant ───────────────────────────────────────────────────────────────────
 
 // maximumGrantRoots bounds one grant's root list.
@@ -1083,6 +1859,24 @@ func computeRevision(store *RuntimeStore) string {
 	return hex.EncodeToString(h[:])
 }
 
+// LedgerExists reports whether a ledger exists for the given change without
+// creating any filesystem state. It checks both the clone-scoped HEAD and the
+// legacy home-dir fallback, which is exactly what replay checks before
+// creating anything.
+func LedgerExists(changeName, repoRoot string) bool {
+	s, err := resolveStore(changeName, repoRoot)
+	if err != nil {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(s.Dir, "HEAD")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(s.LegacyPath); err == nil {
+		return true
+	}
+	return false
+}
+
 // ─── CLI helpers ─────────────────────────────────────────────────────────────
 
 // ParseChangeName extracts the change name from args or returns an error.
@@ -1124,6 +1918,8 @@ Usage:
   biggz sdd-attempt finish <change> [flags]      — finish current attempt
   biggz sdd-attempt reset <change> [flags]       — reset ledger (requires reason)
   biggz sdd-attempt grant <change> [flags]       — record per-change edit authority for roots
+  biggz sdd-attempt acquire <change> [flags]     — claim a bounded attempt and return its token
+  biggz sdd-attempt settle <change> [flags]      — complete the attempt selected by its token
 
 Flags:
   --expected-revision <hash>    CAS guard: fail if current revision differs
@@ -1150,4 +1946,6 @@ Flags:
   --evidence-revision <hash>    Evidence revision hash
   --binding-revision <hash>     Binding revision for remediation
   --binding-lineage <id>        Successor lineage for remediation
+  --token <token>               Compact token returned by acquire (acquire optional continuation, settle required)
+  --remediates-evidence-revision <hash>  Repaired failed evidence (acquire/settle)
 `
