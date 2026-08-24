@@ -68,6 +68,12 @@ Keep one writer and a short synthesized handoff. Delegation is mandatory at the 
 
 {{BIGGZ_BACKGROUND_POLICY}}
 
+### Delegation Runtime Preference (pi)
+When a Mandatory Delegation Trigger fires, delegate via the best available subagent runtime:
+- Prefer `subagent` tool (from `pi-subagents`, FleetView) when `Background subagent policy: on (capability: ready)` — call as `subagent({ agent: "<sdd-*>", task: "<task description>", context: "fresh" | "fork", mode: "task" })` for foreground SDD phases (sdd-* are primary workers; `general`/`explore` only for fallback). Use `mode: "background"` only for independent read-only scans that don't need inline synthesis.
+- Else fall back to Pi's native `task` tool.
+- Reserve `sdd-*` agents for SDD; do not synthesize SDD artifacts inline.
+
 #### Mandatory Delegation Triggers
 
 These are parent-orchestrator routing boundaries. Use the smallest useful topology and keep the safety machinery behind the outcome-first interaction. Do not pass these rules to child agents as permission to orchestrate.

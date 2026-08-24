@@ -32,6 +32,31 @@
           "review-resilience": "allow",
           "review-refuter": "allow",
           "review-validator": "allow"
+        },
+        "subagent": {
+          "__replace__": true,
+          "*": "deny",
+          "general": "allow",
+          "explore": "allow",
+          "sdd-init": "allow",
+          "sdd-explore": "allow",
+          "sdd-propose": "allow",
+          "sdd-spec": "allow",
+          "sdd-design": "allow",
+          "sdd-tasks": "allow",
+          "sdd-apply": "allow",
+          "sdd-verify": "allow",
+          "sdd-archive": "allow",
+          "sdd-onboard": "allow",
+          "jd-judge-a": "allow",
+          "jd-judge-b": "allow",
+          "jd-fix-agent": "allow",
+          "review-risk": "allow",
+          "review-readability": "allow",
+          "review-reliability": "allow",
+          "review-resilience": "allow",
+          "review-refuter": "allow",
+          "review-validator": "allow"
         }
       },
       "tools": {
