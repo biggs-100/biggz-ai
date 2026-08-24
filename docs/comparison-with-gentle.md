@@ -112,6 +112,21 @@ are wired).
 | Path identity packages (`pathidentity`/`pathquote`) | ✅ `pathidentity.Contains` + `pathquote.Quote` (3× `quotePath` deduped, `ShellWord` omitted) |
 | `consentenvelope` standalone package | Logic embedded in sdd/review + schemas in contracts/ |
 
+## Deferred — port on trigger (verified 2026-08-23)
+
+Not absent forever — deferred until the trigger event occurs. Keeping them deferred avoids 500L+ of niche hardening until a real user hits the case.
+
+| Feature (gentle commit) | Trigger to port |
+|---|---|
+| `carrier ratchet` — govern refusal text by carrier (`8a0962a8`) | A `refusal text` leaks through `field carriers` after a fix that left the field but still wrote to stream |
+| `clone-scoped review store reset` (`efa96be3` + `22688369`, `45873da8`) | Someone asks for `review store reset --confirm` to nuke a corrupted `.git/biggz/review-transactions` without manual `rm -rf` |
+| `Windows live lock holder` (`ef6d9297`) | `review gate` says `busy` in Windows CI without naming the PID/lock holder, and you parallelize 2 reviews on the same clone |
+| `Windows RAR repair token control` (`d9c32f85`) | Two concurrent `repair` on Windows race on `LockFileEx` TOCTOU because ownership was decided by path, not token |
+| `widened scope` pair — roll back on escalate (`50d4b3d9`) + honour at gate (`43fda430`) | You use `GrantedRoots` widened for a correction and need the gate to honour it *and* to roll it back when that correction escalates |
+| `nested workspace discovery` (`09a5179c`) | Monorepo with 2+ `openspec/` under `apps/web/openspec` + `apps/api/openspec` (bounded scan ≤2 levels) |
+| `optional agent runtime` (`d4c878fa`) | You mark `pi/kimi` as optional in `agents` and `biggz install` hard-fails because the `pi` binary is missing |
+| `last-event closure` (`0ed9225f`) | You need `validating → approved` without a `FINALIZE` event when the last lens is clean (re-introduces `StateValidating`) |
+
 ## What biggz-ai has that gentle-ai doesn't
 
 | Feature | Why better |
