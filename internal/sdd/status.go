@@ -219,23 +219,32 @@ func StatusWithOptions(openspecRoot string, opts StatusOptions) (active []Change
 	// Archived
 	archiveEntries, err := os.ReadDir(archiveDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return active, nil, nil
+		if !os.IsNotExist(err) {
+			return active, nil, fmt.Errorf("read archive dir: %w", err)
 		}
-		return active, nil, fmt.Errorf("read archive dir: %w", err)
+	} else {
+		// Show last 3 archived
+		for i := len(archiveEntries) - 1; i >= 0 && len(archived) < 3; i-- {
+			entry := archiveEntries[i]
+			if !entry.IsDir() {
+				continue
+			}
+			cs, err := readChange(filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot, opts.IncludeInstructions)
+			if err != nil {
+				continue
+			}
+			archived = append(archived, cs)
+		}
 	}
 
-	// Show last 3 archived
-	for i := len(archiveEntries) - 1; i >= 0 && len(archived) < 3; i-- {
-		entry := archiveEntries[i]
-		if !entry.IsDir() {
-			continue
-		}
-		cs, err := readChange(filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot, opts.IncludeInstructions)
-		if err != nil {
-			continue
-		}
-		archived = append(archived, cs)
+	// Hybrid BigMem merge: the dispatcher is now authoritative for both
+	// openspec and BigMem (filesystem wins on conflict). This ports
+	// gentle-ai's resolveEngramStatus hybrid without breaking
+	// filesystem-only users: when the BigMem DB is absent or has no sdd/
+	// observations, collection returns nil and the filesystem result is
+	// returned unchanged.
+	if memActive, memArchived, err := collectBigMemChangesWithArchive(workspaceRoot, opts.IncludeInstructions); err == nil && len(memActive)+len(memArchived) > 0 {
+		active, archived = mergeFilesystemAndBigMem(active, archived, memActive, memArchived)
 	}
 
 	return active, archived, nil

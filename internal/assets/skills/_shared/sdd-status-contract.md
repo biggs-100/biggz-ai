@@ -51,11 +51,15 @@ archive`, printed as `Change: <name>`, `Next phase: <phase>`,
 `Description: <phase description>`. Exit 1 with `change "<name>" not found`
 if the change does not exist.
 
-The dispatcher reads ONLY OpenSpec file artifacts under `openspec/changes/`.
-It cannot observe BigMem-backed changes and emits no structured JSON. Treat
-the dispatcher as authoritative ONLY when the session artifact store is
-`openspec` or `hybrid`. When the store is `BigMem`, do NOT invoke it at all —
-resolve status entirely from BigMem using the manual schema below.
+The dispatcher (`biggz sdd-status --json --instructions`) is now authoritative
+for both `openspec` and `BigMem` via the native hybrid merge
+(`internal/sdd/engram_status.go` port of gentle-ai's `resolveEngramStatus`):
+it scans `openspec/changes/` on the filesystem and merges in BigMem
+observations (`sdd/{change}/{proposal,spec,design,tasks,apply-progress,verify-report,archive-report}`)
+with filesystem winning on name conflict. Invoke the dispatcher for
+`openspec`, `BigMem`, and `hybrid` alike and treat its JSON as the single
+authority; the manual BigMem schema below is now the fallback only when
+the binary is unavailable.
 
 ## Derived Structured Status (what prompts consume)
 
