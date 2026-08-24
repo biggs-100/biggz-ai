@@ -285,9 +285,10 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		if _, err := DeployPiThinkingWrap(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi thinking wrap: %w", err)
 		}
-		if _, err := DeployPiPrettyWrapper(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi pretty wrapper: %w", err)
-		}
+		// pi-pretty is auto-loaded via its package `pi.extensions` (npm:pi-pretty/dist/index.js).
+		// Do NOT deploy a custom wrapper — it would duplicate tool registrations (read/bash/find/grep)
+		// and cause "Tool conflicts" on pi startup. The FleetView itself comes from pi-subagents,
+		// not pi-pretty, so pretty rendering works without a wrapper.
 	}
 
 	// Auto-install pi subagent dispatcher when pi is the target.
