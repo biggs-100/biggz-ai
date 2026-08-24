@@ -289,6 +289,11 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		// Do NOT deploy a custom wrapper — it would duplicate tool registrations (read/bash/find/grep)
 		// and cause "Tool conflicts" on pi startup. The FleetView itself comes from pi-subagents,
 		// not pi-pretty, so pretty rendering works without a wrapper.
+		// Self-heal: remove legacy conflicting wrapper left by installs before e54da84.
+		if !cfg.DryRun {
+			legacyWrapper := filepath.Join(piExtensionsDir(homeDir), "biggz-pi-pretty.js")
+			_ = os.Remove(legacyWrapper)
+		}
 	}
 
 	// Auto-install pi subagent dispatcher when pi is the target.
