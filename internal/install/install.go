@@ -20,6 +20,7 @@ import (
 	"github.com/biggs-100/biggz-ai/internal/agents"
 	"github.com/biggs-100/biggz-ai/internal/assets"
 	"github.com/biggs-100/biggz-ai/internal/filemerge"
+	"github.com/biggs-100/biggz-ai/internal/platform"
 	"github.com/biggs-100/biggz-ai/model"
 	"github.com/biggs-100/biggz-ai/plugin"
 )
@@ -263,6 +264,29 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 			if !cfg.DryRun {
 				if _, _, err := provisioner.ProvisionBigMemMCP(homeDir); err != nil {
 					return result, fmt.Errorf("provision bigmem mcp: %w", err)
+				}
+			}
+		}
+	}
+
+	// Auto-install pi subagent dispatcher when pi is the target.
+	// Ensures `biggz install --agent pi` provisions pi-subagents
+	// (nicobailon/pi-subagents) so pi has delegate tool, not just
+	// read/bash/edit/write. Without it pi cannot launch sub-agents.
+	// Gentle's 9-step pi install includes pi-subagents-j0k3r; biggz uses
+	// the 2-package npm install (idempotent) plus BigMem MCP separately.
+	if adapter.ID() == agents.AgentPi {
+		if cmds, err := adapter.InstallCommand(nil); err == nil && len(cmds) > 0 {
+			if !cfg.DryRun {
+				for _, cmd := range cmds {
+					if len(cmd) == 0 {
+						continue
+					}
+					c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+					platform.EnsureCommandDir(c)
+					if out, err := c.CombinedOutput(); err != nil {
+						return result, fmt.Errorf("install pi subagents (%s): %w (output: %s)", strings.Join(cmd, " "), err, strings.TrimSpace(string(out)))
+					}
 				}
 			}
 		}

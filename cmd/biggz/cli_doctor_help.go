@@ -83,6 +83,7 @@ func doctorRun() int {
 			doctor.NewVersionCheck(),
 			doctor.NewBackupCheck(),
 			doctor.NewReviewCheck(),
+			doctor.NewPiSubagentsCheck(),
 		},
 	}
 

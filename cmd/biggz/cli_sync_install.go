@@ -242,11 +242,13 @@ func installRun() int {
 	cfg := install.Config{DryRun: dryRun, HomeDir: homeDir}
 	var result *install.Result
 	var lastErr error
+	var usedAdapter plugin.AgentAdapter
 
 	for _, name := range toTry {
 		r, err := install.Run(ctx, adapters[name], cfg)
 		if err == nil && r.AgentDetected {
 			result = r
+			usedAdapter = adapters[name]
 			break
 		}
 		lastErr = err
@@ -268,6 +270,15 @@ func installRun() int {
 		fmt.Printf("  Config merge: %v\n", result.ConfigMerged)
 		fmt.Printf("  Commands: %d\n", result.CommandsWritten)
 		fmt.Printf("  Plugins: %d\n", result.PluginsDeployed)
+		if usedAdapter != nil {
+			if cmds, err := usedAdapter.InstallCommand(nil); err == nil && len(cmds) > 0 {
+				for _, cmd := range cmds {
+					if len(cmd) > 0 {
+						fmt.Printf("  InstallCommand: %s\n", strings.Join(cmd, " "))
+					}
+				}
+			}
+		}
 	} else {
 		fmt.Println("biggz-ai installed successfully")
 		fmt.Printf("  Agent: %s\n", result.BinaryPath)

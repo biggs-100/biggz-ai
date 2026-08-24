@@ -78,21 +78,23 @@ func (a *Adapter) Detect(_ context.Context, homeDir string) (bool, string, strin
 	return installed, binaryPath, configPath, stat.isDir, nil
 }
 
-// InstallCommand returns the minimal install command for Pi.
-// Gentle's pi adapter does 9 steps (npm:gentle-pi, npm:gentle-engram,
-// npm:pi-mcp-adapter, pi-engram init, pi-subagents-j0k3r, etc.) including
-// the engram host relay. Biggz pi will use biggz-mcp (native Go at
-// cmd/biggz-mcp / biggz mcp subcommand), not pi-mcp-adapter, so the full
-// 9-step sequence is deferred. Keep a single npm step for now with a note
-// about the gentle reference.
+// InstallCommand returns the install commands for Pi.
+//
+// Gentle's pi adapter does 9 steps (see gentle-ai/internal/agents/pi/adapter.go:240):
+//   pi install npm:gentle-pi, npm:gentle-engram, npm:pi-mcp-adapter,
+//   pi-engram init, pi-subagents-j0k3r, rpiv-ask-user-question, pi-web-access,
+//   rpiv-todo, pi-btw (see piSubagentsInstallCommand + engramInitCommand).
+// Biggz uses BigMem (native Go at cmd/biggz-mcp / `biggz mcp`), not Engram,
+// so it does NOT need gentle-pi, gentle-engram, pi-mcp-adapter, pi-engram init,
+// or rpiv-* / pi-btw. The only runtime dependency beyond the pi CLI itself is
+// the subagent dispatcher (nicobailon/pi-subagents) which provides
+// scout/researcher/worker/reviewer/oracle/delegate + workflowScript/worktree
+// isolation. Without it pi has only read/bash/edit/write (user reported
+// "No tengo disponible el mecanismo para lanzar sub-agentes").
+// npm install is idempotent, so a single 2-package install suffices;
+// BigMem MCP is provisioned separately via ProvisionBigMemMCP (biggz-mcp).
 func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
-	// Gentle reference (9 steps): pi install npm:gentle-pi, pi install
-	// npm:gentle-engram, pi install npm:pi-mcp-adapter, engram init,
-	// pi-subagents-j0k3r, rpiv-ask-user-question, pi-web-access, rpiv-todo,
-	// pi-btw. Biggz defers the full sequence; this single step installs the
-	// pi CLI itself. BigMem wiring is handled via ProvisionBigMemMCP which
-	// targets biggz-mcp, not pi-mcp-adapter.
-	return [][]string{{"npm", "install", "-g", "@inflection/pi"}}, nil
+	return [][]string{{"npm", "install", "-g", "@inflection/pi", "pi-subagents"}}, nil
 }
 
 func (a *Adapter) Capabilities() []string {
