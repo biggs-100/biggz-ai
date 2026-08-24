@@ -51,6 +51,8 @@ func bigmemRun() int {
 		fmt.Fprintln(os.Stderr, "  conflicts judge <id> <verdict>   Judge a conflict")
 		fmt.Fprintln(os.Stderr, "    verdicts: related, compatible, scoped, conflicts_with, supersedes, not_conflict")
 		fmt.Fprintln(os.Stderr, "  conflicts scan [--project P]     Scan for new conflicts")
+		fmt.Fprintln(os.Stderr, "  graph [--project P] [--format dot|ascii|json] [--limit N] [--scope project|all]")
+		fmt.Fprintln(os.Stderr, "                                Render topic_key hierarchy and relations")
 		fmt.Fprintln(os.Stderr, "  version                         Show bigmem version")
 		fmt.Fprintln(os.Stderr, "  help                            Show this help")
 		return 1
@@ -689,6 +691,9 @@ func bigmemRun() int {
 			fmt.Printf("Exported to %s\n", filepath.Join(projectRoot, ".bigmem"))
 		}
 
+	case "graph":
+		return bigmemGraphRun(store, args[1:])
+
 	case "version", "--version", "-v":
 		fmt.Println("bigmem vdev")
 		return 0
@@ -701,5 +706,98 @@ func bigmemRun() int {
 		return 1
 	}
 
+	return 0
+}
+
+// bigmemGraphRun renders topic_key hierarchy and memory_relations BM25 edges.
+func bigmemGraphRun(store *bigmem.Store, args []string) int {
+	format := "ascii"
+	project := ""
+	scope := "project"
+	limit := 50
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--project":
+			if i+1 < len(args) {
+				project = args[i+1]
+				i++
+			}
+		case "--format":
+			if i+1 < len(args) {
+				format = strings.ToLower(args[i+1])
+				i++
+			}
+		case "--limit":
+			if i+1 < len(args) {
+				if n, err := strconv.Atoi(args[i+1]); err == nil {
+					limit = n
+				}
+				i++
+			}
+		case "--scope":
+			if i+1 < len(args) {
+				scope = strings.ToLower(args[i+1])
+				i++
+			}
+		case "--help", "-h":
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem graph [--project <name>] [--format dot|ascii|json] [--limit N] [--scope project|all]")
+			return 0
+		default:
+			fmt.Fprintf(os.Stderr, "unknown flag for graph: %s\n", args[i])
+			return 1
+		}
+	}
+
+	if format != "ascii" && format != "dot" && format != "json" {
+		fmt.Fprintf(os.Stderr, "error: invalid format %q (dot|ascii|json)\n", format)
+		return 1
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	if scope == "all" {
+		project = ""
+	} else if project == "" {
+		// default current project detection (git root base or cwd base)
+		cwd, _ := os.Getwd()
+		projectRoot := cwd
+		if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
+			projectRoot = strings.TrimSpace(string(out))
+		}
+		if projectRoot != "" {
+			project = filepath.Base(projectRoot)
+		}
+		// If no observations exist for this project, BuildGraph will return empty
+		// and Render will show "No graph data" — gracefully handle empty case below.
+	}
+
+	nodes, edges, err := store.BuildGraph(project, limit)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: graph: %v\n", err)
+		return 1
+	}
+	// If scope is project and graph is empty due to over-filtering, fall back to all
+	// to avoid showing empty when data exists in other projects (helps manual verification).
+	if len(nodes) == 0 && project != "" && scope == "project" {
+		altNodes, altEdges, _ := store.BuildGraph("", limit)
+		if len(altNodes) > 0 || len(altEdges) > 0 {
+			nodes, edges = altNodes, altEdges
+		}
+	}
+
+	switch format {
+	case "ascii":
+		fmt.Println(bigmem.RenderASCII(nodes, edges))
+	case "dot":
+		fmt.Println(bigmem.RenderDOT(nodes, edges))
+	case "json":
+		js, err := bigmem.RenderJSON(nodes, edges)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: json: %v\n", err)
+			return 1
+		}
+		fmt.Println(js)
+	}
 	return 0
 }

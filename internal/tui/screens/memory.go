@@ -19,21 +19,23 @@ const (
 	memViewSearch
 	memViewDetail
 	memViewTimeline
+	memViewGraph
 )
 
 // MemoryModel browses BigMem persistent memory.
 type MemoryModel struct {
-	store    *bigmem.Store
-	items    []*bigmem.Observation
-	cursor   int
-	view     memView
-	searchQ  string
-	detail   *bigmem.Observation
-	loaded   bool
-	err      string
-	copied   bool // shows "Copied!" feedback
-	session  string
-	tlEntries []bigmem.TimelineEntry
+	store        *bigmem.Store
+	items        []*bigmem.Observation
+	cursor       int
+	view         memView
+	searchQ      string
+	detail       *bigmem.Observation
+	loaded       bool
+	err          string
+	copied       bool // shows "Copied!" feedback
+	session      string
+	tlEntries    []bigmem.TimelineEntry
+	graphContent string
 }
 
 // NewMemoryModel creates the memory screen.
@@ -78,6 +80,44 @@ type memResultMsg struct {
 type memTimelineMsg struct {
 	entries []bigmem.TimelineEntry
 	err     string
+}
+type memGraphMsg struct {
+	content string
+	err     string
+}
+
+// ViewGraph renders the memory graph as ASCII for reuse by CLI and TUI.
+// Nodes are topic_key observations; edges are memory_relations.
+// Uses bigmem.RenderASCII (plain) — caller may wrap with lipgloss.
+func ViewGraph(nodes []bigmem.GraphNode, edges []bigmem.GraphEdge) string {
+	return bigmem.RenderASCII(nodes, edges)
+}
+
+// ViewGraphFromStore is a convenience for CLI/TUI that owns a store.
+func ViewGraphFromStore(store *bigmem.Store, project string, limit int) string {
+	if store == nil {
+		return "No graph data"
+	}
+	nodes, edges, err := store.BuildGraph(project, limit)
+	if err != nil {
+		return fmt.Sprintf("error: %v", err)
+	}
+	return ViewGraph(nodes, edges)
+}
+
+func loadGraphData() tea.Msg {
+	home, _ := os.UserHomeDir()
+	dbPath := filepath.Join(home, ".biggz", "bigmem")
+	s, err := bigmem.Open(dbPath)
+	if err != nil {
+		return memGraphMsg{err: err.Error()}
+	}
+	defer s.Close()
+	nodes, edges, err := s.BuildGraph("", 50)
+	if err != nil {
+		return memGraphMsg{err: err.Error()}
+	}
+	return memGraphMsg{content: ViewGraph(nodes, edges)}
 }
 
 func loadTimelineData(focusID string) tea.Msg {
@@ -167,6 +207,13 @@ func (m MemoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				focusID := m.items[m.cursor].ID
 				return m, func() tea.Msg { return loadTimelineData(focusID) }
 			}
+		case "g":
+			if m.view == memViewGraph {
+				m.view = memViewList
+				return m, nil
+			}
+			m.view = memViewGraph
+			return m, loadGraphData
 		case "c":
 			if m.view == memViewDetail && m.detail != nil {
 				// OSC 52 clipboard copy
@@ -203,6 +250,14 @@ func (m MemoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.view = memViewList
 				return m, nil
 			}
+			if m.view == memViewGraph {
+				m.view = memViewList
+				return m, nil
+			}
+			if m.view == memViewTimeline {
+				m.view = memViewList
+				return m, nil
+			}
 		default:
 			if m.view == memViewSearch && len(msg.String()) == 1 && msg.String() != "r" {
 				m.searchQ += msg.String()
@@ -233,6 +288,11 @@ func (m MemoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != "" { m.err = msg.err; return m, nil }
 		m.tlEntries = msg.entries
 		m.view = memViewTimeline
+		m.err = ""
+	case memGraphMsg:
+		if msg.err != "" { m.err = msg.err; return m, nil }
+		m.graphContent = msg.content
+		m.view = memViewGraph
 		m.err = ""
 	}
 
@@ -295,6 +355,19 @@ func (m MemoryModel) View() string {
 		b.WriteString("\n")
 		b.WriteString(styles.Help.Render("[T] toggle timeline · ESC back"))
 
+	case memViewGraph:
+		b.WriteString(styles.Section.Render("Graph"))
+		b.WriteString("\n\n")
+		if m.graphContent == "" {
+			b.WriteString(styles.StatusInfo.Render("No graph data."))
+		} else {
+			// Render ASCII tree; use plain but highlight with title style
+			b.WriteString(m.graphContent)
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		b.WriteString(styles.Help.Render("[G] toggle graph · ESC back"))
+
 	case memViewList:
 		if !m.loaded {
 			b.WriteString("Press [R] to load recent memories.\n\n")
@@ -315,6 +388,6 @@ func (m MemoryModel) View() string {
 	}
 
 	b.WriteString("\n\n")
-	b.WriteString(styles.Help.Render("[R] refresh · / search · T timeline · C copy · ESC back · ? help"))
+	b.WriteString(styles.Help.Render("[R] refresh · / search · T timeline · G graph · C copy · ESC back · ? help"))
 	return styles.AppStyle.Render(b.String())
 }
