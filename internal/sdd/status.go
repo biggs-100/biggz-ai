@@ -381,13 +381,33 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 	remediationComplete := sddattempt.RemediationComplete(cs.Name, workspaceRoot, instance, verifyResult.EvidenceRevision)
 	remediationState := RemediationState{}
 	if verifyReportCurrent && !verifyResult.Passing && applyState == ApplyAllDone && !remediationComplete {
+		reason := fmt.Sprintf(
+			"verify evidence requires unmanaged remediation for %s: %s; receipt-driven review is disabled, so this correction is bounded by the native runtime attempt budget alone",
+			verifyResult.EvidenceRevision, verifyResult.Reason,
+		)
+		// Truthful settlement polish (#3422): distinguish interrupted vs failed.
+		// An interrupted correction discharges nothing (original failure still
+		// bindable); a failed correction records its own new failure as the
+		// next bindable head. Surface the distinction for audit fidelity.
+		if store, err := sddattempt.LoadStore(cs.Name, workspaceRoot); err == nil && len(store.Attempts) > 0 {
+			last := store.Attempts[len(store.Attempts)-1]
+			if last.RemediatesEvidenceRevision == verifyResult.EvidenceRevision {
+				switch last.Outcome {
+				case "interrupted":
+					reason += " (last correction interrupted — original failure still bindable)"
+				case "failed":
+					if last.EvidenceRevision != "" && last.EvidenceRevision != verifyResult.EvidenceRevision {
+						reason += fmt.Sprintf(" (last correction failed — new failure %s now bindable)", last.EvidenceRevision)
+					} else {
+						reason += " (last correction failed — new failure now bindable)"
+					}
+				}
+			}
+		}
 		remediationState = RemediationState{
 			Required:               true,
 			FailedEvidenceRevision: verifyResult.EvidenceRevision,
-			Reason: fmt.Sprintf(
-				"verify evidence requires unmanaged remediation for %s: %s; receipt-driven review is disabled, so this correction is bounded by the native runtime attempt budget alone",
-				verifyResult.EvidenceRevision, verifyResult.Reason,
-			),
+			Reason:                 reason,
 		}
 	}
 	if remediationState.Reason != "" {
