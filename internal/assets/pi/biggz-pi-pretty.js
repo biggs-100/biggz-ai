@@ -20,11 +20,29 @@ import { fileURLToPath } from "node:url";
 
 export default async function biggzPiPrettyExtension(pi, deps) {
 	try {
-		// Resolve the real file path to handle pnpm symlink installs
-		// (like gentle-pi's realpathSync(packageJsonPath) -> createRequire).
 		const extensionRealPath = realpathSync(fileURLToPath(import.meta.url));
-		const require = createRequire(extensionRealPath);
-		const mod = require("@heyhuynhgiabuu/pi-pretty");
+		let mod;
+		// Prefer direct file import from pnpm location (pi install target), fallback to package name
+		try {
+			const { homedir } = await import("node:os");
+			const { join } = await import("node:path");
+			const { pathToFileURL } = await import("node:url");
+			const home = homedir();
+			const candidates = [
+				join(home, ".pi", "agent", "npm", "node_modules", "@heyhuynhgiabuu", "pi-pretty", "dist", "index.js"),
+				join(home, ".pi", "agent", "node_modules", "@heyhuynhgiabuu", "pi-pretty", "dist", "index.js"),
+			];
+			for (const cand of candidates) {
+				try {
+					mod = await import(pathToFileURL(cand).href);
+					if (mod) break;
+				} catch {}
+			}
+		} catch {}
+		if (!mod) {
+			const require = createRequire(extensionRealPath);
+			mod = require("@heyhuynhgiabuu/pi-pretty");
+		}
 		const piPretty = typeof mod === "function" ? mod : mod?.default;
 		if (typeof piPretty === "function") {
 			return piPretty(pi, deps);

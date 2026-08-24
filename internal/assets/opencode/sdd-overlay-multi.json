@@ -41,7 +41,8 @@
         "edit": true,
         "bash": true,
         "question": true,
-        "task": true
+        "task": true,
+        "subagent": true
       }
     },
     "sdd-init": {
