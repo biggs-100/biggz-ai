@@ -4,15 +4,17 @@
 
 | Metric | gentle-ai | biggz-ai | Reduction |
 |---|---|---|---|
-| Production Go lines (no tests) | 112,037 | 36,307 | **68%** |
-| Test Go lines | 200,631 | 24,060 | **88%** |
-| Production Go files | 424 | 186 | **56%** |
-| Test files | 606 | 105 | **83%** |
+| Production Go lines (no tests) | 112,037 | 39,427 | **65%** |
+| Test Go lines | 200,631 | 25,555 | **87%** |
+| Production Go files | 424 | 189 | **55%** |
+| Test files | 606 | 108 | **82%** |
 | Agent adapters | 16 (17 dirs incl. manifest) | 16 (ported, same set) | — |
-| Internal packages | 33 | 28 | — |
+| Internal packages | 33 | 34 | — |
 
-Measured 2026-08-10. gentle-ai counts are from a filtered clone of `cmd/` and
+Measured 2026-08-23. gentle-ai counts are from a filtered clone of `cmd/` and
 `internal/` (no testdata); biggz-ai counts are the full module.
+
+Delta since 2026-08-10: +3,120 prod lines (+8.6%), +1,495 test lines, +3 prod files, +3 test files, +6 internal packages (file lock, acquire/settle, engram_status, sdd-research, agentbuilder).
 
 ## Architecture
 
