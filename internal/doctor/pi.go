@@ -87,7 +87,35 @@ func (c *PiSubagentsCheck) Run(ctx context.Context) *Result {
 		}
 	}
 
-	// 1. npm list -g pi-subagents (most reliable for npm global)
+	// 1. pi's loader path is authoritative: ~/.pi/agent/npm/node_modules/pi-subagents
+	// (pnpm symlinks via `pi install`), not the global npm prefix. Check this first — `pi install`
+	// writes to npm/node_modules, and gentle-pi's FleetView capability probe uses package.json
+	// presence, not `npm list -g`.
+	home, err := c.homeDirFn()
+	if err == nil && home != "" {
+		candidates := []string{
+			filepath.Join(home, ".pi", "agent", "npm", "node_modules", "pi-subagents"),
+			filepath.Join(home, ".pi", "agent", "node_modules", "pi-subagents"),
+			filepath.Join(home, ".pi", "node_modules", "pi-subagents"),
+		}
+		// Also respect PI_CODING_AGENT_DIR if set (mirrors pi adapter ConfigPath)
+		if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
+			candidates = append(candidates, filepath.Join(v, "npm", "node_modules", "pi-subagents"), filepath.Join(v, "node_modules", "pi-subagents"))
+		}
+		for _, cand := range candidates {
+			if info, err := c.statFn(cand); err == nil && info.IsDir() {
+				return &Result{
+					ID:       PiSubagentsCheckID,
+					Status:   StatusPass,
+					Message:  fmt.Sprintf("pi-subagents found at %s", cand),
+					Severity: SeverityInfo,
+				}
+			}
+		}
+	}
+
+	// 2. npm list -g pi-subagents (legacy global check — not where pi loads from,
+	// but kept as fallback for older installs).
 	if out, err := c.execFn("npm", "list", "-g", "pi-subagents"); err == nil {
 		// npm list exits 0 when found; output contains package name
 		if strings.Contains(string(out), "pi-subagents") {
@@ -107,7 +135,7 @@ func (c *PiSubagentsCheck) Run(ctx context.Context) *Result {
 		}
 	}
 
-	// 2. pi-subagents binary on PATH (some installs expose a binary)
+	// 3. pi-subagents binary on PATH (some installs expose a binary)
 	if _, err := c.lookPath("pi-subagents"); err == nil {
 		return &Result{
 			ID:       PiSubagentsCheckID,
@@ -117,54 +145,31 @@ func (c *PiSubagentsCheck) Run(ctx context.Context) *Result {
 		}
 	}
 
-	// 3. ~/.pi/agent/node_modules/pi-subagents and fallback ~/.pi/node_modules/pi-subagents
-	home, err := c.homeDirFn()
-	if err == nil && home != "" {
-		candidates := []string{
-			filepath.Join(home, ".pi", "agent", "node_modules", "pi-subagents"),
-			filepath.Join(home, ".pi", "node_modules", "pi-subagents"),
-		}
-		// Also respect PI_CODING_AGENT_DIR if set (mirrors pi adapter ConfigPath)
-		if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
-			candidates = append(candidates, filepath.Join(v, "node_modules", "pi-subagents"))
-		}
-		for _, cand := range candidates {
-			if info, err := c.statFn(cand); err == nil && info.IsDir() {
-				return &Result{
-					ID:       PiSubagentsCheckID,
-					Status:   StatusPass,
-					Message:  fmt.Sprintf("pi-subagents found at %s", cand),
-					Severity: SeverityInfo,
-				}
-			}
-		}
-	}
-
 	return &Result{
 		ID:       PiSubagentsCheckID,
 		Status:   StatusWarn,
-		Message:  "pi-subagents not installed — pi subagent dispatcher missing (run: npm install -g pi-subagents)",
+		Message:  "pi-subagents not installed — pi subagent dispatcher missing (run: pi install npm:pi-subagents)",
 		Severity: SeverityWarning,
-		Error:    "pi-subagents not found via npm list -g, PATH, or ~/.pi/agent/node_modules/pi-subagents",
+		Error:    "pi-subagents not found via npm list -g, PATH, or ~/.pi/agent/npm/node_modules/pi-subagents",
 	}
 }
 
-// Remedy returns a repair action that installs pi-subagents via npm.
+// Remedy returns a repair action that installs pi-subagents via pi.
 func (c *PiSubagentsCheck) Remedy() *Remedy {
 	return &Remedy{
 		ID:          string(PiSubagentsCheckID),
-		Description: "Install pi-subagents dispatcher (npm install -g pi-subagents)",
+		Description: "Install pi-subagents dispatcher (pi install npm:pi-subagents)",
 		Action: func(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
 			}
-			cmd := exec.CommandContext(ctx, "npm", "install", "-g", "pi-subagents")
+			cmd := exec.CommandContext(ctx, "pi", "install", "npm:pi-subagents")
 			platform.EnsureCommandDir(cmd)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
-				return fmt.Errorf("npm install -g pi-subagents: %w (output: %s)", err, strings.TrimSpace(string(out)))
+				return fmt.Errorf("pi install npm:pi-subagents: %w (output: %s)", err, strings.TrimSpace(string(out)))
 			}
 			return nil
 		},

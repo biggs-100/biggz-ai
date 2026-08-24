@@ -28,7 +28,6 @@ const (
 )
 
 var legacyPiSubagentPackageIdentities = map[string]struct{}{
-	"npm:pi-subagents":          {},
 	"vendor/pi-subagents":       {},
 	"vendor/pi-subagents-fixed": {},
 }
@@ -99,7 +98,13 @@ func (a *Adapter) Detect(_ context.Context, homeDir string) (bool, string, strin
 // This gives pi `sdd-apply`, `sdd-research`, `sdd-spec`, etc. as native
 // agents visible via `/agents` and the model assignment modal.
 func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
-	return [][]string{{"npm", "install", "-g", "pi-subagents"}}, nil
+	// pi's package loader only scans ~/.pi/agent/node_modules (and pnpm
+	// symlinks there), NOT the global npm prefix (%AppData%\npm on Windows
+	// or /usr/local/lib/node_modules). Using `npm install -g` would leave
+	// pi-subagents invisible to the `subagent_run` capability probe and
+	// FleetView would never become ready. `pi install` writes into the
+	// agent-owned node_modules where pi actually discovers packages.
+	return [][]string{{"pi", "install", "npm:pi-subagents"}}, nil
 }
 
 func (a *Adapter) Capabilities() []string {
@@ -247,18 +252,28 @@ func (a *Adapter) mergePiSettingsBigMem(path, mcpBinary string) (filemerge.Write
 	if err != nil {
 		return filemerge.WriteResult{}, err
 	}
-	// Drop legacy pi-subagents* package entries if packages exists.
+	// Ensure packages always contains the FleetView dispatcher and its
+	// pretty renderer, deduplicated, while still filtering legacy vendor
+	// prefixes. This is idempotent: repeated installs keep exactly one copy.
+	desiredPiPackages := []string{"npm:pi-subagents", "npm:@heyhuynhgiabuu/pi-pretty"}
+	var filtered []any
 	if pkgs, ok := obj["packages"]; ok {
-		filtered := filterPiPackages(pkgs)
-		// Normalize to []any for stable JSON; keep even if empty to record
-		// that legacy entries were removed.
-		if filtered == nil {
-			filtered = []any{}
-		}
-		// Only set if originally present or legacy entries were found.
-		// Simpler: always set filtered when packages existed.
-		obj["packages"] = filtered
+		filtered = filterPiPackages(pkgs)
+	} else {
+		filtered = []any{}
 	}
+	if filtered == nil {
+		filtered = []any{}
+	}
+	// Dedupe by base package identity (strip @version suffix for comparison).
+	for _, want := range desiredPiPackages {
+		if containsPiPackage(filtered, want) {
+			continue
+		}
+		filtered = append(filtered, want)
+	}
+	// Always set packages as []any with both entries (stable JSON).
+	obj["packages"] = filtered
 
 	servers, _ := obj["mcpServers"].(map[string]any)
 	if servers == nil {
@@ -383,6 +398,98 @@ func piPackageIdentity(pkg any) string {
 func isLegacyPiSubagentPackage(identity string) bool {
 	_, ok := legacyPiSubagentPackageIdentities[identity]
 	return ok
+}
+
+func containsPiPackage(existing []any, want string) bool {
+	for _, pkg := range existing {
+		var src string
+		switch v := pkg.(type) {
+		case string:
+			src = v
+		case map[string]any:
+			src, _ = v["source"].(string)
+		default:
+			continue
+		}
+		if src == want || strings.HasPrefix(src, want+"@") {
+			return true
+		}
+	}
+	return false
+}
+
+// Background subagent policy — minimal port of gentle-pi's
+// resolveBackgroundSubagentsCapability / loadBackgroundSubagentsPolicy.
+// Gentle-pi resolves policy via project > global > env > default but
+// capability is always probed via the live tool registry or the installed
+// pi-subagents package manifest. For biggz we keep it simple: capability
+// is ready when ~/.pi/agent/npm/node_modules/pi-subagents/package.json exists
+// (via `pi install`, pnpm symlinks under npm/node_modules), and policy
+// is on when capability is ready, off otherwise.
+
+const (
+	backgroundPolicyOn     = "on"
+	backgroundPolicyOff    = "off"
+	backgroundCapabilityReady  = "ready"
+	backgroundCapabilityAbsent = "absent"
+)
+
+func resolveBackgroundSubagentsCapability(homeDir string) string {
+	candidates := []string{
+		filepath.Join(homeDir, ".pi", "agent", "npm", "node_modules", "pi-subagents"),
+		filepath.Join(homeDir, ".pi", "agent", "npm", "node_modules", "pi-subagents-j0k3r"),
+		filepath.Join(homeDir, ".pi", "agent", "node_modules", "pi-subagents"),
+		filepath.Join(homeDir, ".pi", "agent", "node_modules", "pi-subagents-j0k3r"),
+	}
+	if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
+		candidates = append(candidates,
+			filepath.Join(v, "npm", "node_modules", "pi-subagents"),
+			filepath.Join(v, "npm", "node_modules", "pi-subagents-j0k3r"),
+			filepath.Join(v, "node_modules", "pi-subagents"),
+			filepath.Join(v, "node_modules", "pi-subagents-j0k3r"),
+		)
+	}
+	for _, root := range candidates {
+		if _, err := os.Stat(filepath.Join(root, "package.json")); err == nil {
+			return backgroundCapabilityReady
+		}
+		if _, err := ResolvePackageBin(root); err == nil {
+			return backgroundCapabilityReady
+		}
+	}
+	return backgroundCapabilityAbsent
+}
+
+func loadBackgroundSubagentsPolicy(homeDir string) string {
+	if resolveBackgroundSubagentsCapability(homeDir) == backgroundCapabilityReady {
+		return backgroundPolicyOn
+	}
+	return backgroundPolicyOff
+}
+
+func renderBackgroundSubagentsStatusLine(homeDir string) string {
+	capability := resolveBackgroundSubagentsCapability(homeDir)
+	policy := loadBackgroundSubagentsPolicy(homeDir)
+	line := fmt.Sprintf("Background subagent policy: %s (capability: %s)", policy, capability)
+	if capability == backgroundCapabilityAbsent {
+		line += " — run `pi install` to enable FleetView"
+	}
+	return line
+}
+
+// ResolveBackgroundSubagentsCapability is the exported wrapper for install and doctor.
+func ResolveBackgroundSubagentsCapability(homeDir string) string {
+	return resolveBackgroundSubagentsCapability(homeDir)
+}
+
+// LoadBackgroundSubagentsPolicy is the exported wrapper.
+func LoadBackgroundSubagentsPolicy(homeDir string) string {
+	return loadBackgroundSubagentsPolicy(homeDir)
+}
+
+// RenderBackgroundSubagentsStatusLine is the exported wrapper.
+func RenderBackgroundSubagentsStatusLine(homeDir string) string {
+	return renderBackgroundSubagentsStatusLine(homeDir)
 }
 
 func defaultStat(path string) statResult {

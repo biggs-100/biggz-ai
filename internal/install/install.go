@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/agents"
+	piadapter "github.com/biggs-100/biggz-ai/internal/agents/pi"
 	"github.com/biggs-100/biggz-ai/internal/assets"
 	"github.com/biggs-100/biggz-ai/internal/filemerge"
 	"github.com/biggs-100/biggz-ai/internal/platform"
@@ -283,6 +284,9 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		}
 		if _, err := DeployPiThinkingWrap(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi thinking wrap: %w", err)
+		}
+		if _, err := DeployPiPrettyWrapper(homeDir, assets.FS, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy pi pretty wrapper: %w", err)
 		}
 	}
 
@@ -684,6 +688,14 @@ func DeployPersona(adapter plugin.AgentAdapter, homeDir string, dryRun bool) err
 	if adapter.ID() == agents.AgentPi {
 		if orchData, err := fs.ReadFile(assets.FS, "biggz/biggz-orchestrator.md"); err == nil {
 			orchContent := string(orchData)
+			// Replace background policy token with live capability probe at install time.
+			// This mirrors gentle-pi's renderOrchestratorPrompt which injects
+			// Background subagent policy: on|off (capability: ready|absent).
+			// If pi-subagents is not yet installed, render off/absent with hint.
+			if strings.Contains(orchContent, "{{BIGGZ_BACKGROUND_POLICY}}") {
+				bgLine := piadapter.RenderBackgroundSubagentsStatusLine(homeDir)
+				orchContent = strings.ReplaceAll(orchContent, "{{BIGGZ_BACKGROUND_POLICY}}", bgLine)
+			}
 			updated = InjectByMarker(updated, orchContent, "biggz:orchestrator")
 		}
 	}
@@ -1185,6 +1197,45 @@ func DeployPiThinkingWrap(homeDir string, ffs fs.FS, dryRun ...bool) (bool, erro
 		data, err = fs.ReadFile(assets.FS, "pi/biggz-thinking-wrap.js")
 		if err != nil {
 			return false, fmt.Errorf("read pi thinking wrap asset: %w", err)
+		}
+	}
+	if isDry {
+		return true, nil
+	}
+	if err := os.MkdirAll(extensionsDir, 0755); err != nil {
+		return false, fmt.Errorf("mkdir %s: %w", extensionsDir, err)
+	}
+	if _, err := filemerge.WriteFileAtomic(targetPath, data, 0644); err != nil {
+		return false, fmt.Errorf("write %s: %w", targetPath, err)
+	}
+	return true, nil
+}
+
+// DeployPiPrettyWrapper deploys the FleetView pretty extension to
+// ~/.pi/agent/extensions/biggz-pi-pretty.js. It mirrors gentle-pi's
+// extensions/pi-pretty.ts: uses realpathSync + createRequire to resolve
+// pnpm symlinks for @heyhuynhgiabuu/pi-pretty, then delegates
+// piPrettyModule(pi, deps) so pi reports subagent_run capability ready
+// and renders delegation as FleetView (multi-pane) instead of single-column
+// native task fallback.
+//
+// Keep alongside biggz-thinking-wrap.js (Ctrl+T wrap); do not replace it.
+// Reads from ffs at pi/biggz-pi-pretty.js (embedded via assets.FS all:pi)
+// and writes atomically. Dry-run counts without writing.
+func DeployPiPrettyWrapper(homeDir string, ffs fs.FS, dryRun ...bool) (bool, error) {
+	isDry := len(dryRun) > 0 && dryRun[0]
+	extensionsDir := piExtensionsDir(homeDir)
+	targetPath := filepath.Join(extensionsDir, "biggz-pi-pretty.js")
+
+	var data []byte
+	var err error
+	if ffs != nil {
+		data, err = fs.ReadFile(ffs, "pi/biggz-pi-pretty.js")
+	}
+	if err != nil || len(data) == 0 {
+		data, err = fs.ReadFile(assets.FS, "pi/biggz-pi-pretty.js")
+		if err != nil {
+			return false, fmt.Errorf("read pi pretty wrapper asset: %w", err)
 		}
 	}
 	if isDry {

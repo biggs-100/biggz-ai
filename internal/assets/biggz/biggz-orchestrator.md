@@ -66,6 +66,8 @@ Use OpenCode's native `explore` agent for read-only mapping and `general` agent 
 
 Keep one writer and a short synthesized handoff. Delegation is mandatory at the mapping, write, preparation, and broad-research boundaries, but it remains a direct implementation route and must not synthesize SDD artifacts.
 
+{{BIGGZ_BACKGROUND_POLICY}}
+
 #### Mandatory Delegation Triggers
 
 These are parent-orchestrator routing boundaries. Use the smallest useful topology and keep the safety machinery behind the outcome-first interaction. Do not pass these rules to child agents as permission to orchestrate.
