@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -781,43 +783,164 @@ func sddAttemptRun() int {
 }
 
 // sddContinueRun handles the "biggz sdd-continue" subcommand.
-// Usage: biggz sdd-continue <change>
+// Usage: biggz sdd-continue [change]
 // It checks which artifacts exist and recommends the next phase.
+// When invoked without a change name it shows an interactive picker of active changes.
 func sddContinueRun() int {
-	if len(os.Args) < 3 || os.Args[2] == "--help" || os.Args[2] == "-h" {
-		fmt.Fprintln(os.Stderr, "Usage: biggz sdd-continue <change>")
-		fmt.Fprintln(os.Stderr, "  <change> — name of the SDD change to continue")
-		fmt.Fprintln(os.Stderr, "Checks which artifacts exist and recommends the next phase.")
+	return runSddContinue(os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+}
+
+// runSddContinue is the testable core of sddContinueRun.
+func runSddContinue(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) >= 1 && (args[0] == "--help" || args[0] == "-h") {
+		fmt.Fprintln(stderr, "Usage: biggz sdd-continue [change]")
+		fmt.Fprintln(stderr, "  [change] — name of the SDD change to continue (optional; shows picker when omitted)")
+		fmt.Fprintln(stderr, "Checks which artifacts exist and recommends the next phase.")
+		fmt.Fprintln(stderr, "")
+		fmt.Fprintln(stderr, "When run without a change name, shows active changes and prompts for selection.")
 		return 0
 	}
-	change := os.Args[2]
+
+	change := ""
+	if len(args) >= 1 {
+		change = strings.TrimSpace(args[0])
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 	openspecRoot := filepath.Join(cwd, "openspec")
+
+	if change == "" {
+		active, _, err := sdd.StatusWithOptions(openspecRoot, sdd.StatusOptions{IncludeInstructions: false})
+		if err != nil {
+			fmt.Fprintf(stderr, "error: %v\n", err)
+			return 1
+		}
+		if len(active) == 0 {
+			fmt.Fprintln(stdout, "No active changes. Run 'biggz sdd-new <change>' to start one.")
+			return 0
+		}
+		sort.Slice(active, func(i, j int) bool { return active[i].Name < active[j].Name })
+		if len(active) == 1 {
+			change = active[0].Name
+			fmt.Fprintf(stdout, "Auto-selected: %s [next: %s]\n", change, active[0].NextRecommended)
+		} else {
+			fmt.Fprintln(stdout, "Select a change to continue:")
+			for i, cs := range active {
+				label := sddContinuePhaseLabel(cs)
+				fmt.Fprintf(stdout, "  %d) %s — [next: %s] (%d/%d tasks) — %s\n", i+1, cs.Name, cs.NextRecommended, cs.TaskProgress.Completed, cs.TaskProgress.Total, label)
+			}
+			if !isTerminalFunc(stdin) {
+				fmt.Fprintln(stderr, "Run 'biggz sdd-continue <change>' with a change name.")
+				return 1
+			}
+			selected, err := promptChangePickerWithIO(active, stdin, stdout)
+			if err != nil {
+				fmt.Fprintf(stderr, "error: %v\n", err)
+				return 1
+			}
+			change = selected
+		}
+	}
 
 	// Check RDD status
 	commonDir, worktreeDir := detectGitDirs()
 	if commonDir != "" || worktreeDir != "" {
 		rs, rddErr := review.RDDStatus(worktreeDir, commonDir)
 		if rddErr == nil && rs.EffectiveMode == review.RDDModeDisabled {
-			fmt.Println("RDD: disabled (unmanaged)")
+			fmt.Fprintln(stdout, "RDD: disabled (unmanaged)")
 		}
 	}
 
 	phase, err := sdd.NextPhase(openspecRoot, change)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(stderr, "error: %v\n", err)
 		return 1
 	}
 
-	fmt.Printf("Change: %s\n", change)
-	fmt.Printf("Next phase: %s\n", phase)
-	fmt.Printf("Description: %s\n", sdd.NextPhaseDescription(phase))
+	fmt.Fprintf(stdout, "Change: %s\n", change)
+	fmt.Fprintf(stdout, "Next phase: %s\n", phase)
+	fmt.Fprintf(stdout, "Description: %s\n", sdd.NextPhaseDescription(phase))
 	return 0
+}
+
+// sddContinuePhaseLabel mirrors internal/sdd/status.go:phaseLabel for display.
+func sddContinuePhaseLabel(cs sdd.ChangeStatus) string {
+	if cs.NextRecommended != "" {
+		switch cs.NextRecommended {
+		case "done":
+			return "done"
+		case "resolve-blockers":
+			if len(cs.BlockedReasons) > 0 {
+				return "resolve-blockers: " + strings.Join(cs.BlockedReasons, " ")
+			}
+			return "resolve-blockers"
+		default:
+			return "next: " + cs.NextRecommended
+		}
+	}
+	switch {
+	case !cs.HasProposal:
+		return "explore/proposal"
+	case !cs.HasSpecs:
+		return "spec"
+	case !cs.HasDesign:
+		return "design"
+	case !cs.HasTasks:
+		return "tasks"
+	case cs.TasksDone < cs.TasksTotal:
+		return fmt.Sprintf("apply (%d/%d tasks)", cs.TasksDone, cs.TasksTotal)
+	case !cs.HasVerify:
+		return "verify"
+	default:
+		return "archive-ready"
+	}
+}
+
+// isTerminal reports whether stdin is a character device (TTY).
+func isTerminal(r io.Reader) bool {
+	if f, ok := r.(*os.File); ok {
+		if stat, err := f.Stat(); err == nil {
+			return (stat.Mode() & os.ModeCharDevice) != 0
+		}
+	}
+	return false
+}
+
+// isTerminalFunc allows tests to override TTY detection.
+var isTerminalFunc = isTerminal
+
+// promptChangePicker is the helper described in the spec: interactive picker for active changes.
+func promptChangePicker(active []sdd.ChangeStatus) (string, error) {
+	return promptChangePickerWithIO(active, os.Stdin, os.Stdout)
+}
+
+// promptChangePickerWithIO is the testable core of promptChangePicker.
+func promptChangePickerWithIO(active []sdd.ChangeStatus, stdin io.Reader, stdout io.Writer) (string, error) {
+	reader := bufio.NewReader(stdin)
+	for {
+		fmt.Fprintf(stdout, "Enter number (1-%d): ", len(active))
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				return "", fmt.Errorf("no selection")
+			}
+			return "", err
+		}
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		n, err := strconv.Atoi(line)
+		if err != nil || n < 1 || n > len(active) {
+			fmt.Fprintf(stdout, "Invalid selection. Enter a number between 1 and %d.\n", len(active))
+			continue
+		}
+		return active[n-1].Name, nil
+	}
 }
 
 // sddProfileRun handles the "biggz sdd-profile" subcommand.
