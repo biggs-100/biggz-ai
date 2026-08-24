@@ -56,12 +56,24 @@ func TestDeployPiSubAgents(t *testing.T) {
 	if !strings.Contains(content, "Apply body here.") {
 		t.Errorf("sdd-apply.md missing body: %q", content)
 	}
-	// sdd-apply should have edit/bash tools (not read-only)
+	// sdd-apply should have edit/bash tools (not read-only) and no task/mcp (pi has no such tools; BigMem via mcpServers.bigmem)
 	if !strings.Contains(content, "- edit") || !strings.Contains(content, "- bash") {
 		t.Errorf("sdd-apply.md should have edit/bash tools, got %q", content[:500])
 	}
+	if !strings.Contains(content, "- read") || !strings.Contains(content, "- write") {
+		t.Errorf("sdd-apply.md should have read/write tools, got %q", content[:500])
+	}
+	if strings.Contains(content, "- task") || strings.Contains(content, "- mcp") {
+		t.Errorf("sdd-apply.md must NOT contain unavailable tools task/mcp (BigMem via mcpServers), got %q", content[:800])
+	}
+	// Ensure exact allowlist: read,edit,bash,write only
+	for _, want := range []string{"  - read\n", "  - edit\n", "  - bash\n", "  - write\n"} {
+		if !strings.Contains(content, want) {
+			t.Errorf("sdd-apply.md missing expected tool %q in frontmatter, got %q", strings.TrimSpace(want), content[:800])
+		}
+	}
 
-	// sdd-research should be read-only (grep/find/ls)
+	// sdd-research should be read-only (grep/find/ls) and no task/mcp
 	researchPath := filepath.Join(home, ".pi", "agent", "agents", "sdd-research.md")
 	rdata, err := os.ReadFile(researchPath)
 	if err != nil {
@@ -73,6 +85,12 @@ func TestDeployPiSubAgents(t *testing.T) {
 	}
 	if !strings.Contains(rcontent, "- grep") || !strings.Contains(rcontent, "- find") {
 		t.Errorf("sdd-research.md should have read-only tools grep/find, got %q", rcontent[:500])
+	}
+	if !strings.Contains(rcontent, "- read") || !strings.Contains(rcontent, "- ls") {
+		t.Errorf("sdd-research.md should have read/ls tools, got %q", rcontent[:800])
+	}
+	if strings.Contains(rcontent, "- task") || strings.Contains(rcontent, "- mcp") {
+		t.Errorf("sdd-research.md must NOT contain unavailable tools task/mcp, got %q", rcontent[:800])
 	}
 
 	// sdd-explore dual-section handling: should contain capable body, not small body
@@ -87,6 +105,18 @@ func TestDeployPiSubAgents(t *testing.T) {
 	}
 	if strings.Contains(econtent, "small body") {
 		t.Errorf("sdd-explore.md should not contain small model body")
+	}
+	if !strings.Contains(econtent, "- read") || !strings.Contains(econtent, "- grep") {
+		t.Errorf("sdd-explore.md should have read/grep tools, got %q", econtent[:800])
+	}
+	if strings.Contains(econtent, "- task") || strings.Contains(econtent, "- mcp") {
+		t.Errorf("sdd-explore.md must NOT contain unavailable tools task/mcp, got %q", econtent[:800])
+	}
+	// Ensure BigMem protocol block is still injected (5b1d257) after allowlist fix
+	for _, p := range []string{content, rcontent, econtent} {
+		if !strings.Contains(p, "biggz:bigmem-protocol") {
+			t.Errorf("pi agent should contain <!-- biggz:bigmem-protocol --> block, got %q", p[:800])
+		}
 	}
 
 	// branch-pr (non-sdd) should NOT be deployed

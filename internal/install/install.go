@@ -1282,9 +1282,9 @@ func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 		if strings.TrimSpace(body) == "" {
 			body = "See ~/.biggz/skills/" + dir + "/SKILL.md for full instructions."
 		}
-		tools := []string{"read", "edit", "bash", "write", "task", "mcp"}
+		tools := []string{"read", "edit", "bash", "write"}
 		if name == "sdd-explore" || name == "sdd-research" {
-			tools = []string{"read", "grep", "find", "ls", "task", "mcp"}
+			tools = []string{"read", "grep", "find", "ls"}
 		}
 		count++
 		if isDry {
