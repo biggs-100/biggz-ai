@@ -112,10 +112,8 @@ var featureClaimsByAgent = map[model.AgentID]AgentFeatureClaims{
 		SystemPrompt:  true,
 	},
 	model.AgentID("pi"): {
-		AutoInstall:   true,
-		Skills:        true,
-		SystemPrompt:  true,
-		MCP:           true,
+		AutoInstall: true,
+		MCP:         true,
 	},
 	model.AgentID("vscode-copilot"): {
 		AutoInstall:   false,

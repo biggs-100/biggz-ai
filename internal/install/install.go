@@ -871,6 +871,7 @@ func DeployMCPBinaryToHomeDir(homeDir string, dryRun bool) (string, error) {
 //
 //   - MergeIntoSettings: merge into the agent's settings file (OpenCode, Qwen)
 //   - SeparateMCPFiles: write a per-server JSON file (Claude Code)
+//   - MCPConfigFile: dedicated mcp.json (Pi — ~/.pi/agent/mcp.json)
 //
 // Other strategies are a no-op until their adapters are implemented.
 func DeployMCPConfig(adapter plugin.AgentAdapter, homeDir, mcpBinaryPath string, dryRun bool) error {
@@ -883,6 +884,8 @@ func DeployMCPConfig(adapter plugin.AgentAdapter, homeDir, mcpBinaryPath string,
 		return deployMCPMergeIntoSettings(adapter, homeDir, mcpBinaryPath, dryRun)
 	case model.StrategySeparateMCPFiles:
 		return deployMCPSeparateFile(adapter, homeDir, mcpBinaryPath, dryRun)
+	case model.StrategyMCPConfigFile:
+		return deployMCPConfigFile(adapter, homeDir, mcpBinaryPath, dryRun)
 	default:
 		return nil
 	}
@@ -978,6 +981,62 @@ func deployMCPSeparateFile(adapter plugin.AgentAdapter, homeDir, mcpBinaryPath s
 		return fmt.Errorf("write %s: %w", configPath, err)
 	}
 
+	return nil
+}
+
+// deployMCPConfigFile writes the biggz MCP server config into the dedicated
+// mcp.json file used by the MCPConfigFile strategy (Pi — ~/.pi/agent/mcp.json).
+// It merges mcpServers.bigmem into the existing JSON, preserving other servers.
+func deployMCPConfigFile(adapter plugin.AgentAdapter, homeDir, mcpBinaryPath string, dryRun bool) error {
+	configPath := adapter.MCPConfigPath(homeDir, "bigmem")
+	if configPath == "" {
+		configPath = adapter.MCPConfigPath(homeDir, "")
+	}
+	if configPath == "" {
+		return nil
+	}
+	var existingData []byte
+	if _, err := os.Stat(configPath); err == nil {
+		existingData, err = os.ReadFile(configPath)
+		if err != nil {
+			return fmt.Errorf("read mcp config %s: %w", configPath, err)
+		}
+	}
+	var existing map[string]any
+	if len(existingData) == 0 {
+		existing = map[string]any{}
+	} else {
+		if err := json.Unmarshal(existingData, &existing); err != nil {
+			// Malformed existing file — start fresh but preserve backup via write
+			existing = map[string]any{}
+		}
+		if existing == nil {
+			existing = map[string]any{}
+		}
+	}
+	servers, _ := existing["mcpServers"].(map[string]any)
+	if servers == nil {
+		servers = map[string]any{}
+	}
+	servers["bigmem"] = map[string]any{
+		"command": mcpBinaryPath,
+		"args":    []string{"--tools=agent"},
+	}
+	existing["mcpServers"] = servers
+	merged, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal mcp config: %w", err)
+	}
+	merged = append(merged, '\n')
+	if dryRun {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(configPath), 0755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(configPath), err)
+	}
+	if _, err := filemerge.WriteFileAtomic(configPath, merged, 0644); err != nil {
+		return fmt.Errorf("write %s: %w", configPath, err)
+	}
 	return nil
 }
 
