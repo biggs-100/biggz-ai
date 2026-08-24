@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/agents"
 	"github.com/biggs-100/biggz-ai/internal/assets"
 	"github.com/biggs-100/biggz-ai/internal/filemerge"
 	"github.com/biggs-100/biggz-ai/model"
@@ -152,22 +153,30 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 
 	// Also copy skills to the agent's skills directory so OpenCode's native
 	// skill discovery (~/.config/opencode/skills/<name>/SKILL.md) can find them.
+	// Pi has SupportsSkills=false and SkillsDir="" — skip to avoid writing CWD/skills.
 	skillsDir := adapter.SkillsDir(homeDir)
-	if _, err := DeploySkillsToAgentDir(skillsDir, assets.FS, cfg.DryRun); err != nil {
+	if skillsDir == "" || (adapter.ID() == agents.AgentPi && !adapter.SupportsSkills()) {
+		// skip agent skills for pi (which has Skills:false and empty dir)
+	} else if _, err := DeploySkillsToAgentDir(skillsDir, assets.FS, cfg.DryRun); err != nil {
 		return result, fmt.Errorf("deploy skills to agent: %w", err)
 	}
 
 	// Deploy SDD prompts (used by OpenCode to delegate to sub-agents)
-	promptsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "prompts", "sdd")
-	if err := DeployPrompts(promptsDir, assets.FS, cfg.DryRun); err != nil {
-		return result, fmt.Errorf("deploy prompts: %w", err)
-	}
-	fs.WalkDir(assets.FS, "prompts/sdd", func(path string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			result.PromptsDeployed++
+	// Pi has SupportsSkills=false — skip prompts (0 files).
+	if !adapter.SupportsSkills() && adapter.ID() == agents.AgentPi {
+		result.PromptsDeployed = 0
+	} else {
+		promptsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "prompts", "sdd")
+		if err := DeployPrompts(promptsDir, assets.FS, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy prompts: %w", err)
 		}
-		return nil
-	})
+		fs.WalkDir(assets.FS, "prompts/sdd", func(path string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				result.PromptsDeployed++
+			}
+			return nil
+		})
+	}
 
 	// Deploy config overlay with absolute paths to ~/.biggz/
 	merged, err := DeployBiggzConfig(adapter, homeDir, assets.FS, cfg.DryRun)
@@ -176,23 +185,30 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	}
 	result.ConfigMerged = merged
 
-	commandsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "commands")
-	written, err := DeployCommands(commandsDir, assets.FS, cfg.DryRun)
-	if err != nil {
-		return result, fmt.Errorf("write commands: %w", err)
+	// Pi has SupportsSlashCommands=false — skip commands (0 files).
+	if adapter.ID() == agents.AgentPi && !adapter.SupportsSlashCommands() {
+		result.CommandsWritten = 0
+	} else {
+		commandsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "commands")
+		written, err := DeployCommands(commandsDir, assets.FS, cfg.DryRun)
+		if err != nil {
+			return result, fmt.Errorf("write commands: %w", err)
+		}
+		result.CommandsWritten = written
 	}
-	result.CommandsWritten = written
 
 	// Deploy OpenCode plugins to the agent's plugin directory
-	// (~/.config/opencode/plugins/ for OpenCode). Local plugin files are
-	// auto-discovered at startup and need no `plugin: []` config registration
-	// (that array is only for npm packages).
-	pluginsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "plugins")
-	pluginsDeployed, err := DeployPlugins(pluginsDir, assets.FS, cfg.DryRun)
-	if err != nil {
-		return result, fmt.Errorf("deploy plugins: %w", err)
+	// (~/.config/opencode/plugins/ for OpenCode). Pi has SupportsSkills=false — skip.
+	if !adapter.SupportsSkills() && adapter.ID() == agents.AgentPi {
+		result.PluginsDeployed = 0
+	} else {
+		pluginsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "plugins")
+		pluginsDeployed, err := DeployPlugins(pluginsDir, assets.FS, cfg.DryRun)
+		if err != nil {
+			return result, fmt.Errorf("deploy plugins: %w", err)
+		}
+		result.PluginsDeployed = pluginsDeployed
 	}
-	result.PluginsDeployed = pluginsDeployed
 
 	// Inject persona into system prompt file (AGENTS.md or equivalent)
 	if err := DeployPersona(adapter, homeDir, cfg.DryRun); err != nil {
@@ -212,13 +228,45 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		return result, fmt.Errorf("deploy mcp binary: %w", err)
 	}
 
-	// Write MCP config entry using the adapter's strategy
-	if mcpBinPath != "" {
-		if err := DeployMCPConfig(adapter, homeDir, mcpBinPath, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy mcp config: %w", err)
+	// Write MCP config entry using the adapter's strategy — always, with fallback
+	// when the binary is not next to the exe (dev `go run`).
+	mcpPathForConfig := mcpBinPath
+	if mcpPathForConfig == "" {
+		// Fallback via pi adapter's exported resolver if available, else ~/.biggz/biggz-mcp fallback.
+		if fallbacker, ok := adapter.(interface{ BiggzMCPPath() string }); ok {
+			mcpPathForConfig = fallbacker.BiggzMCPPath()
+		} else {
+			// generic fallback: ~/.biggz/biggz-mcp(.exe) or bare name
+			binName := "biggz-mcp"
+			if runtime.GOOS == "windows" {
+				binName = "biggz-mcp.exe"
+			}
+			cand := filepath.Join(homeDir, ".biggz", binName)
+			if _, err := os.Stat(cand); err == nil {
+				mcpPathForConfig = cand
+			} else {
+				mcpPathForConfig = binName
+			}
 		}
 	}
-	result.MCPDeployed = mcpBinPath != ""
+	if err := DeployMCPConfig(adapter, homeDir, mcpPathForConfig, cfg.DryRun); err != nil {
+		return result, fmt.Errorf("deploy mcp config: %w", err)
+	}
+	result.MCPDeployed = true
+
+	// For pi, unify via ProvisionBigMemMCP which writes both settings.json and mcp.json
+	// atomically with type:local and cleans legacy pi-subagents* entries.
+	if adapter.ID() == agents.AgentPi {
+		if provisioner, ok := adapter.(interface {
+			ProvisionBigMemMCP(string) (bool, []string, error)
+		}); ok {
+			if !cfg.DryRun {
+				if _, _, err := provisioner.ProvisionBigMemMCP(homeDir); err != nil {
+					return result, fmt.Errorf("provision bigmem mcp: %w", err)
+				}
+			}
+		}
+	}
 
 	// Ensure biggz binary is on PATH for terminal use
 	if !cfg.DryRun {
@@ -561,6 +609,8 @@ func DeployPrompts(promptsDir string, ffs fs.FS, dryRun bool) error {
 // (or equivalent system prompt file). Uses <!-- biggz:persona --> markers for
 // idempotent injection — subsequent runs replace content within the markers.
 // Compatible with gentle-ai's <!-- gentle-ai:persona --> markers (both can coexist).
+// For pi (which has no agent.biggz-orchestrator JSON), it also inlines
+// biggz-orchestrator.md into the same APPEND_SYSTEM.md via <!-- biggz:orchestrator -->.
 func DeployPersona(adapter plugin.AgentAdapter, homeDir string, dryRun bool) error {
 	if !adapter.SupportsSystemPrompt() {
 		return nil
@@ -587,6 +637,15 @@ func DeployPersona(adapter plugin.AgentAdapter, homeDir string, dryRun bool) err
 	}
 
 	updated := InjectByMarker(string(existing), personaContent, "biggz:persona")
+
+	// For pi, also inline the orchestrator instructions into APPEND_SYSTEM.md
+	// since pi has no settings.json agent.biggz-orchestrator prompt to read.
+	if adapter.ID() == agents.AgentPi {
+		if orchData, err := fs.ReadFile(assets.FS, "biggz/biggz-orchestrator.md"); err == nil {
+			orchContent := string(orchData)
+			updated = InjectByMarker(updated, orchContent, "biggz:orchestrator")
+		}
+	}
 
 	if dryRun {
 		return nil
@@ -1021,6 +1080,7 @@ func deployMCPConfigFile(adapter plugin.AgentAdapter, homeDir, mcpBinaryPath str
 	servers["bigmem"] = map[string]any{
 		"command": mcpBinaryPath,
 		"args":    []string{"--tools=agent"},
+		"type":    "local",
 	}
 	existing["mcpServers"] = servers
 	merged, err := json.MarshalIndent(existing, "", "  ")

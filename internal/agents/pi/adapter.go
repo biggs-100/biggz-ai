@@ -96,14 +96,14 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 }
 
 func (a *Adapter) Capabilities() []string {
-	// Gentle pi: SystemPrompt:false, MCP:true, FileSubAgents:false, Skills:false
+	// Gentle pi: Skills:false, MCP:true, SystemPrompt:true (APPEND_SYSTEM.md via AppendToFile).
 	// Biggz manifest mirrors that (capabilitymanifest/manifest.go).
-	return []string{plugin.CapMCP}
+	return []string{plugin.CapMCP, plugin.CapSystemPrompt}
 }
 
 func (a *Adapter) SupportsAutoInstall() bool  { return true }
 func (a *Adapter) SupportsSkills() bool       { return false }
-func (a *Adapter) SupportsSystemPrompt() bool { return false }
+func (a *Adapter) SupportsSystemPrompt() bool { return true }
 func (a *Adapter) SupportsMCP() bool          { return true }
 func (a *Adapter) SupportsOutputStyles() bool { return false }
 func (a *Adapter) SupportsSlashCommands() bool { return false }
@@ -145,10 +145,22 @@ func (a *Adapter) DeployConfig(ctx context.Context, cfg plugin.AgentConfig) erro
 }
 
 // ConfigPath returns Pi's global config directory path.
-func ConfigPath(homeDir string) string { return filepath.Join(homeDir, ".pi") }
+// Respects PI_CODING_AGENT_DIR env override like gentle's CodeGraphPaths.
+func ConfigPath(homeDir string) string {
+	if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
+		return v
+	}
+	return filepath.Join(homeDir, ".pi")
+}
 
 // AgentConfigPath returns Pi's current agent-owned config directory path.
-func AgentConfigPath(homeDir string) string { return filepath.Join(ConfigPath(homeDir), "agent") }
+// Respects PI_CODING_AGENT_DIR env override like gentle's CodeGraphPaths.
+func AgentConfigPath(homeDir string) string {
+	if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
+		return v
+	}
+	return filepath.Join(ConfigPath(homeDir), "agent")
+}
 
 // ProvisionBigMemMCP atomically merges mcpServers.bigmem pointing at the
 // biggz-mcp binary into both ~/.pi/agent/settings.json and
@@ -188,7 +200,11 @@ func (a *Adapter) ProvisionEngramMCP(homeDir string) (bool, []string, error) {
 	return a.ProvisionBigMemMCP(homeDir)
 }
 
-func (a *Adapter) biggzMCPPath() string {
+func (a *Adapter) biggzMCPPath() string { return a.BiggzMCPPath() }
+
+// BiggzMCPPath is the exported fallback-aware resolver for the biggz-mcp
+// binary path. Used by install fallback when DeployMCPBinaryToHomeDir yields "".
+func (a *Adapter) BiggzMCPPath() string {
 	if p, err := a.lookPath("biggz-mcp"); err == nil && p != "" {
 		return p
 	}
@@ -267,6 +283,7 @@ func (a *Adapter) mergePiMCPFileBigMem(path, mcpBinary string) (filemerge.WriteR
 	servers["bigmem"] = map[string]any{
 		"command": mcpBinary,
 		"args":    []string{"--tools=agent"},
+		"type":    "local",
 	}
 	obj["mcpServers"] = servers
 
