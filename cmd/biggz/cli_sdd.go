@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/sdd"
@@ -19,24 +22,29 @@ import (
 
 // sddStatusRun handles the "biggz sdd-status" subcommand.
 // It scans the openspec/changes directory and reports active/archived changes.
-// Usage: biggz sdd-status [--cwd <dir>] [--json] [--instructions]
+// Usage: biggz sdd-status [--cwd <dir>] [--json] [--instructions] [--watch, -w]
 //
 //	--json emits the sdd.Status payload (active + archived + review_disabled)
 //	as JSON, consumed by the SDD phase failure handoff
 //	(biggz-ai.sdd-task-result-failure/v1 continuation command).
 //	--instructions adds the phaseInstructions block to every derived change.
+//	--watch, -w refresh every 2s until interrupted (ANSI clear, header with timestamp); cannot be used with --json.
 func sddStatusRun() int {
 	// Look for openspec/ relative to the current working dir
 	args := os.Args[2:]
 	emitJSON := false
 	includeInstructions := false
+	watch := false
 	cwd := ""
+	hasHelp := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--json":
 			emitJSON = true
 		case "--instructions":
 			includeInstructions = true
+		case "--watch", "-w":
+			watch = true
 		case "--cwd":
 			if i+1 >= len(args) {
 				fmt.Fprintln(os.Stderr, "error: --cwd requires a directory")
@@ -44,10 +52,26 @@ func sddStatusRun() int {
 			}
 			i++
 			cwd = args[i]
+		case "--help", "-h":
+			hasHelp = true
 		default:
 			fmt.Fprintf(os.Stderr, "error: unknown flag %s\n", args[i])
 			return 1
 		}
+	}
+
+	if hasHelp {
+		fmt.Fprintln(os.Stderr, "Usage: biggz sdd-status [--cwd <dir>] [--json] [--instructions] [--watch, -w]")
+		fmt.Fprintln(os.Stderr, "  --cwd <dir>         — use <dir> as workspace root (default: current directory)")
+		fmt.Fprintln(os.Stderr, "  --json              — emit JSON envelope (cannot be used with --watch)")
+		fmt.Fprintln(os.Stderr, "  --instructions      — include phaseInstructions block")
+		fmt.Fprintln(os.Stderr, "  --watch, -w         — refresh every 2s until interrupted")
+		return 0
+	}
+
+	if statusWatchShouldError(emitJSON, watch) {
+		fmt.Fprintln(os.Stderr, "error: cannot use --watch with --json")
+		return 1
 	}
 
 	var err error
@@ -73,6 +97,10 @@ func sddStatusRun() int {
 		if rddErr == nil && rs.EffectiveMode == review.RDDModeDisabled {
 			reviewDisabled = true
 		}
+	}
+
+	if watch {
+		return sddStatusWatchLoop(openspecRoot, reviewDisabled, includeInstructions)
 	}
 
 	active, archived, err := sdd.StatusWithOptions(openspecRoot, sdd.StatusOptions{
@@ -101,6 +129,93 @@ func sddStatusRun() int {
 
 	fmt.Print(sdd.FormatStatus(active, archived, sdd.StatusOptions{ReviewDisabled: reviewDisabled}))
 	return 0
+}
+
+// statusWatchShouldError reports whether --watch and --json conflict.
+func statusWatchShouldError(emitJSON, watch bool) bool {
+	return emitJSON && watch
+}
+
+// renderStatusOnce is a testable single-render helper for --watch mode.
+func renderStatusOnce(openspecRoot string, opts sdd.StatusOptions) (string, error) {
+	active, archived, err := sdd.StatusWithOptions(openspecRoot, opts)
+	if err != nil {
+		return "", err
+	}
+	return sdd.FormatStatus(active, archived, opts), nil
+}
+
+// parseSddStatusArgs parses sdd-status flags for testing flag parsing.
+func parseSddStatusArgs(args []string) (cwd string, emitJSON, includeInstructions, watch, hasHelp bool, errMsg string) {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--json":
+			emitJSON = true
+		case "--instructions":
+			includeInstructions = true
+		case "--watch", "-w":
+			watch = true
+		case "--cwd":
+			if i+1 >= len(args) {
+				errMsg = "--cwd requires a directory"
+				return
+			}
+			i++
+			cwd = args[i]
+		case "--help", "-h":
+			hasHelp = true
+		default:
+			errMsg = "unknown flag " + args[i]
+			return
+		}
+	}
+	return
+}
+
+// sddStatusWatchInterval controls the polling interval for --watch mode; overridable in tests.
+var sddStatusWatchInterval = 2 * time.Second
+
+// sddStatusWatchIterations limits watch loop iterations for tests (0 = infinite).
+var sddStatusWatchIterations = 0
+
+// sddStatusWatchLoop polls StatusWithOptions every sddStatusWatchInterval and re-renders in-place.
+func sddStatusWatchLoop(openspecRoot string, reviewDisabled, includeInstructions bool) int {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
+
+	opts := sdd.StatusOptions{
+		ReviewDisabled:      reviewDisabled,
+		IncludeInstructions: includeInstructions,
+	}
+	formatOpts := sdd.StatusOptions{ReviewDisabled: reviewDisabled}
+
+	iterations := 0
+	for {
+		// Clear screen equivalent: ANSI clear.
+		fmt.Print("\033[H\033[2J")
+		timestamp := time.Now().Format(time.RFC3339)
+		fmt.Printf("biggz sdd-status --watch (refresh every 2s, Ctrl+C to exit) — %s\n\n", timestamp)
+
+		active, archived, err := sdd.StatusWithOptions(openspecRoot, opts)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		} else {
+			fmt.Print(sdd.FormatStatus(active, archived, formatOpts))
+		}
+
+		iterations++
+		if sddStatusWatchIterations > 0 && iterations >= sddStatusWatchIterations {
+			return 0
+		}
+
+		select {
+		case <-sigCh:
+			fmt.Println("\nwatch interrupted, exiting")
+			return 0
+		case <-time.After(sddStatusWatchInterval):
+		}
+	}
 }
 
 // sddApplyRun handles the "biggz sdd-apply" subcommand.
