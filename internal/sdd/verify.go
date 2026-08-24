@@ -506,3 +506,16 @@ func parseCount(field string) (int, bool) {
 	}
 	return n, true
 }
+
+// anchoredVerifyReportPath returns the repository-relative verify-report path
+// when the report is canonically anchored under the workspace and repo.
+//
+// This is the biggz port of gentle's canonicalVerifyReportPaths anchoring
+// (91919996+765e46c1): every anchor is canonicalized through the same
+// filepath.Abs+EvalSymlinks+Clean the change root was derived from, and the
+// comparison itself is pure slash-form with platform-aware case folding via
+// filepath.Rel("a","A") probe. Callers that have repo/workspace/changeRoot
+// context should prefer this over a raw filepath.Join.
+func anchoredVerifyReportPath(repo, workspace, changeRoot, change string) (string, error) {
+	return canonicalVerifyReportPaths(repo, workspace, changeRoot, change)
+}

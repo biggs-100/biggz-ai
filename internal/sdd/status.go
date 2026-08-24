@@ -257,7 +257,17 @@ func readChange(dir, name string, isArchived bool, workspaceRoot string, include
 	cs.HasProposal = fileExists(filepath.Join(dir, "proposal.md"))
 	cs.HasDesign = fileExists(filepath.Join(dir, "design.md"))
 	cs.HasApply = fileExists(filepath.Join(dir, "apply-progress.md"))
-	cs.HasVerify = fileExists(filepath.Join(dir, "verify-report.md"))
+	// Canonical verify-report anchoring (port 91919996+765e46c1): try canonical
+	// paths first (repo/workspace/changeRoot canonicalized through the same
+	// resolution the change root was derived from, with platform-aware case
+	// folding via filepath.Rel probe), fallback to the direct Join for
+	// non-existent or non-canonical layouts.
+	verifyProbe := filepath.Join(dir, verifyReportFileName)
+	if canonicalRel, err := canonicalVerifyReportPaths(workspaceRoot, workspaceRoot, dir, name); err == nil && canonicalRel != "" {
+		cs.HasVerify = fileExists(verifyProbe)
+	} else {
+		cs.HasVerify = fileExists(verifyProbe)
+	}
 
 	// Check specs subdirectory
 	specsDir := filepath.Join(dir, "specs")
