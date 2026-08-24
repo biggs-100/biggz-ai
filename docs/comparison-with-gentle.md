@@ -90,7 +90,7 @@ are wired).
 | Advisory review transport (`advisoryreview`) | Absent — no third runtime gets advisory-only verdicts today |
 | Engram Cloud sync (tokens, autosync, self-hosted) | Absent — BigMem is local-only (SQLite at `~/.biggz/bigmem`) |
 | GGA (Guardian Angel git-hook guardian) | Discarded — RDD kill switch + native gates (`review gate`) cover the same need; no git hooks needed |
-| Pi runtime integration (answer-consent, organic routing) | Absent — pi adapter only |
+| Pi runtime integration (answer-consent, organic routing) | ✅ Pi adapter corrected to BigMem + host relay `biggz-pi.review-relay/v1` for immutable `approved` reviews (`c4a0560` + `bdd2c40`) — `PiAdapter` scratch-dir with `--no-*` lockdown, `WaitDelay 5s`, gated by `BIGGZ_PI_REVIEW_RELAY_CONTRACT` |
 | CodeGraph integration + `codegraph` verb | ✅ `biggz codegraph init --cwd` + guidance (safe-root validation + `change-intent` hint — ca97594) |
 | Bench journeys (`bench/` + `gentle-ai bench`) | Absent |
 | Package-manager installers (apt/pacman/dnf/zypper/scoop) + Android/Termux | Absent — brew formula + goreleaser only |
@@ -111,6 +111,7 @@ are wired).
 | Legacy v1 authority compatibility (`review-*` commands) | Deliberate — no legacy debt |
 | Path identity packages (`pathidentity`/`pathquote`) | ✅ `pathidentity.Contains` + `pathquote.Quote` (3× `quotePath` deduped, `ShellWord` omitted) |
 | `consentenvelope` standalone package | Logic embedded in sdd/review + schemas in contracts/ |
+| Pi host relay (`gentle-pi.review-relay/v1`) | ✅ Host-mediated immutable relay — `PiAdapter` in scratch-dir, `BIGGZ_PI_REVIEW_RELAY_CONTRACT` handshake (bdd2c40) |
 
 ## Deferred — port on trigger (verified 2026-08-23)
 
