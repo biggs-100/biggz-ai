@@ -3,10 +3,15 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/platform"
 	"github.com/biggs-100/biggz-ai/internal/review"
@@ -189,5 +194,131 @@ func (c *ReviewCheck) resolveGitDir() (string, error) {
 	return filepath.Clean(gitDir), nil
 }
 
-// Remedy returns nil — chain repair requires manual intervention.
-func (c *ReviewCheck) Remedy() *Remedy { return nil }
+// Remedy returns a repair action that removes stale lock files.
+// It walks the git common dir and ~/.biggz looking for LOCK/.lock files
+// and removes those older than 5 minutes or whose PID is dead. Safe and idempotent.
+func (c *ReviewCheck) Remedy() *Remedy {
+	return &Remedy{
+		ID:          string(ReviewCheckID),
+		Description: "Remove stale review locks",
+		Action: func(ctx context.Context) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			var roots []string
+			if gitDir, err := c.resolveGitDir(); err == nil {
+				roots = append(roots, gitDir)
+				// Also walk the parent of .git (repo root) for sdd-runtime in case common dir differs.
+				if parent := filepath.Dir(gitDir); parent != gitDir && parent != "." {
+					roots = append(roots, parent)
+				}
+			}
+			if home, err := os.UserHomeDir(); err == nil && home != "" {
+				roots = append(roots, filepath.Join(home, ".biggz"))
+			}
+			// Deduplicate roots.
+			seen := make(map[string]bool)
+			var uniq []string
+			for _, r := range roots {
+				r = filepath.Clean(r)
+				if r == "" || seen[r] {
+					continue
+				}
+				seen[r] = true
+				uniq = append(uniq, r)
+			}
+
+			for _, root := range uniq {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				default:
+				}
+				_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+					if err != nil {
+						return nil // skip unreadable
+					}
+					select {
+					case <-ctx.Done():
+						return fs.SkipAll
+					default:
+					}
+					if d.IsDir() {
+						return nil
+					}
+					base := filepath.Base(path)
+					if base != "LOCK" && base != ".lock" && !strings.HasSuffix(base, ".lock") {
+						return nil
+					}
+					stale, serr := isStaleLockFile(path)
+					if serr != nil {
+						return nil
+					}
+					if stale {
+						_ = os.Remove(path)
+					}
+					return nil
+				})
+			}
+			return nil
+		},
+	}
+}
+
+// staleLockAge is the maximum age after which a lock is considered stale.
+const staleLockAge = 5 * time.Minute
+
+// isStaleLockFile reports whether the lock file at path is stale.
+// A lock is stale if its mtime exceeds staleLockAge or its PID is dead.
+func isStaleLockFile(path string) (bool, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if time.Since(info.ModTime()) > staleLockAge {
+		return true, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) == 0 {
+		return false, nil
+	}
+	pidStr := strings.TrimSpace(lines[0])
+	pid, err := strconv.Atoi(pidStr)
+	if err != nil || pid <= 0 {
+		return false, nil
+	}
+	if !isDoctorProcessAlive(pid) {
+		return true, nil
+	}
+	return false, nil
+}
+
+// isDoctorProcessAlive reports whether a process with pid is alive.
+func isDoctorProcessAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	if err := proc.Signal(syscall.Signal(0)); err != nil {
+		return false
+	}
+	return true
+}

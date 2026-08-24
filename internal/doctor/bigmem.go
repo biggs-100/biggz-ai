@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
 	_ "modernc.org/sqlite"
@@ -129,5 +131,93 @@ func (c *BigmemCheck) checkIntegrity(ctx context.Context, dbPath string) *Result
 	}
 }
 
-// Remedy returns nil — database repair requires external tooling.
-func (c *BigmemCheck) Remedy() *Remedy { return nil }
+// Remedy returns a repair action that reindexes the BigMem FTS index.
+// It is safe and idempotent: re-running on a healthy database succeeds.
+func (c *BigmemCheck) Remedy() *Remedy {
+	return &Remedy{
+		ID:          string(BigmemCheckID),
+		Description: "Reindex BigMem FTS",
+		Action: func(ctx context.Context) error {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			var dbPath string
+			store, err := c.opener()
+			if err == nil {
+				dbPath = filepath.Join(store.RootDir(), "bigmem.db")
+				_ = store.Close()
+			} else {
+				home, herr := os.UserHomeDir()
+				if herr != nil {
+					return fmt.Errorf("bigmem remedy: cannot determine home dir: %w", herr)
+				}
+				dbPath = filepath.Join(home, ".biggz", "bigmem", "bigmem.db")
+				if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
+					// No database file yet — create a fresh store.
+					s, oerr := c.opener()
+					if oerr != nil {
+						return fmt.Errorf("bigmem remedy: cannot create store: %w", oerr)
+					}
+					_ = s.Close()
+					return nil
+				}
+			}
+			// Ensure parent dir exists (repair may be called before bigmem init).
+			if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+				return fmt.Errorf("bigmem remedy: mkdir: %w", err)
+			}
+			db, err := sql.Open("sqlite", dbPath)
+			if err != nil {
+				return fmt.Errorf("bigmem remedy: open db: %w", err)
+			}
+			defer db.Close()
+
+			// Try REINDEX first (standard SQLite).
+			if _, err := db.ExecContext(ctx, "REINDEX observations_fts"); err == nil {
+				return nil
+			}
+			// FTS5 rebuild syntax.
+			if _, err := db.ExecContext(ctx, "INSERT INTO observations_fts(observations_fts) VALUES('rebuild')"); err == nil {
+				return nil
+			}
+			// Fallback: drop and recreate FTS5 virtual table + triggers (mirrors bigmem.Open).
+			if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS observations_fts"); err != nil {
+				return fmt.Errorf("bigmem remedy: drop fts: %w", err)
+			}
+			if _, err := db.ExecContext(ctx, `
+				CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
+					title, content, topic_key, tool_name, type, project,
+					content='observations',
+					content_rowid='rowid'
+				);
+			`); err != nil {
+				return fmt.Errorf("bigmem remedy: create fts: %w", err)
+			}
+			// Recreate triggers.
+			_, _ = db.ExecContext(ctx, `
+				CREATE TRIGGER IF NOT EXISTS obs_fts_ai AFTER INSERT ON observations BEGIN
+					INSERT INTO observations_fts(rowid, title, content, topic_key, tool_name, type, project)
+					VALUES (new.rowid, new.title, new.content, new.topic_key, new.tool_name, new.type, new.project);
+				END;
+				CREATE TRIGGER IF NOT EXISTS obs_fts_ad AFTER DELETE ON observations BEGIN
+					INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key, tool_name, type, project)
+					VALUES ('delete', old.rowid, old.title, old.content, old.topic_key, old.tool_name, old.type, old.project);
+				END;
+				CREATE TRIGGER IF NOT EXISTS obs_fts_au AFTER UPDATE ON observations BEGIN
+					INSERT INTO observations_fts(observations_fts, rowid, title, content, topic_key, tool_name, type, project)
+					VALUES ('delete', old.rowid, old.title, old.content, old.topic_key, old.tool_name, old.type, old.project);
+					INSERT INTO observations_fts(rowid, title, content, topic_key, tool_name, type, project)
+					VALUES (new.rowid, new.title, new.content, new.topic_key, new.tool_name, new.type, new.project);
+				END;
+			`)
+			// Repopulate from existing observations (best-effort).
+			_, _ = db.ExecContext(ctx, "INSERT INTO observations_fts(observations_fts) VALUES('rebuild')")
+			_, _ = db.ExecContext(ctx, `
+				INSERT OR IGNORE INTO observations_fts(rowid, title, content, topic_key, tool_name, type, project)
+				SELECT rowid, title, content, topic_key, tool_name, type, project FROM observations`)
+			return nil
+		},
+	}
+}
