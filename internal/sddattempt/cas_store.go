@@ -574,6 +574,8 @@ func sha256Hex(data []byte) string {
 
 // withStoreLock runs f under the ledger's exclusive LOCK file, reusing the
 // review store's file-lock helper with the LOCK name this contract publishes.
+// It polls for up to 5s (100ms interval) to accommodate cooperative waits
+// without failing immediately on contention.
 func (s Store) withStoreLock(f func() error) error {
-	return review.WithNamedFileLock(s.Dir, "LOCK", f)
+	return review.WithNamedFileLockTimeout(s.Dir, "LOCK", 5*time.Second, f)
 }
