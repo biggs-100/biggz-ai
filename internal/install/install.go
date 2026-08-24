@@ -1164,6 +1164,39 @@ func piAgentsDir(homeDir string) string {
 func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 	isDry := len(dryRun) > 0 && dryRun[0]
 	agentsDir := piAgentsDir(homeDir)
+	// Load BigMem protocol content for injection into each pi subagent.
+	// Makes every sdd-* agent self-contained, not relying on APPEND_SYSTEM.md inheritance.
+	protocolContent := ""
+	if pData, err := fs.ReadFile(assets.FS, "biggz/bigmem-protocol.md"); err == nil {
+		raw := string(pData)
+		startMarker := "<!-- biggz:bigmem-protocol -->"
+		endMarker := "<!-- /biggz:bigmem-protocol -->"
+		if s := strings.Index(raw, startMarker); s != -1 {
+			if e := strings.Index(raw[s+len(startMarker):], endMarker); e != -1 {
+				protocolContent = strings.TrimSpace(raw[s+len(startMarker) : s+len(startMarker)+e])
+			} else {
+				protocolContent = strings.TrimSpace(raw)
+			}
+		} else {
+			protocolContent = strings.TrimSpace(raw)
+		}
+		if protocolContent == "" {
+			protocolContent = strings.TrimSpace(raw)
+		}
+	} else if pData, err := fs.ReadFile(ffs, "biggz/bigmem-protocol.md"); err == nil {
+		raw := string(pData)
+		startMarker := "<!-- biggz:bigmem-protocol -->"
+		endMarker := "<!-- /biggz:bigmem-protocol -->"
+		if s := strings.Index(raw, startMarker); s != -1 {
+			if e := strings.Index(raw[s+len(startMarker):], endMarker); e != -1 {
+				protocolContent = strings.TrimSpace(raw[s+len(startMarker) : s+len(startMarker)+e])
+			} else {
+				protocolContent = strings.TrimSpace(raw)
+			}
+		} else {
+			protocolContent = strings.TrimSpace(raw)
+		}
+	}
 	count := 0
 	err := fs.WalkDir(ffs, "skills", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -1197,9 +1230,9 @@ func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 		if strings.TrimSpace(body) == "" {
 			body = "See ~/.biggz/skills/" + dir + "/SKILL.md for full instructions."
 		}
-		tools := []string{"read", "edit", "bash", "write"}
+		tools := []string{"read", "edit", "bash", "write", "task", "mcp"}
 		if name == "sdd-explore" || name == "sdd-research" {
-			tools = []string{"read", "grep", "find", "ls"}
+			tools = []string{"read", "grep", "find", "ls", "task", "mcp"}
 		}
 		count++
 		if isDry {
@@ -1222,6 +1255,11 @@ func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 		sb.WriteString("---\n\n")
 		sb.WriteString(strings.TrimSpace(body))
 		sb.WriteString("\n")
+		if protocolContent != "" {
+			sb.WriteString("\n<!-- biggz:bigmem-protocol -->\n")
+			sb.WriteString(strings.TrimSpace(protocolContent))
+			sb.WriteString("\n<!-- /biggz:bigmem-protocol -->\n")
+		}
 		targetPath := filepath.Join(agentsDir, name+".md")
 		if _, err := filemerge.WriteFileAtomic(targetPath, []byte(sb.String()), 0644); err != nil {
 			return fmt.Errorf("write %s: %w", targetPath, err)
