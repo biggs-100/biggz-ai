@@ -99,6 +99,7 @@ are wired).
 | SDD research lane (`sdd-research` + `research-lifecycle`) | ✅ Skill + prompt (dual tier) + opencode command + orchestrator gate (3f072ca) |
 | Compact `acquire`/`settle` + admission probe (`runtimeReadiness`) | ✅ Token continuation + `BlockedReason`/`SettleObligation` freeing `verify`/`archive` from stale `decision-required` (3d1dd53) |
 | Truthful `failed`/`interrupted` remediation settle (#3422) | ✅ `interrupted` vs `failed` distinct in `RemediationState.Reason` — original vs new head (0672bc0) |
+| Engram/hybrid native status derivation (`resolveEngramStatus`) | ✅ Hybrid authoritative: BigMem SQLite `sdd/*` + filesystem merge (filesystem wins), `collectBigMemChanges` wired into `StatusWithOptions` (3bd1f54) |
 | Full management TUI (model picker, Configure Models, agent set editing) | Agent-builder TUI + 4-mode model picker (19 agents, variants cache) — 2026-08-10 |
 | `internal/opencode` Go model picker | Ported (2026-08-10) — reads the model-variants cache, JSONC-safe assignment read/write |
 | Release policy attestation (`releasepolicy` run-marker) | ✅ Minimal `Validate` + `directoryContains` + `validateSnapshotFile` (full YAML/artifact pin omitted) |
