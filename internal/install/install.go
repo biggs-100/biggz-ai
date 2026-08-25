@@ -827,6 +827,12 @@ func DeployPersona(adapter plugin.AgentAdapter, homeDir string, dryRun bool) err
 			}
 			updated = InjectByMarker(updated, orchContent, "biggz:orchestrator")
 		}
+		// Document web tools explicitly so the model never self-refuses browsing
+		// based on its own training beliefs (pi has no built-in web tools; they
+		// come from the biggz-web-search extension and work with any model).
+		if webData, err := fs.ReadFile(assets.FS, "biggz/web-tools.md"); err == nil {
+			updated = InjectByMarker(updated, string(webData), "biggz:web-tools")
+		}
 	}
 
 	if dryRun {
