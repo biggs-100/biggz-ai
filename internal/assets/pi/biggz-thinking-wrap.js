@@ -20,6 +20,7 @@
 /** @type {import("@earendil-works/pi-coding-agent").ExtensionAPI} */
 // pi-pretty termWidth caps at 210 - 4 = 206ish; thinking wraps there natively.
 export default function biggzThinkingWrap(pi) {
+	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 	pi.on("session_start", async (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
 		// Gentle-pi style: thinking uses Markdown streaming:true with muted/blue.

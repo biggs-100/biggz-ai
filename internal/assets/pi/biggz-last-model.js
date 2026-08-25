@@ -28,6 +28,9 @@ import path from "node:path";
 
 /** @type {import("@earendil-works/pi-coding-agent").ExtensionAPI} */
 export default function biggzLastModel(pi) {
+	// Never run inside fresh/isolated subagent children — they have empty sessions and would mis-detect model + race settings.json writes.
+	// Mirrors pi-subagents guard: if (process.env.PI_SUBAGENT_CHILD === "1") return;
+	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 	try {
 		const agentDir = process.env.PI_CODING_AGENT_DIR
 			? String(process.env.PI_CODING_AGENT_DIR).trim()
