@@ -476,14 +476,29 @@ export default function biggzWebSearch(pi) {
   };
 
   if (register) {
-    pi.registerTool("web_search", {
+    pi.registerTool({
+      name: "web_search",
       description: "Search web via Tavily->Brave->DDG (open-web, sdd-research only)",
-      parameters: { query: "string", limit: "number?" },
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Search query" },
+          limit: { type: "number", description: "Max results 1-10" },
+        },
+        required: ["query"],
+      },
       handler: webSearchHandler,
     });
-    pi.registerTool("web_fetch", {
+    pi.registerTool({
+      name: "web_fetch",
       description: "Fetch URL -> Markdown with SSRF guard, 10s/1MB caps, 3-tier TLS fallback",
-      parameters: { url: "string" },
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "URL to fetch" },
+        },
+        required: ["url"],
+      },
       handler: webFetchHandler,
     });
   } else {
