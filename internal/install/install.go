@@ -484,8 +484,12 @@ var sharedSkillNames = map[string]bool{
 // DeploySkillsToAgentDir copies biggz-only embedded skill files to the agent's
 // skills directory. Skills that also exist in gentle-ai are skipped to avoid
 // conflicts — they are only stored in ~/.biggz/skills/ and resolved via the
-// skill registry.
+// skill registry. Pi is isolated under ~/.pi (not ~/.config/opencode) so it
+// never conflicts with gentle-ai — for pi, all skills including shared ones are
+// deployed to ~/.pi/agent/skills for native discovery.
 func DeploySkillsToAgentDir(skillsDir string, ffs fs.FS, dryRun bool) (int, error) {
+	// Pi's skills dir is isolated (~/.pi/agent/skills), no gentle-ai conflict.
+	isPi := strings.Contains(skillsDir, ".pi")
 	count := 0
 	err := fs.WalkDir(ffs, "skills", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -496,7 +500,7 @@ func DeploySkillsToAgentDir(skillsDir string, ffs fs.FS, dryRun bool) (int, erro
 		}
 		relPath := strings.TrimPrefix(path, "skills/")
 		skillName := filepath.Dir(relPath)
-		if sharedSkillNames[skillName] {
+		if sharedSkillNames[skillName] && !isPi {
 			return nil
 		}
 		data, err := fs.ReadFile(ffs, path)

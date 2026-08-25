@@ -7,10 +7,17 @@
  * (ESC[?1000h + ESC[?1006h) and maps clicks to row selection.
  *
  * This extension adds mouse parity WITHOUT forking the package:
- *  - Enables SGR extended mouse reporting on dialog activation and disables on done.
+ *  - Enables SGR extended mouse reporting ONLY while ask_user_question is active
+ *    (per-dialog enable in the execute wrapper, disable in finally). Outside
+ *    dialogs mouse reporting stays OFF so terminal text selection and wheel
+ *    scroll work normally. During a dialog, hold Shift+drag to select text
+ *    (standard terminal bypass for active mouse reporting).
  *  - Intercepts `ctx.ui.custom`'s factory/component handleInput to translate
  *    SGR mouse sequences `\x1b[<Cb;Cx;CyM` / `\x1b[<Cb;Cx;Cy m` into synthetic
  *    keyboard actions that the existing `routeKey` reducer already understands.
+ *  - Wheel (Cb 64 up / 65 down) is mapped to arrow up/down so WrappingSelect
+ *    scrolls its maxVisible window even when the dialog is taller than the
+ *    terminal viewport.
  *
  * Layout mapping (v1, configurable):
  *  - headerOffset = 5 (heading + tabs + borders). Click row Cy -> targetIndex = clamp(Cy - offset, 0, itemsLen-1).
@@ -23,9 +30,9 @@
  * question allows "1", "la 1", etc. The key is that mouse always enables and is
  * never ignored as `ignore`.
  *
- * Defensive: all blocks are try/catch, console.log for debugging, ignores wheel
- * (Cb 64/65) and non-left buttons, acts on press (M) only, strips mouse
- * sequences before forwarding remaining data.
+ * Defensive: all blocks are try/catch, console.log for debugging, handles wheel
+ * (Cb 64/65) as nav prev/next, ignores non-left buttons, acts on press (M)
+ * only, strips mouse sequences before forwarding remaining data.
  *
  * See: ask-user-question state/key-router.ts, state/questionnaire-session.ts,
  * view/dialog-builder.ts (topFixed/border), view/components/wrapping-select.ts
@@ -53,12 +60,12 @@ export default function biggzQuestionMouse(pi) {
     } catch {}
   }
 
-  // Enable globally for the session so earlier dialogs also benefit; per-dialog
-  // enable/disable in the tool wrapper is the source of truth.
-  try {
-    enableMouse();
-    console.log("[biggz-question-mouse] mouse reporting enabled (SGR 1000/1006) — click to focus, click again to confirm");
-  } catch {}
+  // Mouse is enabled ONLY per-dialog (inside the ask_user_question execute wrapper).
+  // Outside dialogs SGR reporting stays OFF so terminal text selection and wheel
+  // scroll work normally. During a dialog, hold Shift+drag to select text
+  // (standard terminal bypass for mouse reporting). Wheel is mapped to nav
+  // prev/next so WrappingSelect scrolls even when the dialog is taller than
+  // the terminal viewport.
 
   // Cleanup on exit — best effort, never throw.
   try {
@@ -133,18 +140,43 @@ export default function biggzQuestionMouse(pi) {
                           let handledMouse = false;
                           // We may have multiple sequences in one data chunk (e.g., press+release)
                           // Collect clicks, act on each press only.
-                          const clicks = [];
+                           const clicks = [];
+                          const wheelDeltas = []; // -1 up (Cb 64), +1 down (Cb 65)
                           while ((m = re.exec(data)) !== null) {
                             const cb = parseInt(m[1], 10);
                             const cx = parseInt(m[2], 10);
                             const cy = parseInt(m[3], 10);
                             const isPress = m[4] === "M";
                             if (!isPress) continue;
-                            // Left click is Cb 0; ignore wheel (64/65), right (2), etc. Allow 0 with mod 0 only.
-                            // SGR encodes button + modifiers in Cb; wheel is 64/65, right is 2, middle is 1.
-                            // For now, only handle pure left press (0). This ignores drags (32) and wheel.
+                            // Wheel: Cb 64 = wheel up, 65 = wheel down (SGR). Map to nav prev/next.
+                            // This lets WrappingSelect scroll its maxVisible window even when taller than viewport.
+                            if (cb === 64) {
+                              wheelDeltas.push(-1);
+                              continue;
+                            }
+                            if (cb === 65) {
+                              wheelDeltas.push(1);
+                              continue;
+                            }
+                            // Left click is Cb 0; ignore right (2), middle (1), drags (32), etc.
+                            // SGR encodes button + modifiers in Cb; wheel already handled above.
                             if (cb !== 0) continue;
                             clicks.push({ cb, cx, cy });
+                          }
+                          // Handle wheel: synthesize arrow up/down per tick, updating shadow predictedIndex.
+                          for (const delta of wheelDeltas) {
+                            try {
+                              if (delta < 0) {
+                                origHandleInput("\x1b[A");
+                                predictedIndex = (predictedIndex - 1 + Math.max(1, estItemsLen)) % Math.max(1, estItemsLen);
+                                console.log(`[biggz-question-mouse] wheel up -> nav prev (predicted=${predictedIndex})`);
+                              } else {
+                                origHandleInput("\x1b[B");
+                                predictedIndex = (predictedIndex + 1) % Math.max(1, estItemsLen);
+                                console.log(`[biggz-question-mouse] wheel down -> nav next (predicted=${predictedIndex})`);
+                              }
+                              handledMouse = true;
+                            } catch {}
                           }
                           for (const { cb, cy } of clicks) {
                             // Map terminal row Cy to option index

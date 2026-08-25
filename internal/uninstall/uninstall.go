@@ -423,10 +423,16 @@ func (s *sharedOps) run(res *Result) {
 	removeAllIfExists(filepath.Join(biggzDir, "biggz-mcp.exe"), "remove ~/.biggz/biggz-mcp.exe")
 	removeAllIfExists(filepath.Join(biggzDir, "biggz.exe"), "remove ~/.biggz/biggz.exe")
 
+	// biggz-owned state/cache (RDD mode, model-variants cache). Remove always
+	// so plain uninstall doesn't leave orphaned state; purge also clears them.
+	removeAllIfExists(filepath.Join(biggzDir, "rdd-mode.json"), "remove ~/.biggz/rdd-mode.json")
+	removeAllIfExists(filepath.Join(biggzDir, "cache"), "remove ~/.biggz/cache")
+
 	// --purge: also delete the user-created bigmem store and backups.
 	if s.cfg.Purge {
 		removeAllIfExists(filepath.Join(biggzDir, "bigmem"), "remove ~/.biggz/bigmem")
 		removeAllIfExists(filepath.Join(biggzDir, "backups"), "remove ~/.biggz/backups")
+		removeAllIfExists(filepath.Join(biggzDir, "config.json"), "remove ~/.biggz/config.json")
 	}
 
 	// Remove ~/.biggz itself only when empty — bigmem, backups and
