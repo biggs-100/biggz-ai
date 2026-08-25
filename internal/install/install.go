@@ -318,6 +318,9 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		if _, err := DeployPiThinkingWrap(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi thinking wrap: %w", err)
 		}
+		if _, err := DeployPiMemoryChrome(homeDir, assets.FS, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy pi memory chrome: %w", err)
+		}
 		if _, err := DeployPiLastModel(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi last model: %w", err)
 		}
@@ -1454,6 +1457,38 @@ func DeployPiThinkingWrap(homeDir string, ffs fs.FS, dryRun ...bool) (bool, erro
 		data, err = fs.ReadFile(assets.FS, "pi/biggz-thinking-wrap.js")
 		if err != nil {
 			return false, fmt.Errorf("read pi thinking wrap asset: %w", err)
+		}
+	}
+	if isDry {
+		return true, nil
+	}
+	if err := os.MkdirAll(extensionsDir, 0755); err != nil {
+		return false, fmt.Errorf("mkdir %s: %w", extensionsDir, err)
+	}
+	if _, err := filemerge.WriteFileAtomic(targetPath, data, 0644); err != nil {
+		return false, fmt.Errorf("write %s: %w", targetPath, err)
+	}
+	return true, nil
+}
+
+// DeployPiMemoryChrome deploys the biggz memory-chrome extension to
+// ~/.pi/agent/extensions/biggz-memory-chrome.js. It provides compact human
+// labels and rendered content for BigMem (biggz_mem_*) tools in Pi's stream
+// so the collapsed line shows "🧠 save "title" … → ✓ saved #id" and
+// expanded shows the saved text. Port of engram's memory-tool-chrome.js.
+func DeployPiMemoryChrome(homeDir string, ffs fs.FS, dryRun ...bool) (bool, error) {
+	isDry := len(dryRun) > 0 && dryRun[0]
+	extensionsDir := piExtensionsDir(homeDir)
+	targetPath := filepath.Join(extensionsDir, "biggz-memory-chrome.js")
+	var data []byte
+	var err error
+	if ffs != nil {
+		data, err = fs.ReadFile(ffs, "pi/biggz-memory-chrome.js")
+	}
+	if err != nil || len(data) == 0 {
+		data, err = fs.ReadFile(assets.FS, "pi/biggz-memory-chrome.js")
+		if err != nil {
+			return false, fmt.Errorf("read pi memory chrome asset: %w", err)
 		}
 	}
 	if isDry {
