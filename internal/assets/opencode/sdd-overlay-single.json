@@ -41,6 +41,7 @@
         "edit": true,
         "bash": true,
         "question": true,
+        "ask_user_question": true,
         "task": true
       }
     },

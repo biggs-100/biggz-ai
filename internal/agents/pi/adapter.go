@@ -101,10 +101,19 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	// pi's package loader only scans ~/.pi/agent/node_modules (and pnpm
 	// symlinks there), NOT the global npm prefix (%AppData%\npm on Windows
 	// or /usr/local/lib/node_modules). Using `npm install -g` would leave
-	// pi-subagents invisible to the `subagent_run` capability probe and
-	// FleetView would never become ready. `pi install` writes into the
-	// agent-owned node_modules where pi actually discovers packages.
-	return [][]string{{"pi", "install", "npm:pi-subagents"}}, nil
+	// packages invisible to pi's capability probes and FleetView would never
+	// become ready. `pi install` writes into the agent-owned node_modules
+	// where pi actually discovers packages.
+	// - npm:pi-subagents must use `pi install` (not `npm install -g`) — pi
+	//   loader only scans ~/.pi/agent/npm.
+	// - npm:@juicesharp/rpiv-ask-user-question provides the `ask_user_question`
+	//   TUI (single/multi-select + "Type something." + "Chat about this") that
+	//   is pi's parity for opencode's `question` (grouped interaction,
+	//   header/label/description, custom answer row auto-appended).
+	return [][]string{
+		{"pi", "install", "npm:pi-subagents"},
+		{"pi", "install", "npm:@juicesharp/rpiv-ask-user-question"},
+	}, nil
 }
 
 func (a *Adapter) Capabilities() []string {

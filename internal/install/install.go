@@ -1685,6 +1685,9 @@ func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 		if name == "sdd-research" {
 			tools = append(tools, "web_search", "web_fetch")
 		}
+		// ask_user_question is pi's parity for opencode's `question` (grouped TUI
+		// with single/multi-select + "Type something." + "Chat about this").
+		tools = append(tools, "ask_user_question")
 		count++
 		if isDry {
 			return nil
