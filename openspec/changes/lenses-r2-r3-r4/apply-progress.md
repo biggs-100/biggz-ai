@@ -35,7 +35,7 @@ Rollback boundary for stale work (already deleted): `internal/lens/gitdiff/`, `r
 - [x] 1.1 Archive stale `apply-progress.md`, verify `internal/lens/` absent
 - [x] 1.2 Create `internal/review/lens/types.go`
 - [x] 1.3 Create `internal/review/lens/registry.go`
-- [ ] 1.4 Create `internal/review/lens/stage.go`
+- [x] 1.4 Create `internal/review/lens/stage.go`
 - [ ] 1.5 Modify `internal/review/risk.go` freeze `PlanLenses(RiskHigh)==[risk,resilience,readability,reliability]`
 - [ ] 1.6 Guard `plugin/interfaces.go` zero `LensPlugin`/`Lens` + `internal/lens/` absent
 
@@ -47,6 +47,8 @@ Rollback boundary for stale work (already deleted): `internal/lens/gitdiff/`, `r
 | `internal/review/lens/types.go` | Created | Lens{ID,Analyze}, LensInput{RiskInput,Hunks,Truncated,Repo}, LensResult `biggz-ai.lens-result/v1` + LensFinding ProofRefs/Class |
 | `internal/review/lens/registry.go` | Created | Registry map, RegisterLens last-win, Ordered skip-unknown, ResetRegistry for tests |
 | `internal/review/lens/registry_test.go` | Created | 7 tests: ordered/last-win/skip/copy/guard no-plugin + internal/lens absent |
+| `internal/review/lens/stage.go` | Created | LensStage pipeline.Stage sequential, no graph.go/DAG, ResultHash auto |
+| `internal/review/lens/stage_test.go` | Created | 6 tests: name/execute success+hash/failure/sequential rollback/no-DAG import |
 
 ## Test Results (incremental)
 
@@ -55,14 +57,14 @@ Rollback boundary for stale work (already deleted): `internal/lens/gitdiff/`, `r
 - `go vet ./internal/review/lens` → exit 0 — types.go valid
 - `go test ./internal/review/lens -count=1` → ? (no test files) — package compiles
 
-## Work Unit Evidence (S1 — after 1.3)
+## Work Unit Evidence (S1 — after 1.4)
 
 | Evidence | Required value |
 |---|---|
-| Focused test command and exact result | `go test ./internal/review/lens -run TestRegistry -count=1` — 7 tests pass |
-| Runtime harness command/scenario and exact result | `go test ./internal/review/lens -count=1` — pass, registry guards ok |
-| Rollback boundary | Delete `internal/review/lens/registry.go` + `registry_test.go` (types.go stays) |
+| Focused test command and exact result | `go test ./internal/review/lens -run TestLensStage -count=1` — 6 tests pass; `go test ./internal/review/lens -count=1` — 13 tests pass |
+| Runtime harness command/scenario and exact result | `go test ./internal/review/lens -count=1` — pass, Stage pipeline sequential |
+| Rollback boundary | Delete `internal/review/lens/stage.go` + `stage_test.go` (types+registry stay) |
 
 ## Status
 
-3/6 S1 tasks complete. In progress — next: stage.go.
+4/6 S1 tasks complete. In progress — next: risk.go freeze.
