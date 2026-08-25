@@ -10,7 +10,10 @@
  */
 
 import dns from "node:dns/promises";
+import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 
 const BLOCKED_SCHEMES = new Set(["file:", "data:", "ftp:", "gopher:"]);
 const ONE_MB = 1024 * 1024;
@@ -108,7 +111,9 @@ function resolveProviderOrder(env) {
   const order = [];
   if (env.TAVILY_API_KEY) order.push("tavily");
   if (env.BRAVE_API_KEY) order.push("brave");
-  if (env.BIGGZ_DDG_FALLBACK === "1") order.push("duckduckgo");
+  // DuckDuckGo no-key fallback is now default (no env gate) — keeps web_search working without API keys
+  // Keep BIGGZ_DDG_FALLBACK gate for backward compat, but always include duckduckgo as last resort
+  order.push("duckduckgo");
   return order;
 }
 
@@ -481,22 +486,31 @@ export default function biggzWebSearch(pi) {
   };
 
   if (register) {
-    pi.registerTool({
-      name: "web_search",
-      description: "Search web via Tavily->Brave->DDG (open-web, sdd-research only)",
-      parameters: {
-        type: "object",
-        properties: {
-          query: { type: "string", description: "Search query" },
-          limit: { type: "number", description: "Max results 1-10" },
+    // Avoid duplicate web_search when pi-web-search (provider-native) is already installed — it provides better grounding via Gemini/OpenAI/Anthropic
+    let hasPiWebSearch = false;
+    try {
+      hasPiWebSearch = fs.existsSync(path.join(os.homedir(), ".pi", "agent", "npm", "node_modules", "pi-web-search", "package.json"));
+    } catch {}
+    if (!hasPiWebSearch) {
+      pi.registerTool({
+        name: "web_search",
+        description: "Search web via Tavily->Brave->DDG (open-web, sdd-research only)",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query" },
+            limit: { type: "number", description: "Max results 1-10" },
+          },
+          required: ["query"],
         },
-        required: ["query"],
-      },
-      execute: async (...args) => {
-        const params = args[1] && typeof args[1] === "object" ? args[1] : args[0];
-        return webSearchHandler(params);
-      },
-    });
+        execute: async (...args) => {
+          const params = args[1] && typeof args[1] === "object" ? args[1] : args[0];
+          return webSearchHandler(params);
+        },
+      });
+    } else {
+      console.log("[biggz-web-search] skipping web_search, pi-web-search already provides provider-native web_search");
+    }
     pi.registerTool({
       name: "web_fetch",
       description: "Fetch URL -> Markdown with SSRF guard, 10s/1MB caps, 3-tier TLS fallback",
