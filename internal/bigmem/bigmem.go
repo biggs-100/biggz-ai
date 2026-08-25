@@ -115,14 +115,92 @@ func Open(rootDir string) (*Store, error) {
 	}
 
 	dbPath := filepath.Join(rootDir, "bigmem.db")
+
+	// Pre-open stale WAL/SHM cleanup: if WAL is 0 bytes but SHM holds a stale
+	// lock from a zombie pid (Windows job-object ghost), the DB will be BUSY
+	// forever. Detect and remove stale files before opening.
+	// If ghost handles block removal, fall back to a recovered copy without WAL/SHM.
+	walPath := dbPath + "-wal"
+	shmPath := dbPath + "-shm"
+	needsFallback := false
+	if walInfo, err := os.Stat(walPath); err == nil && walInfo.Size() == 0 {
+		if shmInfo, err := os.Stat(shmPath); err == nil && shmInfo.Size() > 0 {
+			_ = os.Remove(walPath)
+			_ = os.Remove(shmPath)
+			if _, err := os.Stat(shmPath); err == nil {
+				if f, err := os.OpenFile(shmPath, os.O_WRONLY, 0644); err == nil {
+					_ = f.Truncate(0)
+					f.Close()
+					_ = os.Remove(shmPath)
+				}
+			}
+			if _, err := os.Stat(walPath); err == nil {
+				if f, err := os.OpenFile(walPath, os.O_WRONLY, 0644); err == nil {
+					_ = f.Truncate(0)
+					f.Close()
+					_ = os.Remove(walPath)
+				}
+			}
+			// If SHM still exists after cleanup attempts, ghost handles block it.
+			if _, err := os.Stat(shmPath); err == nil {
+				needsFallback = true
+			}
+			if _, err := os.Stat(walPath); err == nil {
+				needsFallback = true
+			}
+		}
+	}
+	if needsFallback {
+		// Ghost handles hold WAL/SHM — use a recovered copy without them.
+		recoveredDir := filepath.Join(filepath.Dir(rootDir), "bigmem_recovered")
+		_ = os.MkdirAll(recoveredDir, 0755)
+		recoveredPath := filepath.Join(recoveredDir, "bigmem.db")
+		if _, err := os.Stat(recoveredPath); err != nil {
+			if data, err := os.ReadFile(dbPath); err == nil {
+				_ = os.WriteFile(recoveredPath, data, 0644)
+			}
+		}
+		// Use recovered DB if it exists and is valid.
+		if _, err := os.Stat(recoveredPath); err == nil {
+			dbPath = recoveredPath
+			rootDir = recoveredDir
+		}
+	} else {
+		// No fallback needed — ghost lock cleared. If recovered exists and is newer,
+		// consolidate it back to primary (one-way sync on clean restart).
+		recoveredPath := filepath.Join(filepath.Dir(rootDir), "bigmem_recovered", "bigmem.db")
+		if recInfo, err := os.Stat(recoveredPath); err == nil {
+			if primInfo, err := os.Stat(dbPath); err == nil && recInfo.Size() > primInfo.Size() {
+				if data, err := os.ReadFile(recoveredPath); err == nil {
+					_ = os.WriteFile(dbPath, data, 0644)
+				}
+			}
+		}
+	}
+
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
-	// WAL mode for better concurrency
-	db.Exec("PRAGMA journal_mode=WAL")
+	// WAL mode for better concurrency — busy_timeout must be set BEFORE journal_mode
+	// so that journal_mode retries on SQLITE_BUSY (stale SHM from zombie handles).
 	db.Exec("PRAGMA busy_timeout=5000")
+	// Retry journal_mode on BUSY (ghost WAL/SHM locks from unreaped pids).
+	for i := 0; i < 5; i++ {
+		_, err = db.Exec("PRAGMA journal_mode=WAL")
+		if err == nil {
+			break
+		}
+		if !strings.Contains(err.Error(), "busy") && !strings.Contains(err.Error(), "locked") {
+			break
+		}
+		time.Sleep(time.Duration(200*(i+1)) * time.Millisecond)
+	}
+	// If WAL still BUSY, fall back to DELETE mode so the DB remains usable.
+	if err != nil && (strings.Contains(err.Error(), "busy") || strings.Contains(err.Error(), "locked")) {
+		db.Exec("PRAGMA journal_mode=DELETE")
+	}
 	db.Exec("PRAGMA synchronous=NORMAL")
 	db.Exec("PRAGMA foreign_keys=ON")
 
