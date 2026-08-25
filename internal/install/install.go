@@ -1735,6 +1735,41 @@ func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 		}
 	}
 	count := 0
+	// Deploy general/explore as file-based agents so pi-subagents FleetView can discover them
+	// (settings.json alone is not enough for FleetView; it scans agents/*.md).
+	for _, fallback := range []struct{ name, desc, promptFile string; tools []string }{
+		{"general", "General unstructured queries and auxiliary fallback tasks", "prompts/general.md", []string{"read", "edit", "bash", "write"}},
+		{"explore", "Freeform exploration fallback agent", "prompts/explore.md", []string{"read"}},
+	} {
+		body := ""
+		if data, err := fs.ReadFile(assets.FS, fallback.promptFile); err == nil {
+			body = strings.TrimSpace(string(data))
+		}
+		if body == "" {
+			body = fallback.desc
+		}
+		if !isDry {
+			if err := os.MkdirAll(agentsDir, 0755); err != nil {
+				return count, fmt.Errorf("mkdir %s: %w", agentsDir, err)
+			}
+			var sb strings.Builder
+			sb.WriteString("---\n")
+			sb.WriteString(fmt.Sprintf("name: %s\n", fallback.name))
+			sb.WriteString(fmt.Sprintf("description: \"%s\"\n", strings.ReplaceAll(fallback.desc, `"`, `\"`)))
+			sb.WriteString("tools:\n")
+			for _, t := range fallback.tools {
+				sb.WriteString(fmt.Sprintf("  - %s\n", t))
+			}
+			sb.WriteString("---\n\n")
+			sb.WriteString(body)
+			sb.WriteString("\n")
+			targetPath := filepath.Join(agentsDir, fallback.name+".md")
+			if _, err := filemerge.WriteFileAtomic(targetPath, []byte(sb.String()), 0644); err != nil {
+				return count, fmt.Errorf("write %s: %w", targetPath, err)
+			}
+		}
+		count++
+	}
 	err := fs.WalkDir(ffs, "skills", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
