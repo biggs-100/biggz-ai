@@ -9,7 +9,7 @@ The Plugin System domain defines the plugin interfaces for extending biggz-ai ca
 ### Requirement: AgentAdapter Interface
 
 The system MUST define an AgentAdapter interface with these methods: ID() model.AgentID, Name() string, Tier() SupportTier, Detect(ctx, homeDir) (bool, string, string, bool, error), InstallCommand(profile) ([][]string, error), Capabilities() []string, SupportsAutoInstall() bool, SupportsSkills() bool, SupportsSystemPrompt() bool, SupportsMCP() bool, SupportsOutputStyles() bool, SupportsSlashCommands() bool, SupportsSubAgents() bool, GlobalConfigDir(homeDir) string, SystemPromptDir(homeDir) string, SystemPromptFile(homeDir) string, SkillsDir(homeDir) string, CommandsDir(homeDir) string, SubAgentsDir(homeDir) string, EmbeddedSubAgentsDir(homeDir) string, OutputStyleDir(homeDir) string, SettingsPath(homeDir) string, MCPConfigPath(homeDir, serverName) string, SystemPromptStrategy() SystemPromptStrategy, MCPStrategy() model.MCPStrategy, DeployConfig(ctx, cfg) error.
-(Previously: 11 methods with ID() string, Detect(ctx) (binaryPath, err), MCPStrategy() string)
+(Previously: 11 methods with ID() string, Detect(ctx) (binaryPath, err), MCPStrategy() string — legacy LensPlugin existence assumed)
 
 #### Scenario: Happy path — agent detected with full metadata
 
@@ -53,6 +53,14 @@ The system MUST define an AgentAdapter interface with these methods: ID() model.
 - WHEN SystemPromptStrategy() is called
 - THEN it MUST return one of the 6 known SystemPromptStrategy values
 - AND the value MUST match the adapter's prompt injection model
+
+#### Scenario: Lens seam not in plugin
+
+- GIVEN `plugin/interfaces.go`
+- WHEN inspected for `Lens` or `LensPlugin`
+- THEN it MUST contain zero lens types
+- AND `internal/review/lens/types.go` MUST be sole `Lens` owner
+
 
 ### Requirement: Pipeline Stage Execution
 
@@ -163,3 +171,37 @@ The system MUST define Tier() SupportTier on AgentAdapter. This method returns t
 - WHEN Tier() is called
 - THEN it MUST return SupportTierFirst (or the adapter's appropriate tier)
 - AND the value MUST be one of the 5 known SupportTier constants
+
+### Requirement: LensPlugin Absence Invariant
+
+The system MUST NOT reintroduce `plugin.LensPlugin`, `internal/lens/*`, or embedded static-analysis engine. `Lens` MUST remain in `internal/review/lens/types.go`, not `plugin/`. Any PR reintroducing `LensPlugin` MUST fail `gofmt`/`go test` validation via missing import guard.
+
+#### Scenario: LensPlugin stays absent
+
+- GIVEN codebase after change
+- WHEN searching for `type LensPlugin`
+- THEN zero definitions MUST be found
+- AND `plugin/interfaces.go` MUST not import `internal/review/lens`
+
+#### Scenario: Legacy path absent
+
+- GIVEN filesystem check
+- WHEN `internal/lens/` directory is queried
+- THEN it MUST not exist (lenses live under `internal/review/lens/`)
+### Requirement: ExternalLensAdapter Bridge
+
+The system MUST provide `ExternalLensAdapter` in `internal/review/lens/external/adapter.go` implementing `Lens` by delegating to `biggz review capture-result` JSON. It MUST translate `LensResultHash` with prefix `gentle-ai.lens-result/v1` without changing `capture.go`/`ledger.go` schema. Build-time registry wiring lives in `cmd/biggz` init.
+
+#### Scenario: Bridge preserves hash contract
+
+- GIVEN a capture-result JSON with `gentle-ai.lens-result/v1` hash
+- WHEN adapter returns `LensResult`
+- THEN hash prefix MUST be preserved
+- AND downstream `capture`/`ledger` MUST accept it without schema change
+
+#### Scenario: No plugin DAG
+
+- GIVEN adapter registration
+- WHEN pipeline executes with external lens
+- THEN execution MUST remain sequential `pipeline.Stage` ordered by `PlanLenses`
+- AND no DAG scheduler MUST be invoked
