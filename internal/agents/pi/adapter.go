@@ -127,14 +127,16 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 }
 
 func (a *Adapter) Capabilities() []string {
-	// Gentle pi: Skills:false, MCP:true, SystemPrompt:true (APPEND_SYSTEM.md via AppendToFile).
-	// Biggz manifest mirrors that (capabilitymanifest/manifest.go) plus FileSubAgents
+	// Skills:true — pi discovers SDD skills from ~/.pi/agent/skills/ (global, via AgentConfigPath)
+	// and .pi/skills/ (project, trust-gated), per pi docs (earendil-works/pi packages/coding-agent/docs/skills.md).
+	// This brings pi to parity with opencode (~/.config/opencode/skills) so <available_skills> lists all SDD skills
+	// (sdd-apply, sdd-verify, etc.) in both harnesses. Biggz manifest mirrors that plus FileSubAgents
 	// for pi-native SDD agents at ~/.pi/agent/agents/sdd-*.md (like gentle-pi).
-	return []string{plugin.CapMCP, plugin.CapSystemPrompt, plugin.CapSubAgents}
+	return []string{plugin.CapSkills, plugin.CapMCP, plugin.CapSystemPrompt, plugin.CapSubAgents}
 }
 
 func (a *Adapter) SupportsAutoInstall() bool  { return true }
-func (a *Adapter) SupportsSkills() bool       { return false }
+func (a *Adapter) SupportsSkills() bool       { return true }
 func (a *Adapter) SupportsSystemPrompt() bool { return true }
 func (a *Adapter) SupportsMCP() bool          { return true }
 func (a *Adapter) SupportsOutputStyles() bool { return false }
@@ -151,7 +153,15 @@ func (a *Adapter) SystemPromptDir(homeDir string) string { return AgentConfigPat
 func (a *Adapter) SystemPromptFile(homeDir string) string {
 	return filepath.Join(AgentConfigPath(homeDir), piAppendSystemFile)
 }
-func (a *Adapter) SkillsDir(_ string) string   { return "" }
+
+// SkillsDir returns pi's global skills directory for native skill discovery.
+// Per pi docs (packages/coding-agent/docs/skills.md), pi scans ~/.pi/agent/skills/ (global)
+// and .pi/skills/ (project). This mirrors opencode's ~/.config/opencode/skills/ so both
+// harnesses surface the same SDD skills (sdd-apply, sdd-verify, etc.) in <available_skills>.
+// Respects PI_CODING_AGENT_DIR via AgentConfigPath, matching other pi assets (agents, extensions).
+func (a *Adapter) SkillsDir(homeDir string) string {
+	return filepath.Join(AgentConfigPath(homeDir), "skills")
+}
 func (a *Adapter) CommandsDir(_ string) string { return "" }
 func (a *Adapter) SubAgentsDir(homeDir string) string { return filepath.Join(AgentConfigPath(homeDir), "agents") }
 func (a *Adapter) EmbeddedSubAgentsDir() string { return "" }

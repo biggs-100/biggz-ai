@@ -158,19 +158,20 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	}
 	result.SkillsDeployed = deployed
 
-	// Also copy skills to the agent's skills directory so OpenCode's native
-	// skill discovery (~/.config/opencode/skills/<name>/SKILL.md) can find them.
-	// Pi has SupportsSkills=false and SkillsDir="" — skip to avoid writing CWD/skills.
+	// Also copy skills to the agent's skills directory so the agent's native
+	// skill discovery can find them (opencode: ~/.config/opencode/skills, pi: ~/.pi/agent/skills).
+	// Pi now has parity with opencode via SupportsSkills=true and SkillsDir=~/.pi/agent/skills
+	// (per pi docs packages/coding-agent/docs/skills.md).
 	skillsDir := adapter.SkillsDir(homeDir)
-	if skillsDir == "" || (adapter.ID() == agents.AgentPi && !adapter.SupportsSkills()) {
-		// skip agent skills for pi (which has Skills:false and empty dir)
+	if skillsDir == "" {
+		// skip when agent has no skills dir
 	} else if _, err := DeploySkillsToAgentDir(skillsDir, assets.FS, cfg.DryRun); err != nil {
 		return result, fmt.Errorf("deploy skills to agent: %w", err)
 	}
 
 	// Deploy SDD prompts (used by OpenCode to delegate to sub-agents)
-	// Pi has SupportsSkills=false — skip prompts (0 files).
-	if !adapter.SupportsSkills() && adapter.ID() == agents.AgentPi {
+	// Pi uses native agents (~/.pi/agent/agents/), not prompts — skip for pi.
+	if adapter.ID() == agents.AgentPi {
 		result.PromptsDeployed = 0
 	} else {
 		promptsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "prompts", "sdd")
@@ -214,8 +215,8 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	}
 
 	// Deploy OpenCode plugins to the agent's plugin directory
-	// (~/.config/opencode/plugins/ for OpenCode). Pi has SupportsSkills=false — skip.
-	if !adapter.SupportsSkills() && adapter.ID() == agents.AgentPi {
+	// (~/.config/opencode/plugins/ for OpenCode). Pi uses extensions (~/.pi/agent/extensions/) — skip for pi.
+	if adapter.ID() == agents.AgentPi {
 		result.PluginsDeployed = 0
 	} else {
 		pluginsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "plugins")
