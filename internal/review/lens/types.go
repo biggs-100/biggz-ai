@@ -15,6 +15,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"sort"
 
 	"github.com/biggs-100/biggz-ai/internal/review"
 )
@@ -66,6 +67,48 @@ type LensResult struct {
 type Lens interface {
 	ID() string
 	Analyze(ctx context.Context, input LensInput) (LensResult, error)
+}
+
+// HunkCapBytes is the maximum total hunk bytes inspected (8MiB).
+const HunkCapBytes = 8 << 20
+
+// NewLensInput builds a LensInput from the single DeriveRiskInput derivation
+// plus hunk-bounded diff content. Hunks are capped at HunkCapBytes total;
+// when exceeded, the hunks are truncated and Truncated is set. No per-lens
+// diff is performed — the single RiskInput is reused.
+func NewLensInput(riskInput review.RiskInput, hunks map[string][]byte, truncated bool, repo string) LensInput {
+	total := 0
+	for _, b := range hunks {
+		total += len(b)
+	}
+	if total > HunkCapBytes {
+		truncated = true
+	}
+	capped := hunks
+	if total > HunkCapBytes {
+		// Cap in stable sorted order to keep determinism.
+		keys := make([]string, 0, len(hunks))
+		for k := range hunks {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		capped = make(map[string][]byte, len(hunks))
+		remaining := HunkCapBytes
+		for _, k := range keys {
+			b := hunks[k]
+			if len(b) <= remaining {
+				capped[k] = b
+				remaining -= len(b)
+			} else if remaining > 0 {
+				capped[k] = b[:remaining]
+				remaining = 0
+				break
+			} else {
+				break
+			}
+		}
+	}
+	return LensInput{RiskInput: riskInput, Hunks: capped, Truncated: truncated, Repo: repo}
 }
 
 // LensResultHash derives the content-addressed hash for a lens result

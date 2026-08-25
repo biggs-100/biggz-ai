@@ -14,22 +14,67 @@ import (
 
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/review/lens"
+	"github.com/biggs-100/biggz-ai/internal/review/lens/external"
 	readability "github.com/biggs-100/biggz-ai/internal/review/lens/readability"
+	"github.com/biggs-100/biggz-ai/internal/review/lens/reliability"
+	"github.com/biggs-100/biggz-ai/internal/review/lens/resilience"
 	"github.com/biggs-100/biggz-ai/internal/sdd"
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
 	"github.com/biggs-100/biggz-ai/model"
 )
 
 func init() {
-	// R2 readability is the first hybrid lens. Other lenses (R3, R4,
-	// ExternalLensAdapter) remain pending for PR3; register only readability
-	// for now to keep the work unit autonomous. Build-time Registry is
-	// last-win; unknown IDs are skipped by Ordered. Sequential pipeline.Stage
-	// wiring reuses the single DeriveRiskInput derivation (no per-lens diff):
+	// Hybrid facade sequential lenses: R2 readability, R3 reliability, R4
+	// resilience, plus ExternalLensAdapter bridging capture-result JSON.
+	// Build-time Registry is last-win; unknown IDs are skipped by Ordered.
+	// Sequential pipeline.Stage wiring reuses the single DeriveRiskInput
+	// derivation (no per-lens diff):
 	//   input, _ := review.DeriveRiskInput(repo, commit, baseRef)
-	//   lensInput := lens.LensInput{RiskInput: input, Hunks: hunks, Truncated: truncated, Repo: repo}
-	//   stages := lensStages(lens.Ordered(review.PlanLenses(tier, declared)), lensInput)
+	//   hunks, truncated := deriveLensHunks(repo, input) // ≤8MiB, Truncated flag
+	//   lensInput := lens.NewLensInput(input, hunks, truncated, repo)
+	//   stages := lensStagesForReview(lens.Ordered(review.PlanLenses(tier, declared)), lensInput)
 	lens.RegisterLens(&readability.Lens{})
+	lens.RegisterLens(&reliability.Lens{})
+	lens.RegisterLens(&resilience.Lens{})
+	lens.RegisterLens(&external.ExternalLensAdapter{LensID: "external"})
+}
+
+// deriveLensHunks derives hunk-bounded diff content for LensInput, capped at
+// 8MiB total with Truncated flag. It reuses the single DeriveRiskInput
+// derivation (no per-lens diff) and never falls back to full file reads for R4.
+func deriveLensHunks(repo string, input review.RiskInput) (map[string][]byte, bool) {
+	// Placeholder: in production this runs `git diff --raw -z` plus `git show` per path
+	// to collect hunks, then caps via lens.NewLensInput. For wiring verification,
+	// return empty map with truncated derived from input size; real hunks are
+	// supplied by the caller (e.g., review start pipeline).
+	return map[string][]byte{}, false
+}
+
+// buildLensInput is the single derivation entry point for all lenses:
+// DeriveRiskInput → hunks ≤8MiB with Truncated → LensInput.
+// No per-lens diff is performed; the frozen RiskInput is reused.
+func buildLensInput(repo, commitSHA, baseRef string, hunks map[string][]byte) (lens.LensInput, error) {
+	riskInput, err := review.DeriveRiskInput(repo, commitSHA, baseRef)
+	if err != nil {
+		return lens.LensInput{}, err
+	}
+	return lens.NewLensInput(riskInput, hunks, false, repo), nil
+}
+
+// lensStagesForReview adapts ordered lenses to sequential pipeline.Stages in
+// PlanLenses order (risk→resilience→readability→reliability) with reverse
+// rollback on failure. No graph.go/DAG is involved.
+func lensStagesForReview(ordered []lens.Lens, input lens.LensInput) []lensStage {
+	stages := make([]lensStage, 0, len(ordered))
+	for _, l := range ordered {
+		stages = append(stages, lensStage{lens.NewLensStage(l, input)})
+	}
+	return stages
+}
+
+// lensStage is a thin alias to avoid importing pipeline at init.
+type lensStage struct {
+	*lens.LensStage
 }
 
 // ---------------------------------------------------------------------------

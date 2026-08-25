@@ -101,17 +101,30 @@ type GateFindingsSummary struct {
 // authorization decision: false for every denial including the disabled
 // disposition. Delivery names what governs delivery and never fabricates an
 // approval.
+// LensGateFinding is the structured breakdown of a lens finding for gate JSON reporting.
+// It carries the lens ID, finding class (inferential|deterministic), ProofRefs, and location.
+type LensGateFinding struct {
+	LensID    string   `json:"lens_id"`
+	ID        string   `json:"id"`
+	Class     string   `json:"class"` // inferential | deterministic
+	ProofRefs []string `json:"proof_refs,omitempty"`
+	Message   string   `json:"message,omitempty"`
+	File      string   `json:"file,omitempty"`
+	Line      int      `json:"line,omitempty"`
+}
+
 type GateResult struct {
-	Gate        GateKind             `json:"gate"`
-	LineageID   string               `json:"lineage,omitempty"`
-	Passed      bool                 `json:"passed"`
-	Allowed     bool                 `json:"allowed"`
-	Delivery    string               `json:"delivery,omitempty"`
-	Reason      string               `json:"reason,omitempty"`
-	ReceiptHash string               `json:"receipt_hash,omitempty"`
-	Findings    *GateFindingsSummary `json:"findings,omitempty"`
-	Reasons     []string             `json:"reasons,omitempty"`
-	DryRun      bool                 `json:"dry_run"`
+	Gate         GateKind             `json:"gate"`
+	LineageID    string               `json:"lineage,omitempty"`
+	Passed       bool                 `json:"passed"`
+	Allowed      bool                 `json:"allowed"`
+	Delivery     string               `json:"delivery,omitempty"`
+	Reason       string               `json:"reason,omitempty"`
+	ReceiptHash  string               `json:"receipt_hash,omitempty"`
+	Findings     *GateFindingsSummary `json:"findings,omitempty"`
+	Reasons      []string             `json:"reasons,omitempty"`
+	DryRun       bool                 `json:"dry_run"`
+	LensFindings []LensGateFinding    `json:"lens_findings,omitempty"`
 }
 
 // GateOptions carries the extra inputs some gate kinds need. Repo is the
@@ -666,6 +679,10 @@ func EvaluateGate(kind GateKind, repo, lineageID string, opts GateOptions) (Gate
 		summary, findingReasons := recomputeGateFindings(chain, receipt)
 		result.Findings = &summary
 		reasons = append(reasons, findingReasons...)
+		// Lens findings breakdown for --json reporting: inferential vs deterministic with ProofRefs.
+		// Single derivation reuse: lens evidence is the DeriveRiskInput output (paths, changed lines, diff summary)
+		// plus hunk-bounded hunks ≤8MiB with Truncated flag — no second git diff --numstat -z parse.
+		result.LensFindings = BuildLensFindingsBreakdown(chain)
 	}
 
 	// 4. Kind-specific checks against the live repository.
@@ -768,6 +785,11 @@ func verifyReceiptBinding(receipt PersistedReceipt, binding gateBinding, chain V
 // blocking unless the receipt (or its fix delta) shows them resolved; refuted
 // findings appear resolved, standing and deterministic findings block; unknown
 // dispositions or insufficient evidence on a severe finding escalate.
+// Lens findings are candidate-causal gate inputs: heuristic findings
+// default to inferential and surface as warnings (exit 0) unless they are
+// deterministic with concrete ProofRefs or the refuter verdict is stands,
+// in which case they block pre-pr (exit 1) with --json pass:false.
+// DeriveRiskInput is reused for lens evidence — no second git diff --numstat parse.
 func recomputeGateFindings(chain ValidatedChain, receipt PersistedReceipt) (GateFindingsSummary, []string) {
 	var summary GateFindingsSummary
 	var reasons []string
@@ -805,27 +827,70 @@ func recomputeGateFindings(chain ValidatedChain, receipt PersistedReceipt) (Gate
 			}
 		}
 		for _, id := range payload.CandidateCausalFindingIDs {
-			switch {
-			case containsString(receipt.ResolvedFindingIDs, id) || fixDeltaDelivered:
+			if containsString(receipt.ResolvedFindingIDs, id) || fixDeltaDelivered {
 				summary.Resolved++
-			default:
-				summary.Blocking++
-				message := fmt.Sprintf(
-					"unresolved finding [%s]: candidate-causal finding is not resolved by the persisted receipt; review it and re-finalize the lineage", id)
-				finding, known := findingsByID[id]
-				switch {
-				case containsString(receipt.StandingFindingIDs, id):
-					message = fmt.Sprintf(
-						"unresolved finding [%s]: the refuter verdict stands; the finding remains blocking", id)
-				case known && finding.EvidenceClass == EvidenceDeterministic:
-					message = fmt.Sprintf(
-						"unresolved finding [%s]: deterministic finding is auto-blocking and cannot be refuted; resolve it with a correction", id)
-				}
-				reasons = append(reasons, message)
+				continue
 			}
+			finding, known := findingsByID[id]
+			isStanding := containsString(receipt.StandingFindingIDs, id)
+			isDeterministic := known && finding.EvidenceClass == EvidenceDeterministic
+			if !isDeterministic && !isStanding {
+				// Inferential heuristic findings warn but do not block pre-pr.
+				// They are surfaced as FollowUp warnings; gate passes with warning.
+				summary.FollowUp++
+				continue
+			}
+			summary.Blocking++
+			message := fmt.Sprintf(
+				"unresolved finding [%s]: candidate-causal finding is not resolved by the persisted receipt; review it and re-finalize the lineage", id)
+			switch {
+			case isStanding:
+				message = fmt.Sprintf(
+					"unresolved finding [%s]: the refuter verdict stands; the finding remains blocking", id)
+			case isDeterministic:
+				message = fmt.Sprintf(
+					"unresolved finding [%s]: deterministic finding is auto-blocking and cannot be refuted; resolve it with a correction", id)
+			}
+			reasons = append(reasons, message)
 		}
 	}
 	return summary, reasons
+}
+
+// BuildLensFindingsBreakdown returns the structured lens finding breakdown for
+// gate --json output, grouping by inferential|deterministic with ProofRefs.
+// No duplicate git diff is performed — lens evidence reuses DeriveRiskInput.
+func BuildLensFindingsBreakdown(chain ValidatedChain) []LensGateFinding {
+	out := []LensGateFinding{}
+	for index := range chain.Records {
+		rec := &chain.Records[index]
+		if rec.Operation != LensResultOperation {
+			continue
+		}
+		var payload lensResultEventPayload
+		if err := json.Unmarshal(rec.Payload, &payload); err != nil || payload.AdmissionDecision != AdmissionCompleted {
+			continue
+		}
+		for _, f := range payload.Result.Findings {
+			class := string(f.EvidenceClass)
+			if class == "" {
+				class = string(EvidenceInferential)
+			}
+			proofRefs := f.ProofRefs
+			// ArtifactFinding uses ProofRefs, but LensFinding fallback is Location as ProofRef
+			if len(proofRefs) == 0 && f.Location != "" {
+				proofRefs = []string{f.Location}
+			}
+			out = append(out, LensGateFinding{
+				LensID:    f.Lens,
+				ID:        f.ID,
+				Class:     class,
+				ProofRefs: proofRefs,
+				Message:   f.Claim,
+			})
+		}
+	}
+	return out
 }
 
 // postApplyChecks verifies the applied candidate is still the reviewed

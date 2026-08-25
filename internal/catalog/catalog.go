@@ -108,6 +108,36 @@ var allComponents = []ComponentEntry{
 		},
 		Dependencies: []string{"config"},
 	},
+	{
+		CatalogEntry: plugin.CatalogEntry{
+			ID:          "readability",
+			Name:        "Readability Lens",
+			Description: "R2 readability heuristic (go/parser + thresholds) as sequential pipeline stage",
+			Tier:        "native",
+			Type:        "lens",
+		},
+		Dependencies: []string{},
+	},
+	{
+		CatalogEntry: plugin.CatalogEntry{
+			ID:          "reliability",
+			Name:        "Reliability Lens",
+			Description: "R3 reliability heuristic (missing _test.go + error tokens) as sequential stage",
+			Tier:        "native",
+			Type:        "lens",
+		},
+		Dependencies: []string{},
+	},
+	{
+		CatalogEntry: plugin.CatalogEntry{
+			ID:          "resilience",
+			Name:        "Resilience Lens",
+			Description: "R4 resilience heuristic (timeout/context/concurrency/cleanup) hunk-bounded 8MiB",
+			Tier:        "native",
+			Type:        "lens",
+		},
+		Dependencies: []string{},
+	},
 }
 
 // AllComponents returns a defensive copy of the built-in component catalog.
