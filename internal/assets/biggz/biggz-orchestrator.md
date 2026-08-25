@@ -80,7 +80,7 @@ Keep one writer and a short synthesized handoff. Delegation is mandatory at the 
 
 ### Delegation Runtime Preference (pi)
 When a Mandatory Delegation Trigger fires, delegate via the best available subagent runtime:
-- Prefer `subagent` tool (from `pi-subagents`, FleetView) when `Background subagent policy: on (capability: ready)` — call as `subagent({ agent: "<sdd-*>", task: "<task description>", context: "fresh" | "fork", mode: "task" })` for foreground SDD phases (sdd-* are primary workers; `general`/`explore` only for fallback). Use `mode: "background"` only for independent read-only scans that don't need inline synthesis.
+- Prefer `subagent` tool (from `pi-subagents`, FleetView) when `Background subagent policy: on (capability: ready)` — call as `subagent({ agent: "<sdd-*>", task: "<task description>", context: "fresh", mode: "task" })` for foreground SDD phases (sdd-* are primary workers; `general`/`explore` only for fallback). Use `context: "fork"` **only when the human has explicitly approved it** (e.g., via preflight or direct consent); otherwise always use `"fresh"`. Use `mode: "background"` only for independent read-only scans that don't need inline synthesis.
 - Else fall back to Pi's native `task` tool.
 - Reserve `sdd-*` agents for SDD; do not synthesize SDD artifacts inline.
 
