@@ -45,14 +45,15 @@ func TestPiWebSearch_PassWithTavily(t *testing.T) {
 	}
 }
 
-func TestPiWebSearch_WarnNoProvider(t *testing.T) {
+func TestPiWebSearch_NoProviderDDGDefault(t *testing.T) {
+	// DuckDuckGo is the built-in default provider (no env gate): file existence alone is ready.
 	c := NewPiWebSearchCheckWithCustom(fakeStatExists, func(k string) string { return "" }, func() (string, error) { return t.TempDir(), nil })
 	r := c.Run(context.Background())
-	if r.Status != StatusWarn || r.Severity != SeverityWarning {
-		t.Fatalf("want warn/WARNING got %v/%s %q", r.Status, r.Severity, r.Message)
+	if r.Status != StatusPass || r.Severity != SeverityInfo {
+		t.Fatalf("want pass/INFO got %v/%s %q", r.Status, r.Severity, r.Message)
 	}
-	if !strings.Contains(r.Message, "TAVILY_API_KEY") {
-		t.Errorf("warn should hint TAVILY_API_KEY, got %q", r.Message)
+	if !strings.Contains(r.Message, "[DuckDuckGo default]") {
+		t.Errorf("message should note DuckDuckGo default, got %q", r.Message)
 	}
 }
 
@@ -173,7 +174,10 @@ func TestPiWebSearch_RealFS_Integration(t *testing.T) {
 	}
 	t.Setenv("TAVILY_API_KEY", "")
 	r2 := c.Run(context.Background())
-	if r2.Status != StatusWarn {
-		t.Fatalf("no key should warn, got %v", r2.Status)
+	if r2.Status != StatusPass {
+		t.Fatalf("no key should still pass via DuckDuckGo default, got %v %q", r2.Status, r2.Message)
+	}
+	if !strings.Contains(r2.Message, "[DuckDuckGo default]") {
+		t.Errorf("message should note DuckDuckGo default, got %q", r2.Message)
 	}
 }
