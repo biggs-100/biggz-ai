@@ -509,7 +509,23 @@ export default function biggzWebSearch(pi) {
         },
       });
     } else {
-      console.log("[biggz-web-search] skipping web_search, pi-web-search already provides provider-native web_search");
+      pi.registerTool({
+        name: "biggz_web_search",
+        description: "Search web via DuckDuckGo (no-key fallback, for models without native grounding like ox-alpha-free)",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string", description: "Search query" },
+            limit: { type: "number", description: "Max results 1-10" },
+          },
+          required: ["query"],
+        },
+        execute: async (...args) => {
+          const params = args[1] && typeof args[1] === "object" ? args[1] : args[0];
+          return webSearchHandler(params);
+        },
+      });
+      console.log("[biggz-web-search] pi-web-search provides web_search, registered biggz_web_search fallback (DuckDuckGo no-key)");
     }
     pi.registerTool({
       name: "web_fetch",
