@@ -79,20 +79,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     },
     "sdd-explore": {
@@ -104,20 +91,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     },
     "sdd-propose": {
@@ -129,20 +103,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     },
     "sdd-spec": {
@@ -154,20 +115,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     },
     "sdd-design": {
@@ -179,20 +127,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     },
     "sdd-tasks": {
@@ -204,20 +139,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     },
     "sdd-apply": {
@@ -229,20 +151,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     },
     "sdd-verify": {
@@ -254,20 +163,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     },
     "sdd-archive": {
@@ -279,20 +175,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     },
     "sdd-onboard": {
@@ -304,20 +187,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     },
     "jd-judge-a": {
@@ -463,19 +333,6 @@
         "write": true,
         "edit": true,
         "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true,
         "web_search": true,
         "web_fetch": true
       }
@@ -489,20 +346,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     },
     "sdd-new": {
@@ -514,20 +358,7 @@
         "read": true,
         "write": true,
         "edit": true,
-        "bash": true,
-        "biggz_mem_save": true,
-        "biggz_mem_search": true,
-        "biggz_mem_get_observation": true,
-        "biggz_mem_update": true,
-        "biggz_mem_context": true,
-        "biggz_mem_session_summary": true,
-        "biggz_mem_save_prompt": true,
-        "biggz_mem_capture_passive": true,
-        "biggz_mem_suggest_topic_key": true,
-        "mem_save": true,
-        "mem_search": true,
-        "mem_get_observation": true,
-        "mem_update": true
+        "bash": true
       }
     }
   }
