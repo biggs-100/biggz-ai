@@ -131,38 +131,38 @@ func (c *BigmemCheck) checkIntegrity(ctx context.Context, dbPath string) *Result
 	}
 }
 
-// Remedy returns a repair action that reindexes the BigMem FTS index.
+// Remedy returns a repair action that repairs WAL, FTS, and schema.
 // It is safe and idempotent: re-running on a healthy database succeeds.
 func (c *BigmemCheck) Remedy() *Remedy {
 	return &Remedy{
 		ID:          string(BigmemCheckID),
-		Description: "Reindex BigMem FTS",
+		Description: "Repair BigMem WAL/FTS/schema",
 		Action: func(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
 			}
-			var dbPath string
 			store, err := c.opener()
 			if err == nil {
-				dbPath = filepath.Join(store.RootDir(), "bigmem.db")
+				// Comprehensive fix via Store API (WAL checkpoint, VACUUM, FTS rebuild, directory migration).
+				fixErr := store.DoctorFix()
 				_ = store.Close()
-			} else {
-				home, herr := os.UserHomeDir()
-				if herr != nil {
-					return fmt.Errorf("bigmem remedy: cannot determine home dir: %w", herr)
+				return fixErr
+			}
+			home, herr := os.UserHomeDir()
+			if herr != nil {
+				return fmt.Errorf("bigmem remedy: cannot determine home dir: %w", herr)
+			}
+			dbPath := filepath.Join(home, ".biggz", "bigmem", "bigmem.db")
+			if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
+				// No database file yet — create a fresh store.
+				s, oerr := c.opener()
+				if oerr != nil {
+					return fmt.Errorf("bigmem remedy: cannot create store: %w", oerr)
 				}
-				dbPath = filepath.Join(home, ".biggz", "bigmem", "bigmem.db")
-				if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
-					// No database file yet — create a fresh store.
-					s, oerr := c.opener()
-					if oerr != nil {
-						return fmt.Errorf("bigmem remedy: cannot create store: %w", oerr)
-					}
-					_ = s.Close()
-					return nil
-				}
+				_ = s.Close()
+				return nil
 			}
 			// Ensure parent dir exists (repair may be called before bigmem init).
 			if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
@@ -174,6 +174,40 @@ func (c *BigmemCheck) Remedy() *Remedy {
 			}
 			defer db.Close()
 
+			// WAL checkpoint and VACUUM to fix malformed and checkpoint issues.
+			_, _ = db.ExecContext(ctx, "PRAGMA wal_checkpoint(PASSIVE)")
+			_, _ = db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
+			_, _ = db.ExecContext(ctx, "VACUUM")
+
+			// Schema migration: ensure sessions.directory exists.
+			var sessExists int
+			_ = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sessions'").Scan(&sessExists)
+			if sessExists == 0 {
+				_, _ = db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sessions
+					(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT)`)
+			} else {
+				rows, qerr := db.QueryContext(ctx, "PRAGMA table_info(sessions)")
+				if qerr == nil {
+					hasDir := false
+					for rows.Next() {
+						var cid int
+						var name, ctype string
+						var notnull, pk int
+						var dflt sql.NullString
+						if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+							continue
+						}
+						if name == "directory" {
+							hasDir = true
+						}
+					}
+					rows.Close()
+					if !hasDir {
+						_, _ = db.ExecContext(ctx, "ALTER TABLE sessions ADD COLUMN directory TEXT")
+					}
+				}
+			}
+
 			// Try REINDEX first (standard SQLite).
 			if _, err := db.ExecContext(ctx, "REINDEX observations_fts"); err == nil {
 				return nil
@@ -183,6 +217,12 @@ func (c *BigmemCheck) Remedy() *Remedy {
 				return nil
 			}
 			// Fallback: drop and recreate FTS5 virtual table + triggers (mirrors bigmem.Open).
+			_, _ = db.ExecContext(ctx, "DROP TRIGGER IF EXISTS obs_fts_ai")
+			_, _ = db.ExecContext(ctx, "DROP TRIGGER IF EXISTS obs_fts_ad")
+			_, _ = db.ExecContext(ctx, "DROP TRIGGER IF EXISTS obs_fts_au")
+			_, _ = db.ExecContext(ctx, "DROP TRIGGER IF EXISTS obs_fts_insert")
+			_, _ = db.ExecContext(ctx, "DROP TRIGGER IF EXISTS obs_fts_delete")
+			_, _ = db.ExecContext(ctx, "DROP TRIGGER IF EXISTS obs_fts_update")
 			if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS observations_fts"); err != nil {
 				return fmt.Errorf("bigmem remedy: drop fts: %w", err)
 			}

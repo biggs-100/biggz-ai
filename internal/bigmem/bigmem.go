@@ -124,6 +124,7 @@ func Open(rootDir string) (*Store, error) {
 	db.Exec("PRAGMA journal_mode=WAL")
 	db.Exec("PRAGMA busy_timeout=5000")
 	db.Exec("PRAGMA synchronous=NORMAL")
+	db.Exec("PRAGMA foreign_keys=ON")
 
 	// Migrate legacy databases before creating indexes: CREATE TABLE IF NOT
 	// EXISTS cannot alter existing tables, so columns added in later versions
@@ -171,8 +172,6 @@ func Open(rootDir string) (*Store, error) {
 	}
 
 	// Create FTS5 virtual table for full-text search with BM25 ranking.
-	// Rebuilt if schema changed (recreate on column count mismatch).
-	db.Exec("DROP TABLE IF EXISTS observations_fts")
 	_, err = db.Exec(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
 			title, content, topic_key, tool_name, type, project,
@@ -429,6 +428,31 @@ func dedupeWindowExpression(d time.Duration) string {
 	}
 	seconds := int(d.Seconds())
 	return fmt.Sprintf("-%d seconds", seconds)
+}
+
+// buildLikeSearchSQL builds a LIKE-based fallback query when FTS fails or returns no rows.
+func buildLikeSearchSQL(query string, opts SearchOptions, limit int) (string, []any) {
+	likeQuery := "%" + strings.ReplaceAll(query, "%", "\\%") + "%"
+	sqlQ := `SELECT o.id, o.title, o.type, o.content, o.session_id, o.tool_name,
+		o.topic_key, o.project, o.scope, o.normalized_hash, o.revision_count, o.duplicate_count,
+		o.last_seen_at, o.review_after, o.pinned, o.created_at, o.updated_at, o.deleted_at
+		FROM observations o WHERE o.deleted_at IS NULL AND (o.title LIKE ? ESCAPE '\' OR o.content LIKE ? ESCAPE '\' OR o.topic_key LIKE ? ESCAPE '\')`
+	args := []any{likeQuery, likeQuery, likeQuery}
+	if opts.Type != "" {
+		sqlQ += " AND o.type = ?"
+		args = append(args, opts.Type)
+	}
+	if opts.Project != "" {
+		sqlQ += " AND o.project = ?"
+		args = append(args, opts.Project)
+	}
+	if opts.Scope != "" {
+		sqlQ += " AND o.scope = ?"
+		args = append(args, normalizeScope(opts.Scope))
+	}
+	sqlQ += " ORDER BY o.updated_at DESC LIMIT ?"
+	args = append(args, limit)
+	return sqlQ, args
 }
 
 // ─── Save with dedup ─────────────────────────────────────────────────────────
@@ -741,10 +765,16 @@ func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error)
 		rows, err = s.db.Query(sqlQ, args...)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("search: %w", err)
+		// FTS error — fallback to LIKE search
+		likeSQL, likeArgs := buildLikeSearchSQL(query, opts, limit)
+		rows, err = s.db.Query(likeSQL, likeArgs...)
+		if err != nil {
+			return nil, fmt.Errorf("search: %w", err)
+		}
 	}
 	defer rows.Close()
 
+	var hasRows bool
 	// Dedup: track seen IDs (direct results come first)
 	seen := make(map[string]bool)
 	for _, dr := range directResults {
@@ -754,6 +784,7 @@ func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error)
 	var results []*Observation
 	results = append(results, directResults...)
 	for rows.Next() {
+		hasRows = true
 		obs := &Observation{}
 		var ca, ua string
 		var ra, da, lsa sql.NullString
@@ -781,6 +812,43 @@ func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error)
 		}
 		obs.Pinned = pinnedInt != 0
 		results = append(results, obs)
+	}
+	// Fallback to LIKE if FTS returned no rows (covers rebuild race or corrupted FTS)
+	if !hasRows {
+		likeSQL, likeArgs := buildLikeSearchSQL(query, opts, limit)
+		likeRows, err := s.db.Query(likeSQL, likeArgs...)
+		if err == nil {
+			defer likeRows.Close()
+			for likeRows.Next() {
+				obs := &Observation{}
+				var ca, ua string
+				var ra, da, lsa sql.NullString
+				var pinnedInt int
+				if err := likeRows.Scan(&obs.ID, &obs.Title, &obs.Type, &obs.Content,
+					&obs.SessionID, &obs.ToolName, &obs.TopicKey, &obs.Project, &obs.Scope,
+					&obs.NormalizedHash, &obs.RevisionCount, &obs.DuplicateCount,
+					&lsa, &ra, &pinnedInt, &ca, &ua, &da); err != nil {
+					continue
+				}
+				if seen[obs.ID] {
+					continue
+				}
+				seen[obs.ID] = true
+				obs.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+				obs.UpdatedAt, _ = time.Parse(time.RFC3339, ua)
+				if lsa.Valid {
+					obs.LastSeenAt = &lsa.String
+				}
+				if ra.Valid {
+					obs.ReviewAfter = &ra.String
+				}
+				if da.Valid {
+					obs.DeletedAt = &da.String
+				}
+				obs.Pinned = pinnedInt != 0
+				results = append(results, obs)
+			}
+		}
 	}
 	return results, nil
 }

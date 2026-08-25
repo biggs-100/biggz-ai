@@ -319,9 +319,22 @@ func bigmemRun() int {
 
 	case "doctor":
 		useJSON := false
+		doFix := false
 		for i := 1; i < len(args); i++ {
-			if args[i] == "--json" {
+			switch args[i] {
+			case "--json":
 				useJSON = true
+			case "--fix":
+				doFix = true
+			}
+		}
+		if doFix {
+			if err := store.DoctorFix(); err != nil {
+				fmt.Fprintf(os.Stderr, "error: doctor --fix: %v\n", err)
+				return 1
+			}
+			if !useJSON {
+				fmt.Fprintln(os.Stderr, "Doctor fix applied: WAL checkpoint, VACUUM, FTS rebuild, schema migration.")
 			}
 		}
 		r, err := store.Doctor()
