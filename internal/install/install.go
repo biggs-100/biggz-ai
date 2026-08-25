@@ -310,6 +310,11 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		} else {
 			result.PiAgentsDeployed = n
 		}
+		if n, err := DeployPiThemes(homeDir, assets.FS, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy pi themes: %w", err)
+		} else if n > 0 {
+			_ = n
+		}
 		if _, err := DeployPiThinkingWrap(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi thinking wrap: %w", err)
 		}
@@ -1980,6 +1985,48 @@ func parsePiSkillFrontmatter(data string) (string, string, string, error) {
 		}
 	}
 	return name, desc, body, nil
+}
+
+// DeployPiThemes deploys bundled pi TUI themes (e.g. solarized-osaka) to
+// ~/.pi/agent/themes/*.json. Themes are discovered via pi's standard
+// locations (global ~/.pi/agent/themes, project .pi/themes, etc.).
+func DeployPiThemes(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
+	isDry := len(dryRun) > 0 && dryRun[0]
+	themesDir := filepath.Join(piAgentsDir(homeDir), "..", "themes")
+	// Use filepath.Clean to normalize .. segment
+	themesDir = filepath.Clean(themesDir)
+	count := 0
+	err := fs.WalkDir(ffs, "pi/themes", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(strings.ToLower(d.Name()), ".json") {
+			return nil
+		}
+		data, err := fs.ReadFile(ffs, path)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", path, err)
+		}
+		count++
+		if isDry {
+			return nil
+		}
+		if err := os.MkdirAll(themesDir, 0755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", themesDir, err)
+		}
+		targetPath := filepath.Join(themesDir, filepath.Base(path))
+		if _, err := filemerge.WriteFileAtomic(targetPath, data, 0644); err != nil {
+			return fmt.Errorf("write %s: %w", targetPath, err)
+		}
+		return nil
+	})
+	if err != nil && strings.Contains(err.Error(), "file does not exist") {
+		return 0, nil
+	}
+	return count, err
 }
 
 // deploySelfToPath copies the running biggz binary to ~/.biggz/biggz.exe
