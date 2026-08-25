@@ -28,7 +28,7 @@ Chain strategy: stacked-to-main
 
 - [x] 1.1 Archive stale `apply-progress.md` (`internal/lens/*` 2950a40), verify `internal/lens/` absent
 - [x] 1.2 Create `internal/review/lens/types.go` `Lens{ID,Analyze}`, `LensInput{RiskInput,Hunks,Truncated}`, `LensResult` `biggz-ai.lens-result/v1` not in `plugin/`
-- [ ] 1.3 Create `internal/review/lens/registry.go` `Registry`, `RegisterLens`, `Ordered` last-win skip unknown at `cmd/biggz` init
+- [x] 1.3 Create `internal/review/lens/registry.go` `Registry`, `RegisterLens`, `Ordered` last-win skip unknown at `cmd/biggz` init
 - [ ] 1.4 Create `internal/review/lens/stage.go` `LensStage` as `pipeline.Stage` no `graph.go`
 - [ ] 1.5 Modify `internal/review/risk.go` freeze `PlanLenses(RiskHigh)==[risk,resilience,readability,reliability]`
 - [ ] 1.6 Guard `plugin/interfaces.go` zero `LensPlugin`/`Lens` + `internal/lens/` absent
