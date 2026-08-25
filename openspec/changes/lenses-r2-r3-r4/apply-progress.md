@@ -37,7 +37,7 @@ Rollback boundary for stale work (already deleted): `internal/lens/gitdiff/`, `r
 - [x] 1.3 Create `internal/review/lens/registry.go`
 - [x] 1.4 Create `internal/review/lens/stage.go`
 - [x] 1.5 Modify `internal/review/risk.go` freeze `PlanLenses(RiskHigh)==[risk,resilience,readability,reliability]`
-- [ ] 1.6 Guard `plugin/interfaces.go` zero `LensPlugin`/`Lens` + `internal/lens/` absent
+- [x] 1.6 Guard `plugin/interfaces.go` zero `LensPlugin`/`Lens` + `internal/lens/` absent
 
 ## Files Changed (PR1 incremental)
 
@@ -53,21 +53,42 @@ Rollback boundary for stale work (already deleted): `internal/lens/gitdiff/`, `r
 | `internal/review/risk_test.go` | Modified | Update canonical 4R expectations to new order |
 | `cmd/biggz/review_parity_test.go` | Modified | Update 3 canonical plan lenses assertions to new order |
 
-## Test Results (incremental)
+## Test Results (final S1)
 
+- `go vet ./internal/review/lens` → exit 0
+- `go vet ./...` → exit 0
+- `gofmt -l` → 0 files to format (lens, risk.go clean)
 - `ls -la internal/lens` → ENOENT (absent) — verified
-- `grep -r "LensPlugin\|type Lens" plugin/interfaces.go` → 0 hits — verified
-- `go vet ./internal/review/lens` → exit 0 — types.go valid
-- `go test ./internal/review/lens -count=1` → ? (no test files) — package compiles
+- `grep -rn "LensPlugin\|type Lens " plugin/interfaces.go` → 0 hits — verified
+- `grep -rn "internal/review/lens" plugin/*.go` → 0 hits — verified (no plugin import)
+- `grep -rn "internal/planner.*graph" internal/review/lens/*.go` → 0 hits — verified no DAG
 
-## Work Unit Evidence (S1 — after 1.5)
+## Work Unit Evidence (S1 — PR1 Foundation)
 
 | Evidence | Required value |
 |---|---|
-| Focused test command and exact result | `go test ./internal/review -run TestPlanLenses -count=1` — 2 tests pass (DeclaredWins, FromTier) |
-| Runtime harness command/scenario and exact result | `go test ./cmd/biggz -run TestReviewStart -count=1` — pass, frozen plan matches new order |
-| Rollback boundary | Revert `internal/review/risk.go` + `risk_test.go` + `cmd/biggz/review_parity_test.go` to old order (risk,readability,reliability,resilience) |
+| Focused test command and exact result | `go test ./internal/review/lens -count=1` — exit 0, 13 tests pass (7 registry + 6 stage); `go test ./internal/review -run TestPlanLenses -count=1 -v` — exit 0, 2 tests pass (DeclaredWins, FromTier) |
+| Runtime harness command/scenario and exact result | `go test ./internal/review -run TestPlanLenses -count=1` is the tier→lens runtime path; `go test ./cmd/biggz -run TestReviewStart -count=1` — exit 0 (parity harness, frozen plan = [risk,resilience,readability,reliability]); `pipeline.Execute` sequential rollback proven via TestLensStage_SequentialRollback |
+| Rollback boundary | Delete `internal/review/lens/types.go, registry.go, registry_test.go, stage.go, stage_test.go` + revert `internal/review/risk.go`, `internal/review/risk_test.go`, `cmd/biggz/review_parity_test.go` — SDD artifacts `openspec/changes/lenses-r2-r3-r4/*` retain history |
+
+## TDD Cycle Evidence (Strict TDD false — Standard Mode)
+
+| Task | RED | GREEN | REFACTOR |
+|------|-----|-------|----------|
+| 1.2 types.go | N/A (Standard Mode) | `go vet` pass, no tests yet | — |
+| 1.3 registry.go | `go test -run TestRegistry` first run fail (no impl) → then 7 pass | `13 tests pass` | registry.go isolated, ResetRegistry added |
+| 1.4 stage.go | `go test -run TestLensStage_NoDAG` fail before fix → 6 pass | pipeline sequential verified | no DAG import |
+| 1.5 risk.go freeze | `TestPlanLenses_FromTier` fail (old order) → 2 pass after fix | parity harness `go test ./cmd/biggz -run TestReviewStart` pass | — |
+| 1.6 guard | `grep LensPlugin` 0 hits, `ls internal/lens` ENOENT verified | — | — |
 
 ## Status
 
-5/6 S1 tasks complete. In progress — next: guard plugin/interfaces.go.
+6/6 S1 tasks complete. PR1 foundation ready for review. Next: PR2 S2 R2 readability (`internal/review/lens/readability/lens.go`) — stacked to main after PR1 merges.
+
+### Workload / PR Boundary
+
+- Mode: stacked PR slice (stacked-to-main)
+- Current work unit: S1 foundation & supersede
+- Boundary: `internal/lens/` absent verification → `internal/review/lens/{types,registry,stage}` + `risk.go` freeze
+- Estimated review budget impact: ~250 lines prod + ~230 lines tests = ~480 review budget? Actually PR1 measured: 87+57+78+6+12 ≈ 240 prod + 128+130 ≈ 258 tests = ~500 — but code-only core is ~240 prod + lens tests, SDD doc edits excluded from budget per skill; pure lens scaffold ~170 prod + 258 tests ≈ 428 — within 800 budget, no exception needed. Sliced to keep next PRs autonomous.
+

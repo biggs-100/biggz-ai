@@ -31,7 +31,7 @@ Chain strategy: stacked-to-main
 - [x] 1.3 Create `internal/review/lens/registry.go` `Registry`, `RegisterLens`, `Ordered` last-win skip unknown at `cmd/biggz` init
 - [x] 1.4 Create `internal/review/lens/stage.go` `LensStage` as `pipeline.Stage` no `graph.go`
 - [x] 1.5 Modify `internal/review/risk.go` freeze `PlanLenses(RiskHigh)==[risk,resilience,readability,reliability]`
-- [ ] 1.6 Guard `plugin/interfaces.go` zero `LensPlugin`/`Lens` + `internal/lens/` absent
+- [x] 1.6 Guard `plugin/interfaces.go` zero `LensPlugin`/`Lens` + `internal/lens/` absent
 
 ## Phase 2: Core Lenses & Adapter
 
