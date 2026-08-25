@@ -214,6 +214,12 @@ func AgentConfigPath(homeDir string) string {
 // MCP server (cmd/biggz-mcp, also exposed via `biggz mcp`). This is NOT
 // Engram (gentle-ai's JS/Python external + Cloud).
 func (a *Adapter) ProvisionBigMemMCP(homeDir string) (bool, []string, error) {
+	// Never run inside fresh/isolated subagent children — they have empty
+	// sessions and would race settings.json/mcp.json writes. Mirrors
+	// biggz-last-model.js guard: if (process.env.PI_SUBAGENT_CHILD === "1") return;
+	if os.Getenv("PI_SUBAGENT_CHILD") == "1" {
+		return false, nil, nil
+	}
 	settingsPath := a.SettingsPath(homeDir)
 	mcpPath := a.MCPConfigPath(homeDir, "")
 	mcpBinary := a.biggzMCPPath()

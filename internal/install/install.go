@@ -1077,13 +1077,40 @@ func stripOrphanMarkers(input, name string) string {
 // Returns the destination path, or empty string if no source binary was found.
 // When dryRun is true, no files are written.
 func DeployMCPBinaryToHomeDir(homeDir string, dryRun bool) (string, error) {
+	// Never run inside fresh/isolated subagent children — avoid racing the
+	// parent's binary copy. Mirrors biggz-last-model.js / ProvisionBigMemMCP guard.
+	if os.Getenv("PI_SUBAGENT_CHILD") == "1" {
+		return "", nil
+	}
 	biggzDir := filepath.Join(homeDir, ".biggz")
 
-	// Find the source binary — look next to the running binary first
-	srcPath := "biggz-mcp.exe"
+	// Find the source binary — look next to the running binary first.
+	// Try both biggz-mcp and biggz-mcp.exe so the same code works on Linux
+	// (no extension) and Windows (.exe). Prefer the OS-native name first.
+	var srcPath string
 	exe, err := os.Executable()
 	if err == nil {
-		srcPath = filepath.Join(filepath.Dir(exe), "biggz-mcp.exe")
+		exeDir := filepath.Dir(exe)
+		candidates := []string{"biggz-mcp.exe", "biggz-mcp"}
+		if runtime.GOOS != "windows" {
+			candidates = []string{"biggz-mcp", "biggz-mcp.exe"}
+		}
+		for _, name := range candidates {
+			cand := filepath.Join(exeDir, name)
+			if _, err := os.Stat(cand); err == nil {
+				srcPath = cand
+				break
+			}
+		}
+		if srcPath == "" && len(candidates) > 0 {
+			srcPath = filepath.Join(exeDir, candidates[0])
+		}
+	} else {
+		if runtime.GOOS == "windows" {
+			srcPath = "biggz-mcp.exe"
+		} else {
+			srcPath = "biggz-mcp"
+		}
 	}
 
 	// Check if source exists
@@ -1091,7 +1118,13 @@ func DeployMCPBinaryToHomeDir(homeDir string, dryRun bool) (string, error) {
 		return "", nil // source binary not found, skip
 	}
 
-	dstPath := filepath.Join(biggzDir, "biggz-mcp.exe")
+	baseName := filepath.Base(srcPath)
+	dstPath := filepath.Join(biggzDir, baseName)
+	// On Windows, always use .exe; on Linux, use bare name. If the source is
+	// .exe on Linux (cross-built), keep it as-is — the resolver handles both.
+	if runtime.GOOS == "windows" && !strings.HasSuffix(strings.ToLower(baseName), ".exe") {
+		dstPath = filepath.Join(biggzDir, baseName+".exe")
+	}
 
 	if dryRun {
 		return dstPath, nil
@@ -1122,6 +1155,12 @@ func DeployMCPBinaryToHomeDir(homeDir string, dryRun bool) (string, error) {
 //
 // Other strategies are a no-op until their adapters are implemented.
 func DeployMCPConfig(adapter plugin.AgentAdapter, homeDir, mcpBinaryPath string, dryRun bool) error {
+	// Never run inside fresh/isolated pi subagent children — avoid racing the
+	// parent's settings.json/mcp.json writes. Mirrors biggz-last-model.js guard.
+	// PI_SUBAGENT_CHILD is pi-specific; on other agents this is a no-op.
+	if os.Getenv("PI_SUBAGENT_CHILD") == "1" {
+		return nil
+	}
 	if !adapter.SupportsMCP() {
 		return nil
 	}
@@ -1495,6 +1534,12 @@ func findPiLastModel(homeDir string) (string, string, bool) {
 // last session's model, and refreshes last-model.json cache. Best-effort;
 // errors are swallowed to not fail install.
 func syncPiLastModel(homeDir string) error {
+	// Never run inside fresh/isolated subagent children — they have empty
+	// sessions and would race settings.json writes. Mirrors
+	// biggz-last-model.js guard: if (process.env.PI_SUBAGENT_CHILD === "1") return;
+	if os.Getenv("PI_SUBAGENT_CHILD") == "1" {
+		return nil
+	}
 	modelID, provider, ok := findPiLastModel(homeDir)
 	if !ok || strings.TrimSpace(modelID) == "" {
 		return nil
