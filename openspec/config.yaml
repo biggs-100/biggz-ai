@@ -3,22 +3,24 @@
 
 context: |
   biggz-ai es una reimplementación completa de gentle-ai.
-  El proyecto arranca desde cero con Go como lenguaje target.
-  No hay código base existente — todo se construye desde el protocolo hacia adelante.
+  Go 1.25+ harness (CLI+TUI+MCP): SDD orchestration, review lenses, BigMem SQLite.
+  Stack: Go (60K lines), modernc.org/sqlite, Charm Bubbles/Bubbletea/Lipgloss.
+  Testing: go test ./... (-short + e2e), coverage -cover, vet/gofmt gates.
+  Conventions: Conventional Commits, no Co-Authored-By, 400-line review budget.
 
 strict_tdd: false
 
 testing:
-  runner: none
-  runner_command: ""
+  runner: "go test"
+  runner_command: "go test ./... -count=1 -timeout 180s"
   layers:
-    unit: false
-    integration: false
-    e2e: false
-  coverage: false
-  linter: false
-  type_checker: false
-  formatter: false
+    unit: true
+    integration: true
+    e2e: true
+  coverage: true
+  linter: true
+  type_checker: true
+  formatter: true
 
 phases:
   proposal:
