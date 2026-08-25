@@ -1,12 +1,14 @@
 package install_test
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/biggs-100/biggz-ai/internal/assets"
 	"github.com/biggs-100/biggz-ai/internal/install"
 )
 
@@ -131,10 +133,65 @@ func TestDeployPiSubAgents(t *testing.T) {
 		}
 	}
 
+	// web_* must be in sdd-research only (REQ-INST-002/005)
+	if !strings.Contains(rcontent, "- web_search") || !strings.Contains(rcontent, "- web_fetch") {
+		t.Errorf("sdd-research.md should have web_search/web_fetch, got %q", rcontent[:1000])
+	}
+	if strings.Contains(content, "web_search") || strings.Contains(content, "web_fetch") {
+		t.Errorf("sdd-apply.md must NOT contain web_*, got %q", content[:800])
+	}
+	if strings.Contains(econtent, "web_search") || strings.Contains(econtent, "web_fetch") {
+		t.Errorf("sdd-explore.md must NOT contain web_*, got %q", econtent[:800])
+	}
+
 	// branch-pr (non-sdd) should NOT be deployed
 	branchPath := filepath.Join(home, ".pi", "agent", "agents", "branch-pr.md")
 	if _, err := os.Stat(branchPath); err == nil {
 		t.Errorf("branch-pr.md should not be deployed to pi agents dir")
+	}
+}
+
+func TestOverlayWebToolsGating(t *testing.T) {
+	data, err := fs.ReadFile(assets.FS, "opencode/sdd-overlay-multi.json")
+	if err != nil {
+		t.Fatalf("read overlay via FS: %v", err)
+	}
+	s := string(data)
+	if !strings.Contains(s, `"web_search": true`) || !strings.Contains(s, `"web_fetch": true`) {
+		t.Errorf("overlay sdd-research should contain web_search/web_fetch")
+	}
+	count := strings.Count(s, "web_search")
+	if count != 1 {
+		t.Errorf("web_search appears %d times, want 1 (sdd-research only)", count)
+	}
+	skill, err := fs.ReadFile(assets.FS, "skills/sdd-research/SKILL.md")
+	if err != nil {
+		t.Fatalf("read SKILL.md via FS: %v", err)
+	}
+	sk := string(skill)
+	for _, need := range []string{"open-web", "TAVILY_API_KEY", "BIGGZ_DDG_FALLBACK", "BIGGZ_WEB_FETCH_HEADLESS"} {
+		if !strings.Contains(sk, need) {
+			t.Errorf("SKILL.md missing gating doc %q", need)
+		}
+	}
+}
+
+func TestWebSearchJS_CapsAndGuards(t *testing.T) {
+	data, err := fs.ReadFile(assets.FS, "pi/biggz-web-search.js")
+	if err != nil {
+		t.Fatalf("read web search js: %v", err)
+	}
+	s := string(data)
+	for _, need := range []string{"BLOCKED_SCHEMES", "isPrivateIP", "FETCH_TIMEOUT_MS", "ONE_MB", "parseRetryAfter", "resolveProviderOrder", "publisherFor", "chrome124", "safari17", "FetchBlocked", "BIGGZ_DDG_FALLBACK", "BIGGZ_WEB_FETCH_HEADLESS"} {
+		if !strings.Contains(s, need) {
+			t.Errorf("biggz-web-search.js missing %q", need)
+		}
+	}
+	if !strings.Contains(s, "10_000") && !strings.Contains(s, "10000") {
+		t.Errorf("missing 10s timeout cap")
+	}
+	if !strings.Contains(s, "1MB") && !strings.Contains(s, "1024 * 1024") {
+		t.Errorf("missing 1MB cap marker")
 	}
 }
 

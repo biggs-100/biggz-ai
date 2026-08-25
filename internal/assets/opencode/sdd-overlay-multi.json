@@ -475,7 +475,9 @@
         "mem_save": true,
         "mem_search": true,
         "mem_get_observation": true,
-        "mem_update": true
+        "mem_update": true,
+        "web_search": true,
+        "web_fetch": true
       }
     },
     "sdd-ff": {

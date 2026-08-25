@@ -48,6 +48,7 @@ type Result struct {
 	PromptsDeployed  int    // number of prompt files written (or would be written in dry-run)
 	MCPDeployed      bool   // whether the MCP server binary and config were deployed
 	PiAgentsDeployed int    // number of pi-native SDD agent files written (or would be written in dry-run)
+	PiWebSearch      bool   // whether the pi web-search extension was deployed
 	DryRun           bool   // whether this was a dry-run (no files written)
 }
 
@@ -297,6 +298,14 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		}
 		if _, err := DeployPiLastModel(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi last model: %w", err)
+		}
+		if cfg.DryRun {
+			result.PiWebSearch = true
+		} else if res, err := DeployPiWebSearch(ctx, homeDir); err != nil {
+			return result, fmt.Errorf("deploy pi web search: %w", err)
+		} else {
+			result.PiWebSearch = res.Created || res.Changed || true
+			_ = res
 		}
 		// pi-pretty is auto-loaded via its package `pi.extensions` (npm:pi-pretty/dist/index.js).
 		// Do NOT deploy a custom wrapper — it would duplicate tool registrations (read/bash/find/grep)
@@ -1616,6 +1625,9 @@ func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 		tools := append([]string{"read", "edit", "bash", "write"}, bigmemTools...)
 		if name == "sdd-explore" || name == "sdd-research" {
 			tools = append([]string{"read", "grep", "find", "ls"}, bigmemTools...)
+		}
+		if name == "sdd-research" {
+			tools = append(tools, "web_search", "web_fetch")
 		}
 		count++
 		if isDry {
