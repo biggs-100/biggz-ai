@@ -23,6 +23,7 @@ import (
 	"github.com/biggs-100/biggz-ai/internal/assets"
 	"github.com/biggs-100/biggz-ai/internal/filemerge"
 	"github.com/biggs-100/biggz-ai/internal/platform"
+	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/model"
 	"github.com/biggs-100/biggz-ai/plugin"
 )
@@ -348,7 +349,69 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		}
 	}
 
+	// Guarantee RDD enabled by default and clear any stale clone/worktree disables.
+	// Fresh installs must come up trusted without manual `biggz rdd enable`.
+	// This is idempotent and never fails the install (logs warning on error).
+	if !cfg.DryRun {
+		ensureRDDEnabled(homeDir)
+	}
+
 	return result, nil
+}
+
+// ensureRDDEnabled guarantees global RDD is enabled and clears stale
+// clone/worktree generation overrides in the current repository.
+// It is idempotent and never fails the caller; errors are logged as warnings.
+//
+// Clone/worktree clearing requires the actual git directories: RDDEnable with
+// empty strings only writes the global file and cannot clear a stale
+// `clone: disabled` generation that lives under .git/biggz/rdd-mode/.
+// Detection is best-effort via `git rev-parse` and never fails the install.
+//
+// When cfg.HomeDir overrides the real home (tests), HOME and USERPROFILE are
+// temporarily pointed at homeDir so review's globalStatePath (which uses
+// os.UserHomeDir) writes under the temp home for test isolation.
+func ensureRDDEnabled(homeDir string) {
+	var worktreeGitDir, commonGitDir string
+	if out, err := exec.Command("git", "rev-parse", "--git-dir").Output(); err == nil {
+		worktreeGitDir = strings.TrimSpace(string(out))
+	}
+	if out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output(); err == nil {
+		commonGitDir = strings.TrimSpace(string(out))
+	}
+
+	// Temporarily override HOME/USERPROFILE when HomeDir is a test temp dir
+	// so the global rdd-mode.json lands under the isolated home.
+	var restoreHOME, restoreUSERPROFILE string
+	var hadHOME, hadUSERPROFILE bool
+	if homeDir != "" {
+		if v, ok := os.LookupEnv("HOME"); ok {
+			restoreHOME = v
+			hadHOME = true
+		}
+		if v, ok := os.LookupEnv("USERPROFILE"); ok {
+			restoreUSERPROFILE = v
+			hadUSERPROFILE = true
+		}
+		_ = os.Setenv("HOME", homeDir)
+		_ = os.Setenv("USERPROFILE", homeDir)
+		defer func() {
+			if hadHOME {
+				_ = os.Setenv("HOME", restoreHOME)
+			} else {
+				_ = os.Unsetenv("HOME")
+			}
+			if hadUSERPROFILE {
+				_ = os.Setenv("USERPROFILE", restoreUSERPROFILE)
+			} else {
+				_ = os.Unsetenv("USERPROFILE")
+			}
+		}()
+	}
+
+	if _, err := review.RDDEnable(worktreeGitDir, commonGitDir); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to ensure RDD enabled: %v\n", err)
+	}
 }
 
 // DeploySkillsToBiggzDir copies all embedded skill files from ffs (under the

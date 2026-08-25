@@ -6,10 +6,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/biggs-100/biggz-ai/internal/assets"
 	"github.com/biggs-100/biggz-ai/internal/install"
+	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/plugintest"
 )
 
@@ -341,5 +343,120 @@ func TestInstall_CustomHomeDir(t *testing.T) {
 	agentSkillFiles, _ := filepath.Glob(filepath.Join(agentSkillsDir, "**", "SKILL.md"))
 	if len(agentSkillFiles) == 0 {
 		t.Error("no SKILL.md files were deployed to agent skills directory")
+	}
+}
+
+func TestInstall_EnsuresRDDEnabled(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	// Start from disabled to prove install re-enables.
+	if _, err := review.RDDDisable("", "", "global"); err != nil {
+		t.Fatalf("pre-disable: %v", err)
+	}
+	status, err := review.RDDStatus("", "")
+	if err != nil {
+		t.Fatalf("RDDStatus pre: %v", err)
+	}
+	if status.EffectiveMode != review.RDDModeDisabled {
+		t.Fatalf("pre: expected disabled, got %s", status.EffectiveMode)
+	}
+
+	ctx := context.Background()
+	agent := &plugintest.FakeAgent{Installed: true, BinaryPath: "/usr/local/bin/opencode"}
+	result, err := install.Run(ctx, agent, install.Config{HomeDir: home})
+	if err != nil {
+		t.Fatalf("install Run: %v", err)
+	}
+	if !result.AgentDetected {
+		t.Fatal("expected AgentDetected=true")
+	}
+
+	// Global mode must be enabled after install.
+	status, err = review.RDDStatus("", "")
+	if err != nil {
+		t.Fatalf("RDDStatus post: %v", err)
+	}
+	if status.EffectiveMode != review.RDDModeEnabled {
+		t.Errorf("post: expected enabled, got %s (source=%s)", status.EffectiveMode, status.Source)
+	}
+	if status.GlobalMode != review.RDDModeEnabled {
+		t.Errorf("post: expected global enabled, got %s", status.GlobalMode)
+	}
+
+	// File check: ~/.biggz/rdd-mode.json contains enabled.
+	data, err := os.ReadFile(filepath.Join(home, ".biggz", "rdd-mode.json"))
+	if err != nil {
+		t.Fatalf("read rdd-mode.json: %v", err)
+	}
+	if !strings.Contains(string(data), `"mode": "enabled"`) {
+		t.Errorf("rdd-mode.json missing enabled: %s", string(data))
+	}
+
+	// Idempotent second run still enabled.
+	if _, err := install.Run(ctx, agent, install.Config{HomeDir: home}); err != nil {
+		t.Fatalf("second Run: %v", err)
+	}
+	status, _ = review.RDDStatus("", "")
+	if status.EffectiveMode != review.RDDModeEnabled {
+		t.Errorf("second run: expected still enabled, got %s", status.EffectiveMode)
+	}
+}
+
+func TestInstall_EnsuresRDDEnabled_DryRunDoesNotTouchRDD(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	if _, err := review.RDDDisable("", "", "global"); err != nil {
+		t.Fatalf("pre-disable: %v", err)
+	}
+
+	ctx := context.Background()
+	agent := &plugintest.FakeAgent{Installed: true, BinaryPath: "/usr/local/bin/opencode"}
+	if _, err := install.Run(ctx, agent, install.Config{HomeDir: home, DryRun: true}); err != nil {
+		t.Fatalf("dryRun: %v", err)
+	}
+
+	status, err := review.RDDStatus("", "")
+	if err != nil {
+		t.Fatalf("RDDStatus: %v", err)
+	}
+	if status.EffectiveMode != review.RDDModeDisabled {
+		t.Errorf("dryRun should not enable RDD, got %s", status.EffectiveMode)
+	}
+}
+
+func TestInstall_EnsuresRDDEnabled_ClearsStaleCloneDisable(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	// Create a fake git dir and disable at clone scope.
+	gitDir := filepath.Join(home, "repo.git")
+	if err := os.MkdirAll(filepath.Join(gitDir, "objects"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := review.RDDDisable(gitDir, gitDir, "clone"); err != nil {
+		t.Fatalf("clone disable: %v", err)
+	}
+	status, _ := review.RDDStatus(gitDir, gitDir)
+	if status.EffectiveMode != review.RDDModeDisabled {
+		t.Fatalf("expected clone disabled, got %s", status.EffectiveMode)
+	}
+	// Simulate what install does: clear via RDDEnable with the same git dirs.
+	if _, err := review.RDDEnable(gitDir, gitDir); err != nil {
+		t.Fatalf("RDDEnable clear: %v", err)
+	}
+	status, _ = review.RDDStatus(gitDir, gitDir)
+	if status.EffectiveMode != review.RDDModeEnabled {
+		t.Errorf("after clear: expected enabled, got %s", status.EffectiveMode)
+	}
+	if status.CloneMode != review.RDDModeUnset {
+		t.Errorf("after clear: expected clone unset, got %s", status.CloneMode)
 	}
 }
