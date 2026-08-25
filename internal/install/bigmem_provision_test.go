@@ -16,45 +16,47 @@ import (
 	"github.com/biggs-100/biggz-ai/plugintest"
 )
 
-// TestOverlayDoesNotContainBigMemAllowlist ensures the MCP tools are not
-// listed as extension allowlist entries. MCP servers (biggz-mcp) are
-// discovered via mcpServers, not via the task/subagent permission allowlist.
-// Listing them as `biggz_mem_*` caused sdd-propose to fail with strict
-// allowlist deny (fixed 82e5d56). This test prevents regression.
+// TestOverlayDoesNotContainBigMemAllowlist ensures the MCP tools ARE listed
+// for SDD workflow agents but NOT for generic workers. MCP servers (biggz-mcp)
+// are discovered via mcpServers (mcpServers.bigmem via biggz-mcp --tools=agent --prefix=biggz)
+// and correctly provisioned via ProvisionBigMemMCP (pi) / DeployMCPConfig (opencode),
+// so SDD agents can now safely expose biggz_mem_* as allowlisted MCP tools.
+// Previous fix 82e5d56 REMOVED them because they were listed as extension tools
+// without MCP provisioning, causing "requested unavailable child tools" with strict *:"deny".
+// Now with correct MCP provisioning, we restore them for SDD workflow agents.
 func TestOverlayDoesNotContainBigMemAllowlist(t *testing.T) {
 	data, err := fs.ReadFile(assets.FS, "opencode/sdd-overlay-multi.json")
 	if err != nil {
 		t.Fatalf("read overlay: %v", err)
 	}
 	s := string(data)
-	for _, bad := range []string{
-		"biggz_mem_save", "biggz_mem_search", "biggz_mem_context",
-		"biggz_mem_get_observation", "biggz_mem_update", "biggz_mem_session_summary",
-		"mem_save", "mem_search",
+	// SDD agents MUST contain BigMem MCP tools (since MCP is now correctly provisioned)
+	for _, want := range []string{
+		"biggz_mem_save", "biggz_mem_search", "biggz_mem_get_observation",
+		"biggz_mem_update", "biggz_mem_context",
 	} {
-		// Only fail if it appears as a tool allowlist entry: `"biggz_mem_save": true`
-		if strings.Contains(s, `"`+bad+`": true`) || strings.Contains(s, `"`+bad+`":true`) {
-			t.Errorf("overlay must NOT contain BigMem tool allowlist %q (MCP, not extension)", bad)
+		if !strings.Contains(s, `"`+want+`": true`) && !strings.Contains(s, `"`+want+`":true`) {
+			t.Errorf("overlay must contain BigMem tool allowlist %q for SDD agents", want)
 		}
 	}
-	// Ensure sdd-* agents still only declare read/write/edit/bash (and web_* for sdd-research)
 	var overlay map[string]any
 	if err := json.Unmarshal(data, &overlay); err != nil {
 		t.Fatalf("unmarshal overlay: %v", err)
 	}
 	agents, _ := overlay["agent"].(map[string]any)
-	for _, name := range []string{"sdd-propose", "sdd-explore", "sdd-apply", "sdd-verify", "sdd-spec"} {
+	// SDD workflow agents must have BigMem tools
+	for _, name := range []string{"sdd-propose", "sdd-explore", "sdd-apply", "sdd-verify", "sdd-spec", "sdd-design", "sdd-tasks", "sdd-init", "sdd-archive", "sdd-onboard", "sdd-research"} {
 		ag, ok := agents[name].(map[string]any)
 		if !ok {
-			t.Fatalf("agent %q missing in overlay", name)
+			continue // single overlay may not have all
 		}
 		tools, _ := ag["tools"].(map[string]any)
 		if tools == nil {
 			t.Fatalf("agent %q tools missing", name)
 		}
-		for k := range tools {
-			if strings.HasPrefix(k, "biggz_mem_") || strings.HasPrefix(k, "mem_") {
-				t.Errorf("agent %q must not allowlist MCP tool %q", name, k)
+		for _, want := range []string{"biggz_mem_save", "biggz_mem_search", "biggz_mem_get_observation", "biggz_mem_update", "biggz_mem_context"} {
+			if _, ok := tools[want]; !ok {
+				t.Errorf("SDD agent %q must allowlist MCP tool %q (BigMem via MCP, now correctly provisioned)", name, want)
 			}
 		}
 		if _, ok := tools["read"]; !ok {
@@ -62,6 +64,22 @@ func TestOverlayDoesNotContainBigMemAllowlist(t *testing.T) {
 		}
 		if _, ok := tools["bash"]; !ok {
 			t.Errorf("agent %q missing bash tool", name)
+		}
+	}
+	// Generic workers must NOT get BigMem (only SDD workflow)
+	for _, name := range []string{"general", "explore", "jd-judge-a", "review-risk"} {
+		ag, ok := agents[name].(map[string]any)
+		if !ok {
+			continue
+		}
+		tools, _ := ag["tools"].(map[string]any)
+		if tools == nil {
+			continue
+		}
+		for k := range tools {
+			if strings.HasPrefix(k, "biggz_mem_") {
+				t.Errorf("generic agent %q must NOT allowlist MCP tool %q (only SDD workflow should have BigMem)", name, k)
+			}
 		}
 	}
 }

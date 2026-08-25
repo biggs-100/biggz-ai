@@ -316,7 +316,7 @@ func (a *Adapter) mergePiSettingsBigMem(path, mcpBinary string) (filemerge.Write
 	}
 	servers["bigmem"] = map[string]any{
 		"command": mcpBinary,
-		"args":    []string{"--tools=agent"},
+		"args":    []string{"--tools=agent", "--prefix=biggz"},
 		"type":    "local",
 	}
 	obj["mcpServers"] = servers
@@ -340,7 +340,7 @@ func (a *Adapter) mergePiMCPFileBigMem(path, mcpBinary string) (filemerge.WriteR
 	}
 	servers["bigmem"] = map[string]any{
 		"command": mcpBinary,
-		"args":    []string{"--tools=agent"},
+		"args":    []string{"--tools=agent", "--prefix=biggz"},
 		"type":    "local",
 	}
 	obj["mcpServers"] = servers
