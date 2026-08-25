@@ -40,17 +40,18 @@ type Config struct {
 
 // Result describes what happened during an install run.
 type Result struct {
-	AgentDetected    bool   // whether the agent binary was found on PATH
-	BinaryPath       string // full path to the agent binary (empty if not detected)
-	SkillsDeployed   int    // number of skill files written (or would be written in dry-run)
-	ConfigMerged     bool   // whether the config file was merged and written
-	CommandsWritten  int    // number of command files written (or would be written in dry-run)
-	PluginsDeployed  int    // number of plugin files written (or would be written in dry-run)
-	PromptsDeployed  int    // number of prompt files written (or would be written in dry-run)
-	MCPDeployed      bool   // whether the MCP server binary and config were deployed
-	PiAgentsDeployed int    // number of pi-native SDD agent files written (or would be written in dry-run)
-	PiWebSearch      bool   // whether the pi web-search extension was deployed
-	DryRun           bool   // whether this was a dry-run (no files written)
+	AgentDetected     bool   // whether the agent binary was found on PATH
+	BinaryPath        string // full path to the agent binary (empty if not detected)
+	SkillsDeployed    int    // number of skill files written (or would be written in dry-run)
+	ConfigMerged      bool   // whether the config file was merged and written
+	CommandsWritten   int    // number of command files written (or would be written in dry-run)
+	PluginsDeployed   int    // number of plugin files written (or would be written in dry-run)
+	PromptsDeployed   int    // number of prompt files written (or would be written in dry-run)
+	MCPDeployed       bool   // whether the MCP server binary and config were deployed
+	PiAgentsDeployed  int    // number of pi-native SDD agent files written (or would be written in dry-run)
+	PiWebSearch       bool   // whether the pi web-search extension was deployed
+	PiQuestionMouse   bool   // whether the pi question-mouse extension was deployed
+	DryRun            bool   // whether this was a dry-run (no files written)
 }
 
 // AssetRelPaths returns the relative paths (embedded asset layout) of every
@@ -308,6 +309,14 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 			result.PiWebSearch = res.Created || res.Changed || true
 			_ = res
 		}
+		if cfg.DryRun {
+			result.PiQuestionMouse = true
+		} else if res, err := DeployPiQuestionMouse(ctx, homeDir); err != nil {
+			return result, fmt.Errorf("deploy pi question mouse: %w", err)
+		} else {
+			result.PiQuestionMouse = res.Created || res.Changed || true
+			_ = res
+		}
 		// pi-pretty is auto-loaded via its package `pi.extensions` (npm:pi-pretty/dist/index.js).
 		// Do NOT deploy a custom wrapper — it would duplicate tool registrations (read/bash/find/grep)
 		// and cause "Tool conflicts" on pi startup. The FleetView itself comes from pi-subagents,
@@ -325,6 +334,9 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	// read/bash/edit/write. Without it pi cannot launch sub-agents.
 	// Gentle's 9-step pi install includes pi-subagents-j0k3r; biggz uses
 	// the 2-package npm install (idempotent) plus BigMem MCP separately.
+	// Mouse parity for ask_user_question (biggz-question-mouse.js) is not
+	// installed via `pi install`; it is deployed via file copy to
+	// ~/.pi/agent/extensions/ (DeployPiQuestionMouse) so clicks select options.
 	if adapter.ID() == agents.AgentPi {
 		if cmds, err := adapter.InstallCommand(nil); err == nil && len(cmds) > 0 {
 			if !cfg.DryRun {

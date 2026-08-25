@@ -97,6 +97,13 @@ func (a *Adapter) Detect(_ context.Context, homeDir string) (bool, string, strin
 // ~/.pi/agent/node_modules/gentle-pi/subagents/* → ~/.pi/agent/agents/).
 // This gives pi `sdd-apply`, `sdd-research`, `sdd-spec`, etc. as native
 // agents visible via `/agents` and the model assignment modal.
+// Mouse parity for the questionnaire (SGR 1000/1006 click-to-focus / double-click
+// to confirm, multi-select toggle) is provided by the pi extension
+// `~/.pi/agent/extensions/biggz-question-mouse.js` which is deployed via
+// file copy (filemerge.WriteFileAtomic), not via `pi install`. It wraps
+// `ask_user_question` at runtime, enables mouse reporting (ESC[?1000h+1006h),
+// and maps SGR clicks to nav/confirm/toggle so pi matches opencode's `question`
+// mouse behavior.
 func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	// pi's package loader only scans ~/.pi/agent/node_modules (and pnpm
 	// symlinks there), NOT the global npm prefix (%AppData%\npm on Windows
@@ -110,6 +117,9 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	//   TUI (single/multi-select + "Type something." + "Chat about this") that
 	//   is pi's parity for opencode's `question` (grouped interaction,
 	//   header/label/description, custom answer row auto-appended).
+	// - Mouse parity for that TUI (biggz-question-mouse.js) is NOT installed
+	//   via `pi install`; it is copied to `~/.pi/agent/extensions/` via
+	//   DeployPiQuestionMouse (filemerge) during `biggz install --agent pi`.
 	return [][]string{
 		{"pi", "install", "npm:pi-subagents"},
 		{"pi", "install", "npm:@juicesharp/rpiv-ask-user-question"},
