@@ -33,7 +33,7 @@ Rollback boundary for stale work (already deleted): `internal/lens/gitdiff/`, `r
 ## PR1 Scope (S1) — Tasks 1.1-1.6
 
 - [x] 1.1 Archive stale `apply-progress.md`, verify `internal/lens/` absent
-- [ ] 1.2 Create `internal/review/lens/types.go`
+- [x] 1.2 Create `internal/review/lens/types.go`
 - [ ] 1.3 Create `internal/review/lens/registry.go`
 - [ ] 1.4 Create `internal/review/lens/stage.go`
 - [ ] 1.5 Modify `internal/review/risk.go` freeze `PlanLenses(RiskHigh)==[risk,resilience,readability,reliability]`
@@ -44,20 +44,23 @@ Rollback boundary for stale work (already deleted): `internal/lens/gitdiff/`, `r
 | File | Action | What Was Done |
 |------|--------|---------------|
 | `openspec/changes/lenses-r2-r3-r4/apply-progress.md` | Modified | Superseded stale progress, verified `internal/lens/` absent |
+| `internal/review/lens/types.go` | Created | Lens{ID,Analyze}, LensInput{RiskInput,Hunks,Truncated,Repo}, LensResult `biggz-ai.lens-result/v1` + LensFinding ProofRefs/Class |
 
 ## Test Results (incremental)
 
 - `ls -la internal/lens` → ENOENT (absent) — verified
 - `grep -r "LensPlugin\|type Lens" plugin/interfaces.go` → 0 hits — verified
+- `go vet ./internal/review/lens` → exit 0 — types.go valid
+- `go test ./internal/review/lens -count=1` → ? (no test files) — package compiles
 
-## Work Unit Evidence (S1 — after 1.1)
+## Work Unit Evidence (S1 — after 1.2)
 
 | Evidence | Required value |
 |---|---|
-| Focused test command and exact result | `go test ./internal/review -run TestPlanLenses -count=1` — pending full S1 |
-| Runtime harness command/scenario and exact result | `go test ./internal/review -run TestPlanLenses -count=1` — pending |
-| Rollback boundary | Delete `openspec/changes/lenses-r2-r3-r4/apply-progress.md` supersede note (git history retains stale) |
+| Focused test command and exact result | `go vet ./internal/review/lens -count=1` — exit 0, types.go compiles |
+| Runtime harness command/scenario and exact result | `go test ./internal/review/lens -count=1` — ? no tests yet (package valid) |
+| Rollback boundary | Delete `internal/review/lens/types.go` (revert to absent) |
 
 ## Status
 
-1/6 S1 tasks complete. In progress — next: types.go.
+2/6 S1 tasks complete. In progress — next: registry.go.
