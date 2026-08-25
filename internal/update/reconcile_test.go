@@ -53,10 +53,9 @@ func TestReconcile_DeploysFreshAssets(t *testing.T) {
 	if !rr.ConfigMerged {
 		t.Error("expected ConfigMerged=true")
 	}
-	// No biggz-mcp.exe source binary next to the test executable, so the
-	// MCP binary/config are not deployed in tests.
-	if rr.MCPDeployed {
-		t.Error("expected MCPDeployed=false without a source binary")
+	// MCP binary/config are now always deployed via fallback (Install always sets MCPDeployed=true).
+	if !rr.MCPDeployed {
+		t.Error("expected MCPDeployed=true (MCP is always deployed via fallback)")
 	}
 
 	// A couple of deployed files must be byte-identical to the embedded

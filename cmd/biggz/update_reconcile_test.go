@@ -32,7 +32,7 @@ func reconcileFakeAgent(installed bool) map[string]plugin.AgentAdapter {
 // after a successful binary replacement.
 func TestPostUpdateReconcile_Success(t *testing.T) {
 	report := postUpdateReconcile(context.Background(), reconcileFakeAgent(true), t.TempDir(), false)
-	wantParts := []string{"Reconciled:", "skills", "commands", "plugins", "prompts", "config merged", "MCP not deployed"}
+	wantParts := []string{"Reconciled:", "skills", "commands", "plugins", "prompts", "config merged", "MCP deployed"}
 	for _, part := range wantParts {
 		if !strings.Contains(report, part) {
 			t.Errorf("report %q missing %q", report, part)

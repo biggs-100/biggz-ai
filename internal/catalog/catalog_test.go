@@ -61,8 +61,9 @@ func TestIsSupportedAgent(t *testing.T) {
 
 func TestAllComponents_ReturnsThree(t *testing.T) {
 	components := AllComponents()
-	if len(components) != 3 {
-		t.Fatalf("AllComponents() = %d entries, want 3", len(components))
+	// Includes base components (skills, config, prompts) plus optional lens entries (readability, reliability, resilience).
+	if len(components) != 6 {
+		t.Fatalf("AllComponents() = %d entries, want 6", len(components))
 	}
 }
 
@@ -80,12 +81,12 @@ func TestAllComponents_Immutability(t *testing.T) {
 
 func TestListComponents_TierFilter(t *testing.T) {
 	all := ListComponents("")
-	if len(all) != 3 {
-		t.Errorf("ListComponents(\"\") = %d, want 3", len(all))
+	if len(all) != 6 {
+		t.Errorf("ListComponents(\"\") = %d, want 6", len(all))
 	}
 	native := ListComponents("native")
-	if len(native) != 3 {
-		t.Errorf("ListComponents(\"native\") = %d, want 3", len(native))
+	if len(native) != 6 {
+		t.Errorf("ListComponents(\"native\") = %d, want 6", len(native))
 	}
 	community := ListComponents("community")
 	if len(community) != 0 {
