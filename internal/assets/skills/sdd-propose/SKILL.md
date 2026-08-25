@@ -1,7 +1,6 @@
-<!-- section:model-capable -->
 ---
 name: sdd-propose
-description: Create an SDD change proposal with intent, scope, approach, and rollback plan. Trigger: orchestrator launches proposal work for a change.
+description: "Create an SDD change proposal with intent, scope, approach, and rollback plan. Trigger: orchestrator launches proposal work for a change."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -10,6 +9,7 @@ metadata:
   version: "2.0"
   delegate_only: true
 ---
+<!-- section:model-capable -->
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -198,7 +198,7 @@ Ready for specs (sdd-spec) or design (sdd-design).
 <!-- section:model-small -->
 ---
 name: sdd-propose
-description: Create an SDD change proposal with intent, scope, approach, and rollback plan. Trigger: orchestrator launches proposal work for a change.
+description: "Create an SDD change proposal with intent, scope, approach, and rollback plan. Trigger: orchestrator launches proposal work for a change."
 disable-model-invocation: true
 user-invocable: false
 license: MIT

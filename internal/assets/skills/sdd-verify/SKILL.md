@@ -1,7 +1,6 @@
-<!-- section:model-capable -->
 ---
 name: sdd-verify
-description: Verify SDD implementation against specs, design, and tasks. Run tests, validate requirements, check design coherence, and produce verify report. Trigger: orchestrator launches verification after apply.
+description: "Verify SDD implementation against specs, design, and tasks. Run tests, validate requirements, check design coherence, and produce verify report. Trigger: orchestrator launches verification after apply."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -10,6 +9,7 @@ metadata:
   version: "3.0"
   delegate_only: true
 ---
+<!-- section:model-capable -->
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -105,7 +105,7 @@ Return `## Verification Report` with change, mode, completeness table, build/tes
 <!-- section:model-small -->
 ---
 name: sdd-verify
-description: Verify SDD implementation against specs, design, and tasks. Run tests, validate requirements, check design coherence, and produce verify report. Trigger: orchestrator launches verification after apply.
+description: "Verify SDD implementation against specs, design, and tasks. Run tests, validate requirements, check design coherence, and produce verify report. Trigger: orchestrator launches verification after apply."
 disable-model-invocation: true
 user-invocable: false
 license: MIT

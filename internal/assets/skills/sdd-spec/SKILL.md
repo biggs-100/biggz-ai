@@ -1,7 +1,6 @@
-<!-- section:model-capable -->
 ---
 name: sdd-spec
-description: Write SDD delta specs with functional requirements and GIVEN/WHEN/THEN scenarios. Trigger: orchestrator launches spec work for a change.
+description: "Write SDD delta specs with functional requirements and GIVEN/WHEN/THEN scenarios. Trigger: orchestrator launches spec work for a change."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -10,6 +9,7 @@ metadata:
   version: "2.0"
   delegate_only: true
 ---
+<!-- section:model-capable -->
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -247,7 +247,7 @@ Ready for design (sdd-design). If design already exists, ready for tasks (sdd-ta
 <!-- section:model-small -->
 ---
 name: sdd-spec
-description: Write SDD delta specs with functional requirements and GIVEN/WHEN/THEN scenarios. Trigger: orchestrator launches spec work for a change.
+description: "Write SDD delta specs with functional requirements and GIVEN/WHEN/THEN scenarios. Trigger: orchestrator launches spec work for a change."
 disable-model-invocation: true
 user-invocable: false
 license: MIT

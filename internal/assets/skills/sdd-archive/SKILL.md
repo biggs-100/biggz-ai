@@ -1,7 +1,6 @@
-<!-- section:model-capable -->
 ---
 name: sdd-archive
-description: Archive a completed SDD change by syncing delta specs, moving to archive, and producing archive report. Trigger: orchestrator launches archive after implementation and verification.
+description: "Archive a completed SDD change by syncing delta specs, moving to archive, and producing archive report. Trigger: orchestrator launches archive after implementation and verification."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -10,6 +9,7 @@ metadata:
   version: "2.0"
   delegate_only: true
 ---
+<!-- section:model-capable -->
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -230,7 +230,7 @@ Ready for the next change.
 <!-- section:model-small -->
 ---
 name: sdd-archive
-description: Archive a completed SDD change by syncing delta specs, moving to archive, and producing archive report. Trigger: orchestrator launches archive after implementation and verification.
+description: "Archive a completed SDD change by syncing delta specs, moving to archive, and producing archive report. Trigger: orchestrator launches archive after implementation and verification."
 disable-model-invocation: true
 user-invocable: false
 license: MIT

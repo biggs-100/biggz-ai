@@ -1,7 +1,6 @@
-<!-- section:model-capable -->
 ---
 name: sdd-apply
-description: Implement SDD tasks from specs, design, and task plan. Write code, run tests, and produce apply-progress report. Trigger: orchestrator launches apply for one or more change tasks.
+description: "Implement SDD tasks from specs, design, and task plan. Write code, run tests, and produce apply-progress report. Trigger: orchestrator launches apply for one or more change tasks."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -10,6 +9,7 @@ metadata:
   version: "3.0"
   delegate_only: true
 ---
+<!-- section:model-capable -->
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -279,7 +279,7 @@ If none, say "None."}
 <!-- section:model-small -->
 ---
 name: sdd-apply
-description: Implement SDD tasks from specs, design, and task plan. Write code, run tests, and produce apply-progress report. Trigger: orchestrator launches apply for one or more change tasks.
+description: "Implement SDD tasks from specs, design, and task plan. Write code, run tests, and produce apply-progress report. Trigger: orchestrator launches apply for one or more change tasks."
 disable-model-invocation: true
 user-invocable: false
 license: MIT

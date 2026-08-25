@@ -1,6 +1,6 @@
 ---
 name: sdd-new
-description: Start a new SDD change from a brief description. Scaffolds the change directory and hands off to explore or propose. Trigger: sdd new, nuevo cambio, new change
+description: "Start a new SDD change from a brief description. Scaffolds the change directory and hands off to explore or propose. Trigger: sdd new, nuevo cambio, new change"
 license: MIT
 metadata:
   author: biggz-ai

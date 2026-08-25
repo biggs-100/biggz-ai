@@ -1,7 +1,6 @@
-<!-- section:model-capable -->
 ---
 name: sdd-explore
-description: Explore SDD ideas before committing to a change. Investigate codebase, compare approaches, and provide go/no-go recommendation. Trigger: orchestrator launches exploration or requirement clarification.
+description: "Explore SDD ideas before committing to a change. Investigate codebase, compare approaches, and provide go/no-go recommendation. Trigger: orchestrator launches exploration or requirement clarification."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -10,6 +9,7 @@ metadata:
   version: "2.0"
   delegate_only: true
 ---
+<!-- section:model-capable -->
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -141,7 +141,7 @@ Return EXACTLY this format to the orchestrator (and write the same content to `e
 <!-- section:model-small -->
 ---
 name: sdd-explore
-description: Explore SDD ideas before committing to a change. Investigate codebase, compare approaches, and provide go/no-go recommendation. Trigger: orchestrator launches exploration or requirement clarification.
+description: "Explore SDD ideas before committing to a change. Investigate codebase, compare approaches, and provide go/no-go recommendation. Trigger: orchestrator launches exploration or requirement clarification."
 disable-model-invocation: true
 user-invocable: false
 license: MIT

@@ -1,4 +1,3 @@
-<!-- section:model-capable -->
 ---
 name: sdd-research
 description: "Trigger: SDD research, external evidence, source-backed research. Produce auditable evidence for a selected research lane."
@@ -10,6 +9,7 @@ metadata:
   version: "1.0"
   delegate_only: true
 ---
+<!-- section:model-capable -->
 
 ## Execution Role
 

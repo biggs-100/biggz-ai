@@ -79,7 +79,11 @@ func AgentAssetPaths() (AssetRelPaths, error) {
 			return nil
 		}
 		relPath := strings.TrimPrefix(path, "skills/")
-		if sharedSkillNames[filepath.Dir(relPath)] {
+		skillName := filepath.Dir(relPath)
+		if skillName == "_shared" || strings.HasPrefix(skillName, "_") {
+			return nil
+		}
+		if sharedSkillNames[skillName] {
 			return nil
 		}
 		out.AgentSkills = append(out.AgentSkills, relPath)
@@ -441,11 +445,15 @@ func DeploySkillsToBiggzDir(homeDir string, ffs fs.FS, dryRun bool) (int, error)
 		if d.IsDir() {
 			return nil
 		}
+		relPath := strings.TrimPrefix(path, "skills/")
+		skillName := filepath.Dir(relPath)
+		if skillName == "_shared" || strings.HasPrefix(skillName, "_") {
+			return nil
+		}
 		data, err := fs.ReadFile(ffs, path)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", path, err)
 		}
-		relPath := strings.TrimPrefix(path, "skills/")
 		targetPath := filepath.Join(biggzSkillsDir, relPath)
 		if dryRun {
 			count++
@@ -500,6 +508,9 @@ func DeploySkillsToAgentDir(skillsDir string, ffs fs.FS, dryRun bool) (int, erro
 		}
 		relPath := strings.TrimPrefix(path, "skills/")
 		skillName := filepath.Dir(relPath)
+		if skillName == "_shared" || strings.HasPrefix(skillName, "_") {
+			return nil
+		}
 		if sharedSkillNames[skillName] && !isPi {
 			return nil
 		}
@@ -1745,11 +1756,23 @@ func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 // if <!-- section:model-capable --> exists, it extracts only that section's
 // frontmatter/body; otherwise it parses the whole file as a single
 // frontmatter+body document.
+//
+// Pi's strict YAML skill loader requires frontmatter at byte 0, so SDD
+// skills now have frontmatter at the top and the capable marker AFTER it
+// (e.g. "---\nname: sdd-apply\n---\n<!-- section:model-capable -->\nbody").
+// In that layout the markers' interior contains only the body without
+// frontmatter. This parser handles both layouts:
+//   - legacy: marker wraps frontmatter+body ("<!-- -->\\n---\\nname:..\\n---\\nbody")
+//   - new: frontmatter at file top, marker wraps body only.
 func parsePiSkillFrontmatter(data string) (string, string, string, error) {
 	section := data
+	hasCapable := false
+	capableStart := -1
 	if start := strings.Index(data, "<!-- section:model-capable -->"); start != -1 {
+		capableStart = start
 		if end := strings.Index(data, "<!-- /section:model-capable -->"); end != -1 && end > start {
 			section = data[start+len("<!-- section:model-capable -->") : end]
+			hasCapable = true
 		}
 	}
 	lines := strings.Split(section, "\n")
@@ -1766,6 +1789,61 @@ func parsePiSkillFrontmatter(data string) (string, string, string, error) {
 		}
 	}
 	if startIdx == -1 || endIdx == -1 || endIdx <= startIdx {
+		if hasCapable {
+			// New layout: frontmatter is at file top before the capable marker,
+			// section interior has no frontmatter. Extract name/desc from top.
+			prefix := data[:capableStart]
+			plines := strings.Split(strings.TrimSpace(prefix), "\n")
+			pStart := -1
+			pEnd := -1
+			for i, line := range plines {
+				if strings.TrimSpace(line) == "---" {
+					if pStart == -1 {
+						pStart = i
+					} else {
+						pEnd = i
+						break
+					}
+				}
+			}
+			if pStart != -1 && pEnd != -1 && pEnd > pStart {
+				pFrontLines := plines[pStart+1 : pEnd]
+				body := strings.TrimSpace(section)
+				if idx := strings.Index(body, "<!-- section:model-small -->"); idx != -1 {
+					body = strings.TrimSpace(body[:idx])
+				}
+				var name, desc string
+				for i, line := range pFrontLines {
+					trimmed := strings.TrimSpace(line)
+					if strings.HasPrefix(trimmed, "name:") {
+						val := strings.TrimSpace(strings.TrimPrefix(trimmed, "name:"))
+						val = strings.Trim(val, "\"'")
+						name = val
+					} else if strings.HasPrefix(trimmed, "description:") {
+						val := strings.TrimSpace(strings.TrimPrefix(trimmed, "description:"))
+						val = strings.Trim(val, "\"'")
+						if val == ">" || val == "|" {
+							var parts []string
+							for j := i + 1; j < len(pFrontLines); j++ {
+								next := pFrontLines[j]
+								if strings.HasPrefix(next, "  ") || strings.HasPrefix(next, "\t") {
+									parts = append(parts, strings.TrimSpace(next))
+								} else {
+									break
+								}
+							}
+							if len(parts) > 0 {
+								desc = strings.Join(parts, " ")
+								desc = strings.Trim(desc, "\"'")
+							}
+						} else {
+							desc = val
+						}
+					}
+				}
+				return name, desc, body, nil
+			}
+		}
 		return "", "", strings.TrimSpace(section), nil
 	}
 	frontLines := lines[startIdx+1 : endIdx]

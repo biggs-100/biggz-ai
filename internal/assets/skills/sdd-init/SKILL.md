@@ -1,7 +1,6 @@
-<!-- section:model-capable -->
 ---
 name: sdd-init
-description: Initialize SDD context, testing capabilities, registry, and persistence for a project. Trigger: sdd init, iniciar sdd, openspec init; also called automatically by the orchestrator when no openspec/ directory exists.
+description: "Initialize SDD context, testing capabilities, registry, and persistence for a project. Trigger: sdd init, iniciar sdd, openspec init; also called automatically by the orchestrator when no openspec/ directory exists."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
@@ -10,6 +9,7 @@ metadata:
   version: "3.0"
   delegate_only: true
 ---
+<!-- section:model-capable -->
 ## Language Domain Contract
 
 Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
@@ -69,7 +69,7 @@ Return `status`, `executive_summary`, `artifacts`, `next_recommended`, and `risk
 <!-- section:model-small -->
 ---
 name: sdd-init
-description: Initialize SDD context, testing capabilities, registry, and persistence for a project. Trigger: sdd init, iniciar sdd, openspec init; also called automatically by the orchestrator when no openspec/ directory exists.
+description: "Initialize SDD context, testing capabilities, registry, and persistence for a project. Trigger: sdd init, iniciar sdd, openspec init; also called automatically by the orchestrator when no openspec/ directory exists."
 disable-model-invocation: true
 user-invocable: false
 license: MIT
