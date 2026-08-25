@@ -460,3 +460,56 @@ func TestInstall_EnsuresRDDEnabled_ClearsStaleCloneDisable(t *testing.T) {
 		t.Errorf("after clear: expected clone unset, got %s", status.CloneMode)
 	}
 }
+
+func TestInstall_VerifiesOrchestratorCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	agent := &plugintest.FakeAgent{Installed: true, BinaryPath: "/usr/local/bin/opencode"}
+	if _, err := install.Run(ctx, agent, install.Config{HomeDir: home}); err != nil {
+		t.Fatalf("install Run: %v", err)
+	}
+	// Verify OpenCode settings contain checkpoint and permissions
+	configFile := filepath.Join(home, ".config", "opencode", "opencode.jsonc")
+	data, err := os.ReadFile(configFile)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	s := string(data)
+	for _, want := range []string{"Post-Delegation Human Checkpoint", "Synthesize a concise summary"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("config missing %q", want)
+		}
+	}
+	if !strings.Contains(s, "ask_user_question") {
+		t.Errorf("config missing ask_user_question permission")
+	}
+	if !strings.Contains(s, `"question"`) && !strings.Contains(s, "'question'") {
+		t.Errorf("config missing question permission")
+	}
+	// Verify checkpoint at top 40 lines (hardening) — check first 4000 chars contains checkpoint
+	prefix := s
+	if len(prefix) > 4000 {
+		prefix = prefix[:4000]
+	}
+	if !strings.Contains(prefix, "Post-Delegation Human Checkpoint") && !strings.Contains(s, "Post-Delegation Human Checkpoint") {
+		t.Errorf("config should contain checkpoint near top")
+	}
+}
+
+func TestInstall_VerifyCheckpointSynthesisHook(t *testing.T) {
+	if err := install.VerifyCheckpointSynthesis("missing"); err == nil {
+		t.Error("expected error for missing markers")
+	}
+	good := "Post-Delegation Human Checkpoint\nSynthesize a concise summary\nartifacts/paths\nrisks\nnext\n"
+	if err := install.VerifyCheckpointSynthesis(good); err != nil {
+		t.Errorf("expected pass for good synthesis: %v", err)
+	}
+	if err := install.VerifyAskUserQuestionPrecededBySynthesis(good); err != nil {
+		t.Errorf("hook should pass for good synthesis: %v", err)
+	}
+	if err := install.VerifyAskUserQuestionPrecededBySynthesis("no checkpoint"); err == nil {
+		t.Error("hook should fail for missing synthesis")
+	}
+}

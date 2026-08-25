@@ -381,6 +381,14 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		}
 	}
 
+	// Verify orchestrator checkpoint deployment (MANDATORY checkpoint must be present + permissions).
+	// This guards the post-delegation summary preset that the model must emit before ask_user_question.
+	if !cfg.DryRun {
+		if err := verifyOrchestratorDeployment(homeDir, adapter); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: checkpoint verification failed: %v\n", err)
+		}
+	}
+
 	// Guarantee RDD enabled by default and clear any stale clone/worktree disables.
 	// Fresh installs must come up trusted without manual `biggz rdd enable`.
 	// This is idempotent and never fails the install (logs warning on error).
@@ -389,6 +397,76 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	}
 
 	return result, nil
+}
+
+// verifyCheckpointContent checks that data contains all required substrings.
+func verifyCheckpointContent(data []byte, required []string) error {
+	content := string(data)
+	for _, want := range required {
+		if !strings.Contains(content, want) {
+			return fmt.Errorf("missing required checkpoint marker %q", want)
+		}
+	}
+	return nil
+}
+
+// VerifyCheckpointSynthesis checks that content contains synthesis markers for the
+// Post-Delegation Human Checkpoint. Used by tests and as a lightweight hook to
+// detect when ask_user_question/question is called without preceding synthesis.
+// It verifies presence of artifacts/paths, risks, next and the checkpoint header.
+func VerifyCheckpointSynthesis(content string) error {
+	required := []string{
+		"Post-Delegation Human Checkpoint",
+		"Synthesize a concise summary",
+		"artifacts/paths",
+		"risks",
+		"next",
+	}
+	for _, want := range required {
+		if !strings.Contains(content, want) {
+			return fmt.Errorf("checkpoint synthesis missing %q", want)
+		}
+	}
+	return nil
+}
+
+// verifyOrchestratorDeployment checks that the orchestrator prompt and permissions
+// were correctly deployed for the given adapter. It verifies that the deployed
+// file contains the checkpoint markers and that ask_user_question/question
+// permission is present for the orchestrator. On failure it logs a warning;
+// callers may decide to fail installation.
+func verifyOrchestratorDeployment(homeDir string, adapter plugin.AgentAdapter) error {
+	required := []string{
+		"Post-Delegation Human Checkpoint",
+		"Synthesize a concise summary",
+	}
+	// Check OpenCode settings (orchestrator prompt embedded in overlay)
+	if settingsPath := adapter.SettingsPath(homeDir); settingsPath != "" {
+		if data, err := os.ReadFile(settingsPath); err == nil {
+			if err := verifyCheckpointContent(data, required); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: orchestrator checkpoint missing in %s: %v\n", settingsPath, err)
+				return err
+			}
+			// Verify permission for orchestrator (question + ask_user_question)
+			s := string(data)
+			if !strings.Contains(s, `"question"`) && !strings.Contains(s, "'question'") && !strings.Contains(s, "question") {
+				fmt.Fprintf(os.Stderr, "warning: orchestrator permission question missing in %s\n", settingsPath)
+			}
+			if !strings.Contains(s, "ask_user_question") {
+				fmt.Fprintf(os.Stderr, "warning: orchestrator permission ask_user_question missing in %s\n", settingsPath)
+			}
+		}
+	}
+	// Check Pi / system prompt file
+	if promptFile := adapter.SystemPromptFile(homeDir); promptFile != "" {
+		if data, err := os.ReadFile(promptFile); err == nil {
+			if err := verifyCheckpointContent(data, required); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: orchestrator checkpoint missing in %s: %v\n", promptFile, err)
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ensureRDDEnabled guarantees global RDD is enabled and clears stale

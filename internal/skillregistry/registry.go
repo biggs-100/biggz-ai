@@ -276,6 +276,7 @@ func scanDir(dir string, seen map[string]bool, projectRoot string) []Entry {
 		if err == nil {
 			path = rel
 		}
+		path = filepath.ToSlash(path)
 
 		seen[name] = true
 		result = append(result, Entry{
@@ -341,7 +342,7 @@ func generateRegistry(entries []Entry) string {
 
 	for _, e := range entries {
 		scope := "project"
-		if strings.Contains(e.Path, string(filepath.Separator)+".config"+string(filepath.Separator)) {
+		if strings.Contains(e.Path, "/.config/") || strings.Contains(e.Path, "\\.config\\") || strings.Contains(e.Path, string(filepath.Separator)+".config"+string(filepath.Separator)) {
 			scope = "user"
 		}
 		b.WriteString(fmt.Sprintf("| `%s` | %s | %s | `%s` |\n", e.Name, e.Description, scope, e.Path))

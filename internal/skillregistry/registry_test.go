@@ -94,3 +94,46 @@ func TestScanDir_Excluded(t *testing.T) {
 		}
 	}
 }
+
+func TestRefresh_ForwardSlashes(t *testing.T) {
+	root := t.TempDir()
+	tmpHome := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	oldProfile := os.Getenv("USERPROFILE")
+	os.Setenv("HOME", tmpHome)
+	os.Setenv("USERPROFILE", tmpHome)
+	defer func() {
+		os.Setenv("HOME", oldHome)
+		os.Setenv("USERPROFILE", oldProfile)
+	}()
+	skillsDir := filepath.Join(root, "skills", "forward-test")
+	os.MkdirAll(skillsDir, 0755)
+	os.WriteFile(filepath.Join(skillsDir, "SKILL.md"), []byte("---\nname: forward-test\ndescription: Forward slash test\n---\n# Test"), 0644)
+	result, err := Refresh(root, true)
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if result.SkillCount == 0 {
+		t.Fatal("expected at least 1 skill")
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".atl", "skill-registry.md"))
+	if err != nil {
+		t.Fatalf("read registry: %v", err)
+	}
+	content := string(data)
+	if strings.Contains(content, "\\") {
+		t.Errorf("registry should use forward slashes, got backslashes: %q", content)
+	}
+	if !strings.Contains(content, "forward-test") {
+		t.Errorf("registry missing forward-test")
+	}
+	// Windows-specific: simulate backslash path handling
+	winPath := "..\\..\\.config\\opencode\\skills\\test\\SKILL.md"
+	normalized := filepath.ToSlash(winPath)
+	if strings.Contains(normalized, "\\") {
+		t.Errorf("ToSlash should remove backslashes")
+	}
+	if !strings.Contains(normalized, "/") {
+		t.Errorf("normalized path should contain forward slash")
+	}
+}

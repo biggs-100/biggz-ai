@@ -263,3 +263,29 @@ func TestDeployPiSubAgents_PIEnvOverride(t *testing.T) {
 		t.Errorf("should not write to default path when PI_CODING_AGENT_DIR is set")
 	}
 }
+
+func TestDeployPiSubAgents_AskUserQuestionPresent(t *testing.T) {
+	home := t.TempDir()
+	mockFS := fstest.MapFS{
+		"skills/sdd-apply/SKILL.md": &fstest.MapFile{
+			Data: []byte("---\nname: sdd-apply\ndescription: Apply\n---\nBody\n"),
+		},
+	}
+	n, err := install.DeployPiSubAgents(home, mockFS)
+	if err != nil {
+		t.Fatalf("DeployPiSubAgents: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("expected at least 1 agent")
+	}
+	// Verify deployed sdd-apply contains ask_user_question (required for checkpoint)
+	applyPath := filepath.Join(home, ".pi", "agent", "agents", "sdd-apply.md")
+	data, err := os.ReadFile(applyPath)
+	if err != nil {
+		t.Fatalf("read sdd-apply.md: %v", err)
+	}
+	if !strings.Contains(string(data), "ask_user_question") {
+		t.Errorf("sdd-apply.md should contain ask_user_question, got %q", string(data[:500]))
+	}
+}
+

@@ -1,4 +1,5 @@
 /**
+ * MANDATORY: Precede this tool call with synthesis markdown containing artifacts/paths + risks + next (see Post-Delegation Human Checkpoint).
  * biggz-question-mouse — pi mouse parity for ask_user_question.
  *
  * Pi's questionnaire (npm:@juicesharp/rpiv-ask-user-question 2.7.1) is

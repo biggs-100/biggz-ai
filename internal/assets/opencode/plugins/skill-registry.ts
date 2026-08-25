@@ -14,8 +14,11 @@ import { promisify } from "util"
 const execFileAsync = promisify(execFile)
 
 export const SkillRegistryPlugin: Plugin = async (input) => {
+  // Normalize Windows paths to forward slashes for registry consistency (see skillregistry/registry.go ToSlash).
+  const normalizePath = (p: string) => p.replace(/\\/g, "/")
   async function refreshSkillRegistry() {
-    const cwd = input.directory || input.worktree || process.cwd()
+    const rawCwd = input.directory || input.worktree || process.cwd()
+    const cwd = normalizePath(rawCwd)
 
     try {
       await execFileAsync(
