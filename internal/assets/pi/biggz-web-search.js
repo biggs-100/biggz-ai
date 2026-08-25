@@ -487,7 +487,10 @@ export default function biggzWebSearch(pi) {
         },
         required: ["query"],
       },
-      handler: webSearchHandler,
+      execute: async (...args) => {
+        const params = args[1] && typeof args[1] === "object" ? args[1] : args[0];
+        return webSearchHandler(params);
+      },
     });
     pi.registerTool({
       name: "web_fetch",
@@ -499,7 +502,10 @@ export default function biggzWebSearch(pi) {
         },
         required: ["url"],
       },
-      handler: webFetchHandler,
+      execute: async (...args) => {
+        const params = args[1] && typeof args[1] === "object" ? args[1] : args[0];
+        return webFetchHandler(params);
+      },
     });
   } else {
     pi.registerCommand("web_search", {
