@@ -52,24 +52,25 @@ func (c *PiWebSearchCheck) Run(_ context.Context) *Result {
 			break
 		}
 	}
-	hasProvider := c.getenv("TAVILY_API_KEY") != "" || c.getenv("BRAVE_API_KEY") != "" || c.getenv("BIGGZ_DDG_FALLBACK") == "1"
+	_ = c.getenv // keep getter for headless check; provider is now default via DuckDuckGo (no key required)
 	headless := c.getenv("BIGGZ_WEB_FETCH_HEADLESS") == "1"
 	expected := candidates[0]
 	if foundPath == "" {
 		return &Result{ID: PiWebSearchCheckID, Status: StatusFail, Message: fmt.Sprintf("pi web search extension not found at %s (run: biggz install --agent pi)", expected), Severity: SeverityCritical, Error: "biggz-web-search.js missing"}
 	}
-	if hasProvider {
-		msg := fmt.Sprintf("pi web search ready (%s)", foundPath)
-		if headless {
-			msg += " [headless tier enabled]"
-		}
-		return &Result{ID: PiWebSearchCheckID, Status: StatusPass, Message: msg, Severity: SeverityInfo}
+	// DuckDuckGo is default (no env gate) — file existence alone means ready; pi-web-search (provider-native) handles web_search separately
+	msg := fmt.Sprintf("pi web search ready (%s)", foundPath)
+	if c.getenv("TAVILY_API_KEY") != "" {
+		msg += " [Tavily]"
+	} else if c.getenv("BRAVE_API_KEY") != "" {
+		msg += " [Brave]"
+	} else {
+		msg += " [DuckDuckGo default]"
 	}
-	msg := fmt.Sprintf("pi web search installed but no provider configured (%s) — set TAVILY_API_KEY or BIGGZ_DDG_FALLBACK=1", foundPath)
 	if headless {
 		msg += " [headless tier enabled]"
 	}
-	return &Result{ID: PiWebSearchCheckID, Status: StatusWarn, Message: msg, Severity: SeverityWarning, Error: "missing TAVILY_API_KEY/BRAVE_API_KEY/BIGGZ_DDG_FALLBACK=1"}
+	return &Result{ID: PiWebSearchCheckID, Status: StatusPass, Message: msg, Severity: SeverityInfo}
 }
 
 func (c *PiWebSearchCheck) Remedy() *Remedy {
