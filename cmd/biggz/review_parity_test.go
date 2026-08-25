@@ -200,7 +200,7 @@ func TestReviewStart_RelayPrintsEnvelopeAndCreatesNoLineage(t *testing.T) {
 	if candidate.Risk != "high" {
 		t.Errorf("candidate risk = %q, want high", candidate.Risk)
 	}
-	if want := []string{"risk", "readability", "reliability", "resilience"}; !reflect.DeepEqual(candidate.Lenses, want) {
+	if want := []string{"risk", "resilience", "readability", "reliability"}; !reflect.DeepEqual(candidate.Lenses, want) {
 		t.Errorf("candidate lenses = %v, want the planned 4R %v", candidate.Lenses, want)
 	}
 
@@ -285,7 +285,7 @@ func TestReviewStart_WithoutLensesFreezesPlannedSelection(t *testing.T) {
 	if plan.RiskTier != "high" {
 		t.Errorf("frozen risk_tier = %q, want high", plan.RiskTier)
 	}
-	want4R := []string{"risk", "readability", "reliability", "resilience"}
+	want4R := []string{"risk", "resilience", "readability", "reliability"}
 	if !reflect.DeepEqual(plan.SelectedLenses, want4R) {
 		t.Errorf("frozen lenses = %v, want the planned 4R %v", plan.SelectedLenses, want4R)
 	}
@@ -355,7 +355,7 @@ func TestReviewStart_StatusSurfacesTierAndPlan(t *testing.T) {
 	if err := json.Unmarshal(status["lens_plan"], &lensPlan); err != nil {
 		t.Fatalf("status lens_plan: %v", err)
 	}
-	if want := []string{"risk", "readability", "reliability", "resilience"}; !reflect.DeepEqual(lensPlan, want) {
+	if want := []string{"risk", "resilience", "readability", "reliability"}; !reflect.DeepEqual(lensPlan, want) {
 		t.Errorf("status lens_plan = %v, want %v", lensPlan, want)
 	}
 }

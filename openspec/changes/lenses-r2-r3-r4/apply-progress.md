@@ -36,7 +36,7 @@ Rollback boundary for stale work (already deleted): `internal/lens/gitdiff/`, `r
 - [x] 1.2 Create `internal/review/lens/types.go`
 - [x] 1.3 Create `internal/review/lens/registry.go`
 - [x] 1.4 Create `internal/review/lens/stage.go`
-- [ ] 1.5 Modify `internal/review/risk.go` freeze `PlanLenses(RiskHigh)==[risk,resilience,readability,reliability]`
+- [x] 1.5 Modify `internal/review/risk.go` freeze `PlanLenses(RiskHigh)==[risk,resilience,readability,reliability]`
 - [ ] 1.6 Guard `plugin/interfaces.go` zero `LensPlugin`/`Lens` + `internal/lens/` absent
 
 ## Files Changed (PR1 incremental)
@@ -49,6 +49,9 @@ Rollback boundary for stale work (already deleted): `internal/lens/gitdiff/`, `r
 | `internal/review/lens/registry_test.go` | Created | 7 tests: ordered/last-win/skip/copy/guard no-plugin + internal/lens absent |
 | `internal/review/lens/stage.go` | Created | LensStage pipeline.Stage sequential, no graph.go/DAG, ResultHash auto |
 | `internal/review/lens/stage_test.go` | Created | 6 tests: name/execute success+hash/failure/sequential rollback/no-DAG import |
+| `internal/review/risk.go` | Modified | Freeze PlanLenses high to [risk,resilience,readability,reliability] (gentle-ai order) |
+| `internal/review/risk_test.go` | Modified | Update canonical 4R expectations to new order |
+| `cmd/biggz/review_parity_test.go` | Modified | Update 3 canonical plan lenses assertions to new order |
 
 ## Test Results (incremental)
 
@@ -57,14 +60,14 @@ Rollback boundary for stale work (already deleted): `internal/lens/gitdiff/`, `r
 - `go vet ./internal/review/lens` → exit 0 — types.go valid
 - `go test ./internal/review/lens -count=1` → ? (no test files) — package compiles
 
-## Work Unit Evidence (S1 — after 1.4)
+## Work Unit Evidence (S1 — after 1.5)
 
 | Evidence | Required value |
 |---|---|
-| Focused test command and exact result | `go test ./internal/review/lens -run TestLensStage -count=1` — 6 tests pass; `go test ./internal/review/lens -count=1` — 13 tests pass |
-| Runtime harness command/scenario and exact result | `go test ./internal/review/lens -count=1` — pass, Stage pipeline sequential |
-| Rollback boundary | Delete `internal/review/lens/stage.go` + `stage_test.go` (types+registry stay) |
+| Focused test command and exact result | `go test ./internal/review -run TestPlanLenses -count=1` — 2 tests pass (DeclaredWins, FromTier) |
+| Runtime harness command/scenario and exact result | `go test ./cmd/biggz -run TestReviewStart -count=1` — pass, frozen plan matches new order |
+| Rollback boundary | Revert `internal/review/risk.go` + `risk_test.go` + `cmd/biggz/review_parity_test.go` to old order (risk,readability,reliability,resilience) |
 
 ## Status
 
-4/6 S1 tasks complete. In progress — next: risk.go freeze.
+5/6 S1 tasks complete. In progress — next: guard plugin/interfaces.go.

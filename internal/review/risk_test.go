@@ -150,7 +150,7 @@ func TestPlanLenses_FromTier(t *testing.T) {
 	if got := PlanLenses(RiskMedium, nil); !reflect.DeepEqual(got, []string{"risk"}) {
 		t.Errorf("medium plan = %v, want [risk]", got)
 	}
-	want4R := []string{"risk", "readability", "reliability", "resilience"}
+	want4R := []string{"risk", "resilience", "readability", "reliability"}
 	if got := PlanLenses(RiskHigh, nil); !reflect.DeepEqual(got, want4R) {
 		t.Errorf("high plan = %v, want %v", got, want4R)
 	}
@@ -283,7 +283,7 @@ func TestStartFreezesPlannedSelection(t *testing.T) {
 	if err := json.Unmarshal(chain.Records[0].Payload, &frozen); err != nil {
 		t.Fatalf("unmarshal genesis: %v", err)
 	}
-	want4R := []string{"risk", "readability", "reliability", "resilience"}
+	want4R := []string{"risk", "resilience", "readability", "reliability"}
 	if frozen.RiskTier != "high" {
 		t.Errorf("frozen risk_tier = %q, want high", frozen.RiskTier)
 	}
@@ -313,8 +313,8 @@ func TestFinalizeReceiptRecordsFrozenTier(t *testing.T) {
 		Schema: ReviewStartEventSchema, Repository: repo, CommitSHA: head,
 		BaseRef: "", OriginalChangedLines: 5, CorrectionBudget: 3,
 		MaxCorrectionAttempts: MaxCompactCorrectionAttempts,
-		SelectedLenses: []string{"risk", "readability", "reliability", "resilience"},
-		RiskTier:       "high", LensPlan: []string{"risk", "readability", "reliability", "resilience"},
+		SelectedLenses:        []string{"risk", "resilience", "readability", "reliability"},
+		RiskTier:              "high", LensPlan: []string{"risk", "resilience", "readability", "reliability"},
 	}
 	review := New(model.ReviewSubject{Repository: repo, CommitSHA: head})
 	review.State.Role = model.RoleReviewer
@@ -323,7 +323,7 @@ func TestFinalizeReceiptRecordsFrozenTier(t *testing.T) {
 		t.Fatalf("Start: %v", err)
 	}
 
-	for index, lens := range []string{"risk", "readability", "reliability", "resilience"} {
+	for index, lens := range []string{"risk", "resilience", "readability", "reliability"} {
 		captureLens(t, repo, "finalize-tier", head, lens, index)
 	}
 	outcome, err := Finalize(repo, "finalize-tier")
@@ -402,7 +402,7 @@ func TestStatusSurfacesFrozenTierAndPlan(t *testing.T) {
 	if st.RiskTier != "high" {
 		t.Errorf("status risk_tier = %q, want high", st.RiskTier)
 	}
-	want4R := []string{"risk", "readability", "reliability", "resilience"}
+	want4R := []string{"risk", "resilience", "readability", "reliability"}
 	if !reflect.DeepEqual(st.LensPlan, want4R) {
 		t.Errorf("status lens_plan = %v, want %v", st.LensPlan, want4R)
 	}

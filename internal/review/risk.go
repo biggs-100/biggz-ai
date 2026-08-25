@@ -295,8 +295,8 @@ func ClassifyRisk(paths []string, changedLines int, diffSummary map[string]int) 
 
 // PlanLenses resolves the frozen lens selection for a start. Declared lenses
 // win when non-empty; otherwise the tier decides: low → no lenses, medium →
-// the single focus lens, high → the canonical 4R (risk, readability,
-// reliability, resilience).
+// the single focus lens, high → the canonical 4R (risk, resilience,
+// readability, reliability) aligned to gentle-ai order.
 func PlanLenses(tier RiskTier, declared []string) []string {
 	if len(declared) > 0 {
 		return append([]string(nil), declared...)
@@ -305,7 +305,7 @@ func PlanLenses(tier RiskTier, declared []string) []string {
 	case RiskMedium:
 		return []string{"risk"}
 	case RiskHigh:
-		return []string{"risk", "readability", "reliability", "resilience"}
+		return []string{"risk", "resilience", "readability", "reliability"}
 	default:
 		return nil
 	}
