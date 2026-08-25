@@ -307,7 +307,45 @@ async function searchDDG(query, limit, fetcher = fetch) {
         if (r.FirstURL) out.push({ title: r.Text?.slice(0, 120) || r.FirstURL, url: r.FirstURL, snippet: r.Text || "" });
       }
     }
-    // fallback: if API yielded nothing, still return empty but caller will handle Gaps; do not hallucinate
+    // fallback: if API yielded nothing, try HTML scrape (api.duckduckgo.com is instant answers only, often 0 for news queries)
+    if (out.length === 0) {
+      try {
+        const htmlUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+        const htmlRes = await fetch(htmlUrl, {
+          headers: { Accept: "text/html", "User-Agent": CHROME124_UA },
+        });
+        if (htmlRes.ok) {
+          const html = await htmlRes.text();
+          // Parse result__a links and result__snippet
+          const linkRe = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)<\/a>/gi;
+          const snippetRe = /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>(.*?)<\/a>/gi;
+          // fallback: also match result__url
+          let m;
+          const links = [];
+          const titles = [];
+          while ((m = linkRe.exec(html)) !== null && links.length < limit) {
+            try {
+              const href = m[1].startsWith("//") ? "https:" + m[1] : m[1].startsWith("/") ? "https://duckduckgo.com" + m[1] : m[1];
+              // DuckDuckGo wraps via /l/?uddg=...
+              let urlDecoded = href;
+              const uddg = href.match(/[?&]uddg=([^&]+)/);
+              if (uddg) try { urlDecoded = decodeURIComponent(uddg[1]); } catch {}
+              const title = m[2].replace(/<[^>]+>/g, "").trim().slice(0, 120);
+              if (urlDecoded.startsWith("http")) links.push({ url: urlDecoded, title });
+            } catch {}
+          }
+          // Try to extract snippets separately and merge by index
+          const snippets = [];
+          let sm;
+          while ((sm = snippetRe.exec(html)) !== null && snippets.length < limit) {
+            snippets.push(sm[1].replace(/<[^>]+>/g, "").trim());
+          }
+          for (let i = 0; i < links.length && out.length < limit; i++) {
+            out.push({ title: links[i].title || links[i].url, url: links[i].url, snippet: snippets[i] || links[i].title || "" });
+          }
+        }
+      } catch {}
+    }
     return { results: out.slice(0, limit) };
   } finally {
     clearTimeout(t);
