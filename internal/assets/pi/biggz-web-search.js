@@ -100,6 +100,10 @@ function publisherFor(provider) {
   return provider;
 }
 
+function toContent(payload, isError = false) {
+  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], isError };
+}
+
 function resolveProviderOrder(env) {
   const order = [];
   if (env.TAVILY_API_KEY) order.push("tavily");
@@ -314,11 +318,12 @@ export default function biggzWebSearch(pi) {
     const providerOrder = resolveProviderOrder(env);
     console.log(`[biggz-web-search] web_search providerOrder=${providerOrder.join("->") || "none"} query=${JSON.stringify(query)}`);
     if (providerOrder.length === 0) {
-      return { error: "blocked", Gaps: "missing TAVILY_API_KEY (or BRAVE_API_KEY, or BIGGZ_DDG_FALLBACK=1)", providerOrder };
+      const payload = { error: "blocked", Gaps: "missing TAVILY_API_KEY (or BRAVE_API_KEY, or BIGGZ_DDG_FALLBACK=1) — set BIGGZ_DDG_FALLBACK=1 for no-key DuckDuckGo or add a key then restart pi", providerOrder };
+      return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }], isError: true };
     }
     const lim = typeof limit === "number" && limit > 0 ? Math.min(limit, 10) : 5;
     if (!query || typeof query !== "string" || !query.trim()) {
-      return { error: "blocked", Gaps: "missing query", providerOrder };
+      return toContent({ error: "blocked", Gaps: "missing query", providerOrder }, true);
     }
     let lastError = null;
     for (const provider of providerOrder) {
@@ -330,13 +335,13 @@ export default function biggzWebSearch(pi) {
         const results = r?.results || [];
         // Do not return partial silently: empty results tries next provider; if all empty, fall through to blocked
         if (results.length > 0) {
-          return {
+          return toContent({
             providerOrder,
             publisher: publisherFor(provider),
             results,
             query,
             limit: lim,
-          };
+          });
         }
         lastError = `provider ${provider} returned 0 results`;
       } catch (e) {
@@ -345,11 +350,11 @@ export default function biggzWebSearch(pi) {
         continue;
       }
     }
-    return {
+    return toContent({
       error: "blocked",
       Gaps: lastError ? `all providers exhausted: ${lastError}` : "missing TAVILY_API_KEY (or BRAVE_API_KEY, or BIGGZ_DDG_FALLBACK=1)",
       providerOrder,
-    };
+    }, true);
   };
 
   const webFetchHandler = async ({ url } = {}) => {
@@ -406,17 +411,17 @@ export default function biggzWebSearch(pi) {
 
     // T1
     let tierResult = await fetchTier("T1", null);
-    if (tierResult.error) return tierResult;
+    if (tierResult.error) return toContent(tierResult, true);
     let res = tierResult.res;
 
     // 403 -> T2 chrome124/safari17
     if (res && res.status === 403) {
       tierResult = await fetchTier("T2:chrome124", "chrome124");
-      if (tierResult.error) return tierResult;
+      if (tierResult.error) return toContent(tierResult, true);
       res = tierResult.res;
       if (res && res.status === 403) {
         tierResult = await fetchTier("T2:safari17", "safari17");
-        if (tierResult.error) return tierResult;
+        if (tierResult.error) return toContent(tierResult, true);
         res = tierResult.res;
       }
     }
@@ -427,25 +432,25 @@ export default function biggzWebSearch(pi) {
       // exhausted or 403 after T2 -> decide T3
       if (process.env.BIGGZ_WEB_FETCH_HEADLESS === "1") {
         tiers.push("T3:headless");
-        return {
+        return toContent({
           error: "FetchBlocked",
           status,
           URL: url,
           tiers: [...tiers],
           note: "T3 headless gated but not bundled; returning FetchBlocked — see BIGGZ_WEB_FETCH_HEADLESS",
-        };
+        }, true);
       }
       // Exhausted 429/5xx after retries -> FetchBlocked with tiers (never partial)
       if (tierResult.exhausted) {
-        return {
+        return toContent({
           error: "FetchBlocked",
           status,
           URL: url,
           tiers: [...tiers],
           reason: tierResult.retryAfter ? `Retry-After ${tierResult.retryAfter}` : "exhausted retries",
-        };
+        }, true);
       }
-      return { error: "FetchBlocked", status, URL: url, tiers: [...tiers] };
+      return toContent({ error: "FetchBlocked", status, URL: url, tiers: [...tiers] }, true);
     }
 
     // Extract body with 1MB cap — never partial without annotation
@@ -464,7 +469,7 @@ export default function biggzWebSearch(pi) {
     }
     const excerpt = markdown.slice(0, 2000);
     const finalMarkdown = truncated ? markdown + "\n\n[truncated: 1MB cap]" : markdown;
-    return {
+    return toContent({
       markdown: finalMarkdown,
       excerpt,
       publisher: new URL(url).hostname,
@@ -472,7 +477,7 @@ export default function biggzWebSearch(pi) {
       accessed_at: new Date().toISOString(),
       truncated,
       tiers: [...tiers],
-    };
+    });
   };
 
   if (register) {
