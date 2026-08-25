@@ -15,11 +15,28 @@ import (
 
 // bigmemRun handles the "biggz bigmem" subcommand.
 func bigmemRun() int {
+	// Fast-path for `biggz bigmem sync --help` without opening DB (test isolation and disk-error resilience)
+	if len(os.Args) >= 4 && os.Args[2] == "sync" {
+		for _, a := range os.Args[3:] {
+			if a == "--help" || a == "-h" {
+				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem sync [--import] [--status] [--project P] [--all] [--from-engram] [--engram-dir PATH]")
+				fmt.Fprintln(os.Stderr, "  (no flags)      Export observations to .bigmem/ in project")
+				fmt.Fprintln(os.Stderr, "  --import        Import observations from .bigmem/")
+				fmt.Fprintln(os.Stderr, "  --status        Show .bigmem/ status")
+				fmt.Fprintln(os.Stderr, "  --project NAME  Filter export to a project")
+				fmt.Fprintln(os.Stderr, "  --all           Export ALL projects (ignore cwd filter)")
+				fmt.Fprintln(os.Stderr, "  --from-engram       Import from .engram/ instead of .bigmem/")
+				fmt.Fprintln(os.Stderr, "  --engram-dir PATH   Engram directory (default .engram)")
+				return 1
+			}
+		}
+	}
 	store, err := bigmem.Open("")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: open bigmem: %v\n", err)
 		return 1
 	}
+	defer store.Close()
 
 	args := os.Args[2:]
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
@@ -643,27 +660,49 @@ func bigmemRun() int {
 		doImport := false
 		doStatus := false
 		doAll := false
+		fromEngram := false
+		engramDir := ""
 		project := ""
+		hasProject := false
 		for i := 1; i < len(args); i++ {
 			switch args[i] {
 			case "--help", "-h":
-				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem sync [--import] [--status] [--project P] [--all]")
+				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem sync [--import] [--status] [--project P] [--all] [--from-engram] [--engram-dir PATH]")
 				fmt.Fprintln(os.Stderr, "  (no flags)      Export observations to .bigmem/ in project")
 				fmt.Fprintln(os.Stderr, "  --import        Import observations from .bigmem/")
 				fmt.Fprintln(os.Stderr, "  --status        Show .bigmem/ status")
 				fmt.Fprintln(os.Stderr, "  --project NAME  Filter export to a project")
 				fmt.Fprintln(os.Stderr, "  --all           Export ALL projects (ignore cwd filter)")
+				fmt.Fprintln(os.Stderr, "  --from-engram       Import from .engram/ instead of .bigmem/")
+				fmt.Fprintln(os.Stderr, "  --engram-dir PATH   Engram directory (default .engram)")
 				return 1
+			case "import":
+				doImport = true
 			case "--import":
 				doImport = true
 			case "--status":
 				doStatus = true
 			case "--all":
 				doAll = true
+			case "--from-engram":
+				fromEngram = true
+			case "--engram-dir":
+				if i+1 < len(args) {
+					engramDir = args[i+1]
+					i++
+				}
 			case "--project":
 				if i+1 < len(args) {
 					project = args[i+1]
+					hasProject = true
 					i++
+				}
+			default:
+				if strings.HasPrefix(args[i], "--engram-dir=") {
+					engramDir = strings.TrimPrefix(args[i], "--engram-dir=")
+				} else if strings.HasPrefix(args[i], "--project=") {
+					project = strings.TrimPrefix(args[i], "--project=")
+					hasProject = true
 				}
 			}
 		}
@@ -672,8 +711,12 @@ func bigmemRun() int {
 		if gitRoot, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
 			projectRoot = strings.TrimSpace(string(gitRoot))
 		}
-		if !doAll && project == "" {
-			project = filepath.Base(projectRoot) // auto-detect from dir name
+		engramProject := project
+		if !doAll && project == "" && !fromEngram {
+			project = filepath.Base(projectRoot) // auto-detect from dir name (only for default bigmem path)
+		}
+		if fromEngram && !hasProject {
+			engramProject = "" // no filter => import all projects
 		}
 		switch {
 		case doStatus:
@@ -687,13 +730,28 @@ func bigmemRun() int {
 			fmt.Printf("  Chunks:   %d\n", st.ChunkCount)
 			fmt.Printf("  Entries:  %d\n", st.ObsCount)
 
-		case doImport:
-			n, err := store.SyncImport(projectRoot)
+		case doImport && fromEngram:
+			resolvedDir, rerr := bigmem.ResolveEngramDir(engramDir)
+			if rerr != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", rerr)
+				return 1
+			}
+			result, err := store.ImportFromEngram(resolvedDir, engramProject)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				return 1
 			}
-			fmt.Printf("Imported %d observations\n", n)
+			fmt.Printf("Imported %d observations (%d chunks, %d skipped) from %s\n", result.ObservationsImported, result.ChunksImported, result.ChunksSkipped, resolvedDir)
+
+		case doImport:
+			// Default bigmem transport via dependency-safe import (FileTransport)
+			transport := bigmem.NewFileTransport(filepath.Join(projectRoot, ".bigmem"))
+			result, err := store.SyncImportDependencySafe(transport)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+			fmt.Printf("Imported %d observations (%d chunks, %d skipped)\n", result.ObservationsImported, result.ChunksImported, result.ChunksSkipped)
 
 		default:
 			// No flags = export (like engram)

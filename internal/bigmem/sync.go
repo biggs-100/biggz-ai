@@ -173,6 +173,11 @@ func gunzipData(data []byte) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// GunzipData is the exported alias of gunzipData for Engram import reuse.
+func GunzipData(data []byte) ([]byte, error) {
+	return gunzipData(data)
+}
+
 // getUsername returns the current OS username for chunk attribution.
 func getUsername() string {
 	if u := os.Getenv("USER"); u != "" {

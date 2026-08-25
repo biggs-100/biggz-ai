@@ -1,0 +1,10 @@
+name: engram-bigmem-import
+status: proposal
+artifact_store: openspec
+execution_mode: interactive
+delivery_strategy: auto-chain
+review_budget_lines: 800
+project: biggz-ai
+created_at: 2026-08-25
+change_type: feature
+requires_pi_change: false
