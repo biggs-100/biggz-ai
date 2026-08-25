@@ -13,10 +13,24 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/biggs-100/biggz-ai/internal/review"
+	"github.com/biggs-100/biggz-ai/internal/review/lens"
+	readability "github.com/biggs-100/biggz-ai/internal/review/lens/readability"
 	"github.com/biggs-100/biggz-ai/internal/sdd"
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
 	"github.com/biggs-100/biggz-ai/model"
 )
+
+func init() {
+	// R2 readability is the first hybrid lens. Other lenses (R3, R4,
+	// ExternalLensAdapter) remain pending for PR3; register only readability
+	// for now to keep the work unit autonomous. Build-time Registry is
+	// last-win; unknown IDs are skipped by Ordered. Sequential pipeline.Stage
+	// wiring reuses the single DeriveRiskInput derivation (no per-lens diff):
+	//   input, _ := review.DeriveRiskInput(repo, commit, baseRef)
+	//   lensInput := lens.LensInput{RiskInput: input, Hunks: hunks, Truncated: truncated, Repo: repo}
+	//   stages := lensStages(lens.Ordered(review.PlanLenses(tier, declared)), lensInput)
+	lens.RegisterLens(&readability.Lens{})
+}
 
 // ---------------------------------------------------------------------------
 // Review Commands

@@ -35,11 +35,11 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: Core Lenses & Adapter
 
-- [ ] 2.1 Create `internal/review/lens/readability/lens.go` R2 `go/parser` fail deterministic, `DiffSummary>400/>200` inferential
+- [x] 2.1 Create `internal/review/lens/readability/lens.go` R2 `go/parser` fail deterministic, `DiffSummary>400/>200` inferential
 - [ ] 2.2 Create `internal/review/lens/reliability/lens.go` R3 missing `_test.go` + error token inferential, no volume
 - [ ] 2.3 Create `internal/review/lens/resilience/lens.go` R4 hunk timeout/context/concurrency/cleanup 8MiB cap inferential only
 - [ ] 2.4 Create `internal/review/lens/external/adapter.go` `ExternalLensAdapter` wraps `capture-result` JSON preserves hash
-- [ ] 2.5 Wire `cmd/biggz/cli_review.go` register R2/R3/R4+adapter, `Ordered(PlanLenses)` → `pipeline.Stage` reuse `DeriveRiskInput`
+- [ ] 2.5 Wire `cmd/biggz/cli_review.go` register R2/R3/R4+adapter, `Ordered(PlanLenses)` → `pipeline.Stage` reuse `DeriveRiskInput` (PR2 partial: readability registered, R3/R4/adapter pending PR3)
 
 ## Phase 3: Integration
 
@@ -50,7 +50,7 @@ Chain strategy: stacked-to-main
 ## Phase 4: Testing & Verification
 
 - [ ] 4.1 Unit registry/types ordered/last-win/skip + no `plugin/` lens — `go test ./internal/review/lens -count=1`
-- [ ] 4.2 R2 unit ≥15 parser + threshold — `go test ./internal/review/lens/readability -count=1`
+- [x] 4.2 R2 unit ≥15 parser + threshold — `go test ./internal/review/lens/readability -count=1`
 - [ ] 4.3 R3 unit ≥15 missing test + error token — `go test ./internal/review/lens/reliability -count=1`
 - [ ] 4.4 R4 unit ≥15 hunk + 8MiB cap — `go test ./internal/review/lens/resilience -count=1`
 - [ ] 4.5 Adapter unit hash + empty error — `go test ./internal/review/lens/external -count=1`
