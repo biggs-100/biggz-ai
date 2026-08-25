@@ -122,6 +122,17 @@ The canonical native bounded-review contract is injected from the shared provide
 - Let the native review and delivery providers select checking and delivery actions; repeated gates reuse exact authority and never reopen review for unchanged content.
 - Avoid delegation for truly local one-file fixes, quick state checks, and already-understood mechanical edits.
 
+### Post-Delegation Human Checkpoint (MANDATORY)
+
+After EVERY delegated sub-agent completes — whether SDD phase (`sdd-*`), `general`, `explore`, or any direct delegated worker — the orchestrator MUST:
+
+1. **Synthesize a concise summary** in the active conversation language: what the sub-agent did, key findings/decisions, artifacts/paths created or modified, risks or open questions, and next recommended step.
+2. **Present it to the human and STOP**. Do NOT silently continue to the next phase or task. The human must have a chance to review, correct, or redirect.
+3. **Use the lossless blocking-prompt route**: when `ask_user_question` (Pi) or `question` (OpenCode) is available and the summary+choices are representable, present one grouped question with `proceed` / `adjust` / `stop` (or `continue` / `correct` for non-SDD work) and wait. Otherwise emit the summary as plain chat/terminal and STOP with an explicit "Qué hacer ahora" prompt.
+4. **Never auto-continue** after a delegated result without human confirmation, except when the user explicitly said `auto` in the Session Preflight (and even then, surface gate failures as above). For non-SDD delegated work (general/explore/direct workers), this checkpoint is always interactive — there is no `auto` bypass.
+
+This checkpoint is separate from the SDD Interactive gatekeeper. The gatekeeper validates artifact correctness; this checkpoint ensures the human stays in the loop and can steer before the next delegation.
+
 ## SDD Workflow (Spec-Driven Development)
 
 SDD is the structured planning layer for substantial changes.
