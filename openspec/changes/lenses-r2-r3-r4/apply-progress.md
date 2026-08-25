@@ -1,29 +1,23 @@
-# Apply Progress: Lenses R2-R4
+# Apply Progress: Lenses R2-R4 — Hybrid Redesign (PR1 S1 Foundation)
 
 ## Summary
 
-Extracted shared git diff parsing into `internal/lens/gitdiff/` and implemented three new lens packages (Readability, Reliability, Resilience), each implementing the `plugin.LensPlugin` interface. All lenses wired into the pipeline in `cmd/biggz/main.go`.
+PR1 S1 foundation implements the hybrid facade sequential lens scaffold.
+Stale `2950a40` progress (70 tests on `internal/lens/*` + `plugin.LensPlugin`) is superseded:
+`internal/lens/` is absent, `plugin.LensPlugin` remains deleted (`ea8bad5`). New scaffold
+lives in `internal/review/lens/` with build-time `Registry` and `pipeline.Stage` wiring.
 
-## Files Changed
+This document tracks PR1 (S1) only. S2 (R2) and S3 (R3/R4+adapter+gate) remain pending.
 
-| File | Action | What Was Done |
-|------|--------|---------------|
-| `internal/lens/gitdiff/types.go` | Created | DiffFile type shared across all lenses |
-| `internal/lens/gitdiff/parse.go` | Created | ParseDiffStat, DetectModeFunctions extracted from risk |
-| `internal/lens/gitdiff/parse_test.go` | Created | 9 tests for ParseDiffStat and DetectModeChanges |
-| `internal/lens/gitdiff/git.go` | Created | GetDiffStat, HasModeChanges git command wrappers |
-| `internal/lens/risk/types.go` | Modified | Added type alias for gitdiff.DiffFile, updated import |
-| `internal/lens/risk/lens.go` | Modified | Removed extracted functions, imported gitdiff package |
-| `internal/lens/risk/lens_test.go` | Modified | Removed tests that moved to gitdiff |
-| `internal/lens/readability/lens.go` | Created | ReadabilityLens with file-length and naming heuristics |
-| `internal/lens/readability/lens_test.go` | Created | 15 tests |
-| `internal/lens/reliability/lens.go` | Created | ReliabilityLens with missing-test, large-change, error-handling detection |
-| `internal/lens/reliability/lens_test.go` | Created | 16 tests |
-| `internal/lens/resilience/lens.go` | Created | ResilienceLens with timeout, context, concurrency, cleanup detection |
-| `internal/lens/resilience/lens_test.go` | Created | 15 tests |
-| `cmd/biggz/main.go` | Modified | Registered and wired all 3 new lenses in pipeline |
+## Archived Stale Progress (2950a40 — superseded)
 
-## Test Results
+> **Archived 2026-08-25 — stale plan referencing deleted paths `internal/lens/*` and `plugin.LensPlugin`.**
+> Verified `internal/lens/` absent on this branch (`ls -la internal/lens` → ENOENT).
+> Previous content preserved in git history (`git show HEAD:openspec/changes/lenses-r2-r3-r4/apply-progress.md`):
+> extracted `internal/lens/gitdiff/` and three lenses (readability, reliability, resilience) wired via `plugin.LensPlugin`.
+> Superseded by hybrid design: `internal/review/lens/` + `pipeline.Stage` + `DeriveRiskInput` reuse; no `plugin/` lens, no DAG.
+
+Previous test result (stale, not applicable to current scaffold):
 
 ```
 ok  github.com/biggs-100/biggz-ai/internal/lens/gitdiff      0.957s  9 tests
@@ -31,23 +25,39 @@ ok  github.com/biggs-100/biggz-ai/internal/lens/readability   1.047s  15 tests
 ok  github.com/biggs-100/biggz-ai/internal/lens/reliability   1.007s  16 tests
 ok  github.com/biggs-100/biggz-ai/internal/lens/resilience    1.176s  15 tests
 ok  github.com/biggs-100/biggz-ai/internal/lens/risk          1.128s  15 tests
-ok  github.com/biggs-100/biggz-ai/cmd/biggz                   5.468s  (build + test)
+Total: 70 lens tests passing — on deleted paths, now void.
 ```
 
-**Total: 70 lens tests passing, 0 failing.**
+Rollback boundary for stale work (already deleted): `internal/lens/gitdiff/`, `readability/`, `reliability/`, `resilience/` + revert `internal/lens/risk/*`, `cmd/biggz/main.go`.
 
-## Deviations from Design
+## PR1 Scope (S1) — Tasks 1.1-1.6
 
-None — implementation matches the task specification exactly.
+- [x] 1.1 Archive stale `apply-progress.md`, verify `internal/lens/` absent
+- [ ] 1.2 Create `internal/review/lens/types.go`
+- [ ] 1.3 Create `internal/review/lens/registry.go`
+- [ ] 1.4 Create `internal/review/lens/stage.go`
+- [ ] 1.5 Modify `internal/review/risk.go` freeze `PlanLenses(RiskHigh)==[risk,resilience,readability,reliability]`
+- [ ] 1.6 Guard `plugin/interfaces.go` zero `LensPlugin`/`Lens` + `internal/lens/` absent
 
-## Work Unit Evidence
+## Files Changed (PR1 incremental)
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `openspec/changes/lenses-r2-r3-r4/apply-progress.md` | Modified | Superseded stale progress, verified `internal/lens/` absent |
+
+## Test Results (incremental)
+
+- `ls -la internal/lens` → ENOENT (absent) — verified
+- `grep -r "LensPlugin\|type Lens" plugin/interfaces.go` → 0 hits — verified
+
+## Work Unit Evidence (S1 — after 1.1)
 
 | Evidence | Required value |
 |---|---|
-| Focused test command and exact result | `go test ./internal/lens/... -count=1` — exit 0, 70 tests across 5 packages |
-| Runtime harness command/scenario and exact result | `go build ./cmd/biggz/...` — exit 0, compiles successfully |
-| Rollback boundary | `internal/lens/gitdiff/`, `internal/lens/readability/`, `internal/lens/reliability/`, `internal/lens/resilience/` + revert `internal/lens/risk/types.go`, `internal/lens/risk/lens.go`, `internal/lens/risk/lens_test.go`, `cmd/biggz/main.go` |
+| Focused test command and exact result | `go test ./internal/review -run TestPlanLenses -count=1` — pending full S1 |
+| Runtime harness command/scenario and exact result | `go test ./internal/review -run TestPlanLenses -count=1` — pending |
+| Rollback boundary | Delete `openspec/changes/lenses-r2-r3-r4/apply-progress.md` supersede note (git history retains stale) |
 
 ## Status
 
-All tasks complete. Ready for verification.
+1/6 S1 tasks complete. In progress — next: types.go.
