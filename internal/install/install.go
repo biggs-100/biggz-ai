@@ -172,6 +172,16 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	} else if _, err := DeploySkillsToAgentDir(skillsDir, assets.FS, cfg.DryRun); err != nil {
 		return result, fmt.Errorf("deploy skills to agent: %w", err)
 	}
+	// Self-heal: remove legacy _shared skill that had invalid name `_shared` (pi strict validation).
+	// It was previously deployed before the frontmatter fix and now correctly skipped.
+	if !cfg.DryRun {
+		_ = os.RemoveAll(filepath.Join(homeDir, ".pi", "agent", "skills", "_shared"))
+		_ = os.RemoveAll(filepath.Join(homeDir, ".biggz", "skills", "_shared"))
+		// Also clean project-local legacy copy if present
+		if cwd, err := os.Getwd(); err == nil {
+			_ = os.RemoveAll(filepath.Join(cwd, "skills", "_shared"))
+		}
+	}
 
 	// Deploy SDD prompts (used by OpenCode to delegate to sub-agents)
 	// Pi uses native agents (~/.pi/agent/agents/), not prompts — skip for pi.
