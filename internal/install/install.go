@@ -324,6 +324,9 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		if _, err := DeployPiLastModel(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi last model: %w", err)
 		}
+		if _, err := DeployPiSubagentConfig(homeDir, assets.FS, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy pi subagent config: %w", err)
+		}
 		if cfg.DryRun {
 			result.PiWebSearch = true
 		} else if res, err := DeployPiWebSearch(ctx, homeDir); err != nil {
@@ -1430,6 +1433,81 @@ func piExtensionsDir(homeDir string) string {
 		return filepath.Join(v, "extensions")
 	}
 	return filepath.Join(homeDir, ".pi", "agent", "extensions")
+}
+
+// piSubagentConfigDir returns the pi-subagents extension config directory
+// (~/.pi/agent/extensions/subagent/), respecting PI_CODING_AGENT_DIR.
+func piSubagentConfigDir(homeDir string) string {
+	return filepath.Join(piExtensionsDir(homeDir), "subagent")
+}
+
+// DeployPiSubagentConfig deploys the pi-subagents extension config to
+// ~/.pi/agent/extensions/subagent/config.json. It ensures defaultSubagentContext
+// is always "fresh" (installer-enforced) and FleetView/inlineToolDisplay are
+// set to the desired defaults, while preserving unknown user keys.
+//
+// It reads pi/subagent-config.json from ffs (or assets.FS fallback), merges it
+// into the existing config via filemerge.MergeJSONC (asset overlay wins so
+// defaultSubagentContext:fresh is enforced), and writes atomically. Dry-run
+// returns true without writing.
+func DeployPiSubagentConfig(homeDir string, ffs fs.FS, dryRun ...bool) (bool, error) {
+	isDry := len(dryRun) > 0 && dryRun[0]
+
+	// Read asset defaults (try provided FS first, then embedded fallback like DeployPiThinkingWrap).
+	var assetData []byte
+	var err error
+	if ffs != nil {
+		assetData, err = fs.ReadFile(ffs, "pi/subagent-config.json")
+	}
+	if err != nil || len(assetData) == 0 {
+		assetData, err = fs.ReadFile(assets.FS, "pi/subagent-config.json")
+		if err != nil {
+			return false, fmt.Errorf("read pi subagent config asset: %w", err)
+		}
+	}
+
+	configDir := piSubagentConfigDir(homeDir)
+	targetPath := filepath.Join(configDir, "config.json")
+
+	if isDry {
+		return true, nil
+	}
+
+	// Read existing config if present.
+	var existingData []byte
+	if _, err := os.Stat(targetPath); err == nil {
+		if data, err := os.ReadFile(targetPath); err == nil && len(data) > 0 {
+			existingData = data
+		}
+	}
+
+	var merged []byte
+	if len(existingData) > 0 {
+		merged, err = filemerge.MergeJSONC(existingData, assetData)
+		if err != nil {
+			merged, err = filemerge.MergeJSONC([]byte("{}"), assetData)
+			if err != nil {
+				return false, fmt.Errorf("merge pi subagent config: %w", err)
+			}
+		}
+	} else {
+		merged, err = filemerge.MergeJSONC([]byte("{}"), assetData)
+		if err != nil {
+			return false, fmt.Errorf("merge pi subagent config: %w", err)
+		}
+	}
+
+	if len(merged) > 0 && merged[len(merged)-1] != '\n' {
+		merged = append(merged, '\n')
+	}
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return false, fmt.Errorf("mkdir %s: %w", configDir, err)
+	}
+	if _, err := filemerge.WriteFileAtomic(targetPath, merged, 0644); err != nil {
+		return false, fmt.Errorf("write %s: %w", targetPath, err)
+	}
+	return true, nil
 }
 
 // DeployPiThinkingWrap deploys the biggz thinking-wrap extension to

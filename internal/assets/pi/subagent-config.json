@@ -1,0 +1,11 @@
+{
+  "inlineToolDisplay": "rich",
+  "fleetView": true,
+  "fleetViewPlacement": "belowEditor",
+  "asyncWidget": true,
+  "defaultSubagentContext": "fresh",
+  "mainWindowRenderer": {
+    "horizontalSpacing": 0,
+    "compactResultMaxLines": 4
+  }
+}
