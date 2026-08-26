@@ -46,9 +46,9 @@ Chain strategy: stacked-to-main
 
 ## Phase 4: Web Anchors & Advisor (Units 3-4)
 
-- [ ] 4.1 Modify `biggz-web-search.js`: `extractWithAnchors(html,baseUrl)` → `## T {#id}` ordered, resolve `/href`. Verify: `id="install"` → `## Install {#install}`.
-- [ ] 4.2 Unify `web_search`/`web_fetch` path; keep SSRF/10s/1MB; annotate `[truncated — offset {#nearest}]`. Verify: malformed no throw; parity.
-- [ ] 4.3 Add fixture tests (no network) anchors/truncate/malformed/`baseUrl`. Verify: `node --test` passes.
+- [x] 4.1 Modify `biggz-web-search.js`: `extractWithAnchors(html,baseUrl)` → `## T {#id}` ordered, resolve `/href`. Verify: `id="install"` → `## Install {#install}`.
+- [x] 4.2 Unify `web_search`/`web_fetch` path; keep SSRF/10s/1MB; annotate `[truncated — offset {#nearest}]`. Verify: malformed no throw; parity.
+- [x] 4.3 Add fixture tests (no network) anchors/truncate/malformed/`baseUrl`. Verify: `node --test` passes.
 - [ ] 4.4 Modify `biggz-synthesis-gate.js`: advise `BIGGZ_ADVISE=1` (off default), `PI_SUBAGENT_CHILD=1` bypass, thin=`paths<2||len<50`. Verify: missing blocks; thin→`concern`; rich silent.
 - [ ] 4.5 Add advisor tests mocking `pi.on`/`pi.notify` (5 scenarios). Verify: `node --test` passes.
 

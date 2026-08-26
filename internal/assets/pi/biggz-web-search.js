@@ -171,60 +171,119 @@ function buildHeaders(profile) {
   };
 }
 
-function htmlToMarkdown(html, baseUrl) {
-  if (!html || typeof html !== "string") return "";
-  let cleaned = html
-    .replace(/<script[\s\S]*?<\/script>/gi, "")
-    .replace(/<style[\s\S]*?<\/style>/gi, "")
-    .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
-    .replace(/<iframe[\s\S]*?<\/iframe>/gi, "");
-  let content = cleaned;
-  const bodyMatch = cleaned.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-  if (bodyMatch) content = bodyMatch[1];
-  const article = content.match(/<article[^>]*>([\s\S]*?)<\/article>/i);
-  if (article && article[1].trim().length > 200) content = article[1];
-  else {
-    const main = content.match(/<main[^>]*>([\s\S]*?)<\/main>/i);
-    if (main && main[1].trim().length > 200) content = main[1];
-  }
-  let md = content
-    .replace(/<h1[^>]*>(.*?)<\/h1>/gi, "# $1\n\n")
-    .replace(/<h2[^>]*>(.*?)<\/h2>/gi, "## $1\n\n")
-    .replace(/<h3[^>]*>(.*?)<\/h3>/gi, "### $1\n\n")
-    .replace(/<h4[^>]*>(.*?)<\/h4>/gi, "#### $1\n\n")
-    .replace(/<p[^>]*>(.*?)<\/p>/gi, "$1\n\n")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<strong[^>]*>(.*?)<\/strong>/gi, "**$1**")
-    .replace(/<b[^>]*>(.*?)<\/b>/gi, "**$1**")
-    .replace(/<em[^>]*>(.*?)<\/em>/gi, "*$1*")
-    .replace(/<i[^>]*>(.*?)<\/i>/gi, "*$1*")
-    .replace(/<code[^>]*>(.*?)<\/code>/gi, "`$1`")
-    .replace(/<pre[^>]*>(.*?)<\/pre>/gi, "```\n$1\n```\n\n")
-    .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi, "[$2]($1)")
-    .replace(/<li[^>]*>(.*?)<\/li>/gi, "- $1\n")
-    .replace(/<ul[^>]*>/gi, "\n")
-    .replace(/<\/ul>/gi, "\n")
-    .replace(/<ol[^>]*>/gi, "\n")
-    .replace(/<\/ol>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&quot;/g, '"')
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#39;/g, "'")
-    .replace(/\r/g, "")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  // resolve relative links if baseUrl provided (best-effort)
-  if (baseUrl) {
+function extractWithAnchors(html, baseUrl) {
+  try {
+    if (!html || typeof html !== "string") return { markdown: "", anchors: [] };
+    let cleaned = html
+      .replace(/<script[\s\S]*?<\/script>/gi, "")
+      .replace(/<style[\s\S]*?<\/style>/gi, "")
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, "")
+      .replace(/<iframe[\s\S]*?<\/iframe>/gi, "");
+    let content = cleaned;
+    const bodyMatch = cleaned.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
+    if (bodyMatch) content = bodyMatch[1];
+    const article = content.match(/<article[^>]*>([\s\S]*?)<\/article>/i);
+    if (article && article[1].trim().length > 200) content = article[1];
+    else {
+      const main = content.match(/<main[^>]*>([\s\S]*?)<\/main>/i);
+      if (main && main[1].trim().length > 200) content = main[1];
+    }
+    const anchors = [];
+    let md = content.replace(/<h([1-6])([^>]*)>([\s\S]*?)(?:<\/h[1-6]\s*>|(?=<h[1-6][^>]*>)|$)/gi, (match, level, attrs, inner) => {
+      try {
+        const idMatch = attrs.match(/\sid\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s"'=<>`]+))/i);
+        const id = idMatch ? (idMatch[1] || idMatch[2] || idMatch[3]) : null;
+        let title = inner
+          .replace(/<[^>]+>/g, "")
+          .replace(/&nbsp;/g, " ")
+          .replace(/&quot;/g, '"')
+          .replace(/&amp;/g, "&")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&#39;/g, "'")
+          .replace(/\s+/g, " ")
+          .trim();
+        const hashes = "#".repeat(Math.min(parseInt(level, 10), 6));
+        if (id) {
+          anchors.push(id);
+          return `${hashes} ${title} {#${id}}\n\n`;
+        }
+        return `${hashes} ${title}\n\n`;
+      } catch {
+        return match;
+      }
+    });
+    md = md
+      .replace(/<p[^>]*>(.*?)<\/p>/gi, "$1\n\n")
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<strong[^>]*>(.*?)<\/strong>/gi, "**$1**")
+      .replace(/<b[^>]*>(.*?)<\/b>/gi, "**$1**")
+      .replace(/<em[^>]*>(.*?)<\/em>/gi, "*$1*")
+      .replace(/<i[^>]*>(.*?)<\/i>/gi, "*$1*")
+      .replace(/<code[^>]*>(.*?)<\/code>/gi, "`$1`")
+      .replace(/<pre[^>]*>(.*?)<\/pre>/gi, "```\n$1\n```\n\n")
+      .replace(/<a[^>]*href=["']([^"']+)["'][^>]*>(.*?)<\/a>/gi, "[$2]($1)")
+      .replace(/<li[^>]*>(.*?)<\/li>/gi, "- $1\n")
+      .replace(/<ul[^>]*>/gi, "\n")
+      .replace(/<\/ul>/gi, "\n")
+      .replace(/<ol[^>]*>/gi, "\n")
+      .replace(/<\/ol>/gi, "\n")
+      .replace(/<[^>]+>/g, "")
+      .replace(/&nbsp;/g, " ")
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, "&")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&#39;/g, "'")
+      .replace(/\r/g, "")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+    if (baseUrl) {
+      try {
+        const base = new URL(baseUrl);
+        md = md.replace(/\[([^\]]+)\]\((\/[^)]+)\)/g, (_, t, p) => `[${t}](${base.origin}${p})`);
+      } catch {}
+    }
+    return { markdown: md, anchors };
+  } catch {
     try {
-      const base = new URL(baseUrl);
-      md = md.replace(/\[([^\]]+)\]\((\/[^)]+)\)/g, (_, t, p) => `[${t}](${base.origin}${p})`);
-    } catch {}
+      const fallback = String(html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 2000);
+      return { markdown: fallback, anchors: [] };
+    } catch {
+      return { markdown: "", anchors: [] };
+    }
   }
-  return md;
+}
+
+function truncateWithAnchor(markdown, anchors) {
+  if (Buffer.byteLength(markdown, "utf8") <= ONE_MB) return { markdown, truncated: false, annotation: "" };
+  const truncated = Buffer.from(markdown, "utf8").subarray(0, ONE_MB).toString("utf8");
+  let nearest = null;
+  const re = /\{#([^}]+)\}/g;
+  let m;
+  while ((m = re.exec(truncated)) !== null) {
+    nearest = m[1];
+  }
+  if (!nearest && anchors && anchors.length) {
+    for (let i = anchors.length - 1; i >= 0; i--) {
+      if (truncated.includes(`{#${anchors[i]}}`)) {
+        nearest = anchors[i];
+        break;
+      }
+    }
+  }
+  const annotation = nearest ? `\n\n[truncated: 1MB — offset at {#${nearest}}]` : `\n\n[truncated: 1MB cap]`;
+  return { markdown: truncated, truncated: true, annotation, nearest };
+}
+
+function htmlToMarkdown(html, baseUrl) {
+  try {
+    const { markdown } = extractWithAnchors(html, baseUrl);
+    return markdown;
+  } catch {
+    return "";
+  }
 }
 
 // Provider live fetch — isolated for testability and key-env gating
@@ -502,16 +561,26 @@ export default function biggzWebSearch(pi) {
     const ct = (res.headers.get("content-type") || "").toLowerCase();
     const isHTML = ct.includes("text/html") || ct.includes("application/xhtml") || text.trimStart().startsWith("<!DOCTYPE") || text.trimStart().startsWith("<html");
     let markdown;
-    if (isHTML) markdown = htmlToMarkdown(text, url);
-    else markdown = text;
+    let anchors = [];
+    if (isHTML) {
+      const extracted = extractWithAnchors(text, url);
+      markdown = extracted.markdown;
+      anchors = extracted.anchors;
+    } else {
+      markdown = text;
+      anchors = [];
+    }
 
     let truncated = false;
+    let annotation = "";
     if (Buffer.byteLength(markdown, "utf8") > ONE_MB) {
-      markdown = Buffer.from(markdown, "utf8").subarray(0, ONE_MB).toString("utf8");
+      const t = truncateWithAnchor(markdown, anchors);
+      markdown = t.markdown;
       truncated = true;
+      annotation = t.annotation;
     }
     const excerpt = markdown.slice(0, 2000);
-    const finalMarkdown = truncated ? markdown + "\n\n[truncated: 1MB cap]" : markdown;
+    const finalMarkdown = truncated ? markdown + annotation : markdown;
     return toContent({
       markdown: finalMarkdown,
       excerpt,
@@ -605,6 +674,8 @@ export default function biggzWebSearch(pi) {
     publisherFor,
     parseRetryAfter,
     htmlToMarkdown,
+    extractWithAnchors,
+    truncateWithAnchor,
     searchTavily,
     searchBrave,
     searchDDG,

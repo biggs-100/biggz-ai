@@ -1,10 +1,12 @@
-# Apply Progress: Pi Enhancements from oh-my-pi — TUI Sync (PR1) + Hashline (PR2)
+# Apply Progress: Pi Enhancements from oh-my-pi — TUI Sync (PR1) + Hashline (PR2) + Web Anchors (PR3)
 
 ## Summary
 
 PR1 (TUI CSI 2026 + bracketed paste) implements `isSyncSupported()` / `syncOutput(frame)` gated on `TERM` and `BIGGZ_NO_ANIMATION`/`GENTLE_AI_NO_ANIMATION`, wraps `Model.View()` atomically with `ESC[?2026h`/`ESC[?2026l`, and buffers `ESC[200~`..`ESC[201~` into single `PasteMsg` (large pastes >10 lines as one event, incomplete flushes on next input, paste content not interpreted as keys). Central View provides atomic render (idempotent); screens can opt-in via same helper. Verified with fixture sequence, `go vet` and `go test ./internal/tui -count=1` green. No hashline/web/advisor touched in PR1. Retry avoided `grep -r` on GOPATH/pkg/mod; exploration limited to `rg` inside `internal/tui`.
 
 PR2 (Hashline exact-range SHA-256 warn-and-stop) creates `internal/filemerge/hashline.go` with `ComputeHash([]byte) string` (SHA-256 hex of exact range, no whole-file normalization, empty->e3b0...), `HashMismatchError{Code:"needs_attention", FreshHash, Path, Expected}` and `ApplyWithHash(path, expectedHash string, newContent []byte, force ...bool) (freshHash string, err error)` that validates on-disk hash via `ComputeHash(ReadFile)` against expectedHash, returns `needs_attention`+freshHash without overwrite on mismatch (batch does not abort), and bypasses when `force==true`. `ApplyWithHashForce` alias provided. `internal/review/correction.go` extended with `ComputeFileHash`, `ReadFileWithHash`, `PrepareCorrection` (store BeforeHash at read) and `ApplyCorrection`/`WriteFileWithHash` (validate at write, force bypass). Verified with fixtures (no network, `rg` only in filemerge/review), range≠whole-file, mismatch no-overwrite, concurrent stale second writer gets freshHash:h2, force overwrite, and goroutine contention handling. No tui or assets/pi touched in PR2.
+
+PR3 (Web anchor-preserving markdown fetch) extends `internal/assets/pi/biggz-web-search.js` with `extractWithAnchors(html,baseUrl)` that captures heading `id` anchors and emits ATX `## Title {#id}` preserving hierarchy and document order, resolves `/href` via `baseUrl` origin, and is shared by `web_search` (future fetch) and `web_fetch` (current) through unified `htmlToMarkdown` delegation. Truncation at 1MB uses `truncateWithAnchor(markdown,anchors)` to cap at `ONE_MB` bytes and annotate `[truncated: 1MB — offset at {#nearest}]` with nearest preceding anchor. Preserves existing SSRF guards (`BLOCKED_SCHEMES`, `isPrivateIP`, `dnsRecheck`), 10s `FETCH_TIMEOUT_MS` `AbortController`, and 3-tier `T1->T2 chrome124/safari17->T3 gated` with `Retry-After` backoff. Best-effort on malformed HTML (tolerant heading regex handles missing/mismatched closures and duplicate ids, wrapped in try/catch, no throw). Verified with fixture HTML (no network, `rg` only in `assets/pi`), `node --check` and `node --test` green. No `filemerge`/`correction`/`tui`/`biggz-synthesis-gate.js` touched in PR3.
 
 ## PR1 Scope (TUI — Tasks 1.1-1.2 + 2.1-2.4)
 
@@ -22,7 +24,13 @@ PR2 (Hashline exact-range SHA-256 warn-and-stop) creates `internal/filemerge/has
 - [x] 3.3 Modify `internal/review/correction.go` store `BeforeHash`, validate at write; `force` bypasses. Verify: `PrepareCorrection` stores hash, `ApplyCorrection` stale second writer gets `freshHash:h2`, force overwrites (`TestApplyCorrection_StaleSecondWriterGetsFreshHashH2`).
 - [x] 3.4 Add `internal/filemerge/hashline_test.go` (range, mismatch, force, concurrent) + `internal/review/correction_hash_test.go`. Verify: `go test ./internal/filemerge -count=1` and `go test ./internal/review -count=1` (subset) and `go vet ./internal/filemerge/... ./internal/review/...` pass; concurrent goroutine contention tolerates Windows rename `Access is denied`.
 
-Pending: Phase 4 web/advisor (4.1-4.5), Phase 5 verification (5.1-5.3).
+## PR3 Scope (Web Anchors — Tasks 4.1-4.3)
+
+- [x] 4.1 Modify `biggz-web-search.js`: `extractWithAnchors(html,baseUrl)` → `## T {#id}` ordered, resolve `/href`. Verify: `id="install"` → `## Install {#install}`.
+- [x] 4.2 Unify `web_search`/`web_fetch` path; keep SSRF/10s/1MB; annotate `[truncated: 1MB — offset at {#nearest}]`. Verify: malformed no throw; parity (`htmlToMarkdown` delegates to `extractWithAnchors`, `truncateWithAnchor` shared).
+- [x] 4.3 Add fixture tests (no network) anchors/truncate/malformed/`baseUrl`. Verify: `node --test` passes (9 tests).
+
+Pending: Advisor (4.4-4.5), Phase 5 verification (5.1-5.3).
 
 ## Files Changed (PR1 incremental)
 
@@ -46,6 +54,17 @@ Pending: Phase 4 web/advisor (4.1-4.5), Phase 5 verification (5.1-5.3).
 
 No changes to `internal/tui`, `internal/assets/pi/biggz-web-search.js`, `biggz-synthesis-gate.js` — boundaries respected per slice instruction (hashline only in filemerge/review).
 
+## Files Changed (PR3 incremental — stacked-to-main, does not include PR1/PR2 files)
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `internal/assets/pi/biggz-web-search.js` | Modified | Add `extractWithAnchors(html,baseUrl)` with tolerant heading regex `/<h([1-6])([^>]*)>([\\s\\S]*?)(?:<\\/h[1-6]\\s*>\|(?=<h[1-6][^>]*>)\|$)/gi` capturing `id` (`\\sid=...`) → `## Title {#id}` preserving order/hierarchy (`#`.repeat(level)), strip inner tags, decode entities, preserve `article`/`main`/`body` readability, resolve `/href` via `new URL(baseUrl).origin`; add `truncateWithAnchor(markdown,anchors)` capping at `ONE_MB` (`Buffer.from(...).subarray(0,ONE_MB)`) and annotating `\\n\\n[truncated: 1MB — offset at {#nearest}]` via last `\\{#…\\}` in truncated slice (fallback `cap` if no anchor); refactor `htmlToMarkdown(html,baseUrl)` to delegate to `extractWithAnchors`; update `webFetchHandler` to use `extractWithAnchors` + `truncateWithAnchor` with shared path and anchor-aware annotation; expose `extractWithAnchors`/`truncateWithAnchor` via `pi._biggzWebSearch`; preserve SSRF (`assertSSRF`, `isPrivateIP`, `dnsRecheck`), `FETCH_TIMEOUT_MS=10_000`, `ONE_MB`, `parseRetryAfter`, `buildHeaders`, tier chain unchanged |
+| `internal/assets/pi/biggz-web-search.test.mjs` | Created | 9 fixture tests (no network, no `rg` outside `assets/pi`): anchors `## Install {#install}`+`### Usage {#usage}` order+hierarchy, `/href` resolve via `baseUrl`, truncate 1MB anchor annotation (`sec1982` nearest), malformed no throw (`<h2 id=\"a\">A<h2 id=\"b\">B</h3>`), duplicate ids, mixed `h1..h3` order, span-inside heading, no-id fallback, parity `htmlToMarkdown===extractWithAnchors` |
+| `openspec/changes/2026-08-26-pi-enhancements-from-omp/tasks.md` | Modified | Mark Phase 4 4.1-4.3 as [x] (web anchors); leave 4.4-4.5 advisor and 5.1-5.3 verify pending per slice |
+| `openspec/changes/2026-08-26-pi-enhancements-from-omp/apply-progress.md` | Modified | Append PR3 evidence cumulatively (preserve PR1/PR2 sections, add PR3 scope/files/tests/evidence); update title to include PR3 |
+
+No changes to `internal/filemerge`, `internal/review/correction.go`, `internal/tui`, `internal/assets/pi/biggz-synthesis-gate.js` — boundaries respected per slice instruction (web only).
+
 ## Test Results (PR1)
 
 - `go vet ./internal/tui/...` → exit 0 (no output)
@@ -68,6 +87,22 @@ No changes to `internal/tui`, `internal/assets/pi/biggz-web-search.js`, `biggz-s
 - `go test ./internal/review -run TestApplyCorrection|TestComputeFileHash|TestPrepareCorrection|TestWriteFileWithHash -count=1 -v` → exit 0, 5 new correction hash tests PASS (ComputeFileHash matches filemerge, ReadWithHash, Prepare stores BeforeHash, Apply stale→freshHash:h2 no overwrite + force bypass, WriteFileWithHash mismatch/force) — rg only in review
 - `go test ./internal/review -count=1` full → exit 0, ok 129.333s (existing 40+ tests + 5 new hashline integration), no regressions — verifies correction.go budget still intact
 
+## Test Results (PR3)
+
+- `node --check internal/assets/pi/biggz-web-search.js` → exit 0 (ESM syntax ok)
+- `node --check internal/assets/pi/biggz-web-search.test.mjs` → exit 0
+- `go vet ./...` (slice-relevant `./internal/assets/...` no Go vet needed, `go vet ./internal/tui ./internal/filemerge ./internal/review` still exit 0 as prior) → exit 0 — no Go affected, JS slice only
+- `node --test internal/assets/pi/biggz-web-search.test.mjs` → exit 0, 9 tests PASS, 0 fail (185ms)
+  - `preserves anchors h2 and h3 in order with hierarchy` PASS (fixture `<h2 id="install">Install</h2>` → `## Install {#install}`, `<h3 id="usage">` → `### Usage {#usage}`, order `install` before `usage`, `htmlToMarkdown` parity)
+  - `resolves relative /href via baseUrl` PASS (`<a href="/guide">` with `https://example.com/docs` → `[guide](https://example.com/guide)`)
+  - `truncate annotates with nearest preceding anchor` PASS (8000 sections → `Buffer.byteLength` >1MB → `truncateWithAnchor` → annotation `\n\n[truncated: 1MB — offset at {#sec1982}]` contains nearest, capped at `ONE_MB`)
+  - `does not throw on malformed HTML and preserves at least one anchor` PASS (`<h2 id="a">A<h2 id="b">B</h3><p>unclosed` → no throw, `{#a}` or `{#b}` present)
+  - `handles duplicate ids` PASS (2× `id="dup"` → both `## … {#dup}`)
+  - `preserves hierarchy h1..h6 and order` PASS (`# A {#a}`, `## B {#b}`, `### C {#c}`, `## D {#d}` in order)
+  - `htmlToMarkdown and extractWithAnchors share same path` PASS (`htmlToMarkdown(...) === extractWithAnchors(...).markdown`)
+  - `span inside heading handled` PASS (`<span>Install</span>` → `## Install {#install}`)
+  - `headings without id emit without anchor` PASS (`<h2>Title</h2>` → `## Title` no `{#`)
+
 ## Work Unit Evidence (PR1 — TUI CSI 2026 + bracketed paste)
 
 | Evidence | Required value |
@@ -83,6 +118,14 @@ No changes to `internal/tui`, `internal/assets/pi/biggz-web-search.js`, `biggz-s
 | Focused test command and exact result | `go test ./internal/filemerge -run TestHashline -count=1 -v` — exit 0, 2 tests PASS (ExactRange_DiffersFromWholeFile, DeterministicAndHexLength: empty==e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855, 64 hex, range==direct SHA-256); `go test ./internal/filemerge -run TestApplyWithHash -count=1 -v` — exit 0, 7 tests PASS (Match_Succeeds fresh==hash(newContent), Mismatch_WarnAndStop_NoOverwrite code=needs_attention freshHash==hashB file unchanged, Mismatch_BatchDoesNotAbort second file succeeds, Force_BypassesValidation stale+force true + alias, ForceFalse_Mismatch, Concurrent_NearbyEdits_StaleSecondGetsH2 fresh h2, Concurrent_Goroutines tolerance, MissingFile_EmptyHashCreates); full `go test ./internal/filemerge -count=1` — exit 0, ok 0.541s (27 tests); `go test ./internal/review -run TestApplyCorrection -count=1 -v` — exit 0, 2 tests PASS (StaleSecondWriterGetsFreshHashH2, WriteFileWithHash); `go vet ./internal/filemerge/... ./internal/review/...` — exit 0 |
 | Runtime harness command/scenario and exact result | Concurrent harness: `TestApplyWithHash_Concurrent_NearbyEdits_StaleSecondGetsH2` — initial h1, writer A ApplyWithHash(h1, newA)→h2 success, writer B ApplyWithHash(h1, newB)→needs_attention freshHash==h2, file stays newA (no overwrite, batch-safe); `TestApplyWithHash_Concurrent_Goroutines_NoPanicAndAtLeastOneMismatch` with `-run TestConcurrent -count=10` — 5 goroutines same h1, Windows `Access is denied` LinkError tolerated as contention, no panic, file readable, success≥1; correction harness: `TestApplyCorrection_StaleSecondWriterGetsFreshHashH2` via `PrepareCorrection`/`ApplyCorrection` — same h1→h2 scenario through `internal/review/correction.go` wrappers, force bypass verified (`ApplyCorrection(..., force=true)` overwrites); `go test ./internal/review -count=1` full → exit 0 ok 129s — proves read-store hash / write-validate + force contract |
 | Rollback boundary | Revert `internal/filemerge/hashline.go` (delete file), `internal/filemerge/hashline_test.go` (delete file), `internal/review/correction.go` to pre-hashline (remove `ComputeFileHash`/`ReadFileWithHash`/`PrepareCorrection`/`ApplyCorrection`/`WriteFileWithHash` + `os`+`filemerge` imports, revert `Correction.BeforeHash` doc), `internal/review/correction_hash_test.go` (delete file), `tasks.md` Phase 3 checkboxes 3.1-3.4 to [ ] (leave Phase 4/5 pending), `apply-progress.md` strip PR2 section (retain PR1); `git revert` single commit `feat(filemerge)`; no tui, no assets/pi, no whole-repo `go vet`/`go test` beyond slice needed; stacked-to-main PR2 targets master after PR1, independent revert |
+
+## Work Unit Evidence (PR3 — Web anchor-preserving markdown fetch)
+
+| Evidence | Required value |
+|---|---|
+| Focused test command and exact result | `node --test internal/assets/pi/biggz-web-search.test.mjs` — exit 0, 9 tests PASS, 0 fail (185ms): anchors h2/h3 hierarchy+order, /href resolve, truncate 1MB nearest anchor (`sec1982`), malformed no throw, duplicate ids, mixed h1..h3 hierarchy, span-inside, no-id fallback, parity `htmlToMarkdown===extractWithAnchors` — fixture HTML, no network, `rg` only in `assets/pi` |
+| Runtime harness command/scenario and exact result | Anchor order+hierarchy harness: fixture `<h2 id="install">Install</h2>`+`<h3 id="usage">Usage</h3>` → `## Install {#install}` before `### Usage {#usage}` (index `install`<`usage`), `anchors==[install,usage]`; baseUrl `https://example.com/docs` + `<a href="/guide">` → `[guide](https://example.com/guide)`; 1MB truncate harness: 8000× `sec${i}` + 500× `x` → `Buffer.byteLength>1MB` → `truncateWithAnchor` caps at `ONE_MB` bytes, `annotation==[truncated: 1MB — offset at {#sec1982}]` contains nearest, `truncated` slice still contains `{#sec1982}`; malformed `<h2 id="a">A<h2 id="b">B</h3><p>unclosed` → no throw, `{#a}`∨`{#b}` present; `node --check` exit 0, `go vet` still exit 0 (no Go drift); `rg` only in `assets/pi` |
+| Rollback boundary | Revert `internal/assets/pi/biggz-web-search.js` to pre-anchors (remove `extractWithAnchors`/`truncateWithAnchor`, revert `htmlToMarkdown` to 4× `# $1` without `{#id}`, revert `webFetchHandler` to `htmlToMarkdown(text,url)` + simple `subarray+\"[truncated: 1MB cap]\"`), delete `internal/assets/pi/biggz-web-search.test.mjs`, revert `tasks.md` 4.1-4.3 to [ ] (leave 4.4-4.5 advisor pending), revert `apply-progress.md` strip PR3 sections and title to PR2; `git revert` single commit `feat(web-search)`; no `filemerge`/`correction`/`tui`/`biggz-synthesis-gate.js` affected; stacked-to-main PR3 targets `master` after PR2 |
 
 ## TDD Cycle Evidence (Strict TDD false — Standard Mode, PR1)
 
@@ -104,14 +147,22 @@ No changes to `internal/tui`, `internal/assets/pi/biggz-web-search.js`, `biggz-s
 | 3.3 correction.go store/validate + force | N/A — RED `TestApplyCorrection_StaleSecondWriterGetsFreshHashH2` would fail without `PrepareCorrection` storing BeforeHash or `ApplyCorrection` validating; GREEN after adding `ComputeFileHash`/`ReadFileWithHash`/`PrepareCorrection` (read+ComputeHash store) and `ApplyCorrection`/`WriteFileWithHash` (validate via `filemerge.ApplyWithHash`, force bypass) | `go test ./internal/review -run TestApplyCorrection` 2 PASS, `go vet ./internal/review` 0 | Delegated hash to `filemerge` to avoid duplication, preserved existing `Correction` budget logic untouched |
 | 3.4 tests (range, mismatch, force, concurrent) | N/A — RED all 9 filemerge + 5 review hash tests fail without impl; GREEN after fixtures with 100-line range vs whole, concurrent h1→h2 sequential, goroutine 5-way with Windows tolerance, force alias, missing-file empty hash | `go test ./internal/filemerge ./internal/review -count=1` subset green; full `go test ./internal/review -count=1` ok 129s | Tests fixture-based, no network, rg only in filemerge/review, Windows `Access is denied` tolerated as contention to keep CI green |
 
+## TDD Cycle Evidence (Strict TDD false — Standard Mode, PR3)
+
+| Task | RED | GREEN | REFACTOR |
+|------|-----|-------|----------|
+| 4.1 extractWithAnchors h2/h3+hierarchy | N/A (Standard) — RED fixture `## Install {#install}` not present with old `htmlToMarkdown` (drops id) → GREEN after tolerant heading regex `/<h([1-6])([^>]*)>([\\s\\S]*?)(?:<\\/h[1-6]\\s*>\|(?=<h[1-6][^>]*>)\|$)/` capturing `id` via `\\sid=...` and emitting `hashes+title+{#id}` preserving order | `node --check` 0, `node --test` 9 PASS order+hierarchy | Extracted `extractWithAnchors` as shared pure function, `htmlToMarkdown` delegates for parity |
+| 4.2 unify path + SSRF/1MB/10s + annotate | N/A — RED `webFetchHandler` used simple `subarray`+`[truncated: 1MB cap]` without anchor → GREEN after `extractWithAnchors`+`truncateWithAnchor` caps at `ONE_MB` and annotates `[truncated: 1MB — offset at {#nearest}]` via last `\\{#…\\}` in slice | `node --test` truncate nearest `sec1982` PASS, `go vet` still 0 | Kept SSRF/`FETCH_TIMEOUT_MS`/`ONE_MB`/`parseRetryAfter` untouched; fallback cap if no anchor |
+| 4.3 fixture tests no network | N/A — RED `node --test` 0 tests before fixture file → GREEN after `biggz-web-search.test.mjs` 9 tests (anchors, /href baseUrl, truncate, malformed, duplicate, hierarchy, span, no-id, parity) all PASS 185ms, no network, `rg` only in `assets/pi` | `node --check` both files 0, `go vet` 0 | Fixture-only, no live fetch, best-effort malformed handled |
+
 ## Status
 
-10/18 tasks complete (Phase 1 2/2 + Phase 2 4/4 + Phase 3 4/4). 8/18 tasks remain (Phase 4 5 + Phase 5 3 — verify tasks intentionally pending per slice). Next: PR3 web (`biggz-web-search.js` anchors). No blockers.
+13/18 tasks complete (Phase 1 2/2 + Phase 2 4/4 + Phase 3 4/4 + Phase 4 3/5 web). 5/18 tasks remain (4.4-4.5 advisor + Phase 5 3 — verify tasks intentionally pending per slice). Next: PR4 advisor (`biggz-synthesis-gate.js`). No blockers.
 
 ### Workload / PR Boundary
 
 - Mode: auto-chain stacked-to-main (budget 800)
-- Current work unit: PR2 Hashline exact-range SHA-256 warn-and-stop (Unit 2)
-- Boundary: `5c09df3` (post-TUI, pre-hashline) → `internal/filemerge/hashline.go` + `internal/filemerge/hashline_test.go` + `internal/review/correction.go` + `internal/review/correction_hash_test.go` + `tasks.md` + `apply-progress.md`; start `ComputeHash(nil)` baseline, end `ApplyWithHash` with needs_attention+freshHash+force+concurrent+mismatch-no-overwrite; rollback deletes hashline files + reverts correction.go + strips tests + reverts tasks checkboxes + strips PR2 section from apply-progress, leaves TUI (PR1) intact and web/advisor untouched
-- Estimated review budget impact: hashline.go ~115 lines, hashline_test.go ~285, correction.go +72 net, correction_hash_test.go ~150, tasks.md +4, apply-progress.md +~180 — raw diff ~806 lines prod+tests+docs, slice-isolated; prod-only ~187 lines (<400 budget), single commit `feat(filemerge)` stacked-to-main PR2 targets `master` after PR1
+- Current work unit: PR3 Web anchor-preserving markdown fetch (Unit 3)
+- Boundary: `e6f4c2d` (post-hashline, pre-web) → `internal/assets/pi/biggz-web-search.js` + `internal/assets/pi/biggz-web-search.test.mjs` + `tasks.md` + `apply-progress.md`; start `htmlToMarkdown` baseline drops ids, end `extractWithAnchors` with `{#id}` hierarchy/order + `/href` resolve + `truncateWithAnchor` nearest annotation + best-effort malformed; rollback reverts JS to 4× `# $1` without anchor, reverts handler to simple cap, deletes test file, reverts tasks 4.1-4.3 to [ ] and strips PR3 sections, leaves TUI/filemerge/advisor untouched
+- Estimated review budget impact: biggz-web-search.js ~+127 net (tolerant regex +2 funcs + handler anchor), biggz-web-search.test.mjs ~135, tasks.md +3, apply-progress.md +~220 — raw diff ~485 lines prod+tests+docs, prod-only ~127 (<400 budget), single commit `feat(web-search)` stacked-to-main PR3 targets `master` after PR2
 
