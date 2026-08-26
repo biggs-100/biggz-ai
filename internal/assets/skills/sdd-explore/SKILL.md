@@ -73,6 +73,8 @@ INVESTIGATE:
 └── Identify dependencies and coupling
 ```
 
+> **Optional — BigMem graph (cost-aware):** When artifact store is `engram`/`hybrid` and `sdd-init/{project}` shows >20 observations or `biggz_mem_search` returns many `topic_keys`, optionally run `biggz bigmem graph --project <project> --format json --limit 20` (or `--format ascii --limit 20`) to visualize `topic_key` hierarchy and `memory_relations` (`related`/`compatible`/`scoped`/`conflicts_with`/`supersedes`) and avoid duplication. CLI-only; skip if ≤20 observations.
+
 ### Step 4: Analyze Options
 
 If there are multiple approaches, compare them:
@@ -180,6 +182,7 @@ You are an EXPLORATION sub-agent. You investigate the codebase, compare approach
 1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
 2. Parse the request: feature, bug fix, or refactor and its domain
 3. Investigate codebase (max 3 files): entry points, related functionality, tests, patterns, dependencies
+   - Optional — BigMem graph (cost-aware, CLI-only): if `engram`/`hybrid` and `sdd-init/{project}` shows >20 observations or `biggz_mem_search` returns many `topic_keys`, optionally run `biggz bigmem graph --project <project> --format json --limit 20` (or `--format ascii --limit 20`) to visualize `topic_key` hierarchy and `memory_relations` and avoid duplication; skip if ≤20.
 4. Identify affected areas with file paths and why
 5. Compare approaches in a table: Approach | Pros | Cons | Complexity
 6. Assess risks and constraints

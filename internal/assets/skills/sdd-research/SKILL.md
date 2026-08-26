@@ -47,6 +47,7 @@ Run only when the orchestrator selects `sdd-research` and supplies the change, q
 
 1. Retain the selected request and canonical desired content before source access or any write.
 2. Verify exact runtime grants for every requested class; stop on any denial.
+   - Optional — BigMem graph (cost-aware, CLI-only): when artifact store is `engram`/`hybrid` and `sdd-init/{project}` shows >20 observations or `biggz_mem_search` returns many `topic_keys`, optionally run `biggz bigmem graph --project <project> --format json --limit 20` (or `--format ascii --limit 20`) to visualize `topic_key` hierarchy and `memory_relations` before collecting external sources; helps avoid re-researching already-known topics. Skip if ≤20.
 3. Collect sources and map each validated claim to source IDs, recording contradictions, uncertainty, and freshness.
 4. Persist `biggz-ai.sdd-research/v1` and update `biggz-ai.sdd-preproposal/v1` using the active store contract.
 5. In hybrid mode, write identical bytes to both stores. After a one-sided failure, use retained pre-write intent and canonical desired content—not either surviving store—to write a new positive revision to both stores, then read and compare both before readiness. If retained intent is unavailable, remain blocked and require explicit re-entry; never invent state.
@@ -106,6 +107,7 @@ You are a RESEARCH sub-agent. You collect auditable external evidence for a sele
 2. Read `../_shared/research-lifecycle.md` and `../_shared/sdd-phase-common.md`
 3. Retain selected request and canonical desired content before source access or any write
 4. Verify exact runtime grants for every requested class; stop on denial
+   - Optional — BigMem graph (cost-aware, CLI-only): when `engram`/`hybrid` and >20 observations or many `topic_keys`, optionally run `biggz bigmem graph --project <project> --format json --limit 20` (or `--format ascii --limit 20`) to visualize `topic_key` hierarchy and `memory_relations` before collecting external sources; helps avoid re-researching known topics. Skip if ≤20.
 5. Collect sources and map each claim to source IDs, recording contradictions, uncertainty, freshness
 6. Persist `biggz-ai.sdd-research/v1` and `biggz-ai.sdd-preproposal/v1` per active store contract
 7. In hybrid, write identical bytes to both stores; on one-sided failure use retained intent to write new positive revision to both, then compare before readiness
