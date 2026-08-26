@@ -29,11 +29,50 @@ export default function biggzSynthesisGate(pi) {
 
 	let lastAssistantMarkdown = "";
 	let lastUpdateTime = 0;
+	let currentTurnMarkdown = "";
+	let currentTurnUpdateTime = 0;
 
 	function recordText(text) {
 		if (typeof text === "string" && text.trim()) {
 			lastAssistantMarkdown = text;
 			lastUpdateTime = Date.now();
+			// Also accumulate into current-turn buffer for same-turn race fix.
+			const now = Date.now();
+			if (!currentTurnMarkdown) {
+				currentTurnMarkdown = text;
+				currentTurnUpdateTime = now;
+			} else {
+				// If new chunk contains a fresh synthesis header and current already contains
+				// a distinct synthesis block, treat as new turn — replace instead of appending.
+				const hasNew = text.includes("## Sub-agent Result");
+				const hasCur = currentTurnMarkdown.includes("## Sub-agent Result");
+				if (hasNew && hasCur && text.trim() !== currentTurnMarkdown.trim()) {
+					if (!currentTurnMarkdown.includes(text) && !text.includes(currentTurnMarkdown)) {
+						currentTurnMarkdown = text;
+						currentTurnUpdateTime = now;
+						return;
+					}
+					if (text.length > currentTurnMarkdown.length) {
+						currentTurnMarkdown = text;
+						currentTurnUpdateTime = now;
+						return;
+					}
+				}
+				if (currentTurnMarkdown.includes(text)) {
+					if (text.length > currentTurnMarkdown.length) {
+						currentTurnMarkdown = text;
+					}
+					currentTurnUpdateTime = now;
+					return;
+				}
+				if (text.includes(currentTurnMarkdown)) {
+					currentTurnMarkdown = text;
+					currentTurnUpdateTime = now;
+					return;
+				}
+				currentTurnMarkdown += "\n" + text;
+				currentTurnUpdateTime = now;
+			}
 		}
 	}
 
@@ -275,19 +314,52 @@ export default function biggzSynthesisGate(pi) {
 		return "";
 	}
 
+	function getCurrentTurnSynthesis(ctx) {
+		const now = Date.now();
+		// Prefer current-turn buffer first — this catches same-turn streaming race where markdown
+		// was emitted milliseconds before tool_call and hasn't yet appeared in ctx.history.
+		if (currentTurnMarkdown) {
+			const has = hasSynthesis(currentTurnMarkdown) || hasSynthesisLoose(currentTurnMarkdown) || (currentTurnMarkdown.includes("Sub-agent Result") && currentTurnMarkdown.includes("Artifacts/Paths"));
+			if (has) {
+				if (now - currentTurnUpdateTime < 120000) return currentTurnMarkdown;
+				// Even outside window, the most recent chunk is still valid for same-turn check.
+				return currentTurnMarkdown;
+			}
+		}
+		const ctxText = getCtxHistory(ctx);
+		if (ctxText && (hasSynthesis(ctxText) || hasSynthesisLoose(ctxText) || (ctxText.includes("Sub-agent Result") && ctxText.includes("Artifacts/Paths")))) {
+			return ctxText;
+		}
+		if (lastAssistantMarkdown && Date.now() - lastUpdateTime < 120000) {
+			if (hasSynthesis(lastAssistantMarkdown) || hasSynthesisLoose(lastAssistantMarkdown) || (lastAssistantMarkdown.includes("Sub-agent Result") && lastAssistantMarkdown.includes("Artifacts/Paths"))) return lastAssistantMarkdown;
+		}
+		if (lastAssistantMarkdown) {
+			if (hasSynthesis(lastAssistantMarkdown) || hasSynthesisLoose(lastAssistantMarkdown) || (lastAssistantMarkdown.includes("Sub-agent Result") && lastAssistantMarkdown.includes("Artifacts/Paths"))) return lastAssistantMarkdown;
+		}
+		return "";
+	}
+
 	function checkSynthesisPrecondition(ctx) {
-		// Prefer ctx history if available (most accurate for this turn)
+		const now = Date.now();
+		// 1) current-turn buffer — catches same-turn markdown emitted just before tool_call (streaming race).
+		if (currentTurnMarkdown) {
+			const has = hasSynthesis(currentTurnMarkdown) || hasSynthesisLoose(currentTurnMarkdown) || (currentTurnMarkdown.includes("Sub-agent Result") && currentTurnMarkdown.includes("Artifacts/Paths"));
+			if (has) {
+				if (now - currentTurnUpdateTime < 120000) return true;
+				// Most recent chunk regardless of window — handles <100ms race.
+				return true;
+			}
+		}
+		// 2) ctx history
 		const ctxText = getCtxHistory(ctx);
 		if (ctxText && hasSynthesis(ctxText)) return true;
 		if (ctxText && hasSynthesisLoose(ctxText)) return true;
 		if (ctxText && ctxText.includes("Sub-agent Result") && ctxText.includes("Artifacts/Paths")) return true;
-		// Fallback to last recorded assistant markdown if recent (< 2 min)
+		// 3) last recorded assistant markdown with window, plus fallback regardless of window
 		if (lastAssistantMarkdown && Date.now() - lastUpdateTime < 120000) {
 			if (hasSynthesis(lastAssistantMarkdown) || hasSynthesisLoose(lastAssistantMarkdown)) return true;
 			if (lastAssistantMarkdown.includes("Sub-agent Result") && lastAssistantMarkdown.includes("Artifacts/Paths")) return true;
 		}
-		// If we have no evidence, be permissive after 2 min but warn
-		// Strict within same turn: if last markdown exists but lacks markers, fail
 		if (lastAssistantMarkdown) {
 			return hasSynthesis(lastAssistantMarkdown) || hasSynthesisLoose(lastAssistantMarkdown) || (lastAssistantMarkdown.includes("Sub-agent Result") && lastAssistantMarkdown.includes("Artifacts/Paths"));
 		}
@@ -306,6 +378,7 @@ export default function biggzSynthesisGate(pi) {
 			isAdviseEnabled,
 			isChildBypass,
 			getSynthesisSource,
+			getCurrentTurnSynthesis,
 			checkSynthesisPrecondition,
 			emitConcern: (ctx, metrics) => emitConcern(ctx, pi, metrics),
 			// test helpers to manipulate internal state
@@ -314,6 +387,10 @@ export default function biggzSynthesisGate(pi) {
 				getLast: () => lastAssistantMarkdown,
 				setLast: (txt) => { lastAssistantMarkdown = txt; lastUpdateTime = Date.now(); },
 				clearLast: () => { lastAssistantMarkdown = ""; lastUpdateTime = 0; },
+				getCurrent: () => currentTurnMarkdown,
+				setCurrent: (txt) => { currentTurnMarkdown = txt; currentTurnUpdateTime = Date.now(); },
+				clearCurrent: () => { currentTurnMarkdown = ""; currentTurnUpdateTime = 0; },
+				getCurrentTime: () => currentTurnUpdateTime,
 			},
 		};
 	} catch {}
@@ -368,14 +445,20 @@ export default function biggzSynthesisGate(pi) {
 							}
 							// Has synthesis — check advise thin path (non-blocking concern)
 							try {
-								const source = getSynthesisSource(ctx);
+								const source = getCurrentTurnSynthesis(ctx);
 								if (source && isAdviseEnabled() && isThinSynthesis(source)) {
 									const metrics = getArtifactsMetrics(source);
 									emitConcern(ctx, pi, metrics);
 									// do not block — allow the call
 								}
 							} catch {}
-							return origExecute(...args);
+							const result = await origExecute(...args);
+							// Reset current-turn buffer after successful tool call — next turn starts fresh.
+							try {
+								currentTurnMarkdown = "";
+								currentTurnUpdateTime = 0;
+							} catch {}
+							return result;
 						};
 					}
 				} catch (e) {
@@ -412,7 +495,7 @@ export default function biggzSynthesisGate(pi) {
 					}
 					// Has synthesis — check thin + advise for concern (non-blocking)
 					try {
-						const source = getSynthesisSource(ctx);
+						const source = getCurrentTurnSynthesis(ctx);
 						if (source && isAdviseEnabled() && isThinSynthesis(source)) {
 							const metrics = getArtifactsMetrics(source);
 							emitConcern(ctx, pi, metrics);
@@ -437,7 +520,7 @@ export default function biggzSynthesisGate(pi) {
 				ctx.ui.notify(status, "warning");
 				return { content: [{ type: "text", text: status }] };
 			}
-			const source = getSynthesisSource(ctx);
+			const source = getCurrentTurnSynthesis(ctx);
 			if (source && isAdviseEnabled() && isThinSynthesis(source)) {
 				const metrics = getArtifactsMetrics(source);
 				const status = `⚠ synthesis gate: thin synthesis (Artifacts/Paths count=${metrics.count}, len=${metrics.len}) — advise concern enabled (BIGGZ_ADVISE=1)`;

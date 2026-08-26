@@ -364,4 +364,47 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     const concern = [...ctxNotify, ...mock._notifyCalls].find((n) => String(n.msg).includes('concern'));
     assert.ok(concern);
   });
+
+  it('same-turn markdown immediately before tool_call passes (race fix)', async () => {
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi();
+    gateFn(mock);
+    mock._biggzSynthesisGate._test.clearLast();
+    mock._biggzSynthesisGate._test.clearCurrent();
+    let originalCalled = false;
+    const ctxNotify = [];
+    mock.registerTool({
+      name: 'ask_user_question',
+      description: 'test',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => {
+        originalCalled = true;
+        return { content: [{ type: 'text', text: 'ok' }] };
+      },
+    });
+    const wrapped = mock._tools.get('ask_user_question');
+    assert.ok(wrapped, 'wrapped tool exists');
+    const handler = mock._onHandlers['assistant_message'];
+    assert.ok(handler, 'assistant_message handler registered');
+    handler({ text: richMarkdown });
+    assert.ok(mock._biggzSynthesisGate._test.getCurrent().includes('Sub-agent Result'), 'currentTurn should contain synthesis after assistant_message');
+    const ctx = {
+      ui: { notify: (msg, level) => ctxNotify.push({ msg, level }) },
+      history: '',
+      messages: [],
+    };
+    const start = Date.now();
+    const result = await wrapped.execute('id-race', {}, null, null, ctx);
+    const elapsed = Date.now() - start;
+    assert.ok(elapsed < 1000, `should be within same-turn window, elapsed ${elapsed}ms`);
+    assert.equal(result.isError, undefined, 'same-turn markdown should PASS (no block)');
+    assert.equal(originalCalled, true, 'original should be called when same-turn markdown present');
+    const source = mock._biggzSynthesisGate.getCurrentTurnSynthesis(ctx);
+    // After successful call, buffer is reset, so check source before reset would have had synthesis; verify helper works via fresh set
+    mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
+    const source2 = mock._biggzSynthesisGate.getCurrentTurnSynthesis(ctx);
+    assert.ok(source2.includes('Sub-agent Result'), 'getCurrentTurnSynthesis should return currentTurn markdown');
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
+  });
 });
