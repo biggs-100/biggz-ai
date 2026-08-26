@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/biggs-100/biggz-ai/internal/pathquote"
 )
 
 // ErrWindowsBinaryLock is returned only when the async staging also fails.
@@ -33,7 +35,8 @@ func ReplaceBinary(src, dst string) error {
 	}
 	// Write a transient .bat that waits ~1s then moves the staged binary.
 	batPath := filepath.Join(os.TempDir(), fmt.Sprintf("biggz-upgrade-%d.bat", os.Getpid()))
-	batContent := fmt.Sprintf("@echo off\r\nping -n 2 127.0.0.1 >nul\r\nmove /y %q %q >nul 2>&1\r\ndel %%~f0\r\n", newPath, dst)
+	// Windows-safe quoting preserves backslashes; %q would double them.
+	batContent := fmt.Sprintf("@echo off\r\nping -n 2 127.0.0.1 >nul\r\nmove /y %s %s >nul 2>&1\r\ndel %%~f0\r\n", pathquote.Quote(newPath), pathquote.Quote(dst))
 	if err := os.WriteFile(batPath, []byte(batContent), 0644); err != nil {
 		// Staging succeeded; the user can restart manually.
 		return nil

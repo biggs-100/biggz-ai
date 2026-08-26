@@ -7,6 +7,7 @@ package backup
 import (
 	"archive/tar"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/biggs-100/biggz-ai/internal/filemerge"
 )
 
 // Backup describes a single backup snapshot.
@@ -227,6 +230,106 @@ func Prune(rootDir string, keep int) error {
 }
 
 // Restore extracts a backup to the given target directory.
+// ensureCodexSkillRegistryHook atomically ensures hooks.json contains the
+// skill-registry refresh hook under hooks.SessionStart. It mirrors
+// gentle-ai's ensureCodexSkillRegistryHook but uses the biggz binary.
+// The hook is installed atomically via filemerge.WriteFileAtomic and
+// idempotent on re-run.
+func EnsureCodexSkillRegistryHook(hooksPath string) (bool, error) {
+	return ensureCodexSkillRegistryHook(hooksPath)
+}
+
+func ensureCodexSkillRegistryHook(hooksPath string) (bool, error) {
+	root := map[string]any{}
+	if data, err := os.ReadFile(hooksPath); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+		if err := json.Unmarshal(data, &root); err != nil {
+			return false, fmt.Errorf("parse Codex hooks %q: %w", hooksPath, err)
+		}
+	} else if err != nil && !os.IsNotExist(err) {
+		return false, err
+	}
+	const command = `biggz skill-registry refresh --quiet --no-gitignore --cwd "$PWD" || true`
+	if codexHookExists(root, command) {
+		return false, nil
+	}
+	hooksRaw, hasHooks := root["hooks"]
+	hooksMap, _ := hooksRaw.(map[string]any)
+	if hasHooks && hooksMap == nil {
+		return false, fmt.Errorf("Codex hooks %q has unsupported hooks shape: want object", hooksPath)
+	}
+	if hooksMap == nil {
+		hooksMap = map[string]any{}
+	}
+	sessionRaw, hasSessionStart := hooksMap["SessionStart"]
+	sessionStart, _ := sessionRaw.([]any)
+	if hasSessionStart && sessionStart == nil {
+		return false, fmt.Errorf("Codex hooks %q has unsupported hooks.SessionStart shape: want array", hooksPath)
+	}
+	sessionStart = append(sessionStart, map[string]any{
+		"matcher": "startup|resume|clear|compact",
+		"hooks": []any{
+			map[string]any{
+				"type":          "command",
+				"command":       command,
+				"timeout":       30,
+				"statusMessage": "Refreshing skill registry",
+			},
+		},
+	})
+	hooksMap["SessionStart"] = sessionStart
+	root["hooks"] = hooksMap
+	out, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	out = append(out, '\n')
+	if err := os.MkdirAll(filepath.Dir(hooksPath), 0o755); err != nil {
+		return false, err
+	}
+	wr, err := filemerge.WriteFileAtomic(hooksPath, out, 0o644)
+	if err != nil {
+		return false, err
+	}
+	return wr.Changed || wr.Created, nil
+}
+
+func codexHookExists(root map[string]any, command string) bool {
+	hooksMap, ok := root["hooks"].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, key := range []string{"UserPromptSubmit", "SessionStart"} {
+		entries, ok := hooksMap[key].([]any)
+		if !ok {
+			continue
+		}
+		if codexHookListContains(entries, command) {
+			return true
+		}
+	}
+	return false
+}
+
+func codexHookListContains(entries []any, command string) bool {
+	for _, item := range entries {
+		itemMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		hooks, ok := itemMap["hooks"].([]any)
+		if !ok {
+			continue
+		}
+		for _, hook := range hooks {
+			hookMap, ok := hook.(map[string]any)
+			if ok && hookMap["command"] == command {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func Restore(rootDir, backupID, targetDir string) error {
 	if rootDir == "" {
 		home, err := os.UserHomeDir()

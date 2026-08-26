@@ -47,12 +47,12 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Integration
 
-- [ ] 3.1 `internal/opencode/background.go`: grouped isolation scheduling-only
-- [ ] 3.2 `internal/platform/*` + `internal/update/*` + `internal/filemerge/writer.go`: Windows quoting, `rundll32`/`cmd`, handle-relative writer
-- [ ] 3.3 `internal/agents/pi/model_routing.go`: `MaxPackageManifestBytes=64KiB` → `manifest-too-large`, `ProgressState`
-- [ ] 3.4 `internal/backup/backup.go`: `ensureCodexSkillRegistryHook` atomic `hooks.json:SessionStart`
-- [ ] 3.5 `internal/tui/styles/styles.go`: Rose Pine `#191724`/`#c4a7e7`/`#9ccfd8`, remove legacy palette
-- [ ] 3.6 `internal/tui/tui.go`: `tuiAnimationsDisabled()` env-gated, `tickCmd()=nil`, suppress `ESC[?2026h/l`
+- [x] 3.1 `internal/opencode/background.go`: grouped isolation scheduling-only
+- [x] 3.2 `internal/platform/*` + `internal/update/*` + `internal/filemerge/writer.go`: Windows quoting, `rundll32`/`cmd`, handle-relative writer
+- [x] 3.3 `internal/agents/pi/model_routing.go`: `MaxPackageManifestBytes=64KiB` → `manifest-too-large`, `ProgressState`
+- [x] 3.4 `internal/backup/backup.go`: `ensureCodexSkillRegistryHook` atomic `hooks.json:SessionStart`
+- [x] 3.5 `internal/tui/styles/styles.go`: Rose Pine `#191724`/`#c4a7e7`/`#9ccfd8`, remove legacy palette
+- [x] 3.6 `internal/tui/tui.go`: `tuiAnimationsDisabled()` env-gated, `tickCmd()=nil`, suppress `ESC[?2026h/l`
 
 ## Phase 4: Testing
 

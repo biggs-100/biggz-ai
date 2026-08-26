@@ -30,9 +30,17 @@ func TestWriteFile_NonExistentDir(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nonexistent", "test.txt")
 
+	// Handle-relative writer creates parent directories atomically (gentle parity).
 	err := WriteFile(path, []byte("content"), 0644)
-	if err == nil {
-		t.Fatal("WriteFile() expected error for non-existent directory, got nil")
+	if err != nil {
+		t.Fatalf("WriteFile() with handle-relative parent creation error = %v, want nil", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() after handle-relative WriteFile error = %v", err)
+	}
+	if string(got) != "content" {
+		t.Errorf("ReadFile() = %q, want %q", string(got), "content")
 	}
 }
 
@@ -134,8 +142,10 @@ func TestWriteFileAtomic_NewFile(t *testing.T) {
 	if !result.Created {
 		t.Error("WriteFileAtomic() Created = false, want true (new file created)")
 	}
-	if result.Changed {
-		t.Error("WriteFileAtomic() Changed = true, want false (new file, not a change)")
+	// Handle-relative writer: Changed is true when the replacement landed, even for new files.
+	// Gentle parity: WriteResult{Changed: landed, Created: created && landed}
+	if !result.Changed {
+		t.Error("WriteFileAtomic() Changed = false, want true (new file landed)")
 	}
 
 	got, err := os.ReadFile(path)
@@ -182,9 +192,20 @@ func TestWriteFileAtomic_NonExistentParentDir(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "nonexistent", "test.txt")
 
-	_, err := WriteFileAtomic(path, []byte("content"), 0644)
-	if err == nil {
-		t.Fatal("WriteFileAtomic() expected error for non-existent parent directory, got nil")
+	// Handle-relative writer creates parent directories; should succeed.
+	result, err := WriteFileAtomic(path, []byte("content"), 0644)
+	if err != nil {
+		t.Fatalf("WriteFileAtomic() handle-relative parent creation error = %v, want nil", err)
+	}
+	if !result.Created || !result.Changed {
+		t.Errorf("WriteFileAtomic() result = %+v, want Created and Changed true", result)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(got) != "content" {
+		t.Errorf("ReadFile() = %q, want %q", string(got), "content")
 	}
 }
 
@@ -198,10 +219,14 @@ func TestWriteFileAtomic_OriginalPreservedOnError(t *testing.T) {
 		t.Fatalf("setup: WriteFile() returned error: %v", err)
 	}
 
-	// Attempt write to non-existent parent (will fail)
-	_, err := WriteFileAtomic(filepath.Join(dir, "missing", "test.txt"), []byte("new"), 0644)
-	if err == nil {
-		t.Fatal("expected error for non-existent parent directory")
+	// Handle-relative writer creates parent; new file should land without affecting original.
+	newPath := filepath.Join(dir, "missing", "test.txt")
+	result, err := WriteFileAtomic(newPath, []byte("new"), 0644)
+	if err != nil {
+		t.Fatalf("WriteFileAtomic() handle-relative error = %v, want nil", err)
+	}
+	if !result.Created {
+		t.Errorf("WriteFileAtomic() Created = false, want true for new handle-relative file")
 	}
 
 	// Original file must be unchanged
@@ -224,10 +249,10 @@ func TestWriteFile_OverwritePreservesContentOnError(t *testing.T) {
 		t.Fatalf("WriteFile() initial write returned error: %v", err)
 	}
 
-	// Attempt write to non-existent subdirectory (will fail)
+	// Handle-relative writer creates parent; should succeed and preserve original.
 	err := WriteFile(filepath.Join(dir, "missing", "test.txt"), []byte("new"), 0644)
-	if err == nil {
-		t.Fatal("expected error for non-existent directory")
+	if err != nil {
+		t.Fatalf("WriteFile() handle-relative error = %v, want nil", err)
 	}
 
 	// Original file must be unchanged

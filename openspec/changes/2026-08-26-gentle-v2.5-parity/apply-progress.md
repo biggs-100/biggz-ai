@@ -1,12 +1,12 @@
-# Apply Progress: Gentle v2.5 Parity — PR1+PR2 Status v2 + Research + Burn/Budget/Lock
+# Apply Progress: Gentle v2.5 Parity — PR1+PR2+PR3 Status v2 + Research + Burn/Budget/Lock + Runtime/Platform
 
 ## Status
 
 - Mode: Standard (strict_tdd: false)
-- Delivery: auto-chain stacked-to-main, PR2 slice of 4 (stacked on PR1)
-- Progress: 12/24 tasks complete (Phase 1 Foundation + Phase 2 Core)
+- Delivery: auto-chain stacked-to-main, PR3 slice of 4 (stacked on PR2)
+- Progress: 18/24 tasks complete (Phase 1 Foundation + Phase 2 Core + Phase 3 Integration)
 - Change: 2026-08-26-gentle-v2.5-parity
-- Slice: PR2 — Last-event burn + cumulative budget + edit-authority guard + filecoord BusyError
+- Slice: PR3 — Runtime/platform (grouped isolation, Windows quoting/rundll32/writer, Pi manifest bound + ProgressState, Codex hooks, Rose Pine + reduced-motion)
 
 ## Completed Tasks
 
@@ -22,6 +22,12 @@
 - [x] 2.4 `internal/sdd/edit_authority.go`: explicit `apply to <path>` only; `investigate|if possible` read-only
 - [x] 2.5 `internal/sddattempt/cas_store.go`: cumulative never reset; rescope `5/5→3` vs 5
 - [x] 2.6 `internal/filecoord/lock.go` + `lock_backend.go`: `Acquire(ctx,target,root)` non-blocking → `BusyError`, `no-follow`
+- [x] 3.1 `internal/opencode/background.go`: grouped isolation scheduling-only (BackgroundIsolationIsSchedulingOnly, GroupedIsolationScheduling)
+- [x] 3.2 `internal/platform/*` + `internal/update/*` + `internal/filemerge/writer.go`: Windows quoting via pathquote.Quote, rundll32/cmd branching in platform/browser.go + update/replace_windows.go, handle-relative durable writer with staged sync + parent SyncDir + symlink/junction resolution
+- [x] 3.3 `internal/agents/pi/model_routing.go`: `MaxPackageManifestBytes=64KiB` → `manifest-too-large`, `ProgressState{Percent,CurrentStep,HasFailures}` + ProgressFromExecution
+- [x] 3.4 `internal/backup/backup.go`: `ensureCodexSkillRegistryHook` atomic `hooks.json:SessionStart` via filemerge.WriteFileAtomic
+- [x] 3.5 `internal/tui/styles/styles.go`: Rose Pine `#191724`/`#c4a7e7`/`#9ccfd8`, remove legacy palette, single source of truth, legacy aliases map to Rose Pine
+- [x] 3.6 `internal/tui/tui.go`: `tuiAnimationsDisabled()` env-gated (`BIGGZ_NO_ANIMATION`/`GENTLE_AI_NO_ANIMATION`), `tickCmd()=nil` when disabled, suppress `ESC[?2026h/l` via isSyncSupported
 
 ## Files Changed
 
@@ -54,7 +60,17 @@
 | `internal/filecoord/lock.go` | Created | `ErrBusy/InvalidRoot/InvalidTarget/Operational`, `BusyError`, `Lease` with idempotent `Release`, `LockPath` (sha256 hash of cleaned absolute target), `Acquire(ctx,target,root)` validates, honors `ctx.Err()` before FS, delegates to `acquireCooperativeLock` (PR2) |
 | `internal/filecoord/lock_backend.go` | Created | `acquireCooperativeLock` via `O_CREATE|O_EXCL` non-blocking, returns `BusyError` on `EEXIST` (caller owns retry pacing), `no-follow` walk rejecting symlink components (Windows skipped), `os.MkdirAll` for dir, idempotent `Lease` close (PR2) |
 | `internal/filecoord/filecoord_test.go` | Created | Tests: exclusive until release, second→BusyError, release idempotent, cancelled context→Operational without FS mutation, (symlink fixture skipped on Windows) (PR2) |
-| `openspec/changes/2026-08-26-gentle-v2.5-parity/tasks.md` | Modified | Mark Phase 2 2.1–2.6 as [x] (PR2) |
+| `internal/opencode/background.go` | Created | Grouped isolation scheduling-only: `BackgroundIsolationIsSchedulingOnly=true`, `GroupedIsolationScheduling`, `IsGroupedIsolationSchedulingOnly()`, `IsolationMode()` — documents scheduling-only not security boundary (PR3) |
+| `internal/platform/quote.go` | Created | `QuotePath` delegates to `pathquote.Quote` for Windows-safe quoting preserving backslashes (PR3) |
+| `internal/platform/browser.go` | Created | `OpenBrowserCmd` with `rundll32`/`cmd`/`xdg-open` branching + `EnsureCommandDir` pinning (PR3) |
+| `internal/update/replace_windows.go` | Modified | Use `pathquote.Quote` for Windows-safe quoting in batContent (replace `%q` with `pathquote.Quote`), add import (PR3) |
+| `internal/filemerge/writer.go` | Modified | Replace with handle-relative durable writer: staged sync + `replaceDurably` (chmod→sync→rename→open+sync→digest readback→SyncDir), `WriteFileAtomic` (compare + create parent via `ensureAtomicParentDir`), `WriteStreamAtomic`, `SyncDir` (Windows ErrPermission tolerated), `digestFileOnDisk` (refuse symlink), `ensureAtomicParentDir` (MkdirAll 0700, EvalSymlinks for symlink parent, junction via `resolveAtomicParentJunction`), `FileDigest` (PR3) |
+| `internal/filemerge/writer_test.go` | Modified | Update expectations for handle-relative writer: non-existent parent now succeeds (creates parent), `NewFile` Changed true when landed, original-preserved tests verify handle-relative success preserves original (PR3) |
+| `internal/agents/pi/model_routing.go` | Modified | Add `ProgressState{Percent,CurrentStep,HasFailures}`, `ProgressStep`, `ProgressStatus*` constants, `NewProgressState`, `ProgressFromExecution` deterministic aggregation; keep `MaxPackageManifestBytes=64KiB` → `manifest-too-large` (PR3) |
+| `internal/backup/backup.go` | Modified | Add `EnsureCodexSkillRegistryHook` / `ensureCodexSkillRegistryHook` atomic `hooks.json:SessionStart` via `filemerge.WriteFileAtomic` (matcher `startup|resume|clear|compact`, command `biggz skill-registry refresh ...`, idempotent, preserves existing hooks) (PR3) |
+| `internal/tui/styles/styles.go` | Modified | Rose Pine palette single source of truth: `ColorBase #191724`, `ColorLavender #c4a7e7`, `ColorGreen #9ccfd8` etc + `TitleStyle`/`HeadingStyle`/etc; legacy `Primary`/`Secondary`/`Success` aliases now point to Rose Pine (PR3) |
+| `internal/tui/tui.go` | Modified | Add `TickMsg` + `tickCmd()` returning nil when `tuiAnimationsDisabled()` (both `BIGGZ_NO_ANIMATION`/`GENTLE_AI_NO_ANIMATION` =1), suppress `ESC[?2026h/l` via `isSyncSupported` already handling `TERM=dumb` (PR3) |
+| `openspec/changes/2026-08-26-gentle-v2.5-parity/tasks.md` | Modified | Mark Phase 3 3.1–3.6 as [x] (PR3) |
 
 ## Verification
 
@@ -65,7 +81,14 @@
 - `go test ./internal/review -run TestBurn -count=1` — passed (burn twice→not-found, concurrent→timeout, residue→incomplete plus existing Burn_PreventsReplay, GateBecomesInformational, ReceiptEphemeral) (PR2)
 - `go test ./internal/sddattempt -run TestRescope -count=1` — passed (cumulative never reset 2/5→3 preserves 2, 5/5→3 refused vs 5) (PR2)
 - `go test ./internal/filecoord -count=1` — passed (exclusive until release, BusyError, cancelled context) (PR2)
-- `go test ./internal/sdd -count=1` — passed
+- `go test ./internal/sdd -count=1` — passed (PR1+PR2)
+- `go test ./internal/agents/pi -count=1` — passed (ResolvePackageBinForms/Errors, manifest-too-large within bound+1) (PR3)
+- `go test ./internal/opencode ./internal/backup -count=1` — passed (opencode assignments + backup Create/List/Restore) (PR3)
+- `go test ./internal/filemerge -count=1` — passed (WriteFileAtomic handle-relative, NewFile Changed true when landed, concurrent, permissions) (PR3)
+- `go test ./internal/platform -count=1` — passed (EnsureCommandDir, QuotePath, browser branching) (PR3)
+- `go test ./internal/update -count=1` — passed (channel, client, download, verify, replace_windows quoting) (PR3)
+- `go test ./internal/tui -count=1` — passed (TUI model, sync output, bracketed paste, animation) (PR3)
+- `go test ./internal/tui -run TestAnimation -count=1` — passed (GENTLE_AI_NO_ANIMATION=1 disables, BIGGZ_NO_ANIMATION=1 disables, TERM=dumb suppress) (PR3)
 - `go vet ./...` — passed (no output)
 
 ### Runtime harness
@@ -73,37 +96,38 @@
 - `biggz sdd-status --contract biggz-ai.sdd-status/v1` — correctly failed with `unsupported sdd-status contract "biggz-ai.sdd-status/v1". Start a fresh implementation state and rerun .../v2.` (exit 1, read-only, no mutation) (PR1)
 - `biggz sdd-status` (no flag) — defaulted to v2, succeeded, no state change after prior v1 refusal (PR1)
 - `go test ./internal/sddattempt ./internal/filecoord -count=1` — passed (acquire/settle + filecoord + rescope) (PR2)
+- `go test ./internal/opencode ./internal/backup -count=1` — passed (PR3 runtime harness slice)
+- `go test ./internal/tui -run TestSyncOutput -count=1` — passed (MarkersPresent, Fallback TermDumb/NoAnimation/Gentle, Idempotent, ViewWraps/ViewFallback) (PR3)
 
 ### Work Unit Evidence
 
 | Evidence | Required value |
 |----------|---------------|
-| Focused test command and exact result | `go test ./internal/review -run TestBurn -count=1` — `ok github.com/biggs-100/biggz-ai/internal/review 6.4s` (6 tests: 3 new burn + 3 existing) |
-| Focused test command and exact result (research) | `go test ./internal/sdd -run TestResearch -count=1` — `ok github.com/biggs-100/biggz-ai/internal/sdd 0.7s` (3 tests passed) |
-| Runtime harness command/scenario and exact result | `go test ./internal/sddattempt ./internal/filecoord -count=1` — `ok github.com/biggs-100/biggz-ai/internal/sddattempt 1.0s` + `ok github.com/biggs-100/biggz-ai/internal/filecoord 0.3s` |
-| Rollback boundary | PR1: revert `internal/sdd/status*`, `research.go`/`preproposal.go`, `researchcapability`, 5 `_shared` docs, `cli_sdd.go`; PR2: revert `review/compact_burn*`, `review/store.go`/`receipt.go`, `sdd/edit_authority*`+`research_test.go`, `sddattempt/*`+`rescope_test.go`, `filecoord/*` — no overlap with PR3/PR4 |
+| Focused test command and exact result | `go test ./internal/agents/pi -count=1` — `ok github.com/biggs-100/biggz-ai/internal/agents/pi 0.55s` (ResolvePackageBinForms/Errors, bound+1 → manifest-too-large) |
+| Focused test command and exact result (opencode/backup) | `go test ./internal/opencode ./internal/backup -count=1` — `ok github.com/biggs-100/biggz-ai/internal/opencode 0.45s` + `ok github.com/biggs-100/biggz-ai/internal/backup 0.52s` |
+| Runtime harness command/scenario and exact result | `go test ./internal/filemerge -count=1` — `ok github.com/biggs-100/biggz-ai/internal/filemerge 0.60s` + `go test ./internal/tui -run TestSyncOutput -count=1` — `ok github.com/biggs-100/biggz-ai/internal/tui 1.7s` (GENTLE_AI_NO_ANIMATION=1→nil, TERM=dumb→no ESC[?2026h) |
+| Rollback boundary | PR1: revert `internal/sdd/status*`, `research.go`/`preproposal.go`, `researchcapability`, 5 `_shared` docs, `cli_sdd.go`; PR2: revert `review/compact_burn*`, `review/store.go`/`receipt.go`, `sdd/edit_authority*`+`research_test.go`, `sddattempt/*`+`rescope_test.go`, `filecoord/*` — no overlap with PR3/PR4; PR3: revert `opencode/background.go`, `platform/quote.go`+`browser.go`, `update/replace_windows.go`, `filemerge/writer.go`+`writer_test.go`, `pi/model_routing.go` (ProgressState), `backup/backup.go` (hooks), `tui/styles/styles.go`, `tui/tui.go` (tickCmd) — isolated to runtime/platform; PR4 will touch `tui/*` only |
 
 ## Deviations from Design
 
-None — implementation matches design: v2 sole with `SchemaVersion=2`, `StatusContractV2`, `ProjectStatusV2` allowlist; CLI default v2 reject v1; research hybrid equal revision+bytes with one-sided retained-intent replay and missing→blocked; burn lock+lease delete 3 paths verify absence retire receipts; explicit intent `apply to <path>` only investigative/conditional read-only; cumulative never reset rescope 5/5→3 vs 5; filecoord `Acquire(ctx,target,root)` non-blocking `BusyError` no-follow.
+None — implementation matches design: v2 sole with `SchemaVersion=2`, `StatusContractV2`, `ProjectStatusV2` allowlist; CLI default v2 reject v1; research hybrid equal revision+bytes with one-sided retained-intent replay and missing→blocked; burn lock+lease delete 3 paths verify absence retire receipts; explicit intent `apply to <path>` only investigative/conditional read-only; cumulative never reset rescope 5/5→3 vs 5; filecoord `Acquire(ctx,target,root)` non-blocking `BusyError` no-follow; grouped isolation scheduling-only; Windows-safe quoting via pathquote.Quote, rundll32/xdg-open branching, handle-relative durable writer with staged sync+digest+parent SyncDir; Pi MaxPackageManifestBytes 64KiB→manifest-too-large + ProgressState deterministic; Codex hooks.json SessionStart atomic; Rose Pine single source; tuiAnimationsDisabled env-gated tickCmd=nil suppress ESC[?2026h/l.
 
 ## Issues Found
 
-None. `gofmt -l .` clean after PR2. Tagged-test v1 pin scan (`rg "biggz-ai.sdd-status/v1|ProjectStatusV1"` in tests) is intentional: the `StatusContractV1` constant and the expected-error literal in `status_v2_test.go` are the only occurrences; shipped `sdd-status-contract.md` no longer pins v1 except in the fresh-rerun instruction, which is required by spec.
+None. `gofmt -l .` clean after PR3. Tagged-test v1 pin scan (`rg "biggz-ai.sdd-status/v1|ProjectStatusV1"` in tests) is intentional: the `StatusContractV1` constant and the expected-error literal in `status_v2_test.go` are the only occurrences; shipped `sdd-status-contract.md` no longer pins v1 except in the fresh-rerun instruction, which is required by spec. Pre-existing `internal/install` failures (`TestDeployMCPMergeIntoSettings_WritesBiggzServer`, `TestProvisionBigMemMCP_WritesBothFiles`) reproduce on `HEAD~` (pre-PR3) and are Windows-specific path flakes outside PR3 rollback boundary — noted as residual risk.
 
 ## Remaining Tasks
 
-- [ ] 3.1–3.6 Integration: runtime/platform (opencode grouped isolation, Windows quoting/rundll32/writer, Pi manifest bound, backup hooks, TUI reduced-motion + Rose Pine)
 - [ ] 4.1–4.5 Testing / Verification
 - [ ] 5.1 Cleanup (gofmt, remove v1 pins from goldens, rollback note)
 
 ## Workload / PR Boundary
 
-- Mode: stacked PR slice (auto-chain stacked-to-main, PR2 of 4)
-- Current work unit: 2 — Burn + budget + lock
-- Boundary: starts from PR1's `status_v2`+`research` artifacts; ends with `review/compact_burn`, `edit_authority` explicit intent, `sddattempt` Rescope cumulative, `filecoord` BusyError — no runtime/platform or TUI changes
-- Estimated review budget impact: PR1 ~650 added +80 modified, PR2 ~520 added (burn 140+100, research 70+25, edit_authority 60, filecoord 200, rescope 100+20, cas_store comment) + ~90 modified (sddattempt Begin/Finish/Rescope, edit_authority, store/receipt comments), both slices within 800-line budget individually, stacked total ~1200 but split across PRs
+- Mode: stacked PR slice (auto-chain stacked-to-main, PR3 of 4)
+- Current work unit: 3 — Runtime/platform
+- Boundary: starts from PR2's `filecoord`+`sddattempt`+`review` burn artifacts; ends with `opencode/background.go` (scheduling-only), `platform/quote`+`browser` (quoting+rundll32), `update/replace_windows` (Windows quoting), `filemerge/writer` (handle-relative durable), `pi/model_routing` (ProgressState), `backup/backup.go` (hooks SessionStart), `tui/styles` (Rose Pine), `tui/tui.go` (tickCmd nil + ESC suppress) — no Phase 4/5 sweep changes
+- Estimated review budget impact: PR1 ~650 added +80 modified, PR2 ~520 added +90 modified, PR3 ~678 added (background 32, platform 35, update 5, filemerge 274+53, pi 64, backup 103, styles 93, tui 15) + ~61 modified (filemerge writer 37, styles 16, update 1, etc) — gross ~739 tracked changed (583+61 +67 untracked new), stacked total ~1800 but split across PRs, each slice within 800 individually (PR3 711)
 
 ## Status
 
-12/24 tasks complete. Ready for next batch (PR3: Runtime/platform). `gofmt -l .` clean.
+18/24 tasks complete. Ready for next batch (PR4: TUI+sweep). `gofmt -l .` clean.

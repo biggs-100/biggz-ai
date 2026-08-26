@@ -2,16 +2,91 @@ package styles
 
 import "github.com/charmbracelet/lipgloss"
 
+// Rose Pine palette — single source of truth (Gentleman-Cute refresh).
 var (
-	// Colors
-	Primary   = lipgloss.Color("#7C3AED") // violet
-	Secondary = lipgloss.Color("#06B6D4") // cyan
-	Success   = lipgloss.Color("#10B981") // emerald
-	Warning   = lipgloss.Color("#F59E0B") // amber
-	Error     = lipgloss.Color("#EF4444") // red
-	Muted     = lipgloss.Color("#6B7280") // gray
-	Text      = lipgloss.Color("#F3F4F6") // light gray
-	Bg        = lipgloss.Color("#1F2937") // dark bg
+	ColorBase     = lipgloss.Color("#191724")
+	ColorSurface  = lipgloss.Color("#1f1d2e")
+	ColorOverlay  = lipgloss.Color("#6e6a86")
+	ColorText     = lipgloss.Color("#e0def4")
+	ColorSubtext  = lipgloss.Color("#908caa")
+	ColorLavender = lipgloss.Color("#c4a7e7")
+	ColorGreen    = lipgloss.Color("#9ccfd8")
+	ColorPeach    = lipgloss.Color("#f6c177")
+	ColorRed      = lipgloss.Color("#eb6f92")
+	ColorBlue     = lipgloss.Color("#31748f")
+	ColorMauve    = lipgloss.Color("#ebbcba")
+	ColorYellow   = lipgloss.Color("#f1ca93")
+	ColorTeal     = lipgloss.Color("#9ccfd8")
+)
+
+const Cursor = "▸ "
+
+func Tagline(version string) string {
+	return "Gentle-AI " + version + " — Ecosystem, Frameworks, Workflows"
+}
+
+var (
+	TitleStyle = lipgloss.NewStyle().
+			Foreground(ColorLavender).
+			Bold(true)
+
+	HeadingStyle = lipgloss.NewStyle().
+			Foreground(ColorMauve).
+			Bold(true)
+
+	HelpStyle = lipgloss.NewStyle().
+			Foreground(ColorSubtext)
+
+	SubtextStyle = lipgloss.NewStyle().
+			Foreground(ColorSubtext)
+
+	SelectedStyle = lipgloss.NewStyle().
+			Foreground(ColorLavender).
+			Bold(true)
+
+	UnselectedStyle = lipgloss.NewStyle().
+			Foreground(ColorText)
+
+	SuccessStyle = lipgloss.NewStyle().
+			Foreground(ColorGreen)
+
+	ErrorStyle = lipgloss.NewStyle().
+			Foreground(ColorRed)
+
+	WarningStyle = lipgloss.NewStyle().
+			Foreground(ColorYellow)
+
+	FrameStyle = lipgloss.NewStyle().
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(ColorLavender).
+			Padding(1, 2)
+
+	PanelStyle = lipgloss.NewStyle().
+			Border(lipgloss.NormalBorder()).
+			BorderForeground(ColorOverlay).
+			Padding(0, 1)
+
+	ProgressFilled = lipgloss.NewStyle().
+			Foreground(ColorGreen)
+
+	ProgressEmpty = lipgloss.NewStyle().
+			Foreground(ColorOverlay)
+
+	PercentStyle = lipgloss.NewStyle().
+			Foreground(ColorPeach).
+			Bold(true)
+)
+
+var (
+	// Legacy aliases — now map to Rose Pine (single source of truth).
+	Primary   = ColorLavender
+	Secondary = ColorGreen
+	Success   = ColorGreen
+	Warning   = ColorYellow
+	Error     = ColorRed
+	Muted     = ColorSubtext
+	Text      = ColorText
+	Bg        = ColorBase
 
 	// Title style
 	Title = lipgloss.NewStyle().

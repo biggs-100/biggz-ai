@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/tui/screens"
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
@@ -65,8 +66,22 @@ const noAnimationEnv = "BIGGZ_NO_ANIMATION"
 // tuiAnimationsDisabled reports whether spinner animation is disabled.
 // BIGGZ_NO_ANIMATION=1 disables animation; GENTLE_AI_NO_ANIMATION=1 is kept
 // for compatibility with gentle-ai (port b3dfc1ef).
+// When disabled, tickCmd returns nil and synchronized output (ESC[?2026h/l)
+// is suppressed so TERM=dumb terminals are not garbled.
 func tuiAnimationsDisabled() bool {
 	return os.Getenv(noAnimationEnv) == "1" || os.Getenv("GENTLE_AI_NO_ANIMATION") == "1"
+}
+
+// TickMsg drives spinner animation.
+type TickMsg time.Time
+
+func tickCmd() tea.Cmd {
+	if tuiAnimationsDisabled() {
+		return nil
+	}
+	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
+		return TickMsg(t)
+	})
 }
 
 // Screen IDs
