@@ -12,11 +12,53 @@ package tui
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/tui/screens"
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+const (
+	syncBegin           = "\x1b[?2026h"
+	syncEnd             = "\x1b[?2026l"
+	bracketedPasteStart = "\x1b[200~"
+	bracketedPasteEnd   = "\x1b[201~"
+)
+
+// PasteMsg is emitted when a bracketed paste sequence is received.
+// Content between ESC[200~ and ESC[201~ is buffered into a single event
+// so large pastes (>10 lines) do not arrive as individual keystrokes.
+type PasteMsg struct {
+	Text string
+}
+
+// isSyncSupported reports whether synchronized output (CSI 2026) should be
+// enabled. It is gated on TERM support and animation envs.
+func isSyncSupported() bool {
+	if tuiAnimationsDisabled() {
+		return false
+	}
+	term := os.Getenv("TERM")
+	if term == "" || term == "dumb" {
+		return false
+	}
+	return true
+}
+
+// syncOutput wraps frame with CSI 2026 markers when supported.
+// When the terminal does not support sync or animation is disabled,
+// the frame is returned unchanged without garbling.
+func syncOutput(frame string) string {
+	if !isSyncSupported() {
+		return frame
+	}
+	// Idempotent: avoid double-wrapping if frame already synced (opt-in screens).
+	if strings.HasPrefix(frame, syncBegin) && strings.HasSuffix(frame, syncEnd) {
+		return frame
+	}
+	return syncBegin + frame + syncEnd
+}
 
 const noAnimationEnv = "BIGGZ_NO_ANIMATION"
 
@@ -57,6 +99,8 @@ const (
 type Model struct {
 	currentScreen int
 	showHelp      bool
+	pasteActive   bool
+	pasteBuf      string
 	dashboard     screens.DashboardModel
 	welcome       screens.WelcomeModel
 	install       screens.InstallModel
@@ -113,8 +157,118 @@ func (m Model) Init() tea.Cmd {
 	return m.dashboard.Init()
 }
 
+// feedPaste processes a raw chunk that may contain bracketed paste markers.
+// It buffers incomplete sequences and returns a PasteMsg when a complete
+// paste is assembled. Large pastes (>10 lines) arrive as a single event.
+func (m *Model) feedPaste(chunk string) *PasteMsg {
+	if !m.pasteActive {
+		startIdx := strings.Index(chunk, bracketedPasteStart)
+		if startIdx == -1 {
+			return nil
+		}
+		afterStart := chunk[startIdx+len(bracketedPasteStart):]
+		endIdx := strings.Index(afterStart, bracketedPasteEnd)
+		if endIdx != -1 {
+			text := afterStart[:endIdx]
+			return &PasteMsg{Text: text}
+		}
+		m.pasteActive = true
+		m.pasteBuf = afterStart
+		return nil
+	}
+	endIdx := strings.Index(chunk, bracketedPasteEnd)
+	if endIdx != -1 {
+		beforeEnd := chunk[:endIdx]
+		m.pasteBuf += beforeEnd
+		text := m.pasteBuf
+		m.pasteActive = false
+		m.pasteBuf = ""
+		return &PasteMsg{Text: text}
+	}
+	m.pasteBuf += chunk
+	return nil
+}
+
+// flushPaste emits buffered incomplete paste content as a PasteMsg and resets
+// state. Called on timeout or next non-paste input.
+func (m *Model) flushPaste() *PasteMsg {
+	if !m.pasteActive {
+		return nil
+	}
+	text := m.pasteBuf
+	m.pasteActive = false
+	m.pasteBuf = ""
+	if text == "" {
+		return nil
+	}
+	return &PasteMsg{Text: text}
+}
+
 // Update handles messages and user input.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Bracketed paste: raw string chunks containing ESC[200~/ESC[201~ are
+	// buffered into a single PasteMsg. This handles fixture sequences and
+	// direct string inputs used in tests without touching bubbletea internals.
+	switch v := msg.(type) {
+	case string:
+		if m.pasteActive {
+			if strings.Contains(v, bracketedPasteEnd) {
+				if pm := m.feedPaste(v); pm != nil {
+					return m, func() tea.Msg { return *pm }
+				}
+				return m, nil
+			}
+			// No end: incomplete sequence -> flush on next non-paste input.
+			if pm := m.flushPaste(); pm != nil {
+				if strings.Contains(v, bracketedPasteStart) {
+					if pm2 := m.feedPaste(v); pm2 != nil {
+						return m, func() tea.Msg { return *pm2 }
+					}
+					// Started new incomplete, keep buffered; still return flushed previous.
+				}
+				return m, func() tea.Msg { return *pm }
+			}
+			if strings.Contains(v, bracketedPasteStart) {
+				if pm := m.feedPaste(v); pm != nil {
+					return m, func() tea.Msg { return *pm }
+				}
+				return m, nil
+			}
+			return m, nil
+		}
+		if strings.Contains(v, bracketedPasteStart) {
+			if pm := m.feedPaste(v); pm != nil {
+				return m, func() tea.Msg { return *pm }
+			}
+			return m, nil
+		}
+		return m, nil
+	case PasteMsg:
+		// Paste content is inserted as text, not interpreted as keys.
+		// Route to current screen if it handles PasteMsg, otherwise swallow.
+		// Ensure paste does not trigger quit/navigation.
+		switch m.currentScreen {
+		case screenDashboard:
+			u, cmd := m.dashboard.Update(v)
+			m.dashboard = u.(screens.DashboardModel)
+			return m, cmd
+		case screenWelcome:
+			u, cmd := m.welcome.Update(v)
+			m.welcome = u.(screens.WelcomeModel)
+			return m, cmd
+		case screenInstall:
+			u, cmd := m.install.Update(v)
+			m.install = u.(screens.InstallModel)
+			return m, cmd
+		case screenConfig:
+			u, cmd := m.config.Update(v)
+			m.config = u.(screens.ConfigModel)
+			return m, cmd
+		default:
+			return m, nil
+		}
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -263,57 +417,62 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View renders the current screen or help overlay.
 func (m Model) View() string {
+	var frame string
 	if m.err != nil {
-		return styles.ErrorBox.Render(fmt.Sprintf("Error: %v\n\nPress esc to quit.", m.err))
+		frame = styles.ErrorBox.Render(fmt.Sprintf("Error: %v\n\nPress esc to quit.", m.err))
+		return syncOutput(frame)
 	}
 
 	if m.showHelp {
-		return screens.HelpOverlay(m.currentScreen)
+		frame = screens.HelpOverlay(m.currentScreen)
+		return syncOutput(frame)
 	}
 
 	switch m.currentScreen {
 	case screenDashboard:
-		return m.dashboard.View()
+		frame = m.dashboard.View()
 	case screenWelcome:
-		return m.welcome.View()
+		frame = m.welcome.View()
 	case screenInstall:
-		return m.install.View()
+		frame = m.install.View()
 	case screenConfig:
-		return m.config.View()
+		frame = m.config.View()
 	case screenStatus:
-		return m.status.View()
+		frame = m.status.View()
 	case screenMemory, screenMemSearch:
-		return m.memory.View()
+		frame = m.memory.View()
 	case screenBackup:
-		return m.backup.View()
+		frame = m.backup.View()
 	case screenProfile:
-		return m.profile.View()
+		frame = m.profile.View()
 	case screenUpgrade:
-		return m.upgrade.View()
+		frame = m.upgrade.View()
 	case screenUninstall:
-		return m.uninstall.View()
+		frame = m.uninstall.View()
 	case screenStrictTDD:
-		return m.strictTDD.View()
+		frame = m.strictTDD.View()
 	case screenReview:
-		return m.reviewScr.View()
+		frame = m.reviewScr.View()
 	case screenRecovery:
-		return m.recovery.View()
+		frame = m.recovery.View()
 	case screenModelPickers:
-		return m.modelPicker.View()
+		frame = m.modelPicker.View()
 	case screenAgentBuilder:
-		return m.agentBuilder.View()
+		frame = m.agentBuilder.View()
 	case screenCommunity:
-		return m.community.View()
+		frame = m.community.View()
 	case screenSessions:
-		return m.sessions.View()
+		frame = m.sessions.View()
 	case screenSync:
-		return m.syncScr.View()
+		frame = m.syncScr.View()
 	case screenUpdatePrompt:
-		return m.updatePrompt.View()
+		frame = m.updatePrompt.View()
 	case screenPluginUninstall:
-		return m.pluginUninstall.View()
+		frame = m.pluginUninstall.View()
+	default:
+		frame = ""
 	}
-	return ""
+	return syncOutput(frame)
 }
 
 // Run starts the TUI.
