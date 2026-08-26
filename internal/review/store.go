@@ -34,9 +34,11 @@ import (
 
 const recordSchemaVersion = "biggz-ai.review-record/v1"
 
-// Burn semantics: ephemeral receipt — after successful finalize the receipt
-// is burned (deleted) and a burn_review event marks the lineage burned.
-// Burns prevent replay; gates become informational (non-deciding).
+// Burn semantics: last-event closure — every terminal capture burns the
+// exact active lineage under lock+lease, deletes 3 owned paths
+// (authority + effect-markers/v1 + incidents), verifies absence, and
+// retires delivery without receipt/tombstone/mirror. Reuse→not-found.
+// Compact receipts retired; no compact receipt file is created or consumed.
 const (
 	BurnOperation        = "burn_review"
 	BurnEventSchema      = "biggz-ai.review-burn-event/v1"

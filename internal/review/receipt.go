@@ -9,6 +9,10 @@ import (
 	"github.com/biggs-100/biggz-ai/model"
 )
 
+// Compact receipts retired (v2.5 last-event closure): no compact receipt
+// file is persisted or consumed. Chain-bound Receipt below is for the
+// non-compact event-store only; compact delivery is burn-based without
+// receipt, tombstone, or mirror.
 // ---------------------------------------------------------------------------
 // Chain-bound Receipt (PR 2)
 // ---------------------------------------------------------------------------
