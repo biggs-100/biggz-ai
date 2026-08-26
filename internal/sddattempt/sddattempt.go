@@ -51,9 +51,9 @@ type RuntimeStore struct {
 	ChangeName string `json:"change_name"`
 
 	// Current attempt tracking
-	ActiveAttempt    int  `json:"active_attempt,omitempty"`
-	DecisionRequired bool `json:"decision_required,omitempty"`
-	Complete         bool `json:"complete,omitempty"`
+	ActiveAttempt    int    `json:"active_attempt,omitempty"`
+	DecisionRequired bool   `json:"decision_required,omitempty"`
+	Complete         bool   `json:"complete,omitempty"`
 	NextAction       string `json:"next_action,omitempty"` // "begin", "continue", "finish", "complete", ""
 
 	// Objective scope
@@ -170,9 +170,9 @@ const (
 // Blocked reasons for the compact acquire/settle admission probe.
 // They mirror gentle-ai's CompactBlockReason values used by RuntimeStatus.
 const (
-	BlockedReasonBudgetExhausted = "budget_exhausted"
-	BlockedReasonCorruptAuthority = "corrupt_authority"
-	BlockedReasonActiveAttempt   = "active_attempt"
+	BlockedReasonBudgetExhausted     = "budget_exhausted"
+	BlockedReasonCorruptAuthority    = "corrupt_authority"
+	BlockedReasonActiveAttempt       = "active_attempt"
 	BlockedReasonInvalidContinuation = "invalid_continuation"
 )
 
@@ -535,14 +535,14 @@ func Begin(params BeginParams) (*BeginResult, error) {
 		// (the record's content address is its revision).
 		if loaded == nil {
 			store := &RuntimeStore{
-				ChangeName:   params.ChangeName,
-				ObjectiveID:  params.ObjectiveID,
-				MaxAttempts:  params.MaxAttempts,
-				MaxLines:     params.MaxLines,
-				WorkUnit:     params.WorkUnit,
-				EvidenceGoal: params.EvidenceGoal,
-				CreatedAt:    time.Now().UTC().Format(time.RFC3339),
-				UpdatedAt:    time.Now().UTC().Format(time.RFC3339),
+				ChangeName:    params.ChangeName,
+				ObjectiveID:   params.ObjectiveID,
+				MaxAttempts:   params.MaxAttempts,
+				MaxLines:      params.MaxLines,
+				WorkUnit:      params.WorkUnit,
+				EvidenceGoal:  params.EvidenceGoal,
+				CreatedAt:     time.Now().UTC().Format(time.RFC3339),
+				UpdatedAt:     time.Now().UTC().Format(time.RFC3339),
 				ActiveAttempt: 1,
 				NextAction:    "begin",
 				Attempts: []RuntimeAttempt{{
@@ -601,8 +601,14 @@ func Begin(params BeginParams) (*BeginResult, error) {
 			}
 		}
 
-		// Start new attempt
+		// Start new attempt: derive ordinal from history when no active attempt (cumulative never reset).
 		nextOrdinal := store.ActiveAttempt + 1
+		if store.ActiveAttempt == 0 {
+			nextOrdinal = len(store.Attempts) + 1
+			if nextOrdinal == 1 && len(store.Attempts) > 0 {
+				nextOrdinal = store.Attempts[len(store.Attempts)-1].Ordinal + 1
+			}
+		}
 		if nextOrdinal > store.MaxAttempts && store.MaxAttempts > 0 {
 			store.DecisionRequired = true
 			store.NextAction = "decision-required"
@@ -770,6 +776,7 @@ func Finish(params FinishParams) (*FinishResult, error) {
 			store.ActiveAttempt = 0
 		} else {
 			// Failed or interrupted — check if more attempts allowed
+			store.ActiveAttempt = 0
 			if len(store.Attempts) >= store.MaxAttempts && store.MaxAttempts > 0 {
 				store.DecisionRequired = true
 				store.NextAction = "decision-required"
@@ -1136,9 +1143,9 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 				ActiveAttempt: ordinal,
 				NextAction:    "continue",
 				Attempts: []RuntimeAttempt{{
-					Ordinal: ordinal,
+					Ordinal:  ordinal,
 					WorkUnit: params.WorkUnit,
-					BeganAt: time.Now().UTC().Format(time.RFC3339),
+					BeganAt:  time.Now().UTC().Format(time.RFC3339),
 				}},
 				Tokens: map[string]int{token: ordinal},
 			}
@@ -1191,8 +1198,8 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 				for tok, ord := range store.Tokens {
 					if ord == store.ActiveAttempt {
 						return &BlockedError{
-							Reason: BlockedReasonActiveAttempt,
-							Exit:   fmt.Sprintf("a distinct attempt token %s is already active; settle it before acquiring (presented token %s does not match)", tok, params.Token),
+							Reason:           BlockedReasonActiveAttempt,
+							Exit:             fmt.Sprintf("a distinct attempt token %s is already active; settle it before acquiring (presented token %s does not match)", tok, params.Token),
 							SettleObligation: deriveSettleObligation(store),
 						}
 					}
@@ -1230,8 +1237,8 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 			}
 			if !chainHasFailed || chainEvidence != params.RemediatesEvidenceRevision {
 				return &BlockedError{
-					Reason: BlockedReasonInvalidContinuation,
-					Exit:   fmt.Sprintf("this acquire declares a correction for failed evidence %s but the chain's unremediated failure is %q", params.RemediatesEvidenceRevision, chainEvidence),
+					Reason:           BlockedReasonInvalidContinuation,
+					Exit:             fmt.Sprintf("this acquire declares a correction for failed evidence %s but the chain's unremediated failure is %q", params.RemediatesEvidenceRevision, chainEvidence),
 					SettleObligation: deriveSettleObligation(store),
 				}
 			}
@@ -1264,8 +1271,8 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 				return fmt.Errorf("save store: %w", err)
 			}
 			return &BlockedError{
-				Reason: BlockedReasonBudgetExhausted,
-				Exit:   "max attempts reached, decision required",
+				Reason:           BlockedReasonBudgetExhausted,
+				Exit:             "max attempts reached, decision required",
 				SettleObligation: deriveSettleObligation(store),
 			}
 		}
@@ -1282,15 +1289,15 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 		// runtimeObjectiveScopeChanged check).
 		if store.WorkUnit != "" && params.WorkUnit != "" && store.WorkUnit != params.WorkUnit {
 			return &BlockedError{
-				Reason: BlockedReasonInvalidContinuation,
-				Exit:   fmt.Sprintf("work unit scope changed without reset: have %q, acquire wants %q", store.WorkUnit, params.WorkUnit),
+				Reason:           BlockedReasonInvalidContinuation,
+				Exit:             fmt.Sprintf("work unit scope changed without reset: have %q, acquire wants %q", store.WorkUnit, params.WorkUnit),
 				SettleObligation: deriveSettleObligation(store),
 			}
 		}
 		if store.EvidenceGoal != "" && params.EvidenceGoal != "" && store.EvidenceGoal != params.EvidenceGoal {
 			return &BlockedError{
-				Reason: BlockedReasonInvalidContinuation,
-				Exit:   fmt.Sprintf("evidence goal changed without reset: have %q, acquire wants %q", store.EvidenceGoal, params.EvidenceGoal),
+				Reason:           BlockedReasonInvalidContinuation,
+				Exit:             fmt.Sprintf("evidence goal changed without reset: have %q, acquire wants %q", store.EvidenceGoal, params.EvidenceGoal),
 				SettleObligation: deriveSettleObligation(store),
 			}
 		}
@@ -1319,7 +1326,7 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 		store.Attempts = append(store.Attempts, RuntimeAttempt{
 			Ordinal:  ordinal,
 			WorkUnit: params.WorkUnit,
-			BeganAt: time.Now().UTC().Format(time.RFC3339),
+			BeganAt:  time.Now().UTC().Format(time.RFC3339),
 		})
 		outcome := &AcquireResult{Token: token, SettleObligation: deriveSettleObligation(store), Scope: s.Scope}
 		recordRequest(store, params.RequestID, opAcquire, digest, outcome)
@@ -1421,8 +1428,8 @@ func Settle(params SettleParams) (*SettleResult, error) {
 				ok = true
 			} else {
 				return &BlockedError{
-					Reason: BlockedReasonInvalidContinuation,
-					Exit:   fmt.Sprintf("token %q does not continue the attempt currently on record; run sdd-attempt status to see the live token", params.Token),
+					Reason:           BlockedReasonInvalidContinuation,
+					Exit:             fmt.Sprintf("token %q does not continue the attempt currently on record; run sdd-attempt status to see the live token", params.Token),
 					SettleObligation: deriveSettleObligation(store),
 				}
 			}
@@ -1431,8 +1438,8 @@ func Settle(params SettleParams) (*SettleResult, error) {
 		// The ordinal must be the active attempt and still running.
 		if store.ActiveAttempt != ordinal {
 			return &BlockedError{
-				Reason: BlockedReasonInvalidContinuation,
-				Exit:   fmt.Sprintf("token %q maps to attempt %d but active attempt is %d", params.Token, ordinal, store.ActiveAttempt),
+				Reason:           BlockedReasonInvalidContinuation,
+				Exit:             fmt.Sprintf("token %q maps to attempt %d but active attempt is %d", params.Token, ordinal, store.ActiveAttempt),
 				SettleObligation: deriveSettleObligation(store),
 			}
 		}
@@ -1442,8 +1449,8 @@ func Settle(params SettleParams) (*SettleResult, error) {
 			if store.Attempts[i].Ordinal == ordinal {
 				if store.Attempts[i].Outcome != "" {
 					return &BlockedError{
-						Reason: BlockedReasonInvalidContinuation,
-						Exit:   fmt.Sprintf("attempt %d is already finished with outcome %q", ordinal, store.Attempts[i].Outcome),
+						Reason:           BlockedReasonInvalidContinuation,
+						Exit:             fmt.Sprintf("attempt %d is already finished with outcome %q", ordinal, store.Attempts[i].Outcome),
 						SettleObligation: deriveSettleObligation(store),
 					}
 				}
@@ -1454,8 +1461,8 @@ func Settle(params SettleParams) (*SettleResult, error) {
 		}
 		if !found {
 			return &BlockedError{
-				Reason: BlockedReasonInvalidContinuation,
-				Exit:   fmt.Sprintf("no active attempt %d found for token %q", ordinal, params.Token),
+				Reason:           BlockedReasonInvalidContinuation,
+				Exit:             fmt.Sprintf("no active attempt %d found for token %q", ordinal, params.Token),
 				SettleObligation: deriveSettleObligation(store),
 			}
 		}
@@ -1470,23 +1477,23 @@ func Settle(params SettleParams) (*SettleResult, error) {
 		if params.RemediatesEvidenceRevision != "" {
 			if !chainHasFailedEvidence {
 				return &BlockedError{
-					Reason: BlockedReasonInvalidContinuation,
-					Exit:   fmt.Sprintf("this correction names failed verification %s, but the attempt chain records no failed verification", params.RemediatesEvidenceRevision),
+					Reason:           BlockedReasonInvalidContinuation,
+					Exit:             fmt.Sprintf("this correction names failed verification %s, but the attempt chain records no failed verification", params.RemediatesEvidenceRevision),
 					SettleObligation: deriveSettleObligation(store),
 				}
 			}
 			if chainFailedEvidence != params.RemediatesEvidenceRevision {
 				return &BlockedError{
-					Reason: BlockedReasonInvalidContinuation,
-					Exit:   fmt.Sprintf("this correction names failed verification %s, but the chain's unremediated failure is %s", params.RemediatesEvidenceRevision, chainFailedEvidence),
+					Reason:           BlockedReasonInvalidContinuation,
+					Exit:             fmt.Sprintf("this correction names failed verification %s, but the chain's unremediated failure is %s", params.RemediatesEvidenceRevision, chainFailedEvidence),
 					SettleObligation: deriveSettleObligation(store),
 				}
 			}
 		}
 		if params.Outcome == "passed" && chainHasFailedEvidence && params.RemediatesEvidenceRevision == "" {
 			return &BlockedError{
-				Reason: BlockedReasonInvalidContinuation,
-				Exit:   fmt.Sprintf("passing correction for failed verification %q requires --remediates-evidence-revision", chainFailedEvidence),
+				Reason:           BlockedReasonInvalidContinuation,
+				Exit:             fmt.Sprintf("passing correction for failed verification %q requires --remediates-evidence-revision", chainFailedEvidence),
 				SettleObligation: deriveSettleObligation(store),
 			}
 		}
@@ -1875,6 +1882,130 @@ func LedgerExists(changeName, repoRoot string) bool {
 		return true
 	}
 	return false
+}
+
+// ─── Rescope (cumulative-preserving narrow) ─────────────────────────────────
+
+var (
+	ErrRuntimeRescopeWidened    = errors.New("rescope widened budget")
+	ErrRuntimeRescopeNotAllowed = errors.New("rescope not allowed")
+)
+
+type RescopeParams struct {
+	ChangeName   string
+	RepoRoot     string
+	ExpectedRev  string
+	RequestID    string
+	WorkUnit     string
+	EvidenceGoal string
+	MaxAttempts  int
+	MaxLines     int
+	Reason       string
+	Actor        string
+}
+
+const requestDigestDomainRescope = "biggz-ai.sdd-runtime-rescope-request/v1"
+const opRescope = "rescope"
+
+func Rescope(params RescopeParams) (*ResetResult, error) {
+	if params.RequestID != "" && !requestIDPattern.MatchString(params.RequestID) {
+		return nil, errors.New("request_id must be a canonical lowercase identifier")
+	}
+	if err := validateBoundedText(params.Reason, 500); err != nil {
+		return nil, fmt.Errorf("invalid rescope reason: %w", err)
+	}
+	if err := validateBoundedText(params.Actor, 128); err != nil {
+		return nil, fmt.Errorf("invalid rescope actor: %w", err)
+	}
+	digest := requestDigest(requestDigestDomainRescope, params)
+	s, err := resolveStore(params.ChangeName, params.RepoRoot)
+	if err != nil {
+		return nil, err
+	}
+	var result *ResetResult
+	var migrated bool
+	err = s.withStoreLock(func() error {
+		loaded, mig, err := s.replay()
+		if err != nil {
+			return err
+		}
+		migrated = mig
+		if loaded == nil {
+			return fmt.Errorf("no runtime ledger for this change — has sdd-attempt been run?")
+		}
+		store := loaded
+		if params.RequestID != "" && store.Requests != nil {
+			if rec, exists := store.Requests[params.RequestID]; exists {
+				if rec.Operation != opRescope || rec.Digest != digest {
+					return fmt.Errorf("request_id %q was reused with different inputs", params.RequestID)
+				}
+				var replayed ResetResult
+				if err := json.Unmarshal(rec.Outcome, &replayed); err != nil {
+					return fmt.Errorf("replay request %q: %w", params.RequestID, err)
+				}
+				result = &replayed
+				return nil
+			}
+		}
+		if params.ExpectedRev != "" && store.Revision != params.ExpectedRev {
+			return fmt.Errorf("CAS conflict: expected revision %s, got %s", params.ExpectedRev, store.Revision)
+		}
+		if store.ActiveAttempt != 0 {
+			return fmt.Errorf("%w: rescope requires no active attempt", ErrRuntimeRescopeNotAllowed)
+		}
+		if len(store.Attempts) == 0 {
+			return fmt.Errorf("%w: rescope requires prior terminal attempt", ErrRuntimeRescopeNotAllowed)
+		}
+		last := store.Attempts[len(store.Attempts)-1]
+		if last.Outcome == "" {
+			return fmt.Errorf("%w: last attempt not finished", ErrRuntimeRescopeNotAllowed)
+		}
+		oldMaxAttempts := store.MaxAttempts
+		oldMaxLines := store.MaxLines
+		newMaxAttempts := params.MaxAttempts
+		if newMaxAttempts == 0 {
+			newMaxAttempts = oldMaxAttempts
+		}
+		newMaxLines := params.MaxLines
+		if newMaxLines == 0 {
+			newMaxLines = oldMaxLines
+		}
+		if newMaxAttempts > oldMaxAttempts || newMaxLines > oldMaxLines {
+			return fmt.Errorf("%w: rescope must narrow, got %d->%d attempts %d->%d lines", ErrRuntimeRescopeWidened, oldMaxAttempts, newMaxAttempts, oldMaxLines, newMaxLines)
+		}
+		if newMaxAttempts < oldMaxAttempts && newMaxAttempts < len(store.Attempts) {
+			return fmt.Errorf("%w: cumulative %d attempts already exceeds new ceiling %d", ErrRuntimeRescopeWidened, len(store.Attempts), newMaxAttempts)
+		}
+		// Cumulative never reset — preserve attempts slice
+		store.MaxAttempts = newMaxAttempts
+		store.MaxLines = newMaxLines
+		if params.WorkUnit != "" {
+			store.WorkUnit = params.WorkUnit
+		}
+		if params.EvidenceGoal != "" {
+			store.EvidenceGoal = params.EvidenceGoal
+		}
+		store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+		store.NextAction = "begin"
+		store.DecisionRequired = false
+		store.Complete = false
+		out := &ResetResult{AttemptsReset: 0, Scope: s.Scope}
+		recordRequest(store, params.RequestID, opRescope, digest, out)
+		if params.RequestID != "" {
+			setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
+		}
+		if err := s.commit(store); err != nil {
+			return fmt.Errorf("save store: %w", err)
+		}
+		result = &ResetResult{Revision: store.Revision, Scope: s.Scope}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	result.Migrated = migrated
+	result.Scope = s.Scope
+	return result, nil
 }
 
 // ─── CLI helpers ─────────────────────────────────────────────────────────────

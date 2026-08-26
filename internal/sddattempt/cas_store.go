@@ -1,4 +1,6 @@
 // Two-level CAS runtime ledger store (Phase C2 review-workflow parity).
+// Cumulative attempts/lines are never reset on rescope: 5/5->3 is measured
+// against 5 already consumed, not a fresh 0 (v2.5 parity, see Rescope).
 //
 // The SDD attempt ledger lives in the git common directory, mirroring
 // gentle-ai's clone-scoped sdd-runtime ledger

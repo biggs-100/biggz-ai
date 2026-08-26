@@ -28,6 +28,9 @@ var backtickedSpan = regexp.MustCompile("`([^`]+)`")
 // for edit-authority detection.
 var taskCheckbox = regexp.MustCompile(`^\s*(?:[-*]|\d+[.)])\s+\[([ xX])\]`)
 
+var investigativePhrases = []string{"investigate", "explore", "check", "look into"}
+var conditionalPhrases = []string{"if possible", "maybe", "consider", "when ready"}
+
 // detectUnauthorizedEditRoots scans tasks text for path-like tokens in
 // checkbox lines, resolves each against workspaceRoot to its nearest
 // existing ancestor, and reports every resolved Git root that is neither the
@@ -38,7 +41,11 @@ func detectUnauthorizedEditRoots(tasksText string, workspaceRoot string, allowed
 	planningGitRoot := gitRootOf(resolveExistingPath(workspaceRoot))
 	allowed := make([]string, 0, len(allowedEditRoots))
 	for _, root := range allowedEditRoots {
-		allowed = append(allowed, resolveExistingPath(root))
+		root = filepath.Clean(root)
+		if resolved, err := filepath.EvalSymlinks(root); err == nil {
+			root = resolved
+		}
+		allowed = append(allowed, root)
 	}
 
 	unauthorized := map[string]bool{}
@@ -53,10 +60,17 @@ func detectUnauthorizedEditRoots(tasksText string, workspaceRoot string, allowed
 			}
 			resolved = resolveExistingPath(filepath.Clean(resolved))
 			target := gitRootOf(resolved)
-			if target == "" || target == planningGitRoot || withinAnyRoot(target, allowed) {
+			if target == "" {
 				continue
 			}
-			unauthorized[target] = true
+			missing := target
+			if target == planningGitRoot {
+				missing = sameRepositoryEditRoot(resolved)
+			}
+			if withinAnyRoot(missing, allowed) {
+				continue
+			}
+			unauthorized[missing] = true
 		}
 	}
 
@@ -66,6 +80,45 @@ func detectUnauthorizedEditRoots(tasksText string, workspaceRoot string, allowed
 	}
 	sort.Strings(roots)
 	return roots
+}
+
+func sameRepositoryEditRoot(path string) string {
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		return filepath.Dir(path)
+	}
+	return path
+}
+
+// HasExplicitEditIntent reports whether prompt carries explicit permission
+// to edit. Only a phrase containing "apply ... to <path>" counts as explicit.
+// Investigative phrases (investigate, explore, check, look into) and
+// conditional phrases (if possible, maybe, consider, when ready) never
+// grant permission and force read-only exploration.
+func HasExplicitEditIntent(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	for _, phrase := range investigativePhrases {
+		if strings.Contains(lower, phrase) {
+			return false
+		}
+	}
+	for _, phrase := range conditionalPhrases {
+		if strings.Contains(lower, phrase) {
+			return false
+		}
+	}
+	if !strings.Contains(lower, "apply") {
+		return false
+	}
+	idx := strings.Index(lower, "apply")
+	remainder := lower[idx:]
+	if !strings.Contains(remainder, "to") {
+		return false
+	}
+	afterTo := remainder[strings.Index(remainder, "to")+2:]
+	if strings.Contains(afterTo, "/") || strings.Contains(afterTo, ".") {
+		return true
+	}
+	return false
 }
 
 // pathLikeTokens extracts the conservative candidate set from one checkbox
@@ -132,6 +185,9 @@ func gitRootOf(path string) string {
 
 func withinAnyRoot(target string, roots []string) bool {
 	for _, root := range roots {
+		if target == root || strings.HasPrefix(target, root+string(filepath.Separator)) {
+			return true
+		}
 		if pathidentity.Contains(root, target) {
 			return true
 		}
