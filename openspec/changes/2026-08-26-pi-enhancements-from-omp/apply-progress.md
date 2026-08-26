@@ -1,4 +1,4 @@
-# Apply Progress: Pi Enhancements from oh-my-pi — TUI Sync (PR1) + Hashline (PR2) + Web Anchors (PR3)
+# Apply Progress: Pi Enhancements from oh-my-pi — TUI Sync (PR1) + Hashline (PR2) + Web Anchors (PR3) + Advisor (PR4)
 
 ## Summary
 
@@ -7,6 +7,8 @@ PR1 (TUI CSI 2026 + bracketed paste) implements `isSyncSupported()` / `syncOutpu
 PR2 (Hashline exact-range SHA-256 warn-and-stop) creates `internal/filemerge/hashline.go` with `ComputeHash([]byte) string` (SHA-256 hex of exact range, no whole-file normalization, empty->e3b0...), `HashMismatchError{Code:"needs_attention", FreshHash, Path, Expected}` and `ApplyWithHash(path, expectedHash string, newContent []byte, force ...bool) (freshHash string, err error)` that validates on-disk hash via `ComputeHash(ReadFile)` against expectedHash, returns `needs_attention`+freshHash without overwrite on mismatch (batch does not abort), and bypasses when `force==true`. `ApplyWithHashForce` alias provided. `internal/review/correction.go` extended with `ComputeFileHash`, `ReadFileWithHash`, `PrepareCorrection` (store BeforeHash at read) and `ApplyCorrection`/`WriteFileWithHash` (validate at write, force bypass). Verified with fixtures (no network, `rg` only in filemerge/review), range≠whole-file, mismatch no-overwrite, concurrent stale second writer gets freshHash:h2, force overwrite, and goroutine contention handling. No tui or assets/pi touched in PR2.
 
 PR3 (Web anchor-preserving markdown fetch) extends `internal/assets/pi/biggz-web-search.js` with `extractWithAnchors(html,baseUrl)` that captures heading `id` anchors and emits ATX `## Title {#id}` preserving hierarchy and document order, resolves `/href` via `baseUrl` origin, and is shared by `web_search` (future fetch) and `web_fetch` (current) through unified `htmlToMarkdown` delegation. Truncation at 1MB uses `truncateWithAnchor(markdown,anchors)` to cap at `ONE_MB` bytes and annotate `[truncated: 1MB — offset at {#nearest}]` with nearest preceding anchor. Preserves existing SSRF guards (`BLOCKED_SCHEMES`, `isPrivateIP`, `dnsRecheck`), 10s `FETCH_TIMEOUT_MS` `AbortController`, and 3-tier `T1->T2 chrome124/safari17->T3 gated` with `Retry-After` backoff. Best-effort on malformed HTML (tolerant heading regex handles missing/mismatched closures and duplicate ids, wrapped in try/catch, no throw). Verified with fixture HTML (no network, `rg` only in `assets/pi`), `node --check` and `node --test` green. No `filemerge`/`correction`/`tui`/`biggz-synthesis-gate.js` touched in PR3.
+
+PR4 (Advisor inline watchdog advise mode) extends `internal/assets/pi/biggz-synthesis-gate.js` from blocking gate to dual-mode watchdog. Blocking gate still enforced when preceding assistant markdown lacks `## Sub-agent Result` / `Artifacts/Paths` markers (either mode). Advise mode heuristic `paths<2 || len<50` via `extractArtifactsSection` → `countPaths` + `len` gates thin detection; when markers present but thin and `BIGGZ_ADVISE=1` or settings flag `advise:true`, gateway does NOT block but injects non-blocking `concern` warning via `pi.notify` / `ctx.ui.notify` (both primary `registerTool` wrapper and secondary `pi.on(tool_call)` guard). Default OFF (encendido suave), respects `PI_SUBAGENT_CHILD=1` bypass for both modes, no auto-fix, no model call. Verified with 8 fixture tests (no network, `rg` only in `assets/pi`), `node --check` and `node --test` green, `go vet ./...` still 0. No `tui`/`filemerge`/`web-search` touched in PR4.
 
 ## PR1 Scope (TUI — Tasks 1.1-1.2 + 2.1-2.4)
 
@@ -30,7 +32,13 @@ PR3 (Web anchor-preserving markdown fetch) extends `internal/assets/pi/biggz-web
 - [x] 4.2 Unify `web_search`/`web_fetch` path; keep SSRF/10s/1MB; annotate `[truncated: 1MB — offset at {#nearest}]`. Verify: malformed no throw; parity (`htmlToMarkdown` delegates to `extractWithAnchors`, `truncateWithAnchor` shared).
 - [x] 4.3 Add fixture tests (no network) anchors/truncate/malformed/`baseUrl`. Verify: `node --test` passes (9 tests).
 
-Pending: Advisor (4.4-4.5), Phase 5 verification (5.1-5.3).
+## PR4 Scope (Advisor Advise — Tasks 4.4-4.5 + 5.1)
+
+- [x] 4.4 Modify `biggz-synthesis-gate.js`: dual-mode watchdog, `BIGGZ_ADVISE=1` gated (off default) or `pi.settings.advise`, `PI_SUBAGENT_CHILD=1` bypass, thin=`paths<2||len<50` via `extractArtifactsSection`/`countPaths`. Verify: missing still blocks; thin→`concern` via `pi.notify`/`ctx.ui.notify` (both wrapper and `tool_call`), rich silent.
+- [x] 4.5 Add `biggz-synthesis-gate.test.mjs` mocking `pi.on`/`pi.notify`/`registerTool` (8 tests covering 5 spec scenarios + helpers/settings/no-model). Verify: `node --test` passes (8 tests).
+- [x] 5.1 `go vet ./...` + `go test ./... -count=1 -timeout 180s` (slice-relevant). Verify: 0 failures.
+
+Pending: Phase 5 verification 5.2-5.3 (`biggz install --agent pi`, spec sync) intentionally remaining per slice (2 tasks).
 
 ## Files Changed (PR1 incremental)
 
@@ -64,6 +72,17 @@ No changes to `internal/tui`, `internal/assets/pi/biggz-web-search.js`, `biggz-s
 | `openspec/changes/2026-08-26-pi-enhancements-from-omp/apply-progress.md` | Modified | Append PR3 evidence cumulatively (preserve PR1/PR2 sections, add PR3 scope/files/tests/evidence); update title to include PR3 |
 
 No changes to `internal/filemerge`, `internal/review/correction.go`, `internal/tui`, `internal/assets/pi/biggz-synthesis-gate.js` — boundaries respected per slice instruction (web only).
+
+## Files Changed (PR4 incremental — stacked-to-main, does not include PR1/PR2/PR3 files)
+
+| File | Action | What Was Done |
+|------|--------|---------------|
+| `internal/assets/pi/biggz-synthesis-gate.js` | Modified | Extend blocking gate to dual-mode: add `isChildBypass()`, `isAdviseEnabled()` (env `BIGGZ_ADVISE=1` / `true` or any `pi.settings` key containing `advise`), `extractArtifactsSection(text)` (slice after `Artifacts/Paths` until `Risks`/`Next`), `countPaths(section)` (bullet/comma/slash heuristics), `getArtifactsMetrics` / `isThinSynthesis` (`count<2||len<50`), `emitConcern` (warn via `ctx.ui.notify` + `pi.notify`), `getSynthesisSource` to reuse `ctx.history`/`lastAssistantMarkdown`; keep `PI_SUBAGENT_CHILD` early return plus runtime bypass in both wrapper and `tool_call`; blocking still `hasSynthesis` check; advise thin path emits `concern` but allows `origExecute`; expose `pi._biggzSynthesisGate` with helpers and `_test` hooks; keep `synthesis-gate-status` command advise-aware (thin shows advise warning) |
+| `internal/assets/pi/biggz-synthesis-gate.test.mjs` | Created | 8 fixture tests (no network, `rg` only in `assets/pi`): heuristic thin vs rich (count>=2 len>=50), blocking on missing (advise off+on), thin advise emit (wrap+tool_call `concern` with metrics), thin off silent, rich no concern with `BIGGZ_ADVISE=1`, child bypass (`PI_SUBAGENT_CHILD=1` allows missing+thin silent), settings flag (`pi.settings.advise:true` gates), no-model (`callModel` not invoked) — all mock `pi.on`/`pi.notify`/`registerTool` |
+| `openspec/changes/2026-08-26-pi-enhancements-from-omp/tasks.md` | Modified | Mark Phase 4 4.4-4.5 and Phase 5 5.1 as [x]; leave 5.2-5.3 pending per slice |
+| `openspec/changes/2026-08-26-pi-enhancements-from-omp/apply-progress.md` | Modified | Append PR4 evidence cumulatively (preserve PR1-PR3 sections, add PR4 scope/files/tests/evidence); update title to include PR4 |
+
+No changes to `internal/tui`, `internal/filemerge`, `internal/review/correction.go`, `internal/assets/pi/biggz-web-search.js` — boundaries respected per slice instruction (advisor only in `biggz-synthesis-gate.js`).
 
 ## Test Results (PR1)
 
@@ -155,14 +174,56 @@ No changes to `internal/filemerge`, `internal/review/correction.go`, `internal/t
 | 4.2 unify path + SSRF/1MB/10s + annotate | N/A — RED `webFetchHandler` used simple `subarray`+`[truncated: 1MB cap]` without anchor → GREEN after `extractWithAnchors`+`truncateWithAnchor` caps at `ONE_MB` and annotates `[truncated: 1MB — offset at {#nearest}]` via last `\\{#…\\}` in slice | `node --test` truncate nearest `sec1982` PASS, `go vet` still 0 | Kept SSRF/`FETCH_TIMEOUT_MS`/`ONE_MB`/`parseRetryAfter` untouched; fallback cap if no anchor |
 | 4.3 fixture tests no network | N/A — RED `node --test` 0 tests before fixture file → GREEN after `biggz-web-search.test.mjs` 9 tests (anchors, /href baseUrl, truncate, malformed, duplicate, hierarchy, span, no-id, parity) all PASS 185ms, no network, `rg` only in `assets/pi` | `node --check` both files 0, `go vet` 0 | Fixture-only, no live fetch, best-effort malformed handled |
 
+## TDD Cycle Evidence (Strict TDD false — Standard Mode, PR4)
+
+| Task | RED | GREEN | REFACTOR |
+|------|-----|-------|----------|
+| 4.4 dual-mode gate (BLOCK→ADVISE) | N/A (Standard) — RED `isThinSynthesis` thin `"-"` would not emit concern before dual-mode → GREEN after adding `extractArtifactsSection`/`countPaths`/`isThinSynthesis` (`count<2||len<50`) + `isAdviseEnabled` (`BIGGZ_ADVISE=1` / `pi.settings.advise`) and `emitConcern` via `ctx.ui.notify`+`pi.notify`; blocking still `hasSynthesis` check; `PI_SUBAGENT_CHILD` early+runtime bypass preserved | `node --check` 0, `node --test` 8 PASS (blocking, thin advise emit via wrap+tool_call, thin off silent, rich silent, child bypass) | Exposed `pi._biggzSynthesisGate` helpers and `_test` hooks, kept `synthesis-gate-status` advise-aware; no model call, no auto-fix |
+| 4.5 advisor tests mock pi.on/pi.notify | N/A — RED `node --test` 0 tests before `biggz-synthesis-gate.test.mjs` → GREEN after 8 fixture tests mocking `registerTool` wrapper + `tool_call` handler + `pi.notify` (thin→concern with metrics, thin off silent, rich no concern, blocking, child bypass, settings flag, no-model, heuristic) all PASS 89ms, no network, `rg` only in `assets/pi` | `node --check` both files 0, `go vet` 0 | Fixture-only markdown, no live synthesis, heater heuristic isolated |
+| 5.1 go vet + go test slice verify | N/A — `go vet ./...` exit 0, `go test ./internal/tui ./internal/filemerge ./internal/review -count=1` green (tui 3.7s, filemerge 1s, review 1.1s), `node --test` both pi assets green | No Go drift from JS slice, advisor only touches `assets/pi` | Verified after each PR stacked-to-main |
+
+## Test Results (PR4)
+
+- `node --check internal/assets/pi/biggz-synthesis-gate.js` → exit 0 (ESM, dual-mode, `rg` only in `assets/pi`)
+- `node --check internal/assets/pi/biggz-synthesis-gate.test.mjs` → exit 0
+- `go vet ./...` → exit 0 (no output) — slice gate, no Go changed but full vet still clean
+- `go test ./internal/tui -count=1` → exit 0 ok 3.7s (18 tests) — still green after PR4 (advisor only JS)
+- `go test ./internal/filemerge -count=1` → exit 0 ok 1.07s (27 tests) — still green
+- `go test ./internal/review -run TestApplyCorrection -count=1 -v` → exit 0 ok 1.1s — still green
+- `node --test internal/assets/pi/biggz-synthesis-gate.test.mjs` → exit 0, 8 tests PASS, 0 fail (89ms)
+  - `heuristic helpers: thin vs rich classification` PASS (thin `"-"` count=1 len=1 thin true, rich count>=2 len>=50 not thin, missing not thin, extractArtifactsSection <50)
+  - `scenario 1: blocking still enforced on missing markers (advise off and on)` PASS (both `BIGGZ_ADVISE` unset and `1`: missing → `isError:true` `Please synthesize`, original not called, error notify)
+  - `scenario 2: advise emits concern on thin synthesis when BIGGZ_ADVISE=1` PASS (thin `Artifacts/Paths: -` count=1 len=4 → allow `isError:undefined` original called, `concern` with `count=1 len=4` via `ctx.ui.notify`+`pi.notify`; `tool_call` handler also emits concern)
+  - `scenario 3: advise off by default — thin synthesis passes silently without concern` PASS (same thin, `BIGGZ_ADVISE` unset: allow, no concern in wrap nor `tool_call`)
+  - `scenario 4: rich synthesis never triggers concern even with BIGGZ_ADVISE=1` PASS (rich 3 paths >50 chars: allow, no concern in wrap nor `tool_call`)
+  - `scenario 5: child subagent bypass skips both blocking and advise` PASS (`PI_SUBAGENT_CHILD=1`: missing allows, thin+advise allows silent, `tool_call` also bypass)
+  - `settings flag gates advise as alternative to env` PASS (`pi.settings.advise:true` enables, thin → concern)
+  - `advise does not auto-fix and does not call model — only notify` PASS (`callModel` not invoked)
+- `node --test internal/assets/pi/biggz-web-search.test.mjs` → exit 0, 9 tests PASS still (no regression, PR4 did not touch web-search)
+
+## Work Unit Evidence (PR4 — Advisor inline watchdog advise mode)
+
+| Evidence | Required value |
+|---|---|
+| Focused test command and exact result | `node --test internal/assets/pi/biggz-synthesis-gate.test.mjs` — exit 0, 8 tests PASS, 0 fail (89ms): heuristic thin vs rich (count>=2 len>=50), blocking on missing (advise off+on `Please synthesize` isError), thin advise emit (wrap+tool_call `concern` count=1 len=4, allow), thin off silent (no concern), rich no concern with `BIGGZ_ADVISE=1`, child bypass (`PI_SUBAGENT_CHILD=1` allows missing & thin silent), settings flag (`pi.settings.advise:true` gates), no-model — fixture markdown, no network, `rg` only in `assets/pi`; `node --check` both files 0, `go vet` 0 |
+| Runtime harness command/scenario and exact result | Dual-mode harness: `BIGGZ_ADVISE=1` vs unset × `PI_SUBAGENT_CHILD=1` vs thin/rich/missing; blocking harness: missing markdown (no `## Sub-agent Result` / `Artifacts/Paths`) → wrapper `isError:true` block even with `BIGGZ_ADVISE=1` (scenario 1); thin harness: `Artifacts/Paths: -` (count=1 len=4 <2 or <50) with `BIGGZ_ADVISE=1` → wrapper allows `isError:undefined` originalCalled true + `concern` via `ctx.ui.notify`+`pi.notify` (`[biggz-synthesis-gate] concern: synthesis is thin (Artifacts/Paths count=1, len=4 ...)`) and secondary `tool_call` handler also emits concern (scenario 2); thin off harness: same thin with `BIGGZ_ADVISE` unset → allow silent no concern (scenario 3, default OFF encendido suave); rich harness: 3 paths 120 chars (`internal/assets/pi/...` 3 slash tokens, len>50) with `BIGGZ_ADVISE=1` → allow silent no concern (scenario 4); child harness: `PI_SUBAGENT_CHILD=1` → missing thin both allow silent bypass (scenario 5); settings flag harness: `pi.settings.advise:true` → thin concern; `go vet ./...` exit 0, `go test ./internal/tui ./internal/filemerge ./internal/review` still exit 0 |
+| Rollback boundary | Revert `internal/assets/pi/biggz-synthesis-gate.js` to pre-advise (remove `isAdviseEnabled`/`extractArtifactsSection`/`countPaths`/`isThinSynthesis`/`emitConcern`/`getSynthesisSource`, revert `registerTool` wrapper to blocking-only, revert `tool_call` to warning-only, remove `pi._biggzSynthesisGate` expose, revert `synthesis-gate-status` to blocking-only), delete `internal/assets/pi/biggz-synthesis-gate.test.mjs`, revert `tasks.md` 4.4-4.5 and 5.1 to [ ] (leave 5.2-5.3 pending), revert `apply-progress.md` strip PR4 sections and title to PR3; `git revert` single commit `feat(pi)`; no `tui`/`filemerge`/`web-search`/`correction` affected; stacked-to-main PR4 targets `master` after PR3 |
+
 ## Status
 
-13/18 tasks complete (Phase 1 2/2 + Phase 2 4/4 + Phase 3 4/4 + Phase 4 3/5 web). 5/18 tasks remain (4.4-4.5 advisor + Phase 5 3 — verify tasks intentionally pending per slice). Next: PR4 advisor (`biggz-synthesis-gate.js`). No blockers.
+16/18 tasks complete (Phase 1 2/2 + Phase 2 4/4 + Phase 3 4/4 + Phase 4 5/5 advisor+web, Phase 5 1/3 verify). 2/18 tasks remain (5.2 `biggz install --agent pi`, 5.3 spec sync — intentionally remaining per slice, no code impact). Next: verify archive (5.2-5.3). All 4 PRs stacked-to-main complete, cumulative `go vet` + `go test` + `node --test` green.
 
 ### Workload / PR Boundary
 
 - Mode: auto-chain stacked-to-main (budget 800)
-- Current work unit: PR3 Web anchor-preserving markdown fetch (Unit 3)
-- Boundary: `e6f4c2d` (post-hashline, pre-web) → `internal/assets/pi/biggz-web-search.js` + `internal/assets/pi/biggz-web-search.test.mjs` + `tasks.md` + `apply-progress.md`; start `htmlToMarkdown` baseline drops ids, end `extractWithAnchors` with `{#id}` hierarchy/order + `/href` resolve + `truncateWithAnchor` nearest annotation + best-effort malformed; rollback reverts JS to 4× `# $1` without anchor, reverts handler to simple cap, deletes test file, reverts tasks 4.1-4.3 to [ ] and strips PR3 sections, leaves TUI/filemerge/advisor untouched
-- Estimated review budget impact: biggz-web-search.js ~+127 net (tolerant regex +2 funcs + handler anchor), biggz-web-search.test.mjs ~135, tasks.md +3, apply-progress.md +~220 — raw diff ~485 lines prod+tests+docs, prod-only ~127 (<400 budget), single commit `feat(web-search)` stacked-to-main PR3 targets `master` after PR2
+- Current work unit: PR4 Advisor inline watchdog advise mode (Unit 4)
+- Boundary: `d8fe558` (post-web, pre-advisor) → `internal/assets/pi/biggz-synthesis-gate.js` + `internal/assets/pi/biggz-synthesis-gate.test.mjs` + `tasks.md` + `apply-progress.md`; start blocking-only gate, end dual-mode watchdog with `BIGGZ_ADVISE=1`/settings gate (default OFF), `PI_SUBAGENT_CHILD=1` bypass, `paths<2||len<50` heuristic via `extractArtifactsSection`/`countPaths`/`isThinSynthesis`, `concern` via `pi.notify`/`ctx.ui.notify` (wrapper + `tool_call`), no auto-fix/no model; rollback reverts gate to blocking-only, deletes test, reverts 4.4-4.5/5.1 to [ ] and strips PR4 sections, leaves TUI/filemerge/web untouched
+- Estimated review budget impact: biggz-synthesis-gate.js ~+175 net (dual-mode helpers + wrapper + tool_call + expose), biggz-synthesis-gate.test.mjs ~340, tasks.md +3 (mark 4.4-4.5/5.1 [x]), apply-progress.md +~360 — raw diff ~878 lines prod+tests+docs, prod-only ~175 (<400 budget), single commit `feat(pi)` stacked-to-main PR4 targets `master` after PR3
+
+### Previous PR Boundaries (stacked-to-main history)
+
+- PR1: `602a827` → `5c09df3` TUI sync (battery)
+- PR2: `5c09df3` → `e6f4c2d` hashline
+- PR3: `e6f4c2d` → `d8fe558` web anchors
+- PR4: `d8fe558` → HEAD advisor (this slice)
 
