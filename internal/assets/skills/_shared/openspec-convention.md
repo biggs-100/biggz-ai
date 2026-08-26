@@ -38,6 +38,10 @@ openspec/
 | sdd-archive | Moves | `openspec/changes/{change-name}/` → `openspec/changes/archive/YYYY-MM-DD-{change-name}/` |
 | sdd-archive | Updates | `openspec/specs/{domain}/spec.md` (merges deltas into main specs) |
 
+### Research artifacts
+
+`research.md` contains exact `biggz-ai.sdd-research/v1` bytes. Hybrid pre-proposal state uses `biggz-ai.sdd-preproposal/v1`; compare its revision and bytes with BigMem before readiness and never prefer one store after mismatch.
+
 ## Reading Artifacts
 
 ```

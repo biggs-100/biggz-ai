@@ -37,6 +37,7 @@ func sddStatusRun() int {
 	watch := false
 	cwd := ""
 	hasHelp := false
+	contract := sdd.StatusContractV2
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--json":
@@ -52,20 +53,42 @@ func sddStatusRun() int {
 			}
 			i++
 			cwd = args[i]
+		case "--contract":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --contract requires a value")
+				return 1
+			}
+			i++
+			contract = args[i]
+			if contract != sdd.StatusContractV2 {
+				fmt.Fprintf(os.Stderr, "error: unsupported sdd-status contract %q. Start a fresh implementation state and rerun `biggz sdd-status --contract biggz-ai.sdd-status/v2`.\n", contract)
+				return 1
+			}
 		case "--help", "-h":
 			hasHelp = true
 		default:
+			if strings.HasPrefix(args[i], "--contract=") {
+				contract = strings.TrimPrefix(args[i], "--contract=")
+				if contract != sdd.StatusContractV2 {
+					fmt.Fprintf(os.Stderr, "error: unsupported sdd-status contract %q. Start a fresh implementation state and rerun `biggz sdd-status --contract biggz-ai.sdd-status/v2`.\n", contract)
+					return 1
+				}
+				continue
+			}
 			fmt.Fprintf(os.Stderr, "error: unknown flag %s\n", args[i])
 			return 1
 		}
 	}
 
+	_ = contract
+
 	if hasHelp {
-		fmt.Fprintln(os.Stderr, "Usage: biggz sdd-status [--cwd <dir>] [--json] [--instructions] [--watch, -w]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz sdd-status [--cwd <dir>] [--json] [--instructions] [--watch, -w] [--contract <contract>]")
 		fmt.Fprintln(os.Stderr, "  --cwd <dir>         — use <dir> as workspace root (default: current directory)")
 		fmt.Fprintln(os.Stderr, "  --json              — emit JSON envelope (cannot be used with --watch)")
 		fmt.Fprintln(os.Stderr, "  --instructions      — include phaseInstructions block")
 		fmt.Fprintln(os.Stderr, "  --watch, -w         — refresh every 2s until interrupted")
+		fmt.Fprintln(os.Stderr, "  --contract <c>      — status contract (default: "+sdd.StatusContractV2+")")
 		return 0
 	}
 

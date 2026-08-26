@@ -238,6 +238,7 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 		cs.SchemaVersion = StatusSchemaVersion
 		cs.ChangeRoot = fmt.Sprintf("bigmem:sdd/%s", name)
 		cs.PlanningHome = PlanningHome{Mode: "repo-local", Path: "bigmem:sdd"}
+		cs.ArtifactStore = ArtifactStoreEngram
 		cs.ArtifactPaths = bigmemArtifactPaths(name, bySuffix)
 		cs.ContextFiles = cs.ArtifactPaths
 		cs.Artifacts = artifacts
@@ -248,7 +249,9 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 		}
 		cs.ApplyState = ApplyAllDone
 		cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: []string{workspaceRoot}}
+		cs.Relationships = Relationships{}
 		cs.RemediationState = RemediationState{}
+		cs.ReviewOffer = nil
 		cs.NextRecommended = "done"
 		cs.BlockedReasons = []string{}
 		if includeInstructions {
@@ -333,6 +336,7 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 	cs.SchemaVersion = StatusSchemaVersion
 	cs.ChangeRoot = fmt.Sprintf("bigmem:sdd/%s", name)
 	cs.PlanningHome = PlanningHome{Mode: "repo-local", Path: "bigmem:sdd"}
+	cs.ArtifactStore = ArtifactStoreEngram
 	cs.ArtifactPaths = bigmemArtifactPaths(name, bySuffix)
 	cs.ContextFiles = cs.ArtifactPaths
 	cs.Artifacts = artifacts
@@ -340,7 +344,9 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 	cs.Dependencies = dependencies
 	cs.ApplyState = applyState
 	cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: allowedEditRoots}
+	cs.Relationships = Relationships{}
 	cs.RemediationState = remediationState
+	cs.ReviewOffer = nil
 	cs.NextRecommended = nextRecommended
 	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
 	if includeInstructions {

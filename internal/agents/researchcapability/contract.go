@@ -1,0 +1,105 @@
+// Package researchcapability defines the closed admission contract for
+// source-backed SDD research. It is deliberately separate from the capability
+// manifest and enforces exact-grant matching.
+package researchcapability
+
+import "github.com/biggs-100/biggz-ai/model"
+
+type SchemaVersion string
+
+const SchemaV1 SchemaVersion = "biggz-ai.sdd-research-capability/v1"
+
+type Class string
+
+const (
+	ClassDocumentation Class = "documentation"
+	ClassOpenWeb       Class = "open-web"
+)
+
+type Grant string
+
+const (
+	GrantWebFetch  Grant = "WebFetch"
+	GrantWebSearch Grant = "WebSearch"
+)
+
+// Capability is one runtime's maximum declared evidence capability.
+type Capability struct {
+	Schema SchemaVersion
+	Grants map[Class][]Grant
+}
+
+// Request carries observed runtime grants. Admission accepts only an exact
+// match; filenames, Bash, generic MCP access, and inherited tools have no
+// special meaning.
+type Request struct {
+	Schema         SchemaVersion
+	AgentID        model.AgentID
+	Class          Class
+	ObservedGrants []Grant
+}
+
+type Result struct {
+	Allowed        bool
+	VerifiedGrants []Grant
+	Claims         []string
+}
+
+var capabilities = map[model.AgentID]Capability{
+	model.AgentID("claude-code"): {
+		Schema: SchemaV1,
+		Grants: map[Class][]Grant{
+			ClassDocumentation: {GrantWebFetch},
+			ClassOpenWeb:       {GrantWebSearch, GrantWebFetch},
+		},
+	},
+	model.AgentID("kiro"): {
+		Schema: SchemaV1,
+		Grants: map[Class][]Grant{
+			ClassDocumentation: {GrantWebFetch},
+		},
+	},
+}
+
+// ForAgent returns a defensive copy of a declared capability. Every absent
+// AgentID is denied rather than inheriting a runtime-wide default.
+func ForAgent(agent model.AgentID) (Capability, bool) {
+	capability, ok := capabilities[agent]
+	if !ok {
+		return Capability{}, false
+	}
+	copyOf := Capability{Schema: capability.Schema, Grants: make(map[Class][]Grant, len(capability.Grants))}
+	for class, grants := range capability.Grants {
+		copyOf.Grants[class] = append([]Grant(nil), grants...)
+	}
+	return copyOf, true
+}
+
+func Admit(request Request) Result {
+	capability, ok := ForAgent(request.AgentID)
+	if !ok || request.Schema != SchemaV1 || capability.Schema != request.Schema {
+		return Result{}
+	}
+	want, ok := capability.Grants[request.Class]
+	if !ok || !sameGrants(request.ObservedGrants, want) {
+		return Result{}
+	}
+	return Result{Allowed: true, VerifiedGrants: append([]Grant(nil), want...)}
+}
+
+func sameGrants(got, want []Grant) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	counts := make(map[Grant]int, len(want))
+	for _, grant := range want {
+		counts[grant]++
+	}
+	for _, grant := range got {
+		counts[grant]--
+		if counts[grant] < 0 {
+			return false
+		}
+	}
+	return true
+}

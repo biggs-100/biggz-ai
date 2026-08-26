@@ -19,7 +19,14 @@ import (
 const StatusSchemaName = "biggz-ai.sdd-status"
 
 // StatusSchemaVersion is the version of the StatusSchemaName document.
-const StatusSchemaVersion = 1
+const StatusSchemaVersion = 2
+
+// StatusContractV2 is the sole supported SDD status contract.
+const StatusContractV2 = "biggz-ai.sdd-status/v2"
+
+// StatusContractV1 is the retired contract. Requests for it MUST fail
+// read-only with the fresh-v2 rerun instruction.
+const StatusContractV1 = "biggz-ai.sdd-status/v1"
 
 // ArtifactState describes the content state of one SDD artifact.
 type ArtifactState string
@@ -147,21 +154,24 @@ type StatusOptions struct {
 // dependencies, applyState, actionContext, remediationState,
 // nextRecommended, blockedReasons, phaseInstructions).
 type ChangeStatus struct {
-	SchemaName    string           `json:"schemaName,omitempty"`
-	SchemaVersion int              `json:"schemaVersion,omitempty"`
-	ChangeRoot    string           `json:"changeRoot,omitempty"`
-	PlanningHome  PlanningHome     `json:"planningHome,omitempty"`
-	ArtifactPaths ArtifactPaths    `json:"artifactPaths,omitempty"`
-	ContextFiles  ArtifactPaths    `json:"contextFiles,omitempty"`
-	Artifacts     map[string]ArtifactState `json:"artifacts,omitempty"`
-	TaskProgress  TaskProgress     `json:"taskProgress,omitempty"`
-	Dependencies  Dependencies     `json:"dependencies,omitempty"`
-	ApplyState    ApplyState       `json:"applyState,omitempty"`
-	ActionContext ActionContext    `json:"actionContext,omitempty"`
-	RemediationState RemediationState `json:"remediationState,omitempty"`
-	NextRecommended string         `json:"nextRecommended,omitempty"`
-	BlockedReasons []string        `json:"blockedReasons,omitempty"`
-	PhaseInstructions *PhaseInstructions `json:"phaseInstructions,omitempty"`
+	SchemaName        string                   `json:"schemaName,omitempty"`
+	SchemaVersion     int                      `json:"schemaVersion,omitempty"`
+	ChangeRoot        string                   `json:"changeRoot,omitempty"`
+	PlanningHome      PlanningHome             `json:"planningHome,omitempty"`
+	ArtifactStore     ArtifactStore            `json:"artifactStore,omitempty"`
+	ArtifactPaths     ArtifactPaths            `json:"artifactPaths,omitempty"`
+	ContextFiles      ArtifactPaths            `json:"contextFiles,omitempty"`
+	Artifacts         map[string]ArtifactState `json:"artifacts,omitempty"`
+	TaskProgress      TaskProgress             `json:"taskProgress,omitempty"`
+	Dependencies      Dependencies             `json:"dependencies,omitempty"`
+	ApplyState        ApplyState               `json:"applyState,omitempty"`
+	ActionContext     ActionContext            `json:"actionContext,omitempty"`
+	Relationships     Relationships            `json:"relationships,omitempty"`
+	RemediationState  RemediationState         `json:"remediationState,omitempty"`
+	ReviewOffer       *ReviewOfferBlock        `json:"reviewOffer,omitempty"`
+	NextRecommended   string                   `json:"nextRecommended,omitempty"`
+	BlockedReasons    []string                 `json:"blockedReasons,omitempty"`
+	PhaseInstructions *PhaseInstructions       `json:"phaseInstructions,omitempty"`
 
 	Name        string
 	HasProposal bool
@@ -453,6 +463,7 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 	cs.SchemaVersion = StatusSchemaVersion
 	cs.ChangeRoot = changeDir
 	cs.PlanningHome = PlanningHome{Mode: "repo-local", Path: filepath.Join(workspaceRoot, "openspec")}
+	cs.ArtifactStore = ArtifactStoreOpenSpec
 	cs.ArtifactPaths = artifactPaths
 	cs.ContextFiles = artifactPaths
 	cs.Artifacts = artifacts
@@ -460,7 +471,9 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 	cs.Dependencies = dependencies
 	cs.ApplyState = applyState
 	cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: allowedEditRoots}
+	cs.Relationships = Relationships{}
 	cs.RemediationState = remediationState
+	cs.ReviewOffer = nil
 	cs.NextRecommended = nextRecommended
 	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
 	if includeInstructions {
