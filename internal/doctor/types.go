@@ -49,6 +49,7 @@ type Result struct {
 	Message  string  `json:"message"`
 	Severity string  `json:"severity"` // "CRITICAL" | "WARNING" | "INFO"
 	Error    string  `json:"error,omitempty"`
+	Details  any     `json:"details,omitempty"`
 }
 
 // Check defines the contract for a single health check.

@@ -2,10 +2,18 @@ package sdd
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/fzipp/gocyclo"
+	"github.com/uudashr/gocognit"
 )
 
 // VerifyReport represents the parsed YAML envelope of a verify report.
@@ -290,8 +298,8 @@ func ValidateRemediationResult(path string) (*RemediationResult, error) {
 
 	// Map fields to RemediationResult
 	result := &RemediationResult{
-		Schema:  report.Schema,
-		Verdict: report.Verdict,
+		Schema:   report.Schema,
+		Verdict:  report.Verdict,
 		Blockers: report.Blockers,
 	}
 
@@ -518,4 +526,271 @@ func parseCount(field string) (int, bool) {
 // context should prefer this over a raw filepath.Join.
 func anchoredVerifyReportPath(repo, workspace, changeRoot, change string) (string, error) {
 	return canonicalVerifyReportPaths(repo, workspace, changeRoot, change)
+}
+
+// ─── Complexity Debt Report ────────────────────────────────────────────────
+
+const (
+	debtCyclomaticThreshold = 15
+	debtCognitiveThreshold  = 20
+)
+
+var debtCriticalRoots = []string{
+	"internal/review",
+	"internal/sdd",
+	"internal/verification",
+}
+
+// DebtOffender is one function exceeding debt thresholds.
+type DebtOffender struct {
+	Package    string `json:"package"`
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	Function   string `json:"function"`
+	Cyclomatic int    `json:"cyclomatic"`
+	Cognitive  int    `json:"cognitive"`
+}
+
+// DebtPackageReport holds per-package debt totals and top offenders.
+type DebtPackageReport struct {
+	Package              string
+	TotalFuncs           int
+	CyclomaticViolations int
+	CognitiveViolations  int
+	TopOffenders         []DebtOffender
+	TestOffenders        []DebtOffender
+}
+
+// CollectComplexityDebt scans critical packages and returns per-package reports.
+// It is CostQuick/ReadOnly and excludes *_test.go from blocking counts (informational only).
+func CollectComplexityDebt() (map[string]*DebtPackageReport, error) {
+	return CollectComplexityDebtForRoots(debtCriticalRoots)
+}
+
+// CollectComplexityDebtForRoots scans the given roots and returns per-package reports. Exported for testing.
+func CollectComplexityDebtForRoots(roots []string) (map[string]*DebtPackageReport, error) {
+	reports := make(map[string]*DebtPackageReport)
+	for _, root := range roots {
+		reports[root] = &DebtPackageReport{Package: root}
+	}
+	for _, root := range roots {
+		report := reports[root]
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				base := filepath.Base(path)
+				if base == "vendor" || base == "testdata" || strings.HasPrefix(base, ".") || strings.HasPrefix(base, "_") {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !strings.HasSuffix(strings.ToLower(path), ".go") {
+				return nil
+			}
+			src, err := os.ReadFile(path)
+			if err != nil {
+				return nil
+			}
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
+			if err != nil {
+				return nil
+			}
+			isTest := strings.HasSuffix(path, "_test.go")
+			for _, decl := range f.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				report.TotalFuncs++
+				cyclo := gocyclo.Complexity(fn)
+				cog := gocognit.Complexity(fn)
+				isCycloViol := cyclo > debtCyclomaticThreshold
+				isCogViol := cog > debtCognitiveThreshold
+				if isCycloViol {
+					report.CyclomaticViolations++
+				}
+				if isCogViol {
+					report.CognitiveViolations++
+				}
+				if isCycloViol || isCogViol {
+					off := DebtOffender{
+						Package:    filepath.ToSlash(filepath.Dir(path)),
+						File:       filepath.ToSlash(path),
+						Line:       fset.Position(fn.Pos()).Line,
+						Function:   debtFuncName(fn),
+						Cyclomatic: cyclo,
+						Cognitive:  cog,
+					}
+					if isTest {
+						report.TestOffenders = append(report.TestOffenders, off)
+					} else {
+						report.TopOffenders = append(report.TopOffenders, off)
+					}
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		// Sort top offenders by max(cyclo,cog) descending and cap to 10
+		sort.Slice(report.TopOffenders, func(i, j int) bool {
+			mi := report.TopOffenders[i].Cyclomatic
+			if report.TopOffenders[i].Cognitive > mi {
+				mi = report.TopOffenders[i].Cognitive
+			}
+			mj := report.TopOffenders[j].Cyclomatic
+			if report.TopOffenders[j].Cognitive > mj {
+				mj = report.TopOffenders[j].Cognitive
+			}
+			if mi != mj {
+				return mi > mj
+			}
+			if report.TopOffenders[i].File != report.TopOffenders[j].File {
+				return report.TopOffenders[i].File < report.TopOffenders[j].File
+			}
+			return report.TopOffenders[i].Line < report.TopOffenders[j].Line
+		})
+		if len(report.TopOffenders) > 10 {
+			report.TopOffenders = report.TopOffenders[:10]
+		}
+	}
+	return reports, nil
+}
+
+func debtFuncName(fn *ast.FuncDecl) string {
+	if fn.Recv != nil && fn.Recv.NumFields() > 0 {
+		typ := fn.Recv.List[0].Type
+		switch t := typ.(type) {
+		case *ast.StarExpr:
+			if ident, ok := t.X.(*ast.Ident); ok {
+				return fmt.Sprintf("(%s).%s", "*"+ident.Name, fn.Name.Name)
+			}
+		case *ast.Ident:
+			return fmt.Sprintf("(%s).%s", t.Name, fn.Name.Name)
+		}
+		return fmt.Sprintf("(%T).%s", typ, fn.Name.Name)
+	}
+	return fn.Name.Name
+}
+
+// ComplexityDebtMarkdownForRoots renders debt markdown for arbitrary roots (testing).
+func ComplexityDebtMarkdownForRoots(roots []string) (string, error) {
+	reports, err := CollectComplexityDebtForRoots(roots)
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	sb.WriteString("## Complexity Debt\n\n")
+	hasViolations := false
+	for _, root := range roots {
+		r := reports[root]
+		if r.CyclomaticViolations > 0 || r.CognitiveViolations > 0 {
+			hasViolations = true
+			break
+		}
+	}
+	if !hasViolations {
+		totalFuncs := 0
+		totalCyclo := 0
+		totalCog := 0
+		for _, root := range roots {
+			r := reports[root]
+			totalFuncs += r.TotalFuncs
+			totalCyclo += r.CyclomaticViolations
+			totalCog += r.CognitiveViolations
+		}
+		sb.WriteString(fmt.Sprintf("0 violations across %d functions scanned (cyclomatic >%d: %d, cognitive >%d: %d)\n\n", totalFuncs, debtCyclomaticThreshold, totalCyclo, debtCognitiveThreshold, totalCog))
+		for _, root := range roots {
+			r := reports[root]
+			sb.WriteString(fmt.Sprintf("- %s: %d functions scanned, %d cyclomatic violations, %d cognitive violations, 0 top offenders\n", r.Package, r.TotalFuncs, r.CyclomaticViolations, r.CognitiveViolations))
+		}
+		return sb.String(), nil
+	}
+	for _, root := range roots {
+		r := reports[root]
+		sb.WriteString(fmt.Sprintf("### %s\n", r.Package))
+		sb.WriteString(fmt.Sprintf("- Total functions scanned: %d\n", r.TotalFuncs))
+		sb.WriteString(fmt.Sprintf("- Cyclomatic violations (>%d): %d\n", debtCyclomaticThreshold, r.CyclomaticViolations))
+		sb.WriteString(fmt.Sprintf("- Cognitive violations (>%d): %d\n", debtCognitiveThreshold, r.CognitiveViolations))
+		if len(r.TopOffenders) == 0 {
+			sb.WriteString("- Top offenders: none\n")
+		} else {
+			sb.WriteString("- Top 10 offenders (sorted by max complexity descending):\n")
+			for _, o := range r.TopOffenders {
+				sb.WriteString(fmt.Sprintf("  - %s:%d %s cyclomatic=%d cognitive=%d\n", o.File, o.Line, o.Function, o.Cyclomatic, o.Cognitive))
+			}
+		}
+		if len(r.TestOffenders) > 0 {
+			sb.WriteString(fmt.Sprintf("- Informational test file violations: %d (never block)\n", len(r.TestOffenders)))
+			for _, o := range r.TestOffenders {
+				sb.WriteString(fmt.Sprintf("  - %s:%d %s cyclomatic=%d cognitive=%d (test)\n", o.File, o.Line, o.Function, o.Cyclomatic, o.Cognitive))
+			}
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String(), nil
+}
+
+// ComplexityDebtMarkdown returns a markdown section for verify-report.md.
+// It lists per-package totals (scanned, violations by threshold) and top 10 offenders per package
+// sorted by max complexity descending. *_test.go findings are informational only.
+func ComplexityDebtMarkdown() (string, error) {
+	reports, err := CollectComplexityDebt()
+	if err != nil {
+		return "", err
+	}
+	var sb strings.Builder
+	sb.WriteString("## Complexity Debt\n\n")
+	hasViolations := false
+	for _, root := range debtCriticalRoots {
+		r := reports[root]
+		if r.CyclomaticViolations > 0 || r.CognitiveViolations > 0 {
+			hasViolations = true
+			break
+		}
+	}
+	if !hasViolations {
+		totalFuncs := 0
+		totalCyclo := 0
+		totalCog := 0
+		for _, root := range debtCriticalRoots {
+			r := reports[root]
+			totalFuncs += r.TotalFuncs
+			totalCyclo += r.CyclomaticViolations
+			totalCog += r.CognitiveViolations
+		}
+		sb.WriteString(fmt.Sprintf("0 violations across %d functions scanned (cyclomatic >%d: %d, cognitive >%d: %d)\n\n", totalFuncs, debtCyclomaticThreshold, totalCyclo, debtCognitiveThreshold, totalCog))
+		for _, root := range debtCriticalRoots {
+			r := reports[root]
+			sb.WriteString(fmt.Sprintf("- %s: %d functions scanned, %d cyclomatic violations, %d cognitive violations, 0 top offenders\n", r.Package, r.TotalFuncs, r.CyclomaticViolations, r.CognitiveViolations))
+		}
+		return sb.String(), nil
+	}
+	for _, root := range debtCriticalRoots {
+		r := reports[root]
+		sb.WriteString(fmt.Sprintf("### %s\n", r.Package))
+		sb.WriteString(fmt.Sprintf("- Total functions scanned: %d\n", r.TotalFuncs))
+		sb.WriteString(fmt.Sprintf("- Cyclomatic violations (>%d): %d\n", debtCyclomaticThreshold, r.CyclomaticViolations))
+		sb.WriteString(fmt.Sprintf("- Cognitive violations (>%d): %d\n", debtCognitiveThreshold, r.CognitiveViolations))
+		if len(r.TopOffenders) == 0 {
+			sb.WriteString("- Top offenders: none\n")
+		} else {
+			sb.WriteString("- Top 10 offenders (sorted by max complexity descending):\n")
+			for _, o := range r.TopOffenders {
+				sb.WriteString(fmt.Sprintf("  - %s:%d %s cyclomatic=%d cognitive=%d\n", o.File, o.Line, o.Function, o.Cyclomatic, o.Cognitive))
+			}
+		}
+		if len(r.TestOffenders) > 0 {
+			sb.WriteString(fmt.Sprintf("- Informational test file violations: %d (never block)\n", len(r.TestOffenders)))
+			for _, o := range r.TestOffenders {
+				sb.WriteString(fmt.Sprintf("  - %s:%d %s cyclomatic=%d cognitive=%d (test)\n", o.File, o.Line, o.Function, o.Cyclomatic, o.Cognitive))
+			}
+		}
+		sb.WriteString("\n")
+	}
+	return sb.String(), nil
 }

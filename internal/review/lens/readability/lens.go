@@ -149,10 +149,68 @@ func (l *Lens) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult
 		result.Evidence = append(result.Evidence, fmt.Sprintf("parser failure %s: %v", proof, err))
 	}
 
-	// Merge findings: parser (deterministic) first for stable order, then thresholds.
-	// Re-number threshold IDs after merge to keep global sequential prefix? Keep
-	// separate counters for clarity — both are R2-prefixed and unique.
+	// Complexity findings: hunk-bounded, inferential, via DeriveRiskInput, no second diff.
+	complexityFindings := make([]lens.LensFinding, 0)
+	offenders, cWarnings := offendersFromHunks(input)
+	// Surface warnings (rename/no-map, repo path fallback) as evidence, never block.
+	for _, w := range cWarnings {
+		result.Evidence = append(result.Evidence, w)
+	}
+	cycloIdx := 1
+	cognitIdx := 1
+	for _, o := range offenders {
+		isTest := isTestFile(o.File)
+		sev := "warning"
+		if isTest {
+			sev = "info"
+		}
+		if o.Cyclomatic > CyclomaticThreshold {
+			id := fmt.Sprintf("R2-CYCLO-%03d", cycloIdx)
+			cycloIdx++
+			msg := fmt.Sprintf("readability: %s in %s:%d has cyclomatic %d >%d", o.Function, o.File, o.Line, o.Cyclomatic, CyclomaticThreshold)
+			proof := fmt.Sprintf("%s:%d: %s %d >%d", o.File, o.Line, o.Function, o.Cyclomatic, CyclomaticThreshold)
+			finding := lens.LensFinding{
+				ID:        id,
+				LensID:    l.ID(),
+				Message:   msg,
+				File:      o.File,
+				Line:      o.Line,
+				ProofRefs: []string{proof},
+				Class:     review.EvidenceInferential,
+				Severity:  sev,
+			}
+			if isTest {
+				finding.Message += " (informational test file)"
+			}
+			complexityFindings = append(complexityFindings, finding)
+			result.Evidence = append(result.Evidence, proof)
+		}
+		if o.Cognitive > CognitiveThreshold {
+			id := fmt.Sprintf("R2-COGNIT-%03d", cognitIdx)
+			cognitIdx++
+			msg := fmt.Sprintf("readability: %s in %s:%d has cognitive %d >%d", o.Function, o.File, o.Line, o.Cognitive, CognitiveThreshold)
+			proof := fmt.Sprintf("%s:%d: %s %d >%d", o.File, o.Line, o.Function, o.Cognitive, CognitiveThreshold)
+			finding := lens.LensFinding{
+				ID:        id,
+				LensID:    l.ID(),
+				Message:   msg,
+				File:      o.File,
+				Line:      o.Line,
+				ProofRefs: []string{proof},
+				Class:     review.EvidenceInferential,
+				Severity:  sev,
+			}
+			if isTest {
+				finding.Message += " (informational test file)"
+			}
+			complexityFindings = append(complexityFindings, finding)
+			result.Evidence = append(result.Evidence, proof)
+		}
+	}
+
+	// Merge findings: parser (deterministic) first for stable order, then thresholds, then complexity.
 	result.Findings = append(parserFindings, thresholdFindings...)
+	result.Findings = append(result.Findings, complexityFindings...)
 
 	// Ensure Evidence is concrete: if no findings, provide one concrete entry
 	// to satisfy downstream hash stability (optional).

@@ -86,6 +86,7 @@ func doctorRun() int {
 			doctor.NewPiSubagentsCheck(),
 			doctor.NewPiLastModelCheck(),
 			doctor.NewPiWebSearchCheck(),
+			doctor.NewComplexityCheck(),
 		},
 	}
 

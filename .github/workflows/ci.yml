@@ -62,6 +62,110 @@ jobs:
       - name: Test
         run: go test ./... -short -count=1 -timeout 180s
 
+  complexity:
+    name: Complexity
+    needs: format
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful format
+        if: needs.format.result != 'success'
+        run: exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          autocrlf: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      # CostQuick/ReadOnly: no writes, just checks
+      - name: Complexity gate (15/20 diff-aware)
+        run: |
+          set -e
+          pinned_cyclo=$(go list -m -f '{{.Version}}' github.com/fzipp/gocyclo 2>/dev/null || echo "")
+          pinned_cognit=$(go list -m -f '{{.Version}}' github.com/uudashr/gocognit 2>/dev/null || echo "")
+          echo "Pinned gocyclo $pinned_cyclo, gocognit $pinned_cognit"
+          if [ -z "$pinned_cyclo" ] || [ -z "$pinned_cognit" ]; then
+            echo "::warning::Complexity tools not pinned in go.mod"
+          fi
+          # Drift check: compare expected vs actual resolved via go list
+          actual_cyclo=$(go list -m github.com/fzipp/gocyclo 2>/dev/null | awk '{print $2}' || echo "")
+          actual_cognit=$(go list -m github.com/uudashr/gocognit 2>/dev/null | awk '{print $2}' || echo "")
+          if [ "$pinned_cyclo" != "$actual_cyclo" ]; then
+            echo "::warning::gocyclo version drift: expected $pinned_cyclo vs actual $actual_cyclo"
+          fi
+          if [ "$pinned_cognit" != "$actual_cognit" ]; then
+            echo "::warning::gocognit version drift: expected $pinned_cognit vs actual $actual_cognit"
+          fi
+          base=""
+          if [ -n "${{ github.event.pull_request.base.sha }}" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD origin/master 2>/dev/null || git rev-parse HEAD~1 2>/dev/null || echo "")
+          fi
+          if [ -z "$base" ]; then
+            echo "warning: could not determine base, using HEAD"
+            base="HEAD"
+          fi
+          echo "Base: $base Head: $(git rev-parse HEAD)"
+          git diff --name-only "$base"...HEAD -- internal/review internal/sdd internal/verification > /tmp/changed_files.txt 2>/dev/null || true
+          cat /tmp/changed_files.txt || true
+          grep -v "_test.go" /tmp/changed_files.txt > /tmp/changed_blocking.txt 2>/dev/null || true
+          echo "Changed blocking files:"
+          cat /tmp/changed_blocking.txt || echo "(none)"
+          echo "Running gocyclo..."
+          cyclo_out=$(go run github.com/fzipp/gocyclo/cmd/gocyclo -over 15 ./internal/review ./internal/sdd ./internal/verification 2>&1 || true)
+          echo "$cyclo_out"
+          echo "Running gocognit..."
+          cognit_out=$(go run github.com/uudashr/gocognit/cmd/gocognit -over 20 ./internal/review ./internal/sdd ./internal/verification 2>&1 || true)
+          echo "$cognit_out"
+          if git diff --name-status "$base"...HEAD 2>/dev/null | grep -q "^R"; then
+            echo "::warning::File rename detected where git diff reports no mappable function hunks — not blocking"
+          fi
+          fail=0
+          cyclo_filtered=""
+          cognit_filtered=""
+          if [ -s /tmp/changed_blocking.txt ]; then
+            for f in $(cat /tmp/changed_blocking.txt); do
+              nf=$(echo "$f" | sed 's|^\./||')
+              m=$(echo "$cyclo_out" | grep -F "$nf" || true)
+              if [ -n "$m" ]; then cyclo_filtered="$cyclo_filtered$m\n"; fi
+              m2=$(echo "$cognit_out" | grep -F "$nf" || true)
+              if [ -n "$m2" ]; then cognit_filtered="$cognit_filtered$m2\n"; fi
+            done
+          else
+            echo "No changed blocking files, skipping gate check (legacy/test/rename warn)"
+          fi
+          test_cyclo=$(echo "$cyclo_out" | grep "_test.go" || true)
+          test_cognit=$(echo "$cognit_out" | grep "_test.go" || true)
+          if [ -n "$test_cyclo" ] || [ -n "$test_cognit" ]; then
+            echo "::warning::Informational test file violations (never block):"
+            echo "$test_cyclo"
+            echo "$test_cognit"
+          fi
+          if [ -n "$cyclo_filtered" ]; then
+            echo "::error::Cyclomatic violations in changed files (>15):"
+            echo -e "$cyclo_filtered"
+            fail=1
+          fi
+          if [ -n "$cognit_filtered" ]; then
+            echo "::error::Cognitive violations in changed files (>20):"
+            echo -e "$cognit_filtered"
+            fail=1
+          fi
+          if [ -n "$cyclo_out" ] || [ -n "$cognit_out" ]; then
+            echo "Complexity debt: cyclomatic $(echo "$cyclo_out" | grep -c . || echo 0), cognitive $(echo "$cognit_out" | grep -c . || echo 0)"
+          fi
+          if [ "$fail" -eq 1 ]; then
+            echo "Complexity gate failed: new/modified functions exceed 15/20 in critical packages"
+            exit 1
+          fi
+          echo "Complexity gate passed"
+
   e2e:
     name: E2E (${{ matrix.os }})
     needs: format
