@@ -39,10 +39,10 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Hashline (Unit 2)
 
-- [ ] 3.1 Create `internal/filemerge/hashline.go` (`ComputeHash`, `ApplyWithHash`, `HashMismatchError`). Verify: range ≠ whole-file hash.
-- [ ] 3.2 Return `needs_attention` + `freshHash`, no overwrite on mismatch. Verify: file unchanged.
-- [ ] 3.3 Modify `internal/review/correction.go` store `BeforeHash`, validate at write; `force` bypasses. Verify: stale second writer gets `freshHash:h2`.
-- [ ] 3.4 Add `internal/filemerge/hashline_test.go` (range, mismatch, force, concurrent). Verify: `go test ./internal/filemerge ./internal/review -count=1`.
+- [x] 3.1 Create `internal/filemerge/hashline.go` (`ComputeHash`, `ApplyWithHash`, `HashMismatchError`). Verify: range ≠ whole-file hash.
+- [x] 3.2 Return `needs_attention` + `freshHash`, no overwrite on mismatch. Verify: file unchanged.
+- [x] 3.3 Modify `internal/review/correction.go` store `BeforeHash`, validate at write; `force` bypasses. Verify: stale second writer gets `freshHash:h2`.
+- [x] 3.4 Add `internal/filemerge/hashline_test.go` (range, mismatch, force, concurrent). Verify: `go test ./internal/filemerge ./internal/review -count=1`.
 
 ## Phase 4: Web Anchors & Advisor (Units 3-4)
 

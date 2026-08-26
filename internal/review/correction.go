@@ -2,8 +2,10 @@ package review
 
 import (
 	"fmt"
+	"os"
 	"time"
 
+	"github.com/biggs-100/biggz-ai/internal/filemerge"
 	"github.com/biggs-100/biggz-ai/model"
 )
 
@@ -15,9 +17,78 @@ type Correction struct {
 	Files        []string  `json:"files"`
 	LinesChanged int       `json:"lines_changed"`
 	Reason       string    `json:"reason"`
-	BeforeHash   string    `json:"before_hash"`  // SHA of evidence chain before correction
+	BeforeHash   string    `json:"before_hash"` // SHA of file range (via filemerge.ComputeHash) OR evidence chain before correction
 	AfterHash    string    `json:"after_hash"`   // SHA of evidence chain after correction
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// ---------------------------------------------------------------------------
+// Hashline-guarded file helpers (Phase 3: hashline)
+// ---------------------------------------------------------------------------
+// These helpers implement the read-compute-store / write-validate cycle
+// required by the hashline spec. The file's exact content hash is computed
+// at read time and stored in Correction.BeforeHash; at write time it is
+// validated via filemerge.ApplyWithHash (exact-range SHA-256 hex,
+// warn-and-stop with needs_attention + freshHash, force bypasses).
+
+// ComputeFileHash reads path and returns its exact-range SHA-256 hex via
+// filemerge.ComputeHash. A missing file yields the hash of empty content.
+func ComputeFileHash(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return filemerge.ComputeHash(nil), nil
+		}
+		return "", err
+	}
+	return filemerge.ComputeHash(data), nil
+}
+
+// ReadFileWithHash reads path and returns (content, hash, error). The hash
+// is the exact content hash suitable for storing in Correction.BeforeHash.
+func ReadFileWithHash(path string) ([]byte, string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, filemerge.ComputeHash(nil), nil
+		}
+		return nil, "", err
+	}
+	return data, filemerge.ComputeHash(data), nil
+}
+
+// PrepareCorrection reads path, computes its hash, and returns a Correction
+// with BeforeHash populated. The caller can then modify content and call
+// ApplyCorrection to validate at write time.
+func PrepareCorrection(path, reason string) (Correction, []byte, error) {
+	data, hash, err := ReadFileWithHash(path)
+	if err != nil {
+		return Correction{}, nil, err
+	}
+	c := Correction{
+		BeforeHash: hash,
+		Reason:     reason,
+		Files:      []string{path},
+		CreatedAt:  time.Now(),
+	}
+	return c, data, nil
+}
+
+// ApplyCorrection validates the on-disk hash against correction.BeforeHash
+// and atomically writes newContent when it matches (or when force is true).
+// On mismatch it returns (freshHash, *filemerge.HashMismatchError) with
+// Code "needs_attention" and FreshHash set to the current on-disk hash;
+// the file remains unchanged and the batch must not abort. When the write
+// succeeds it returns (newHash, nil) where newHash is the hash of
+// newContent.
+func ApplyCorrection(correction Correction, path string, newContent []byte, force bool) (string, error) {
+	return filemerge.ApplyWithHash(path, correction.BeforeHash, newContent, force)
+}
+
+// WriteFileWithHash is a lower-level helper that validates expectedHash
+// before writing. Prefer ApplyCorrection when a Correction is available.
+func WriteFileWithHash(path, expectedHash string, newContent []byte, force bool) (string, error) {
+	return filemerge.ApplyWithHash(path, expectedHash, newContent, force)
 }
 
 // ---------------------------------------------------------------------------
