@@ -18,6 +18,11 @@ import (
 // parity to pi's ask_user_question (keyboard-only) matching opencode's question
 // tool: left click focuses an option, second click confirms (single-select) or
 // toggles checkbox (multi-select). Terminal mouse reporting is ESC[?1000h+1006h.
+// Since v4 it also pushes chat above the questionnaire instead of compositing
+// over it: it monkey-patches pi-tui's compositeOverlays (prototype + per-TUI
+// instance) to reserve overlay height so the bottom-anchored questionnaire
+// renders over empty padding, keeping chat visible. The fix ships via this
+// embedded asset so `biggz install --agent pi` / `biggz sync` persists it.
 func DeployPiQuestionMouse(ctx context.Context, homeDir string) (filemerge.WriteResult, error) {
 	_ = ctx
 	extensionsDir := piExtensionsDir(homeDir)
