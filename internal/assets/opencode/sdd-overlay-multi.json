@@ -4,7 +4,7 @@
   "agent": {
     "biggz-orchestrator": {
       "mode": "primary",
-      "description": "MANDATORY: Precede question/ask_user_question with synthesis markdown containing artifacts/paths + risks + next (see Post-Delegation Human Checkpoint). biggz-ai SDD Orchestrator — coordinates sub-agents, never does work inline",
+      "description": "MANDATORY: Precede question/ask_user_question with synthesis markdown containing artifacts/paths + risks + next (see Post-Delegation Human Checkpoint). Use the ## Sub-agent Result template; emit markdown BEFORE the tool call in the same turn. biggz-ai SDD Orchestrator — coordinates sub-agents, never does work inline",
       "prompt": "__ORCHESTRATOR_PROMPT__",
       "permission": {
         "question": "allow",

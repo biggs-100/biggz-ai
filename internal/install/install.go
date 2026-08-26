@@ -327,6 +327,9 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		if _, err := DeployPiSubagentConfig(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi subagent config: %w", err)
 		}
+		if _, err := DeployPiSynthesisGate(homeDir, assets.FS, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy pi synthesis gate: %w", err)
+		}
 		if cfg.DryRun {
 			result.PiWebSearch = true
 		} else if res, err := DeployPiWebSearch(ctx, homeDir); err != nil {
@@ -391,7 +394,7 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	// This guards the post-delegation summary preset that the model must emit before ask_user_question.
 	if !cfg.DryRun {
 		if err := verifyOrchestratorDeployment(homeDir, adapter); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: checkpoint verification failed: %v\n", err)
+			return result, fmt.Errorf("orchestrator checkpoint missing — reinstall failed: %w", err)
 		}
 	}
 
@@ -445,6 +448,8 @@ func verifyOrchestratorDeployment(homeDir string, adapter plugin.AgentAdapter) e
 	required := []string{
 		"Post-Delegation Human Checkpoint",
 		"Synthesize a concise summary",
+		"## Sub-agent Result",
+		"Artifacts/Paths",
 	}
 	// Check OpenCode settings (orchestrator prompt embedded in overlay)
 	if settingsPath := adapter.SettingsPath(homeDir); settingsPath != "" {
@@ -1535,6 +1540,40 @@ func DeployPiThinkingWrap(homeDir string, ffs fs.FS, dryRun ...bool) (bool, erro
 		data, err = fs.ReadFile(assets.FS, "pi/biggz-thinking-wrap.js")
 		if err != nil {
 			return false, fmt.Errorf("read pi thinking wrap asset: %w", err)
+		}
+	}
+	if isDry {
+		return true, nil
+	}
+	if err := os.MkdirAll(extensionsDir, 0755); err != nil {
+		return false, fmt.Errorf("mkdir %s: %w", extensionsDir, err)
+	}
+	if _, err := filemerge.WriteFileAtomic(targetPath, data, 0644); err != nil {
+		return false, fmt.Errorf("write %s: %w", targetPath, err)
+	}
+	return true, nil
+}
+
+// DeployPiSynthesisGate deploys the biggz synthesis-gate extension to
+// ~/.pi/agent/extensions/biggz-synthesis-gate.js. It enforces the
+// Post-Delegation Human Checkpoint: orchestrator must emit ## Sub-agent Result
+// + Artifacts/Paths + Risks + Next markdown BEFORE calling ask_user_question/question.
+// If missing, the extension blocks the tool call with an instructive error.
+// Reads from ffs at pi/biggz-synthesis-gate.js (embedded via assets.FS all:pi)
+// and writes atomically. Dry-run counts without writing.
+func DeployPiSynthesisGate(homeDir string, ffs fs.FS, dryRun ...bool) (bool, error) {
+	isDry := len(dryRun) > 0 && dryRun[0]
+	extensionsDir := piExtensionsDir(homeDir)
+	targetPath := filepath.Join(extensionsDir, "biggz-synthesis-gate.js")
+	var data []byte
+	var err error
+	if ffs != nil {
+		data, err = fs.ReadFile(ffs, "pi/biggz-synthesis-gate.js")
+	}
+	if err != nil || len(data) == 0 {
+		data, err = fs.ReadFile(assets.FS, "pi/biggz-synthesis-gate.js")
+		if err != nil {
+			return false, fmt.Errorf("read pi synthesis gate asset: %w", err)
 		}
 	}
 	if isDry {
