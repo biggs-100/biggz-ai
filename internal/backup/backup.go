@@ -22,6 +22,10 @@ type Backup struct {
 	CreatedAt time.Time `json:"created_at"`
 	Size      int64     `json:"size_bytes"`
 	Paths     []string  `json:"paths"`
+	// Skipped lists paths that were not backed up, with the reason
+	// (missing input path, non-regular file, read error). The backup
+	// itself still succeeds; callers surface these as warnings.
+	Skipped []string `json:"skipped,omitempty"`
 }
 
 // Create snapshots the given paths into a timestamped backup file.
@@ -57,11 +61,50 @@ func Create(rootDir string, paths []string) (*Backup, error) {
 
 	var totalSize int64
 	var backedUp []string
+	var skipped []string
+
+	// addFile buffers the file content first and derives the tar header
+	// size from what was actually read. Deriving it from a pre-read Stat
+	// instead would crash the whole archive with "archive/tar: write too
+	// long" when a file grows between stat and read (live SQLite WALs,
+	// replaced binaries). Read failures are recorded in skipped, never
+	// fatal: one bad file must not lose the rest of the snapshot. It
+	// returns true when the file was archived.
+	addFile := func(path, name string, fi os.FileInfo) bool {
+		if !fi.Mode().IsRegular() {
+			skipped = append(skipped, fmt.Sprintf("%s: not a regular file", path))
+			return false
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			skipped = append(skipped, fmt.Sprintf("%s: %v", path, err))
+			return false
+		}
+		header, err := tar.FileInfoHeader(fi, "")
+		if err != nil {
+			skipped = append(skipped, fmt.Sprintf("%s: %v", path, err))
+			return false
+		}
+		header.Name = filepath.ToSlash(name)
+		header.Size = int64(len(data))
+
+		if err := tw.WriteHeader(header); err != nil {
+			skipped = append(skipped, fmt.Sprintf("%s: %v", path, err))
+			return false
+		}
+		if _, err := tw.Write(data); err != nil {
+			skipped = append(skipped, fmt.Sprintf("%s: %v", path, err))
+			return false
+		}
+		totalSize += int64(len(data))
+		return true
+	}
 
 	for _, base := range paths {
 		info, err := os.Stat(base)
 		if err != nil {
 			if os.IsNotExist(err) {
+				skipped = append(skipped, fmt.Sprintf("%s: not found", base))
 				continue
 			}
 			return nil, fmt.Errorf("stat %s: %w", base, err)
@@ -70,7 +113,10 @@ func Create(rootDir string, paths []string) (*Backup, error) {
 		if info.IsDir() {
 			err = filepath.Walk(base, func(path string, fi os.FileInfo, err error) error {
 				if err != nil {
-					return err
+					// Unreadable entry (e.g. permission denied): record it and
+					// keep going so one bad path doesn't kill the snapshot.
+					skipped = append(skipped, fmt.Sprintf("%s: %v", path, err))
+					return nil
 				}
 				if fi.IsDir() {
 					// Skip VCS and backup/cache dirs to avoid bloat and recursion.
@@ -78,60 +124,22 @@ func Create(rootDir string, paths []string) (*Backup, error) {
 					case ".git", "backups", "cache":
 						return filepath.SkipDir
 					}
+					return nil // tar handles dirs via their contents
 				}
 
 				rel, err := filepath.Rel(base, path)
 				if err != nil {
-					return err
+					skipped = append(skipped, fmt.Sprintf("%s: %v", path, err))
+					return nil
 				}
-
-				if fi.IsDir() {
-					return nil // tar handles dirs via their contents
-				}
-
-				header, err := tar.FileInfoHeader(fi, "")
-				if err != nil {
-					return err
-				}
-				header.Name = filepath.ToSlash(rel)
-
-				if err := tw.WriteHeader(header); err != nil {
-					return err
-				}
-
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return err
-				}
-				if _, err := tw.Write(data); err != nil {
-					return err
-				}
-
-				totalSize += fi.Size()
+				addFile(path, rel, fi)
 				return nil
 			})
 			if err != nil {
 				return nil, fmt.Errorf("walk %s: %w", base, err)
 			}
 			backedUp = append(backedUp, base)
-		} else {
-			header, err := tar.FileInfoHeader(info, "")
-			if err != nil {
-				return nil, err
-			}
-			header.Name = filepath.ToSlash(filepath.Base(base))
-
-			if err := tw.WriteHeader(header); err != nil {
-				return nil, err
-			}
-			data, err := os.ReadFile(base)
-			if err != nil {
-				return nil, err
-			}
-			if _, err := tw.Write(data); err != nil {
-				return nil, err
-			}
-			totalSize += info.Size()
+		} else if addFile(base, filepath.Base(base), info) {
 			backedUp = append(backedUp, base)
 		}
 	}
@@ -141,6 +149,7 @@ func Create(rootDir string, paths []string) (*Backup, error) {
 		CreatedAt: now,
 		Size:      totalSize,
 		Paths:     backedUp,
+		Skipped:   skipped,
 	}, nil
 }
 

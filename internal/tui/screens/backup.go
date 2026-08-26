@@ -112,7 +112,11 @@ func createBackup() tea.Msg {
 		return backupResultMsg{err: fmt.Sprintf("backup failed: %v", err)}
 	}
 
-	return backupResultMsg{status: fmt.Sprintf("Backup created: %s (%d bytes)", result.ID, result.Size)}
+	status := fmt.Sprintf("Backup created: %s (%d bytes)", result.ID, result.Size)
+	if len(result.Skipped) > 0 {
+		status += fmt.Sprintf(", %d skipped (see biggz backup create for details)", len(result.Skipped))
+	}
+	return backupResultMsg{status: status}
 }
 
 // Update handles input.

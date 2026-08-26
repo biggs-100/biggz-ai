@@ -38,6 +38,9 @@ func backupRun() int {
 		fmt.Printf("Backup created: %s\n", b.ID)
 		fmt.Printf("  Size: %d bytes\n", b.Size)
 		fmt.Printf("  Paths: %v\n", b.Paths)
+		for _, s := range b.Skipped {
+			fmt.Fprintf(os.Stderr, "warning: skipped %s\n", s)
+		}
 
 	case "list":
 		backups, err := backup.List("")
