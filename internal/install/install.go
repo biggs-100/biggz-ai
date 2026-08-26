@@ -440,10 +440,12 @@ func VerifyCheckpointSynthesis(content string) error {
 }
 
 // verifyOrchestratorDeployment checks that the orchestrator prompt and permissions
-// were correctly deployed for the given adapter. It verifies that the deployed
-// file contains the checkpoint markers and that ask_user_question/question
-// permission is present for the orchestrator. On failure it logs a warning;
-// callers may decide to fail installation.
+// were correctly deployed for the given adapter. The checkpoint is deployed to
+// exactly one surface per adapter strategy — settings overlays for
+// OpenCode-style agents, the system prompt file for Pi — so verification passes
+// when ANY deployed surface carries the checkpoint markers. Demanding all
+// surfaces would fail agents that legitimately keep the prompt in only one.
+// Permission hints are non-fatal warnings.
 func verifyOrchestratorDeployment(homeDir string, adapter plugin.AgentAdapter) error {
 	required := []string{
 		"Post-Delegation Human Checkpoint",
@@ -451,12 +453,16 @@ func verifyOrchestratorDeployment(homeDir string, adapter plugin.AgentAdapter) e
 		"## Sub-agent Result",
 		"Artifacts/Paths",
 	}
+	checkpointFound := false
+	var checked []string
 	// Check OpenCode settings (orchestrator prompt embedded in overlay)
 	if settingsPath := adapter.SettingsPath(homeDir); settingsPath != "" {
 		if data, err := os.ReadFile(settingsPath); err == nil {
+			checked = append(checked, settingsPath)
 			if err := verifyCheckpointContent(data, required); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: orchestrator checkpoint missing in %s: %v\n", settingsPath, err)
-				return err
+			} else {
+				checkpointFound = true
 			}
 			// Verify permission for orchestrator (question + ask_user_question)
 			s := string(data)
@@ -471,11 +477,16 @@ func verifyOrchestratorDeployment(homeDir string, adapter plugin.AgentAdapter) e
 	// Check Pi / system prompt file
 	if promptFile := adapter.SystemPromptFile(homeDir); promptFile != "" {
 		if data, err := os.ReadFile(promptFile); err == nil {
+			checked = append(checked, promptFile)
 			if err := verifyCheckpointContent(data, required); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: orchestrator checkpoint missing in %s: %v\n", promptFile, err)
-				return err
+			} else {
+				checkpointFound = true
 			}
 		}
+	}
+	if !checkpointFound {
+		return fmt.Errorf("orchestrator checkpoint not found in any deployed surface %v", checked)
 	}
 	return nil
 }
