@@ -300,7 +300,7 @@ echo '{"repository":"C:/temp/biggz-full-test","commit_sha":"HEAD"}' | biggz
 # ===== 8.8 Create verify report =====
 @"
 yaml
-schema: gentle-ai.verify-result/v1
+schema: biggz-ai.verify-result/v1
 verdict: pass
 blockers: 0
 critical_findings: 0
