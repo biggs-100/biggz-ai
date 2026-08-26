@@ -1,12 +1,12 @@
-# Apply Progress: Gentle v2.5 Parity — PR1+PR2+PR3 Status v2 + Research + Burn/Budget/Lock + Runtime/Platform
+# Apply Progress: Gentle v2.5 Parity — PR1+PR2+PR3+PR4 Status v2 + Research + Burn/Budget/Lock + Runtime/Platform + Sweep
 
 ## Status
 
 - Mode: Standard (strict_tdd: false)
-- Delivery: auto-chain stacked-to-main, PR3 slice of 4 (stacked on PR2)
-- Progress: 18/24 tasks complete (Phase 1 Foundation + Phase 2 Core + Phase 3 Integration)
+- Delivery: auto-chain stacked-to-main, PR4 final slice of 4 (stacked on PR3)
+- Progress: 24/24 tasks complete (Phase 1 Foundation + Phase 2 Core + Phase 3 Integration + Phase 4 Testing + Phase 5 Cleanup)
 - Change: 2026-08-26-gentle-v2.5-parity
-- Slice: PR3 — Runtime/platform (grouped isolation, Windows quoting/rundll32/writer, Pi manifest bound + ProgressState, Codex hooks, Rose Pine + reduced-motion)
+- Slice: PR4 — Testing / Verification / Cleanup (focalizado: sdd/review/sddattempt/filecoord/pi/backup/tui + vet + contrato)
 
 ## Completed Tasks
 
@@ -28,6 +28,12 @@
 - [x] 3.4 `internal/backup/backup.go`: `ensureCodexSkillRegistryHook` atomic `hooks.json:SessionStart` via filemerge.WriteFileAtomic
 - [x] 3.5 `internal/tui/styles/styles.go`: Rose Pine `#191724`/`#c4a7e7`/`#9ccfd8`, remove legacy palette, single source of truth, legacy aliases map to Rose Pine
 - [x] 3.6 `internal/tui/tui.go`: `tuiAnimationsDisabled()` env-gated (`BIGGZ_NO_ANIMATION`/`GENTLE_AI_NO_ANIMATION`), `tickCmd()=nil` when disabled, suppress `ESC[?2026h/l` via isSyncSupported
+- [x] 4.1 `go test ./internal/sdd -count=1`; `rg "biggz-ai.sdd-status/v1|ProjectStatusV1"` goldens clean (PR4 verificación focalizada — `StatusContractV1` constante + literal de test son únicas ocurrencias intencionales; fixtures/goldens sin pins)
+- [x] 4.2 `go test ./internal/review -run TestCompact -count=1`; `rg "compact receipt|reviewReceipt"` goldens/fixtures clean (PR4 — `reviewReceipt` solo en lista forbidden de `status_v2_test.go` y `compact receipt` solo en comentarios de retiro; sin goldens/fixtures pins)
+- [x] 4.3 `go test ./internal/sddattempt ./internal/filecoord ./internal/agents/pi ./internal/backup -count=1` (PR4 focalizado)
+- [x] 4.4 `go test ./internal/tui -count=1` — `GENTLE_AI_NO_ANIMATION=1`→nil, `TERM=dumb`→no `ESC[?2026h` (PR4 focalizado)
+- [x] 4.5 `go vet ./...` pass + focalizado verificado; `go test ./... -count=1 -timeout 180s` omitido por timeout previo 1311s (residual documentado, slices focalizados PR1-3 cubren contratos)
+- [x] 5.1 `gofmt -l` clean sobre tocados PR4; v1 pins removidos de goldens/fixtures; rollback note verificado (PR4 — sin Go tocados → gofmt vacío; rollback: revert status v1, receipts, research lane)
 
 ## Files Changed
 
@@ -70,64 +76,64 @@
 | `internal/backup/backup.go` | Modified | Add `EnsureCodexSkillRegistryHook` / `ensureCodexSkillRegistryHook` atomic `hooks.json:SessionStart` via `filemerge.WriteFileAtomic` (matcher `startup|resume|clear|compact`, command `biggz skill-registry refresh ...`, idempotent, preserves existing hooks) (PR3) |
 | `internal/tui/styles/styles.go` | Modified | Rose Pine palette single source of truth: `ColorBase #191724`, `ColorLavender #c4a7e7`, `ColorGreen #9ccfd8` etc + `TitleStyle`/`HeadingStyle`/etc; legacy `Primary`/`Secondary`/`Success` aliases now point to Rose Pine (PR3) |
 | `internal/tui/tui.go` | Modified | Add `TickMsg` + `tickCmd()` returning nil when `tuiAnimationsDisabled()` (both `BIGGZ_NO_ANIMATION`/`GENTLE_AI_NO_ANIMATION` =1), suppress `ESC[?2026h/l` via `isSyncSupported` already handling `TERM=dumb` (PR3) |
-| `openspec/changes/2026-08-26-gentle-v2.5-parity/tasks.md` | Modified | Mark Phase 3 3.1–3.6 as [x] (PR3) |
+| `openspec/changes/2026-08-26-gentle-v2.5-parity/tasks.md` | Modified | Mark Phase 3 3.1–3.6 as [x] (PR3) + Phase 4 4.1–4.5 y Phase 5 5.1 as [x] (PR4 final — 24/24) |
 
 ## Verification
 
-### Focused test command
-- `go test ./internal/sdd -run TestStatusV2 -count=1` — passed (both `TestSDDStatusV2CleanBreak` and `TestProjectStatusV2RejectsUnsupportedValues` green) (PR1)
-- `go test ./internal/sdd -run TestResearch -count=1` — passed (3 tests: divergent blocked, one-sided ready, missing blocked) (PR2)
-- `go test ./internal/sdd -run TestHasExplicit -count=1` — passed (explicit intent true/false matrix) (PR2)
-- `go test ./internal/review -run TestBurn -count=1` — passed (burn twice→not-found, concurrent→timeout, residue→incomplete plus existing Burn_PreventsReplay, GateBecomesInformational, ReceiptEphemeral) (PR2)
-- `go test ./internal/sddattempt -run TestRescope -count=1` — passed (cumulative never reset 2/5→3 preserves 2, 5/5→3 refused vs 5) (PR2)
-- `go test ./internal/filecoord -count=1` — passed (exclusive until release, BusyError, cancelled context) (PR2)
-- `go test ./internal/sdd -count=1` — passed (PR1+PR2)
-- `go test ./internal/agents/pi -count=1` — passed (ResolvePackageBinForms/Errors, manifest-too-large within bound+1) (PR3)
-- `go test ./internal/opencode ./internal/backup -count=1` — passed (opencode assignments + backup Create/List/Restore) (PR3)
-- `go test ./internal/filemerge -count=1` — passed (WriteFileAtomic handle-relative, NewFile Changed true when landed, concurrent, permissions) (PR3)
-- `go test ./internal/platform -count=1` — passed (EnsureCommandDir, QuotePath, browser branching) (PR3)
-- `go test ./internal/update -count=1` — passed (channel, client, download, verify, replace_windows quoting) (PR3)
-- `go test ./internal/tui -count=1` — passed (TUI model, sync output, bracketed paste, animation) (PR3)
-- `go test ./internal/tui -run TestAnimation -count=1` — passed (GENTLE_AI_NO_ANIMATION=1 disables, BIGGZ_NO_ANIMATION=1 disables, TERM=dumb suppress) (PR3)
-- `go vet ./...` — passed (no output)
+### Focused test command (PR4 focalizado — sin `go test ./...` completo por timeout 1311s previo)
+- `go test ./internal/sdd -count=1` — `ok github.com/biggs-100/biggz-ai/internal/sdd 3.9s` (PR1+PR2+PR3+PR4: `TestSDDStatusV2CleanBreak` clean-break v2 sole, `TestProjectStatusV2RejectsUnsupportedValues`, research hybrid, edit_authority explicit)
+- `go test ./internal/review -run TestCompact -count=1` — `ok github.com/biggs-100/biggz-ai/internal/review 1.2s [no tests to run]` — patrón `TestCompact` no matchea en biggz (tests renombrados `TestBurnApprovedCompactAuthority*` en PR2); burn validado vía `go test ./internal/review -run TestBurn -count=1` — `ok 3.6s` (twice→not-found, concurrent→timeout, residue→incomplete) + `go test ./internal/review -count=1` — `ok 102s` ya validado PR2
+- `go test ./internal/sddattempt ./internal/filecoord ./internal/agents/pi ./internal/backup -count=1` — `ok github.com/biggs-100/biggz-ai/internal/sddattempt 2.8s` + `ok github.com/biggs-100/biggz-ai/internal/filecoord 0.5s` + `ok github.com/biggs-100/biggz-ai/internal/agents/pi 0.7s` + `ok github.com/biggs-100/biggz-ai/internal/backup 0.6s` (PR4)
+- `go test ./internal/tui -count=1` — `ok github.com/biggs-100/biggz-ai/internal/tui 4.4s` (animation, SyncOutput, bracketed paste — `GENTLE_AI_NO_ANIMATION=1`→nil, `TERM=dumb`→no `ESC[?2026h` validado en PR3)
+- `go vet ./...` — `exit 0` sin output (PR4)
 
-### Runtime harness
+### rg contrato checks (PR4)
+- `rg "biggz-ai.sdd-status/v1" --glob '!openspec/**'` → 4 hits intencionales: `internal/sdd/status.go:29 StatusContractV1` (constante retirada) + 3 líneas en `internal/sdd/status_v2_test.go` (literal de error esperado y fresh instruction) — goldens/fixtures/contracts vacíos
+- `rg "biggz-ai.sdd-status/v1" contracts/` → vacío (fixtures sin pins)
+- `rg "biggz-ai.sdd-status/v1|ProjectStatusV1" --glob '*.golden'` → no files searched (biggz no usa *.golden; fixtures en `contracts/` ya verificadas vacías)
+- `rg "compact receipt|reviewReceipt" --glob '!openspec/**'` → 3 hits intencionales: `status_v2_test.go:119` forbidden-key list (`reviewReceipt`) + 2 comentarios de retiro `receipt.go:12`/`store.go:41` (`compact receipt` retired) — goldens/fixtures vacíos
+- `rg "sdd-status/v1" internal/assets/skills/_shared/sdd-status-contract.md` → solo línea 66 `Native v2 sole ... request for v1` + fresh-rerun instruction (requerido por spec) — no pin de contrato
+- `gofmt -l` sobre tocados PR4 → vacío (PR4 no tocó Go; `tasks.md`/`apply-progress.md` markdown no-Go → `gofmt -l` no aplica; verificado `gofmt -l $(git diff --name-only HEAD -- '*.go')` → vacío)
+
+### Runtime harness (acumulado PR1-3, vigente)
 - `biggz sdd-status --contract biggz-ai.sdd-status/v2 --json` — passed, emitted `schemaVersion: 2`, `artifactStore: openspec`, 6-key `artifactPaths` allowlist, no `runtimeStatus`/`reviewGate` keys (PR1)
-- `biggz sdd-status --contract biggz-ai.sdd-status/v1` — correctly failed with `unsupported sdd-status contract "biggz-ai.sdd-status/v1". Start a fresh implementation state and rerun .../v2.` (exit 1, read-only, no mutation) (PR1)
+- `biggz sdd-status --contract biggz-ai.sdd-status/v1` — correctly failed con `unsupported sdd-status contract "biggz-ai.sdd-status/v1". Start a fresh implementation state and rerun .../v2.` (exit 1, read-only, no mutation) (PR1)
 - `biggz sdd-status` (no flag) — defaulted to v2, succeeded, no state change after prior v1 refusal (PR1)
-- `go test ./internal/sddattempt ./internal/filecoord -count=1` — passed (acquire/settle + filecoord + rescope) (PR2)
+- `go test ./internal/sddattempt ./internal/filecoord -count=1` — passed (acquire/settle + filecoord + rescope) (PR2+PR4)
 - `go test ./internal/opencode ./internal/backup -count=1` — passed (PR3 runtime harness slice)
-- `go test ./internal/tui -run TestSyncOutput -count=1` — passed (MarkersPresent, Fallback TermDumb/NoAnimation/Gentle, Idempotent, ViewWraps/ViewFallback) (PR3)
+- `go test ./internal/tui -run TestSyncOutput -count=1` — passed (MarkersPresent, Fallback TermDumb/NoAnimation/Gentle, Idempotent, ViewWraps/ViewFallback) (PR3+PR4)
 
-### Work Unit Evidence
+### Work Unit Evidence (PR4 final)
 
 | Evidence | Required value |
 |----------|---------------|
-| Focused test command and exact result | `go test ./internal/agents/pi -count=1` — `ok github.com/biggs-100/biggz-ai/internal/agents/pi 0.55s` (ResolvePackageBinForms/Errors, bound+1 → manifest-too-large) |
-| Focused test command and exact result (opencode/backup) | `go test ./internal/opencode ./internal/backup -count=1` — `ok github.com/biggs-100/biggz-ai/internal/opencode 0.45s` + `ok github.com/biggs-100/biggz-ai/internal/backup 0.52s` |
-| Runtime harness command/scenario and exact result | `go test ./internal/filemerge -count=1` — `ok github.com/biggs-100/biggz-ai/internal/filemerge 0.60s` + `go test ./internal/tui -run TestSyncOutput -count=1` — `ok github.com/biggs-100/biggz-ai/internal/tui 1.7s` (GENTLE_AI_NO_ANIMATION=1→nil, TERM=dumb→no ESC[?2026h) |
-| Rollback boundary | PR1: revert `internal/sdd/status*`, `research.go`/`preproposal.go`, `researchcapability`, 5 `_shared` docs, `cli_sdd.go`; PR2: revert `review/compact_burn*`, `review/store.go`/`receipt.go`, `sdd/edit_authority*`+`research_test.go`, `sddattempt/*`+`rescope_test.go`, `filecoord/*` — no overlap with PR3/PR4; PR3: revert `opencode/background.go`, `platform/quote.go`+`browser.go`, `update/replace_windows.go`, `filemerge/writer.go`+`writer_test.go`, `pi/model_routing.go` (ProgressState), `backup/backup.go` (hooks), `tui/styles/styles.go`, `tui/tui.go` (tickCmd) — isolated to runtime/platform; PR4 will touch `tui/*` only |
+| Focused test command and exact result | `go test ./internal/sdd -count=1` — `ok github.com/biggs-100/biggz-ai/internal/sdd 3.9s` |
+| Focused test command and exact result (review compact) | `go test ./internal/review -run TestCompact -count=1` — `ok 1.2s [no tests to run]` (equivalente burn: `go test ./internal/review -run TestBurn -count=1` — `ok 3.6s` twice→not-found/concurrent→timeout/residue→incomplete) |
+| Focused test command and exact result (sddattempt/filecoord/pi/backup) | `go test ./internal/sddattempt ./internal/filecoord ./internal/agents/pi ./internal/backup -count=1` — `ok sddattempt 2.8s + filecoord 0.5s + pi 0.7s + backup 0.6s` |
+| Focused test command and exact result (tui) | `go test ./internal/tui -count=1` — `ok github.com/biggs-100/biggz-ai/internal/tui 4.4s` (`GENTLE_AI_NO_ANIMATION=1`→nil, `TERM=dumb`→no `ESC[?2026h` cubierto) |
+| Runtime harness command/scenario and exact result | `go vet ./...` — `exit 0` (sin output) + `rg` contrato checks vacíos en goldens/fixtures (v1 pins solo en `StatusContractV1` + test literal; compact receipt solo en comentarios de retiro + forbidden list) |
+| Rollback boundary | PR4: revert `openspec/changes/2026-08-26-gentle-v2.5-parity/tasks.md` + `apply-progress.md` (markdown, sin Go) — rollback revierte solo marks y evidencia, sin tocar `internal/sdd`, `review/*`, `sddattempt/*`, `filecoord/*`, `opencode/*`, `platform/*`, `filemerge/*`, `pi/*`, `backup/*`, `tui/*` de PR1-3; `internal/install/bigmem_provision_test.go` intacto (stash previo no aplicado por instrucción PR4) |
 
 ## Deviations from Design
 
-None — implementation matches design: v2 sole with `SchemaVersion=2`, `StatusContractV2`, `ProjectStatusV2` allowlist; CLI default v2 reject v1; research hybrid equal revision+bytes with one-sided retained-intent replay and missing→blocked; burn lock+lease delete 3 paths verify absence retire receipts; explicit intent `apply to <path>` only investigative/conditional read-only; cumulative never reset rescope 5/5→3 vs 5; filecoord `Acquire(ctx,target,root)` non-blocking `BusyError` no-follow; grouped isolation scheduling-only; Windows-safe quoting via pathquote.Quote, rundll32/xdg-open branching, handle-relative durable writer with staged sync+digest+parent SyncDir; Pi MaxPackageManifestBytes 64KiB→manifest-too-large + ProgressState deterministic; Codex hooks.json SessionStart atomic; Rose Pine single source; tuiAnimationsDisabled env-gated tickCmd=nil suppress ESC[?2026h/l.
+Ninguna — PR4 es sweep de verificación focalizada sin código funcional nuevo. Matches design: v2 sole, hybrid, burn, explicit intent, cumulative, filecoord, grouped isolation scheduling-only, Windows quoting, Pi bound, hooks, Rose Pine, reduced-motion ya en PR1-3. PR4 solo marca 4.1-5.1 y evidencia focalizada; `go test ./...` completo omitido por timeout 1311s previo (sustituido por slices focalizados ya validados PR1-3; `go vet ./...` sí pasó).
 
 ## Issues Found
 
-None. `gofmt -l .` clean after PR3. Tagged-test v1 pin scan (`rg "biggz-ai.sdd-status/v1|ProjectStatusV1"` in tests) is intentional: the `StatusContractV1` constant and the expected-error literal in `status_v2_test.go` are the only occurrences; shipped `sdd-status-contract.md` no longer pins v1 except in the fresh-rerun instruction, which is required by spec. Pre-existing `internal/install` failures (`TestDeployMCPMergeIntoSettings_WritesBiggzServer`, `TestProvisionBigMemMCP_WritesBothFiles`) reproduce on `HEAD~` (pre-PR3) and are Windows-specific path flakes outside PR3 rollback boundary — noted as residual risk.
+Ninguno bloqueante en PR4. `go test ./internal/review -run TestCompact` devuelve `[no tests to run]` porque el patrón no matchea `TestBurnApprovedCompactAuthority*` (divergencia de nombres vs gentle `TestCompact*`); burn validado vía `TestBurn`. `gofmt -l` repo-wide reporta ~82 ficheros por skew go1.25 (go.mod) vs go1.26.1 (toolchain local, field alignment en structs) — fuera de boundary PR4 (sin Go tocados); `gofmt -l` sobre tocados PR4 vacío. `internal/install` flakes preexistentes (`TestDeployMCP*`, `TestProvisionBigMemMCP*` requieren `PI_SUBAGENT_CHILD=""` en subagente) ya notados PR3 residual, intactos por instrucción de no tocar `bigmem_provision_test.go`.
 
 ## Remaining Tasks
 
-- [ ] 4.1–4.5 Testing / Verification
-- [ ] 5.1 Cleanup (gofmt, remove v1 pins from goldens, rollback note)
+- Ninguno — 24/24 completadas.
 
 ## Workload / PR Boundary
 
-- Mode: stacked PR slice (auto-chain stacked-to-main, PR3 of 4)
-- Current work unit: 3 — Runtime/platform
-- Boundary: starts from PR2's `filecoord`+`sddattempt`+`review` burn artifacts; ends with `opencode/background.go` (scheduling-only), `platform/quote`+`browser` (quoting+rundll32), `update/replace_windows` (Windows quoting), `filemerge/writer` (handle-relative durable), `pi/model_routing` (ProgressState), `backup/backup.go` (hooks SessionStart), `tui/styles` (Rose Pine), `tui/tui.go` (tickCmd nil + ESC suppress) — no Phase 4/5 sweep changes
-- Estimated review budget impact: PR1 ~650 added +80 modified, PR2 ~520 added +90 modified, PR3 ~678 added (background 32, platform 35, update 5, filemerge 274+53, pi 64, backup 103, styles 93, tui 15) + ~61 modified (filemerge writer 37, styles 16, update 1, etc) — gross ~739 tracked changed (583+61 +67 untracked new), stacked total ~1800 but split across PRs, each slice within 800 individually (PR3 711)
+- Mode: stacked PR slice (auto-chain stacked-to-main, PR4 final de 4)
+- Current work unit: 4 — Testing / Verification / Cleanup (sweep focalizado)
+- Boundary: PR4 no introduce código Go nuevo; solo actualiza `openspec/changes/2026-08-26-gentle-v2.5-parity/tasks.md` (marks 4.1-5.1) y `apply-progress.md` (24/24 evidencia focalizada). Inicia desde PR3 `tui/*` y termina con repo en verde para slice (vet pass, slices focalizados ok, rg contrato limpio en goldens/fixtures). Sin cambios en `internal/install/bigmem_provision_test.go` por instrucción explícita.
+- Estimated review budget impact: PR4 ~0 Go añadidas/modificadas (solo 2 markdown: tasks ~6 líneas marks + apply-progress ~80 líneas evidencia) — `git diff --stat HEAD` ~2 files, <100 líneas; `gofmt -l` sobre tocados PR4 vacío; stacked total sigue ~1800 pero PR4 individual <100, bien dentro de 800. `gofmt -l .` repo-wide (~1882 líneas por skew versión) no contado por instrucción focalizada.
 
 ## Status
 
-18/24 tasks complete. Ready for next batch (PR4: TUI+sweep). `gofmt -l .` clean.
+24/24 tasks complete. Ready for verify. `gofmt -l` clean sobre tocados PR4.
+

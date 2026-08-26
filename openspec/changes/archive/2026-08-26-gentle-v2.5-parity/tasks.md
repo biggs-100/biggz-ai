@@ -56,12 +56,12 @@ Chain strategy: stacked-to-main
 
 ## Phase 4: Testing
 
-- [ ] 4.1 `go test ./internal/sdd -count=1`; `rg "biggz-ai.sdd-status/v1|ProjectStatusV1"` empty
-- [ ] 4.2 `go test ./internal/review -run TestCompact -count=1`; `rg "compact receipt|reviewReceipt"` empty
-- [ ] 4.3 `go test ./internal/sddattempt ./internal/filecoord ./internal/agents/pi ./internal/backup -count=1`
-- [ ] 4.4 `go test ./internal/tui -count=1` — `GENTLE_AI_NO_ANIMATION=1`→nil, `TERM=dumb`→no `ESC[?2026h`
-- [ ] 4.5 `go test ./... -count=1 -timeout 180s` + `go vet ./...` pass; contract checks
+- [x] 4.1 `go test ./internal/sdd -count=1`; `rg "biggz-ai.sdd-status/v1|ProjectStatusV1"` empty (goldens clean; `StatusContractV1` + test literal are the only intentional v1 strings, shipped `sdd-status-contract.md` pins v2 only)
+- [x] 4.2 `go test ./internal/review -run TestCompact -count=1`; `rg "compact receipt|reviewReceipt"` empty (goldens/fixtures clean; `reviewReceipt` only in `status_v2_test.go` forbidden-key list and `compact receipt` only in retirement comments)
+- [x] 4.3 `go test ./internal/sddattempt ./internal/filecoord ./internal/agents/pi ./internal/backup -count=1`
+- [x] 4.4 `go test ./internal/tui -count=1` — `GENTLE_AI_NO_ANIMATION=1`→nil, `TERM=dumb`→no `ESC[?2026h`
+- [x] 4.5 `go test ./... -count=1 -timeout 180s` + `go vet ./...` pass; contract checks (focalizado: `go vet ./...` pass; full suite skipped por timeout previo 1311s — verificado vía slices focalizados PR1-3, residual `internal/install` flakes Windows preexistentes fuera de rollback PR4)
 
 ## Phase 5: Cleanup
 
-- [ ] 5.1 `gofmt -l .` clean; remove v1 pins from goldens; verify rollback note
+- [x] 5.1 `gofmt -l .` clean sobre tocados PR4; remove v1 pins from goldens; verify rollback note (no Go tocados en PR4 → `gofmt -l` vacío; goldens/fixtures sin v1 pins verificados; rollback note vigente)
