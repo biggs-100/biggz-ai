@@ -22,9 +22,9 @@ import (
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const (
-	PlanSchema        = "biggz.verification-plan/v1"
-	EffectSchema      = "biggz.verification-effect/v1"
-	ConsentSchema     = "biggz.verification-consent/v1"
+	PlanSchema          = "biggz.verification-plan/v1"
+	EffectSchema        = "biggz.verification-effect/v1"
+	ConsentSchema       = "biggz.verification-consent/v1"
 	AuthorizationSchema = "biggz.verification-authorization/v1"
 )
 
@@ -62,28 +62,28 @@ const (
 type PermissionEffect string
 
 const (
-	PermissionOrdinary    PermissionEffect = "ordinary"
-	PermissionSensitive   PermissionEffect = "sensitive" // e.g. network access, secrets
+	PermissionOrdinary  PermissionEffect = "ordinary"
+	PermissionSensitive PermissionEffect = "sensitive" // e.g. network access, secrets
 )
 
 // VerificationObligation is a single verifier to run.
 type VerificationObligation struct {
-	ID            string    `json:"id"`             // e.g. "lens/risk", "lens/reliability"
-	Contract      string    `json:"contract"`       // e.g. "biggz.functional-proof/v1"
-	Cost          CostClass `json:"cost"`
-	ReadOnly      bool      `json:"read_only"`      // true if verifier never modifies files
-	Mandatory     bool      `json:"mandatory"`       // true if cannot be skipped
-	Description   string    `json:"description,omitempty"`
+	ID          string    `json:"id"`       // e.g. "lens/risk", "lens/reliability"
+	Contract    string    `json:"contract"` // e.g. "biggz.functional-proof/v1"
+	Cost        CostClass `json:"cost"`
+	ReadOnly    bool      `json:"read_only"` // true if verifier never modifies files
+	Mandatory   bool      `json:"mandatory"` // true if cannot be skipped
+	Description string    `json:"description,omitempty"`
 }
 
 // EffectProfile describes the aggregate effect of running a plan.
 type EffectProfile struct {
-	Schema       string           `json:"schema"`
-	Applicable   bool             `json:"applicable"`
-	AggregateCost CostClass       `json:"aggregate_cost"`
-	Mutation     MutationEffect   `json:"mutation"`
-	Permission   PermissionEffect `json:"permission"`
-	Digest       string           `json:"digest"` // SHA-256 of all fields
+	Schema        string           `json:"schema"`
+	Applicable    bool             `json:"applicable"`
+	AggregateCost CostClass        `json:"aggregate_cost"`
+	Mutation      MutationEffect   `json:"mutation"`
+	Permission    PermissionEffect `json:"permission"`
+	Digest        string           `json:"digest"` // SHA-256 of all fields
 }
 
 // VerificationPlan is a frozen, content-addressed plan.
@@ -98,41 +98,41 @@ type VerificationPlan struct {
 
 // PlanGate determines what's needed to execute the plan.
 type PlanGate struct {
-	Decision           PlanDecision `json:"decision"`
-	RequiresConsent    bool         `json:"requires_consent"`
-	RequiresAuth       bool         `json:"requires_authorization"`
-	Reason             string       `json:"reason,omitempty"`
+	Decision        PlanDecision `json:"decision"`
+	RequiresConsent bool         `json:"requires_consent"`
+	RequiresAuth    bool         `json:"requires_authorization"`
+	Reason          string       `json:"reason,omitempty"`
 }
 
 // PlanDecision classifies the gate outcome.
 type PlanDecision string
 
 const (
-	DecisionAutoRun        PlanDecision = "auto_run"          // safe to run unattended
-	DecisionNeedsConsent   PlanDecision = "needs_consent"     // expensive, needs human OK
-	DecisionNeedsAuth      PlanDecision = "needs_auth"        // destructive/sensitive, needs per-effect OK
-	DecisionNotApplicable  PlanDecision = "not_applicable"    // no work to do
-	DecisionEvidenceGap    PlanDecision = "evidence_gap"      // cost unknown, can't decide
+	DecisionAutoRun       PlanDecision = "auto_run"       // safe to run unattended
+	DecisionNeedsConsent  PlanDecision = "needs_consent"  // expensive, needs human OK
+	DecisionNeedsAuth     PlanDecision = "needs_auth"     // destructive/sensitive, needs per-effect OK
+	DecisionNotApplicable PlanDecision = "not_applicable" // no work to do
+	DecisionEvidenceGap   PlanDecision = "evidence_gap"   // cost unknown, can't decide
 )
 
 // FrozenConsent records human approval for an expensive plan.
 type FrozenConsent struct {
 	Schema      string `json:"schema"`
-	PlanRef     string `json:"plan_ref"`     // AuthorityRef of the plan
-	PlanDigest  string `json:"plan_digest"`  // Digest of the plan
+	PlanRef     string `json:"plan_ref"`    // AuthorityRef of the plan
+	PlanDigest  string `json:"plan_digest"` // Digest of the plan
 	ConsentedBy string `json:"consented_by"`
 	ConsentedAt string `json:"consented_at"`
-	Digest      string `json:"digest"`       // SHA-256 of all fields
+	Digest      string `json:"digest"` // SHA-256 of all fields
 }
 
 // EffectAuthorization records human approval for a sensitive obligation.
 type EffectAuthorization struct {
-	Schema        string `json:"schema"`
-	PlanRef       string `json:"plan_ref"`
-	ObligationID  string `json:"obligation_id"`
-	AuthorizedBy  string `json:"authorized_by"`
-	AuthorizedAt  string `json:"authorized_at"`
-	Digest        string `json:"digest"`
+	Schema       string `json:"schema"`
+	PlanRef      string `json:"plan_ref"`
+	ObligationID string `json:"obligation_id"`
+	AuthorizedBy string `json:"authorized_by"`
+	AuthorizedAt string `json:"authorized_at"`
+	Digest       string `json:"digest"`
 }
 
 // ─── Content-addressed helpers ───────────────────────────────────────────────
@@ -268,10 +268,10 @@ func (p *VerificationPlan) ResolveGate() PlanGate {
 
 	if isDestructive || isSensitive {
 		return PlanGate{
-			Decision:      DecisionNeedsAuth,
-			RequiresAuth:  true,
+			Decision:        DecisionNeedsAuth,
+			RequiresAuth:    true,
 			RequiresConsent: isExpensive,
-			Reason:        planAuthReason(p.Effects),
+			Reason:          planAuthReason(p.Effects),
 		}
 	}
 
@@ -379,9 +379,9 @@ func CheckConvergence(expected, live VerificationSubject) *ConvergenceResult {
 
 // PlanStore holds published plans for the current session.
 type PlanStore struct {
-	plans        map[string]*VerificationPlan
-	consents     map[string]*FrozenConsent
-	auths        map[string]*EffectAuthorization
+	plans    map[string]*VerificationPlan
+	consents map[string]*FrozenConsent
+	auths    map[string]*EffectAuthorization
 }
 
 func NewPlanStore() *PlanStore {

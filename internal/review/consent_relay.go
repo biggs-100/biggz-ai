@@ -85,9 +85,9 @@ const (
 	reviewConsentOffPathCmd   = "biggz rdd disable"
 	reviewConsentOffPathNote  = "To turn reviews off for good, run '" + reviewConsentOffPathCmd + "'."
 
-	reviewConsentGrantedLabel  = "Run the review now"
-	reviewConsentGrantedEffect = "Starts the review for this candidate and creates its review lineage; later candidates are asked again."
-	reviewConsentDeclinedLabel = "Not now, just this once"
+	reviewConsentGrantedLabel   = "Run the review now"
+	reviewConsentGrantedEffect  = "Starts the review for this candidate and creates its review lineage; later candidates are asked again."
+	reviewConsentDeclinedLabel  = "Not now, just this once"
 	reviewConsentDeclinedEffect = "Skips the review for this exact candidate only; nothing is persisted, and the next candidate is asked again."
 )
 
@@ -162,9 +162,9 @@ func buildConsentEnvelope(subject model.ReviewSubject, lineageID string, tier Re
 		reason = reviewConsentReasonHigh
 	}
 	return &ConsentEnvelope{
-		Schema:   ConsentModeSchema,
-		Headline: reviewConsentHeadline,
-		Reason:   reason + " " + reviewConsentValue,
+		Schema:       ConsentModeSchema,
+		Headline:     reviewConsentHeadline,
+		Reason:       reason + " " + reviewConsentValue,
 		RiskEvidence: riskEvidence(input, lenses),
 		Candidate: ConsentCandidateScope{
 			Repository: subject.Repository,
@@ -180,5 +180,3 @@ func buildConsentEnvelope(subject model.ReviewSubject, lineageID string, tier Re
 		OffPathNote: reviewConsentOffPathNote,
 	}
 }
-
-

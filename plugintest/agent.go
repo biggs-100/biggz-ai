@@ -24,13 +24,13 @@ type FakeAgent struct {
 	AgentCapabilities []string
 
 	// Feature toggles (nil = default false)
-	AgentAutoInstall    *bool
-	AgentSkills         *bool
-	AgentSystemPrompt   *bool
-	AgentMCP            *bool
-	AgentOutputStyles   *bool
-	AgentSlashCommands  *bool
-	AgentSubAgents      *bool
+	AgentAutoInstall   *bool
+	AgentSkills        *bool
+	AgentSystemPrompt  *bool
+	AgentMCP           *bool
+	AgentOutputStyles  *bool
+	AgentSlashCommands *bool
+	AgentSubAgents     *bool
 
 	// Strategy overrides
 	AgentMCPStrategy          model.MCPStrategy

@@ -43,16 +43,16 @@ func (e *CompactStateError) Error() string {
 
 // CompactRecord is a single compacted state record for one lineage.
 type CompactRecord struct {
-	LineageID    string            `json:"lineage_id"`
-	Schema       string            `json:"schema"`
+	LineageID    string             `json:"lineage_id"`
+	Schema       string             `json:"schema"`
 	State        model.ReviewStatus `json:"state"`
-	MerkleRoot   string            `json:"merkle_root"`
-	ReceiptHash  string            `json:"receipt_hash,omitempty"`
-	EventCount   int               `json:"event_count"`
-	Corrections  int               `json:"corrections"`
-	FirstEvent   time.Time         `json:"first_event"`
-	LastEvent    time.Time         `json:"last_event"`
-	EvidenceHash string            `json:"evidence_hash,omitempty"`
+	MerkleRoot   string             `json:"merkle_root"`
+	ReceiptHash  string             `json:"receipt_hash,omitempty"`
+	EventCount   int                `json:"event_count"`
+	Corrections  int                `json:"corrections"`
+	FirstEvent   time.Time          `json:"first_event"`
+	LastEvent    time.Time          `json:"last_event"`
+	EvidenceHash string             `json:"evidence_hash,omitempty"`
 }
 
 // CompactStore manages compacted review state for parallel lineages.
@@ -65,13 +65,13 @@ type CompactStore struct {
 
 // CompactEvent is a single event in the compact transaction log.
 type CompactEvent struct {
-	ID        string            `json:"id"`
-	LineageID string            `json:"lineage_id"`
-	Type      string            `json:"type"`
+	ID        string             `json:"id"`
+	LineageID string             `json:"lineage_id"`
+	Type      string             `json:"type"`
 	State     model.ReviewStatus `json:"state"`
-	Timestamp time.Time         `json:"timestamp"`
-	Hash      string            `json:"hash"`
-	PrevHash  string            `json:"prev_hash"`
+	Timestamp time.Time          `json:"timestamp"`
+	Hash      string             `json:"hash"`
+	PrevHash  string             `json:"prev_hash"`
 }
 
 // NewCompactStore creates an empty compact store.
@@ -417,11 +417,11 @@ func MergeCompactRecords(a, b *CompactRecord) *CompactRecord {
 
 // CompactStoreStats returns statistics about the compact store.
 type CompactStoreStats struct {
-	TotalLineages   int            `json:"total_lineages"`
-	CompletedCount  int            `json:"completed_count"`
-	FailedCount     int            `json:"failed_count"`
-	TotalEvents     int            `json:"total_events"`
-	ByState         map[string]int `json:"by_state"`
+	TotalLineages  int            `json:"total_lineages"`
+	CompletedCount int            `json:"completed_count"`
+	FailedCount    int            `json:"failed_count"`
+	TotalEvents    int            `json:"total_events"`
+	ByState        map[string]int `json:"by_state"`
 }
 
 // Stats computes statistics from the compact store.
@@ -454,8 +454,8 @@ func min(a, b int) int {
 // CompactStoreJSON is the JSON-serializable form of the compact store.
 type CompactStoreJSON struct {
 	Records  map[string]*CompactRecord `json:"records"`
-	EventLog []CompactEvent             `json:"event_log"`
-	Schema   string                     `json:"schema"`
+	EventLog []CompactEvent            `json:"event_log"`
+	Schema   string                    `json:"schema"`
 }
 
 // MarshalJSON serializes the compact store to JSON.
@@ -574,13 +574,13 @@ func (cs *CompactStore) RecoverLineage(lineageID string) error {
 	}
 
 	cs.records[lineageID] = &CompactRecord{
-		LineageID:    lineageID,
-		Schema:       CompactStateSchema,
-		State:        terminalState,
-		EventCount:   len(events),
-		Corrections:  corrections,
-		FirstEvent:   events[0].Timestamp,
-		LastEvent:    lastEvent.Timestamp,
+		LineageID:   lineageID,
+		Schema:      CompactStateSchema,
+		State:       terminalState,
+		EventCount:  len(events),
+		Corrections: corrections,
+		FirstEvent:  events[0].Timestamp,
+		LastEvent:   lastEvent.Timestamp,
 	}
 	return nil
 }

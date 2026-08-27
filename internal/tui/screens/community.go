@@ -13,7 +13,7 @@ import (
 type cvView int
 
 const (
-	cvList        cvView = iota
+	cvList cvView = iota
 	cvSkillPicker
 	cvPluginDetail
 	cvInstalling
@@ -22,10 +22,10 @@ const (
 
 // pluginInfo describes a community plugin or tool.
 type pluginInfo struct {
-	name     string
-	desc     string
-	category string
-	repo     string
+	name      string
+	desc      string
+	category  string
+	repo      string
 	installed bool
 }
 
@@ -51,11 +51,11 @@ var communitySkills = []struct {
 
 // CommunityScreen lists and manages community plugins, tools, and skills.
 type CommunityScreen struct {
-	view       cvView
-	cursor     int
-	pluginCur  int // which plugin we're acting on
-	err        string
-	status     string
+	view      cvView
+	cursor    int
+	pluginCur int // which plugin we're acting on
+	err       string
+	status    string
 }
 
 func NewCommunityScreen() CommunityScreen {

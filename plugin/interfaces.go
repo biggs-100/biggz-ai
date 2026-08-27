@@ -132,7 +132,7 @@ const (
 // AgentConfig holds configuration to deploy to an AI coding agent.
 type AgentConfig struct {
 	SkillsDir     string            `json:"skills_dir,omitempty"`
-	MCPServers    map[string]string `json:"mcp_servers,omitempty"`    // name → binary path
+	MCPServers    map[string]string `json:"mcp_servers,omitempty"` // name → binary path
 	SystemPrompt  string            `json:"system_prompt,omitempty"`
 	SlashCommands []string          `json:"slash_commands,omitempty"`
 }

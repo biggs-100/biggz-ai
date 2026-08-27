@@ -36,11 +36,11 @@ func contractStatus(t *testing.T, lineageID string) map[string]json.RawMessage {
 
 // contractTransition decodes the next_transition of a contract envelope.
 func contractTransition(t *testing.T, envelope map[string]json.RawMessage) (nt struct {
-	Type       string                       `json:"type"`
-	Operation  string                       `json:"operation"`
-	Arguments  []string                     `json:"arguments"`
-	ReasonCode string                       `json:"reason_code"`
-	Inputs     map[string]json.RawMessage   `json:"inputs"`
+	Type       string                     `json:"type"`
+	Operation  string                     `json:"operation"`
+	Arguments  []string                   `json:"arguments"`
+	ReasonCode string                     `json:"reason_code"`
+	Inputs     map[string]json.RawMessage `json:"inputs"`
 }) {
 	t.Helper()
 	if err := json.Unmarshal(envelope["next_transition"], &nt); err != nil {
@@ -142,7 +142,7 @@ func TestReviewStart_ContractRelayEnvelopeWithInvocations(t *testing.T) {
 	}
 
 	var envelope struct {
-		Schema   string `json:"schema"`
+		Schema    string `json:"schema"`
 		Candidate struct {
 			Lineage string   `json:"lineage"`
 			Risk    string   `json:"risk"`
@@ -276,12 +276,12 @@ func splitInvocation(t *testing.T, invocation string) []string {
 // captureCollectInput runs `capture-result --preflight` and the real capture
 // for one collect input with a clean reviewer payload, through the CLI.
 func captureCollectInput(t *testing.T, repoDir, headSHA string, input struct {
-	Lineage           string                       `json:"lineage"`
-	Target            string                       `json:"target"`
-	Lens              string                       `json:"lens"`
-	Order             int                          `json:"order"`
-	ExpectedRevision  string                       `json:"expected_revision"`
-	RepositoryContext map[string]json.RawMessage   `json:"repository_context"`
+	Lineage           string                     `json:"lineage"`
+	Target            string                     `json:"target"`
+	Lens              string                     `json:"lens"`
+	Order             int                        `json:"order"`
+	ExpectedRevision  string                     `json:"expected_revision"`
+	RepositoryContext map[string]json.RawMessage `json:"repository_context"`
 }) {
 	t.Helper()
 	code, stdout, stderr := runReviewCapture(t, []string{"biggz", "review", "capture-result",

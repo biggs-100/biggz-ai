@@ -27,10 +27,10 @@ var dashboardActions = []struct {
 	desc string
 	view int
 }{
-	{"s", "Search memories", 12},      // screenMemSearch
-	{"r", "Recent observations", 4},    // screenMemory (already has list)
-	{"e", "Browse sessions", 11},       // screenSessions
-	{"i", "Install agent plugin", 1},   // screenInstall
+	{"s", "Search memories", 12},     // screenMemSearch
+	{"r", "Recent observations", 4},  // screenMemory (already has list)
+	{"e", "Browse sessions", 11},     // screenSessions
+	{"i", "Install agent plugin", 1}, // screenInstall
 	{"q", "Quit", -1},
 }
 
@@ -72,9 +72,13 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "up", "k":
-			if m.cursor > 0 { m.cursor-- }
+			if m.cursor > 0 {
+				m.cursor--
+			}
 		case "down", "j":
-			if m.cursor < len(dashboardActions)-1 { m.cursor++ }
+			if m.cursor < len(dashboardActions)-1 {
+				m.cursor++
+			}
 		case "enter", " ":
 			view := dashboardActions[m.cursor].view
 			if view == -1 {
@@ -96,7 +100,10 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case dashboardStatsMsg:
-		if msg.err != "" { m.err = msg.err; return m, nil }
+		if msg.err != "" {
+			m.err = msg.err
+			return m, nil
+		}
 		m.stats = msg.stats
 		m.projects = msg.projects
 		m.loaded = true
@@ -131,7 +138,9 @@ func (m DashboardModel) View() string {
 		b.WriteString("  (none)\n")
 	} else {
 		maxShow := 5
-		if len(m.projects) < maxShow { maxShow = len(m.projects) }
+		if len(m.projects) < maxShow {
+			maxShow = len(m.projects)
+		}
 		for _, p := range m.projects[:maxShow] {
 			b.WriteString(fmt.Sprintf("  • %s (%d obs, %d sessions)\n", p.Name, p.Observations, p.Sessions))
 		}
@@ -146,7 +155,9 @@ func (m DashboardModel) View() string {
 	b.WriteString("\n\n")
 	for i, a := range dashboardActions {
 		cur := "  "
-		if i == m.cursor { cur = "▸ " }
+		if i == m.cursor {
+			cur = "▸ "
+		}
 		b.WriteString(fmt.Sprintf("%s%s  %s\n", cur, styles.MenuItemKey.Render("["+a.key+"]"), a.desc))
 	}
 

@@ -11,10 +11,10 @@ import (
 type VerificationDomain string
 
 const (
-	DomainNativeLowRisk            VerificationDomain = "biggz.native-low-risk-verification/v1"
-	DomainFunctionalProof          VerificationDomain = "biggz.functional-proof/v1"
-	DomainAdversarialReview        VerificationDomain = "biggz.adversarial-review/v1"
-	DomainStructuralReadback       VerificationDomain = "biggz.structural-readback/v1"
+	DomainNativeLowRisk      VerificationDomain = "biggz.native-low-risk-verification/v1"
+	DomainFunctionalProof    VerificationDomain = "biggz.functional-proof/v1"
+	DomainAdversarialReview  VerificationDomain = "biggz.adversarial-review/v1"
+	DomainStructuralReadback VerificationDomain = "biggz.structural-readback/v1"
 )
 
 // VerificationContract defines what must be verified for a review to pass.
@@ -32,14 +32,14 @@ type VerificationContract struct {
 
 // VerificationResult records the outcome of a verification attempt.
 type VerificationResult struct {
-	ContractID    string    `json:"contract_id"`
-	Attempt       int       `json:"attempt"`
-	Passed        bool      `json:"passed"`
-	Evidence      string    `json:"evidence,omitempty"`
-	Findings      []string  `json:"findings,omitempty"`
-	Retryable     bool      `json:"retryable"`
-	ExecutedAt    time.Time `json:"executed_at"`
-	Duration      string    `json:"duration,omitempty"`
+	ContractID string    `json:"contract_id"`
+	Attempt    int       `json:"attempt"`
+	Passed     bool      `json:"passed"`
+	Evidence   string    `json:"evidence,omitempty"`
+	Findings   []string  `json:"findings,omitempty"`
+	Retryable  bool      `json:"retryable"`
+	ExecutedAt time.Time `json:"executed_at"`
+	Duration   string    `json:"duration,omitempty"`
 }
 
 // VerificationEngine runs verification contracts with retry logic.

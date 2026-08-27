@@ -53,13 +53,13 @@ type MirrorTopicStatus struct {
 
 // ReconcileReport describes the outcome of `review reconcile-authority`.
 type ReconcileReport struct {
-	Schema     string               `json:"schema"`
-	LineageID  string               `json:"lineage_id"`
-	Project    string               `json:"project"`
-	ChainValid bool                 `json:"chain_valid"`
-	Topics     []MirrorTopicStatus  `json:"topics"`
-	Refreshed  int                  `json:"refreshed"`
-	Wrote      bool                 `json:"wrote"`
+	Schema     string              `json:"schema"`
+	LineageID  string              `json:"lineage_id"`
+	Project    string              `json:"project"`
+	ChainValid bool                `json:"chain_valid"`
+	Topics     []MirrorTopicStatus `json:"topics"`
+	Refreshed  int                 `json:"refreshed"`
+	Wrote      bool                `json:"wrote"`
 }
 
 // mirrorTopic returns the BigMem topic key for one mirror kind of a lineage.
@@ -90,19 +90,19 @@ type ledgerEntryMirror struct {
 }
 
 type ledgerMirror struct {
-	Schema    string               `json:"schema"`
-	LineageID string               `json:"lineage_id"`
-	HeadHash  string               `json:"head_hash"`
-	Events    []ledgerEntryMirror  `json:"events"`
+	Schema    string              `json:"schema"`
+	LineageID string              `json:"lineage_id"`
+	HeadHash  string              `json:"head_hash"`
+	Events    []ledgerEntryMirror `json:"events"`
 }
 
 type receiptMirror struct {
-	Schema      string             `json:"schema"`
-	LineageID   string             `json:"lineage_id"`
-	ReceiptPath string             `json:"receipt_path,omitempty"`
-	ReceiptHash string             `json:"receipt_hash,omitempty"`
-	Receipt     *PersistedReceipt  `json:"receipt,omitempty"`
-	Detail      string             `json:"detail,omitempty"`
+	Schema      string            `json:"schema"`
+	LineageID   string            `json:"lineage_id"`
+	ReceiptPath string            `json:"receipt_path,omitempty"`
+	ReceiptHash string            `json:"receipt_hash,omitempty"`
+	Receipt     *PersistedReceipt `json:"receipt,omitempty"`
+	Detail      string            `json:"detail,omitempty"`
 }
 
 type gateContextMirror struct {

@@ -141,17 +141,29 @@ func (m SessionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case sesListMsg:
-		if msg.err != "" { m.err = msg.err; return m, nil }
+		if msg.err != "" {
+			m.err = msg.err
+			return m, nil
+		}
 		m.sessions = msg.sessions
-		if m.sessions == nil { m.sessions = []bigmem.Session{} }
+		if m.sessions == nil {
+			m.sessions = []bigmem.Session{}
+		}
 		m.err = ""
 
 	case sesObsMsg:
-		if msg.err != "" { m.err = msg.err; return m, nil }
+		if msg.err != "" {
+			m.err = msg.err
+			return m, nil
+		}
 		m.items = msg.items
-		if m.items == nil { m.items = []*bigmem.Observation{} }
+		if m.items == nil {
+			m.items = []*bigmem.Observation{}
+		}
 		m.prompts = msg.prompts
-		if m.prompts == nil { m.prompts = []bigmem.SavedPrompt{} }
+		if m.prompts == nil {
+			m.prompts = []bigmem.SavedPrompt{}
+		}
 	}
 
 	return m, nil
@@ -206,11 +218,17 @@ func (m SessionsModel) View() string {
 			b.WriteString("\n")
 			start := m.scroll
 			end := start + 8
-			if start > len(m.prompts) { start = len(m.prompts) }
-			if end > len(m.prompts) { end = len(m.prompts) }
+			if start > len(m.prompts) {
+				start = len(m.prompts)
+			}
+			if end > len(m.prompts) {
+				end = len(m.prompts)
+			}
 			for _, p := range m.prompts[start:end] {
 				content := p.Content
-				if len(content) > 80 { content = content[:80] + "..." }
+				if len(content) > 80 {
+					content = content[:80] + "..."
+				}
 				b.WriteString(fmt.Sprintf("  • %s\n", content))
 			}
 			if len(m.prompts) > 8 {
@@ -243,7 +261,9 @@ func (m SessionsModel) View() string {
 			b.WriteString("\n\n")
 			for i, s := range m.sessions {
 				cur := "  "
-				if i == m.cursor { cur = "▸ " }
+				if i == m.cursor {
+					cur = "▸ "
+				}
 				b.WriteString(fmt.Sprintf("%s%s  %s\n", cur, s.ID, s.StartTime.Format("Jan 2 15:04")))
 				if s.Summary != "" {
 					b.WriteString(fmt.Sprintf("    %s\n", s.Summary))

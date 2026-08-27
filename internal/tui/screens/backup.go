@@ -25,11 +25,11 @@ const (
 
 // BackupModel manages snapshots.
 type BackupModel struct {
-	step    backupStep
-	items   []backupEntry
-	cursor  int
-	err     string
-	status  string
+	step   backupStep
+	items  []backupEntry
+	cursor int
+	err    string
+	status string
 }
 
 type backupEntry struct {

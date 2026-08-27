@@ -73,8 +73,8 @@ type testCheck struct {
 	panic   bool
 }
 
-func (c *testCheck) ID() CheckID          { return c.id }
-func (c *testCheck) Remedy() *Remedy       { return nil }
+func (c *testCheck) ID() CheckID     { return c.id }
+func (c *testCheck) Remedy() *Remedy { return nil }
 func (c *testCheck) Run(ctx context.Context) *Result {
 	if c.panic {
 		panic("test panic")
@@ -919,7 +919,7 @@ func TestIntegration_JSONOutput(t *testing.T) {
 	if !strings.Contains(output, "Git not found") {
 		t.Error("JSON missing result message")
 	}
-	
+
 	t.Logf("JSON output:\n%s", output)
 }
 

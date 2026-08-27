@@ -18,7 +18,7 @@ type Correction struct {
 	LinesChanged int       `json:"lines_changed"`
 	Reason       string    `json:"reason"`
 	BeforeHash   string    `json:"before_hash"` // SHA of file range (via filemerge.ComputeHash) OR evidence chain before correction
-	AfterHash    string    `json:"after_hash"`   // SHA of evidence chain after correction
+	AfterHash    string    `json:"after_hash"`  // SHA of evidence chain after correction
 	CreatedAt    time.Time `json:"created_at"`
 }
 

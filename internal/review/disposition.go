@@ -21,7 +21,7 @@ const (
 
 // ResultDisposition records a single disposition event for a review result.
 type ResultDisposition struct {
-	Schema    string            `json:"schema"`    // "biggz.review-disposition/v1"
+	Schema    string            `json:"schema"` // "biggz.review-disposition/v1"
 	LineageID string            `json:"lineage_id"`
 	Action    DispositionAction `json:"action"`
 	Reason    string            `json:"reason"`
@@ -32,9 +32,9 @@ type ResultDisposition struct {
 
 // DispositionJournal is an append-only journal of result dispositions.
 type DispositionJournal struct {
-	Schema       string               `json:"schema"`
-	LineageID    string               `json:"lineage_id"`
-	Dispositions []ResultDisposition  `json:"dispositions"`
+	Schema       string              `json:"schema"`
+	LineageID    string              `json:"lineage_id"`
+	Dispositions []ResultDisposition `json:"dispositions"`
 }
 
 // NewDispositionJournal creates a new journal for a lineage.

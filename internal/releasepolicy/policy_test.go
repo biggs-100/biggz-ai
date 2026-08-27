@@ -9,9 +9,9 @@ import (
 
 func TestValidateMarkerPlacement(t *testing.T) {
 	tests := []struct {
-		name      string
+		name       string
 		insideDist bool
-		wantErr   bool
+		wantErr    bool
 	}{
 		{name: "marker inside dist is rejected", insideDist: true, wantErr: true},
 		{name: "marker outside dist is accepted", insideDist: false, wantErr: false},

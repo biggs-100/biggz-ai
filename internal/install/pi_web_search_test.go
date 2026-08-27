@@ -89,5 +89,3 @@ func TestDeployPiWebSearch_LegacyCleanup(t *testing.T) {
 		t.Fatalf("legacy file not removed")
 	}
 }
-
-

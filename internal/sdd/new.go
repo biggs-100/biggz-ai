@@ -19,8 +19,8 @@ type NewChangeParams struct {
 
 // NewChangeResult describes the created change.
 type NewChangeResult struct {
-	ChangePath string `json:"change_path"`
-	MetaPath   string `json:"meta_path"`
+	ChangePath   string `json:"change_path"`
+	MetaPath     string `json:"meta_path"`
 	ProposalPath string `json:"proposal_path,omitempty"`
 }
 

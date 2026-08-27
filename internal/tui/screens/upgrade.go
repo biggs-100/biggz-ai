@@ -24,12 +24,12 @@ const (
 
 // UpgradeModel checks for and applies updates.
 type UpgradeModel struct {
-	step      upgradeStep
-	status    string
-	err       string
-	release   *update.Release
-	currentV  string
-	latestV   string
+	step     upgradeStep
+	status   string
+	err      string
+	release  *update.Release
+	currentV string
+	latestV  string
 }
 
 // NewUpgradeModel creates the upgrade screen.

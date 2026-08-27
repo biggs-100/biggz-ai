@@ -37,18 +37,18 @@ var SupportedReviewContracts = []string{ContractSchema}
 // ContractEnvelope is the ONLY routing authority of the negotiated flow. It
 // deliberately carries no raw status field: there is nothing to interpret.
 type ContractEnvelope struct {
-	Schema         string                `json:"schema"`
-	Lineage        string                `json:"lineage"`
+	Schema         string                 `json:"schema"`
+	Lineage        string                 `json:"lineage"`
 	NextTransition NextTransitionEnvelope `json:"next_transition"`
 }
 
 // NextTransitionEnvelope is the typed routing decision. Exactly one of
 // Operation (execute), Inputs (collect), or ReasonCode (stop) is set.
 type NextTransitionEnvelope struct {
-	Type       string `json:"type"` // collect | execute | stop
-	Operation  string `json:"operation,omitempty"`
-	Arguments  []string `json:"arguments,omitempty"`
-	ReasonCode string `json:"reason_code,omitempty"`
+	Type       string                          `json:"type"` // collect | execute | stop
+	Operation  string                          `json:"operation,omitempty"`
+	Arguments  []string                        `json:"arguments,omitempty"`
+	ReasonCode string                          `json:"reason_code,omitempty"`
 	Inputs     map[string]ContractCaptureInput `json:"inputs,omitempty"`
 }
 

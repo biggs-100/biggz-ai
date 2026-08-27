@@ -9,17 +9,17 @@ import (
 	"time"
 )
 
-func fakeStatExists(path string) (os.FileInfo, error) { return fakeFileInfo{isDir: false}, nil }
+func fakeStatExists(path string) (os.FileInfo, error)  { return fakeFileInfo{isDir: false}, nil }
 func fakeStatMissing(path string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 
 type fakeFileInfo struct{ isDir bool }
 
-func (f fakeFileInfo) Name() string      { return "biggz-web-search.js" }
-func (f fakeFileInfo) Size() int64       { return 100 }
-func (f fakeFileInfo) Mode() os.FileMode { return 0644 }
+func (f fakeFileInfo) Name() string       { return "biggz-web-search.js" }
+func (f fakeFileInfo) Size() int64        { return 100 }
+func (f fakeFileInfo) Mode() os.FileMode  { return 0644 }
 func (f fakeFileInfo) ModTime() time.Time { return time.Time{} }
-func (f fakeFileInfo) IsDir() bool       { return f.isDir }
-func (f fakeFileInfo) Sys() any          { return nil }
+func (f fakeFileInfo) IsDir() bool        { return f.isDir }
+func (f fakeFileInfo) Sys() any           { return nil }
 
 func TestPiWebSearch_FileMissingFail(t *testing.T) {
 	c := NewPiWebSearchCheckWithCustom(fakeStatMissing, func(k string) string { return "" }, func() (string, error) { return t.TempDir(), nil })

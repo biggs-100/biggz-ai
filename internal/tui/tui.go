@@ -112,57 +112,57 @@ const (
 
 // Model is the top-level TUI model.
 type Model struct {
-	currentScreen int
-	showHelp      bool
-	pasteActive   bool
-	pasteBuf      string
-	dashboard     screens.DashboardModel
-	welcome       screens.WelcomeModel
-	install       screens.InstallModel
-	config        screens.ConfigModel
-	status        screens.StatusModel
-	memory        screens.MemoryModel
-	backup        screens.BackupModel
-	profile       screens.ProfileModel
-	recovery      screens.RecoveryModel
-	modelPicker   screens.ModelPickerScreen
-	agentBuilder  screens.AgentBuilderScreen
-	community     screens.CommunityScreen
-	upgrade       screens.UpgradeModel
-	uninstall     screens.UninstallModel
-	strictTDD     screens.StrictTDDModel
-	reviewScr     screens.ReviewModel
-	sessions      screens.SessionsModel
-	syncScr       screens.SyncModel
-	updatePrompt  screens.UpdatePromptModel
+	currentScreen   int
+	showHelp        bool
+	pasteActive     bool
+	pasteBuf        string
+	dashboard       screens.DashboardModel
+	welcome         screens.WelcomeModel
+	install         screens.InstallModel
+	config          screens.ConfigModel
+	status          screens.StatusModel
+	memory          screens.MemoryModel
+	backup          screens.BackupModel
+	profile         screens.ProfileModel
+	recovery        screens.RecoveryModel
+	modelPicker     screens.ModelPickerScreen
+	agentBuilder    screens.AgentBuilderScreen
+	community       screens.CommunityScreen
+	upgrade         screens.UpgradeModel
+	uninstall       screens.UninstallModel
+	strictTDD       screens.StrictTDDModel
+	reviewScr       screens.ReviewModel
+	sessions        screens.SessionsModel
+	syncScr         screens.SyncModel
+	updatePrompt    screens.UpdatePromptModel
 	pluginUninstall screens.PluginUninstallModel
-	width, height int
-	err           error
+	width, height   int
+	err             error
 }
 
 // New creates the initial TUI model.
 func New() Model {
 	return Model{
-		currentScreen: screenDashboard,
-		dashboard:     screens.NewDashboardModel(),
-		welcome:       screens.NewWelcomeModel(),
-		install:       screens.NewInstallModel(),
-		config:        screens.NewConfigModel(),
-		status:        screens.NewStatusModel(),
-		memory:        screens.NewMemoryModel(),
-		backup:        screens.NewBackupModel(),
-		profile:       screens.NewProfileModel(),
-		recovery:      screens.NewRecoveryModel(),
-		modelPicker:   screens.NewModelPickerScreen(),
-		agentBuilder:  screens.NewAgentBuilderScreen(),
-		community:     screens.NewCommunityScreen(),
-		upgrade:       screens.NewUpgradeModel(),
-		uninstall:     screens.NewUninstallModel(),
-		strictTDD:     screens.NewStrictTDDModel(),
-		reviewScr:     screens.NewReviewModel(),
-		sessions:      screens.NewSessionsModel(),
-		syncScr:       screens.NewSyncModel(),
-		updatePrompt:  screens.NewUpdatePromptModel(),
+		currentScreen:   screenDashboard,
+		dashboard:       screens.NewDashboardModel(),
+		welcome:         screens.NewWelcomeModel(),
+		install:         screens.NewInstallModel(),
+		config:          screens.NewConfigModel(),
+		status:          screens.NewStatusModel(),
+		memory:          screens.NewMemoryModel(),
+		backup:          screens.NewBackupModel(),
+		profile:         screens.NewProfileModel(),
+		recovery:        screens.NewRecoveryModel(),
+		modelPicker:     screens.NewModelPickerScreen(),
+		agentBuilder:    screens.NewAgentBuilderScreen(),
+		community:       screens.NewCommunityScreen(),
+		upgrade:         screens.NewUpgradeModel(),
+		uninstall:       screens.NewUninstallModel(),
+		strictTDD:       screens.NewStrictTDDModel(),
+		reviewScr:       screens.NewReviewModel(),
+		sessions:        screens.NewSessionsModel(),
+		syncScr:         screens.NewSyncModel(),
+		updatePrompt:    screens.NewUpdatePromptModel(),
 		pluginUninstall: screens.NewPluginUninstallModel(),
 	}
 }

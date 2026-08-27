@@ -26,10 +26,10 @@ const (
 // review event store. It enumerates lineages under
 // .git/biggz/review-transactions/ and calls store.Validate() on each.
 type ReviewCheck struct {
-	getwdFn  func() (string, error)
-	statFn   func(string) (os.FileInfo, error)
+	getwdFn   func() (string, error)
+	statFn    func(string) (os.FileInfo, error)
 	readDirFn func(string) ([]os.DirEntry, error)
-	execFn   func(string, ...string) ([]byte, error)
+	execFn    func(string, ...string) ([]byte, error)
 }
 
 // NewReviewCheck creates a ReviewCheck using the default environment.

@@ -48,5 +48,3 @@ func BuildReviewPayload(plan *Plan) string {
 	}
 	return out
 }
-
-

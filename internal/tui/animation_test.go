@@ -36,10 +36,10 @@ func TestAnimationRequiresExactOne(t *testing.T) {
 	empty := ""
 	truthy := "true"
 	tests := []struct {
-		name     string
-		biggzVal *string
+		name      string
+		biggzVal  *string
 		gentleVal *string
-		want     bool
+		want      bool
 	}{
 		{name: "exact one disables", biggzVal: &one, want: true},
 		{name: "unset preserves animation", biggzVal: nil, want: false},

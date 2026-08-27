@@ -22,9 +22,9 @@ type Adapter struct {
 
 func NewAdapter() *Adapter { return &Adapter{lookPath: exec.LookPath} }
 
-func (a *Adapter) ID() model.AgentID                        { return agents.AgentKiro }
-func (a *Adapter) Name() string                               { return "Kiro IDE" }
-func (a *Adapter) Tier() model.SupportTier                    { return agents.TierFull }
+func (a *Adapter) ID() model.AgentID       { return agents.AgentKiro }
+func (a *Adapter) Name() string            { return "Kiro IDE" }
+func (a *Adapter) Tier() model.SupportTier { return agents.TierFull }
 
 func (a *Adapter) Detect(ctx context.Context, homeDir string) (bool, string, string, bool, error) {
 	binPath, err := a.lookPath("kiro")
@@ -42,23 +42,37 @@ func (a *Adapter) Capabilities() []string {
 	return []string{plugin.CapSkills, plugin.CapSystemPrompt, plugin.CapSubAgents, plugin.CapMCP}
 }
 
-func (a *Adapter) SupportsAutoInstall() bool    { return true }
-func (a *Adapter) SupportsSkills() bool         { return true }
-func (a *Adapter) SupportsSystemPrompt() bool   { return true }
-func (a *Adapter) SupportsMCP() bool            { return true }
-func (a *Adapter) SupportsOutputStyles() bool   { return false }
-func (a *Adapter) SupportsSlashCommands() bool  { return false }
-func (a *Adapter) SupportsSubAgents() bool      { return true }
-func (a *Adapter) SystemPromptStrategy() model.SystemPromptStrategy { return agents.StrategyFileReplace }
-func (a *Adapter) MCPStrategy() model.MCPStrategy                    { return agents.StrategyMergeIntoSettings }
-func (a *Adapter) GlobalConfigDir(homeDir string) string             { return filepath.Join(homeDir, ".config", "kiro") }
-func (a *Adapter) SystemPromptDir(homeDir string) string             { return a.GlobalConfigDir(homeDir) }
-func (a *Adapter) SystemPromptFile(homeDir string) string            { return filepath.Join(a.GlobalConfigDir(homeDir), "KIRO.md") }
-func (a *Adapter) SkillsDir(homeDir string) string                   { return filepath.Join(homeDir, ".config", "kiro", "skills") }
-func (a *Adapter) CommandsDir(homeDir string) string                 { return "" }
-func (a *Adapter) SubAgentsDir(homeDir string) string                { return filepath.Join(homeDir, ".config", "kiro", "agents") }
-func (a *Adapter) EmbeddedSubAgentsDir() string                      { return "agents/kiro" }
-func (a *Adapter) OutputStyleDir(homeDir string) string              { return "" }
-func (a *Adapter) SettingsPath(homeDir string) string                { return filepath.Join(homeDir, ".config", "kiro", "settings.json") }
-func (a *Adapter) MCPConfigPath(homeDir string, serverName string) string { return filepath.Join(homeDir, ".config", "kiro", "mcp.json") }
+func (a *Adapter) SupportsAutoInstall() bool   { return true }
+func (a *Adapter) SupportsSkills() bool        { return true }
+func (a *Adapter) SupportsSystemPrompt() bool  { return true }
+func (a *Adapter) SupportsMCP() bool           { return true }
+func (a *Adapter) SupportsOutputStyles() bool  { return false }
+func (a *Adapter) SupportsSlashCommands() bool { return false }
+func (a *Adapter) SupportsSubAgents() bool     { return true }
+func (a *Adapter) SystemPromptStrategy() model.SystemPromptStrategy {
+	return agents.StrategyFileReplace
+}
+func (a *Adapter) MCPStrategy() model.MCPStrategy { return agents.StrategyMergeIntoSettings }
+func (a *Adapter) GlobalConfigDir(homeDir string) string {
+	return filepath.Join(homeDir, ".config", "kiro")
+}
+func (a *Adapter) SystemPromptDir(homeDir string) string { return a.GlobalConfigDir(homeDir) }
+func (a *Adapter) SystemPromptFile(homeDir string) string {
+	return filepath.Join(a.GlobalConfigDir(homeDir), "KIRO.md")
+}
+func (a *Adapter) SkillsDir(homeDir string) string {
+	return filepath.Join(homeDir, ".config", "kiro", "skills")
+}
+func (a *Adapter) CommandsDir(homeDir string) string { return "" }
+func (a *Adapter) SubAgentsDir(homeDir string) string {
+	return filepath.Join(homeDir, ".config", "kiro", "agents")
+}
+func (a *Adapter) EmbeddedSubAgentsDir() string         { return "agents/kiro" }
+func (a *Adapter) OutputStyleDir(homeDir string) string { return "" }
+func (a *Adapter) SettingsPath(homeDir string) string {
+	return filepath.Join(homeDir, ".config", "kiro", "settings.json")
+}
+func (a *Adapter) MCPConfigPath(homeDir string, serverName string) string {
+	return filepath.Join(homeDir, ".config", "kiro", "mcp.json")
+}
 func (a *Adapter) DeployConfig(ctx context.Context, cfg plugin.AgentConfig) error { return nil }

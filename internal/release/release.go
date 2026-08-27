@@ -13,11 +13,11 @@ import (
 
 // GitState describes the current git repository state.
 type GitState struct {
-	Clean    bool   // true if working tree is clean
-	Branch   string // current branch name
-	Commit   string // current commit SHA (short)
-	LastTag  string // most recent tag reachable from HEAD
-	CommitsSinceTag int // commits since last tag
+	Clean           bool   // true if working tree is clean
+	Branch          string // current branch name
+	Commit          string // current commit SHA (short)
+	LastTag         string // most recent tag reachable from HEAD
+	CommitsSinceTag int    // commits since last tag
 }
 
 // VersionPattern is the regex for valid semantic version tags.

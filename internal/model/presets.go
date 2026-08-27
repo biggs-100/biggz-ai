@@ -37,7 +37,7 @@ func Presets() []Preset {
 		{
 			Name:        "custom",
 			Description: "Select components manually",
-			Components: []string{},
+			Components:  []string{},
 		},
 	}
 }

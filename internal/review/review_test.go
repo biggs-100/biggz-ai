@@ -214,8 +214,8 @@ func TestStartWithStore(t *testing.T) {
 
 type noopStage struct{}
 
-func (s *noopStage) Name() string { return "noop" }
-func (s *noopStage) Execute(ctx context.Context, state *model.ReviewState) error { return nil }
+func (s *noopStage) Name() string                                                 { return "noop" }
+func (s *noopStage) Execute(ctx context.Context, state *model.ReviewState) error  { return nil }
 func (s *noopStage) Rollback(ctx context.Context, state *model.ReviewState) error { return nil }
 
 type failStage struct{}

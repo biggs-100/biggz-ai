@@ -55,10 +55,10 @@ type CapturedLens struct {
 // alias "repository") selects the repository root, and "project" echoes the
 // repository basename. Unknown keys are rejected.
 type RepositoryContext struct {
-	Repo       string `json:"repo,omitempty"`
-	Repository string `json:"repository,omitempty"` // alias emitted by the negotiated contract envelope
-	Project    string `json:"project,omitempty"`    // informational echo of the repository basename
-	LineageID  string `json:"lineage_id,omitempty"`
+	Repo             string `json:"repo,omitempty"`
+	Repository       string `json:"repository,omitempty"` // alias emitted by the negotiated contract envelope
+	Project          string `json:"project,omitempty"`    // informational echo of the repository basename
+	LineageID        string `json:"lineage_id,omitempty"`
 	TargetIdentity   string `json:"target_identity,omitempty"`
 	ExpectedRevision string `json:"expected_revision,omitempty"`
 	Lens             string `json:"lens,omitempty"`

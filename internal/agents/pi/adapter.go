@@ -55,8 +55,8 @@ func NewAdapter() *Adapter {
 	}
 }
 
-func (a *Adapter) ID() model.AgentID     { return agents.AgentPi }
-func (a *Adapter) Name() string          { return "Pi" }
+func (a *Adapter) ID() model.AgentID       { return agents.AgentPi }
+func (a *Adapter) Name() string            { return "Pi" }
 func (a *Adapter) Tier() model.SupportTier { return agents.TierFull }
 
 // Detect checks pi binary and ~/.pi/agent config dir.
@@ -80,9 +80,11 @@ func (a *Adapter) Detect(_ context.Context, homeDir string) (bool, string, strin
 // InstallCommand returns the install commands for Pi.
 //
 // Gentle's pi adapter does 9 steps (see gentle-ai/internal/agents/pi/adapter.go:240):
-//   pi install npm:gentle-pi, npm:gentle-engram, npm:pi-mcp-adapter,
-//   pi-engram init, pi-subagents-j0k3r, rpiv-ask-user-question, pi-web-access,
-//   rpiv-todo, pi-btw (see piSubagentsInstallCommand + engramInitCommand).
+//
+//	pi install npm:gentle-pi, npm:gentle-engram, npm:pi-mcp-adapter,
+//	pi-engram init, pi-subagents-j0k3r, rpiv-ask-user-question, pi-web-access,
+//	rpiv-todo, pi-btw (see piSubagentsInstallCommand + engramInitCommand).
+//
 // Biggz uses BigMem (native Go at cmd/biggz-mcp / `biggz mcp`), not Engram,
 // so it does NOT need gentle-pi, gentle-engram, pi-mcp-adapter, pi-engram init,
 // or rpiv-* / pi-btw. The only runtime dependency beyond the pi CLI itself is
@@ -135,11 +137,11 @@ func (a *Adapter) Capabilities() []string {
 	return []string{plugin.CapSkills, plugin.CapMCP, plugin.CapSystemPrompt, plugin.CapSubAgents}
 }
 
-func (a *Adapter) SupportsAutoInstall() bool  { return true }
-func (a *Adapter) SupportsSkills() bool       { return true }
-func (a *Adapter) SupportsSystemPrompt() bool { return true }
-func (a *Adapter) SupportsMCP() bool          { return true }
-func (a *Adapter) SupportsOutputStyles() bool { return false }
+func (a *Adapter) SupportsAutoInstall() bool   { return true }
+func (a *Adapter) SupportsSkills() bool        { return true }
+func (a *Adapter) SupportsSystemPrompt() bool  { return true }
+func (a *Adapter) SupportsMCP() bool           { return true }
+func (a *Adapter) SupportsOutputStyles() bool  { return false }
 func (a *Adapter) SupportsSlashCommands() bool { return false }
 func (a *Adapter) SupportsSubAgents() bool     { return true }
 
@@ -163,8 +165,10 @@ func (a *Adapter) SkillsDir(homeDir string) string {
 	return filepath.Join(AgentConfigPath(homeDir), "skills")
 }
 func (a *Adapter) CommandsDir(_ string) string { return "" }
-func (a *Adapter) SubAgentsDir(homeDir string) string { return filepath.Join(AgentConfigPath(homeDir), "agents") }
-func (a *Adapter) EmbeddedSubAgentsDir() string { return "" }
+func (a *Adapter) SubAgentsDir(homeDir string) string {
+	return filepath.Join(AgentConfigPath(homeDir), "agents")
+}
+func (a *Adapter) EmbeddedSubAgentsDir() string   { return "" }
 func (a *Adapter) OutputStyleDir(_ string) string { return "" }
 func (a *Adapter) SettingsPath(homeDir string) string {
 	return filepath.Join(AgentConfigPath(homeDir), piSettingsFile)
@@ -463,8 +467,8 @@ func containsPiPackage(existing []any, want string) bool {
 // is on when capability is ready, off otherwise.
 
 const (
-	backgroundPolicyOn     = "on"
-	backgroundPolicyOff    = "off"
+	backgroundPolicyOn         = "on"
+	backgroundPolicyOff        = "off"
 	backgroundCapabilityReady  = "ready"
 	backgroundCapabilityAbsent = "absent"
 )

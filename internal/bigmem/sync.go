@@ -6,11 +6,12 @@
 // file-based sync that Engram had before cloud sync existed.
 //
 // .bigmem/
-//   manifest.json         ← append-only index (git-diffable)
-//   chunks/
-//     a3f8c1d2.jsonl.gz   ← content-addressed chunk (gzipped JSON)
-//     b7d2e4f1.jsonl.gz
-//     ...
+//
+//	manifest.json         ← append-only index (git-diffable)
+//	chunks/
+//	  a3f8c1d2.jsonl.gz   ← content-addressed chunk (gzipped JSON)
+//	  b7d2e4f1.jsonl.gz
+//	  ...
 package bigmem
 
 import (
@@ -49,17 +50,17 @@ type ChunkEntry struct {
 
 // ChunkData is the payload of a single chunk file.
 type ChunkData struct {
-	Sessions     []Session        `json:"sessions"`
-	Observations []Observation    `json:"observations"`
-	Prompts      []SavedPrompt    `json:"prompts"`
-	Mutations    []SyncMutation   `json:"mutations,omitempty"`
+	Sessions     []Session      `json:"sessions"`
+	Observations []Observation  `json:"observations"`
+	Prompts      []SavedPrompt  `json:"prompts"`
+	Mutations    []SyncMutation `json:"mutations,omitempty"`
 }
 
 // SyncMutation tracks a single entity change for incremental sync.
 type SyncMutation struct {
-	Entity    string `json:"entity"`    // "session" | "observation" | "prompt"
+	Entity    string `json:"entity"`     // "session" | "observation" | "prompt"
 	EntityKey string `json:"entity_key"` // the entity's ID
-	Op        string `json:"op"`        // "upsert" | "delete"
+	Op        string `json:"op"`         // "upsert" | "delete"
 	Project   string `json:"project,omitempty"`
 }
 
@@ -695,10 +696,10 @@ func (s *Store) importChunkData(cd *ChunkData, allSessionIDs map[string]bool) (b
 // SyncLocalStatus returns the number of local chunks and observations
 // pending import vs already imported.
 type SyncLocalStatus struct {
-	TransportDir       string `json:"transport_dir"`
-	ManifestChunks     int    `json:"manifest_chunks"`
-	ImportedChunks     int    `json:"imported_chunks"`
-	PendingImport      int    `json:"pending_import"`
+	TransportDir   string `json:"transport_dir"`
+	ManifestChunks int    `json:"manifest_chunks"`
+	ImportedChunks int    `json:"imported_chunks"`
+	PendingImport  int    `json:"pending_import"`
 }
 
 // SyncLocalStatus returns sync status for a given transport.

@@ -123,8 +123,8 @@ var commonModels = []string{
 type configTab int
 
 const (
-	tabConfigPreset  configTab = iota // new: preset selection first
-	tabConfigModels                   // per-phase model selection
+	tabConfigPreset configTab = iota // new: preset selection first
+	tabConfigModels                  // per-phase model selection
 	tabConfigPersona
 	tabConfigDelivery
 	tabConfigDone
@@ -136,7 +136,7 @@ var configTabLabels = []string{" Preset ", " Models ", " Persona ", " Delivery "
 type ConfigModel struct {
 	tab      configTab
 	cursor   int
-	preset   int          // selected preset index
+	preset   int               // selected preset index
 	models   map[string]string // phase -> model
 	persona  int
 	delivery int
@@ -347,32 +347,48 @@ func (m ConfigModel) detectAgent() plugin.AgentAdapter {
 // minimalAgent implements plugin.AgentAdapter minimally for persona injection.
 type minimalAgent struct{}
 
-func (a *minimalAgent) ID() model.AgentID                         { return "opencode" }
-func (a *minimalAgent) Name() string                              { return "OpenCode" }
-func (a *minimalAgent) Tier() model.SupportTier                   { return model.TierFull }
-func (a *minimalAgent) Capabilities() []string                    { return nil }
-func (a *minimalAgent) Detect(ctx context.Context, homeDir string) (bool, string, string, bool, error) { return false, "", "", false, nil }
-func (a *minimalAgent) InstallCommand(profile interface{}) ([][]string, error) { return nil, nil }
+func (a *minimalAgent) ID() model.AgentID       { return "opencode" }
+func (a *minimalAgent) Name() string            { return "OpenCode" }
+func (a *minimalAgent) Tier() model.SupportTier { return model.TierFull }
+func (a *minimalAgent) Capabilities() []string  { return nil }
+func (a *minimalAgent) Detect(ctx context.Context, homeDir string) (bool, string, string, bool, error) {
+	return false, "", "", false, nil
+}
+func (a *minimalAgent) InstallCommand(profile interface{}) ([][]string, error)         { return nil, nil }
 func (a *minimalAgent) DeployConfig(ctx context.Context, cfg plugin.AgentConfig) error { return nil }
-func (a *minimalAgent) SupportsAutoInstall() bool                 { return false }
-func (a *minimalAgent) SupportsSkills() bool                      { return false }
-func (a *minimalAgent) SupportsSystemPrompt() bool                { return true }
-func (a *minimalAgent) SupportsMCP() bool                         { return false }
-func (a *minimalAgent) SupportsOutputStyles() bool                { return false }
-func (a *minimalAgent) SupportsSlashCommands() bool               { return false }
-func (a *minimalAgent) SupportsSubAgents() bool                   { return false }
-func (a *minimalAgent) SystemPromptStrategy() model.SystemPromptStrategy { return model.StrategyFileReplace }
-func (a *minimalAgent) MCPStrategy() model.MCPStrategy            { return model.StrategyMergeIntoSettings }
-func (a *minimalAgent) GlobalConfigDir(homeDir string) string     { return filepath.Join(homeDir, ".config", "opencode") }
-func (a *minimalAgent) SystemPromptDir(homeDir string) string     { return a.GlobalConfigDir(homeDir) }
-func (a *minimalAgent) SystemPromptFile(homeDir string) string    { return filepath.Join(a.GlobalConfigDir(homeDir), "AGENTS.md") }
-func (a *minimalAgent) SkillsDir(homeDir string) string           { return filepath.Join(a.GlobalConfigDir(homeDir), "skills") }
-func (a *minimalAgent) CommandsDir(homeDir string) string         { return filepath.Join(a.GlobalConfigDir(homeDir), "commands") }
-func (a *minimalAgent) SubAgentsDir(homeDir string) string        { return "" }
-func (a *minimalAgent) EmbeddedSubAgentsDir() string              { return "" }
-func (a *minimalAgent) OutputStyleDir(homeDir string) string      { return "" }
-func (a *minimalAgent) SettingsPath(homeDir string) string        { return filepath.Join(a.GlobalConfigDir(homeDir), "opencode.json") }
-func (a *minimalAgent) MCPConfigPath(homeDir string, serverName string) string { return a.SettingsPath(homeDir) }
+func (a *minimalAgent) SupportsAutoInstall() bool                                      { return false }
+func (a *minimalAgent) SupportsSkills() bool                                           { return false }
+func (a *minimalAgent) SupportsSystemPrompt() bool                                     { return true }
+func (a *minimalAgent) SupportsMCP() bool                                              { return false }
+func (a *minimalAgent) SupportsOutputStyles() bool                                     { return false }
+func (a *minimalAgent) SupportsSlashCommands() bool                                    { return false }
+func (a *minimalAgent) SupportsSubAgents() bool                                        { return false }
+func (a *minimalAgent) SystemPromptStrategy() model.SystemPromptStrategy {
+	return model.StrategyFileReplace
+}
+func (a *minimalAgent) MCPStrategy() model.MCPStrategy { return model.StrategyMergeIntoSettings }
+func (a *minimalAgent) GlobalConfigDir(homeDir string) string {
+	return filepath.Join(homeDir, ".config", "opencode")
+}
+func (a *minimalAgent) SystemPromptDir(homeDir string) string { return a.GlobalConfigDir(homeDir) }
+func (a *minimalAgent) SystemPromptFile(homeDir string) string {
+	return filepath.Join(a.GlobalConfigDir(homeDir), "AGENTS.md")
+}
+func (a *minimalAgent) SkillsDir(homeDir string) string {
+	return filepath.Join(a.GlobalConfigDir(homeDir), "skills")
+}
+func (a *minimalAgent) CommandsDir(homeDir string) string {
+	return filepath.Join(a.GlobalConfigDir(homeDir), "commands")
+}
+func (a *minimalAgent) SubAgentsDir(homeDir string) string   { return "" }
+func (a *minimalAgent) EmbeddedSubAgentsDir() string         { return "" }
+func (a *minimalAgent) OutputStyleDir(homeDir string) string { return "" }
+func (a *minimalAgent) SettingsPath(homeDir string) string {
+	return filepath.Join(a.GlobalConfigDir(homeDir), "opencode.json")
+}
+func (a *minimalAgent) MCPConfigPath(homeDir string, serverName string) string {
+	return a.SettingsPath(homeDir)
+}
 
 // View renders the config screen.
 func (m ConfigModel) View() string {

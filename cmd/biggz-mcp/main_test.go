@@ -48,9 +48,9 @@ type rpcError struct {
 }
 
 type rpcResponse struct {
-	ID     any              `json:"id"`
-	Result json.RawMessage  `json:"result,omitempty"`
-	Error  *rpcError        `json:"error,omitempty"`
+	ID     any             `json:"id"`
+	Result json.RawMessage `json:"result,omitempty"`
+	Error  *rpcError       `json:"error,omitempty"`
 }
 
 func parseRPC(t *testing.T, raw string) *rpcResponse {
@@ -980,7 +980,7 @@ func TestHandleToolCall_mem_review(t *testing.T) {
 		}
 	})
 
-		t.Run("mark_reviewed", func(t *testing.T) {
+	t.Run("mark_reviewed", func(t *testing.T) {
 		raw := captureStdout(t, func() {
 			handleToolCall("rv2", "mem_review", map[string]any{
 				"action": "mark_reviewed", "observation_id": "1",

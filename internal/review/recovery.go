@@ -11,26 +11,26 @@ import (
 // from a previous lineage. This ensures auditability when lineages are
 // replaced or superseded.
 type RecoveryProvenance struct {
-	Schema          string `json:"schema"`           // "biggz.review-recovery/v1"
-	PredecessorLineage string `json:"predecessor_lineage"`
+	Schema              string `json:"schema"` // "biggz.review-recovery/v1"
+	PredecessorLineage  string `json:"predecessor_lineage"`
 	PredecessorRevision string `json:"predecessor_revision"`
-	Disposition     string `json:"disposition"`      // "escalated", "invalidated", "superseded"
-	Reason          string `json:"reason"`
-	RecoveredBy     string `json:"recovered_by"`
-	RecoveredAt     string `json:"recovered_at"`
-	Authorization   string `json:"authorization,omitempty"` // maintainer authorization ref
+	Disposition         string `json:"disposition"` // "escalated", "invalidated", "superseded"
+	Reason              string `json:"reason"`
+	RecoveredBy         string `json:"recovered_by"`
+	RecoveredAt         string `json:"recovered_at"`
+	Authorization       string `json:"authorization,omitempty"` // maintainer authorization ref
 }
 
 // NewRecoveryProvenance creates a recovery record for a lineage.
 func NewRecoveryProvenance(predecessorLineage, predecessorRevision, disposition, reason, recoveredBy string) *RecoveryProvenance {
 	return &RecoveryProvenance{
-		Schema:             "biggz.review-recovery/v1",
-		PredecessorLineage: predecessorLineage,
+		Schema:              "biggz.review-recovery/v1",
+		PredecessorLineage:  predecessorLineage,
 		PredecessorRevision: predecessorRevision,
-		Disposition:        disposition,
-		Reason:             reason,
-		RecoveredBy:        recoveredBy,
-		RecoveredAt:        time.Now().UTC().Format(time.RFC3339),
+		Disposition:         disposition,
+		Reason:              reason,
+		RecoveredBy:         recoveredBy,
+		RecoveredAt:         time.Now().UTC().Format(time.RFC3339),
 	}
 }
 

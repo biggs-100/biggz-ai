@@ -12,7 +12,7 @@ import (
 type pluginStep int
 
 const (
-	pluginList     pluginStep = iota
+	pluginList pluginStep = iota
 	pluginConfirm
 	pluginRunning
 	pluginDone
@@ -21,11 +21,11 @@ const (
 
 // PluginUninstallModel handles OpenCode plugin management from TUI.
 type PluginUninstallModel struct {
-	step     pluginStep
-	cursor   int
-	plugins  []opencodeplugin.Plugin
-	err      string
-	status   string
+	step    pluginStep
+	cursor  int
+	plugins []opencodeplugin.Plugin
+	err     string
+	status  string
 }
 
 func NewPluginUninstallModel() PluginUninstallModel {

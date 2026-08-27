@@ -102,18 +102,18 @@ type Reconciliation struct {
 
 // Row is the recovery decision for exactly one path.
 type Row struct {
-	Path                string          `json:"path"`
-	Disposition         Disposition     `json:"disposition"`
-	Context             SystemicContext `json:"context,omitempty"`
-	Invariant           string          `json:"invariant,omitempty"`
-	Proof               []string        `json:"proof,omitempty"`
-	Contributor         string          `json:"contributor"`
+	Path                string           `json:"path"`
+	Disposition         Disposition      `json:"disposition"`
+	Context             SystemicContext  `json:"context,omitempty"`
+	Invariant           string           `json:"invariant,omitempty"`
+	Proof               []string         `json:"proof,omitempty"`
+	Contributor         string           `json:"contributor"`
 	Publication         []PublicationRef `json:"publication,omitempty"`
-	EarlyDeviation      bool            `json:"earlyDeviation,omitempty"`
-	DestinationPath     string          `json:"destinationPath,omitempty"`
-	DestinationProof    []string        `json:"destinationProof,omitempty"`
-	NoRetainedInvariant bool            `json:"noRetainedInvariant,omitempty"`
-	CreatedAt           string          `json:"createdAt,omitempty"`
+	EarlyDeviation      bool             `json:"earlyDeviation,omitempty"`
+	DestinationPath     string           `json:"destinationPath,omitempty"`
+	DestinationProof    []string         `json:"destinationProof,omitempty"`
+	NoRetainedInvariant bool             `json:"noRetainedInvariant,omitempty"`
+	CreatedAt           string           `json:"createdAt,omitempty"`
 }
 
 // Ledgers carries the reconciliation totals alongside the items and rows.

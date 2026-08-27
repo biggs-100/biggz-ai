@@ -18,34 +18,48 @@ type mockAdapter struct {
 	id string
 }
 
-func (m *mockAdapter) ID() model.AgentID                                   { return model.AgentID(m.id) }
-func (m *mockAdapter) Name() string                                        { return "Mock " + m.id }
-func (m *mockAdapter) Tier() model.SupportTier                             { return model.TierFull }
+func (m *mockAdapter) ID() model.AgentID       { return model.AgentID(m.id) }
+func (m *mockAdapter) Name() string            { return "Mock " + m.id }
+func (m *mockAdapter) Tier() model.SupportTier { return model.TierFull }
 func (m *mockAdapter) Detect(_ context.Context, _ string) (bool, string, string, bool, error) {
 	return true, "/bin/" + m.id, "", false, nil
 }
-func (m *mockAdapter) InstallCommand(_ interface{}) ([][]string, error)    { return nil, nil }
-func (m *mockAdapter) Capabilities() []string                              { return nil }
-func (m *mockAdapter) SupportsAutoInstall() bool                           { return false }
-func (m *mockAdapter) SupportsSkills() bool                                { return false }
-func (m *mockAdapter) SupportsSystemPrompt() bool                          { return false }
-func (m *mockAdapter) SupportsMCP() bool                                   { return false }
-func (m *mockAdapter) SupportsOutputStyles() bool                          { return false }
-func (m *mockAdapter) SupportsSlashCommands() bool                         { return false }
-func (m *mockAdapter) SupportsSubAgents() bool                             { return false }
-func (m *mockAdapter) SystemPromptStrategy() model.SystemPromptStrategy    { return 0 }
-func (m *mockAdapter) MCPStrategy() model.MCPStrategy                      { return 0 }
+func (m *mockAdapter) InstallCommand(_ interface{}) ([][]string, error)           { return nil, nil }
+func (m *mockAdapter) Capabilities() []string                                     { return nil }
+func (m *mockAdapter) SupportsAutoInstall() bool                                  { return false }
+func (m *mockAdapter) SupportsSkills() bool                                       { return false }
+func (m *mockAdapter) SupportsSystemPrompt() bool                                 { return false }
+func (m *mockAdapter) SupportsMCP() bool                                          { return false }
+func (m *mockAdapter) SupportsOutputStyles() bool                                 { return false }
+func (m *mockAdapter) SupportsSlashCommands() bool                                { return false }
+func (m *mockAdapter) SupportsSubAgents() bool                                    { return false }
+func (m *mockAdapter) SystemPromptStrategy() model.SystemPromptStrategy           { return 0 }
+func (m *mockAdapter) MCPStrategy() model.MCPStrategy                             { return 0 }
 func (m *mockAdapter) DeployConfig(_ context.Context, _ plugin.AgentConfig) error { return nil }
-func (m *mockAdapter) GlobalConfigDir(homeDir string) string               { return filepath.Join(homeDir, ".config", m.id) }
-func (m *mockAdapter) SystemPromptDir(homeDir string) string               { return filepath.Join(homeDir, ".config", m.id) }
-func (m *mockAdapter) SystemPromptFile(homeDir string) string              { return filepath.Join(homeDir, ".config", m.id, "AGENTS.md") }
-func (m *mockAdapter) SkillsDir(homeDir string) string                     { return filepath.Join(homeDir, ".config", m.id, "skills") }
-func (m *mockAdapter) CommandsDir(homeDir string) string                   { return filepath.Join(homeDir, ".config", m.id, "commands") }
-func (m *mockAdapter) SubAgentsDir(homeDir string) string                  { return "" }
-func (m *mockAdapter) EmbeddedSubAgentsDir() string                        { return "" }
-func (m *mockAdapter) OutputStyleDir(homeDir string) string                { return "" }
-func (m *mockAdapter) SettingsPath(homeDir string) string                  { return filepath.Join(homeDir, ".config", m.id, "settings.jsonc") }
-func (m *mockAdapter) MCPConfigPath(homeDir string, _ string) string       { return filepath.Join(homeDir, ".config", m.id, "settings.jsonc") }
+func (m *mockAdapter) GlobalConfigDir(homeDir string) string {
+	return filepath.Join(homeDir, ".config", m.id)
+}
+func (m *mockAdapter) SystemPromptDir(homeDir string) string {
+	return filepath.Join(homeDir, ".config", m.id)
+}
+func (m *mockAdapter) SystemPromptFile(homeDir string) string {
+	return filepath.Join(homeDir, ".config", m.id, "AGENTS.md")
+}
+func (m *mockAdapter) SkillsDir(homeDir string) string {
+	return filepath.Join(homeDir, ".config", m.id, "skills")
+}
+func (m *mockAdapter) CommandsDir(homeDir string) string {
+	return filepath.Join(homeDir, ".config", m.id, "commands")
+}
+func (m *mockAdapter) SubAgentsDir(homeDir string) string   { return "" }
+func (m *mockAdapter) EmbeddedSubAgentsDir() string         { return "" }
+func (m *mockAdapter) OutputStyleDir(homeDir string) string { return "" }
+func (m *mockAdapter) SettingsPath(homeDir string) string {
+	return filepath.Join(homeDir, ".config", m.id, "settings.jsonc")
+}
+func (m *mockAdapter) MCPConfigPath(homeDir string, _ string) string {
+	return filepath.Join(homeDir, ".config", m.id, "settings.jsonc")
+}
 
 // -- tests -------------------------------------------------------------------
 

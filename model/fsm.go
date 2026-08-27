@@ -50,9 +50,10 @@ const (
 // Precondition is a human-readable description of the precondition;
 // it is not enforced by the FSM (caller's responsibility).
 // BudgetCheck identifies which budget counter to validate:
-//   ""              — no budget check
-//   "fix-rounds"    — checks FixRounds < MaxFixRounds
-//   "scoped-validations" — checks ScopedValidations < MaxScopedValidations
+//
+//	""              — no budget check
+//	"fix-rounds"    — checks FixRounds < MaxFixRounds
+//	"scoped-validations" — checks ScopedValidations < MaxScopedValidations
 type GuardEntry struct {
 	From         ReviewStatus `json:"from"`
 	To           ReviewStatus `json:"to"`

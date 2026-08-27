@@ -122,11 +122,11 @@ func TestNpmWritable(t *testing.T) {
 	home := t.TempDir()
 
 	tests := []struct {
-		name       string
-		prefixOut  string
-		prefixErr  error
-		homeDir    string
-		wantWrit   bool
+		name      string
+		prefixOut string
+		prefixErr error
+		homeDir   string
+		wantWrit  bool
 	}{
 		{name: "writable when prefix under home", prefixOut: home + "/.npm-global", homeDir: home, wantWrit: true},
 		{name: "not writable when prefix outside home", prefixOut: "/usr/local", homeDir: home, wantWrit: false},

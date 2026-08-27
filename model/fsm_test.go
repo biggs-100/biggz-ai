@@ -36,10 +36,10 @@ func TestFSM_ValidTransition_HappyPath(t *testing.T) {
 	fsm := FSM{}
 
 	cases := []struct {
-		name    string
-		from    ReviewStatus
-		to      ReviewStatus
-		role    Role
+		name     string
+		from     ReviewStatus
+		to       ReviewStatus
+		role     Role
 		counters BudgetCounters
 	}{
 		{"Unreviewed→InReview as Reviewer", StatusUnreviewed, StatusInReview, RoleReviewer, BudgetCounters{}},
@@ -217,5 +217,3 @@ func TestFSM_EveryStatusExists(t *testing.T) {
 		}
 	}
 }
-
-

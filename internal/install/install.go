@@ -40,18 +40,18 @@ type Config struct {
 
 // Result describes what happened during an install run.
 type Result struct {
-	AgentDetected     bool   // whether the agent binary was found on PATH
-	BinaryPath        string // full path to the agent binary (empty if not detected)
-	SkillsDeployed    int    // number of skill files written (or would be written in dry-run)
-	ConfigMerged      bool   // whether the config file was merged and written
-	CommandsWritten   int    // number of command files written (or would be written in dry-run)
-	PluginsDeployed   int    // number of plugin files written (or would be written in dry-run)
-	PromptsDeployed   int    // number of prompt files written (or would be written in dry-run)
-	MCPDeployed       bool   // whether the MCP server binary and config were deployed
-	PiAgentsDeployed  int    // number of pi-native SDD agent files written (or would be written in dry-run)
-	PiWebSearch       bool   // whether the pi web-search extension was deployed
-	PiQuestionMouse   bool   // whether the pi question-mouse extension was deployed
-	DryRun            bool   // whether this was a dry-run (no files written)
+	AgentDetected    bool   // whether the agent binary was found on PATH
+	BinaryPath       string // full path to the agent binary (empty if not detected)
+	SkillsDeployed   int    // number of skill files written (or would be written in dry-run)
+	ConfigMerged     bool   // whether the config file was merged and written
+	CommandsWritten  int    // number of command files written (or would be written in dry-run)
+	PluginsDeployed  int    // number of plugin files written (or would be written in dry-run)
+	PromptsDeployed  int    // number of prompt files written (or would be written in dry-run)
+	MCPDeployed      bool   // whether the MCP server binary and config were deployed
+	PiAgentsDeployed int    // number of pi-native SDD agent files written (or would be written in dry-run)
+	PiWebSearch      bool   // whether the pi web-search extension was deployed
+	PiQuestionMouse  bool   // whether the pi question-mouse extension was deployed
+	DryRun           bool   // whether this was a dry-run (no files written)
 }
 
 // AssetRelPaths returns the relative paths (embedded asset layout) of every
@@ -1983,7 +1983,10 @@ func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 	count := 0
 	// Deploy general/explore as file-based agents so pi-subagents FleetView can discover them
 	// (settings.json alone is not enough for FleetView; it scans agents/*.md).
-	for _, fallback := range []struct{ name, desc, promptFile string; tools []string }{
+	for _, fallback := range []struct {
+		name, desc, promptFile string
+		tools                  []string
+	}{
 		{"general", "General unstructured queries and auxiliary fallback tasks", "prompts/general.md", []string{"read", "edit", "bash", "write"}},
 		{"explore", "Freeform exploration fallback agent", "prompts/explore.md", []string{"read"}},
 	} {

@@ -11,7 +11,7 @@ import (
 type syncStep int
 
 const (
-	syncIdle     syncStep = iota
+	syncIdle syncStep = iota
 	syncRunning
 	syncDone
 	syncError
@@ -19,10 +19,10 @@ const (
 
 // SyncModel handles sync + combined upgrade operations.
 type SyncModel struct {
-	step      syncStep
-	status    string
-	err       string
-	combined  bool // if true, also runs upgrade
+	step     syncStep
+	status   string
+	err      string
+	combined bool // if true, also runs upgrade
 }
 
 func NewSyncModel() SyncModel { return SyncModel{step: syncIdle} }

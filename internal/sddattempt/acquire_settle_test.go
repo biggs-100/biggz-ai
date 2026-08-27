@@ -52,13 +52,13 @@ func TestAcquire_Settle_RoundTrip(t *testing.T) {
 
 	// Settle by token.
 	settle, err := Settle(SettleParams{
-		ChangeName:       "ch-acq-1",
-		RepoRoot:         "r",
-		Token:            acq.Token,
-		RequestID:        "req-settle-1",
-		Outcome:          "passed",
-		EvidenceRevision: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Diagnosis:        "ok",
+		ChangeName:         "ch-acq-1",
+		RepoRoot:           "r",
+		Token:              acq.Token,
+		RequestID:          "req-settle-1",
+		Outcome:            "passed",
+		EvidenceRevision:   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Diagnosis:          "ok",
 		HarnessDisposition: "reused",
 		CleanupEvidence:    "cleanup ok",
 		ProcessEvidence:    "process ok",
@@ -75,13 +75,13 @@ func TestAcquire_Settle_RoundTrip(t *testing.T) {
 
 	// Idempotent settle replay.
 	replaySettle, err := Settle(SettleParams{
-		ChangeName:       "ch-acq-1",
-		RepoRoot:         "r",
-		Token:            acq.Token,
-		RequestID:        "req-settle-1",
-		Outcome:          "passed",
-		EvidenceRevision: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Diagnosis:        "ok",
+		ChangeName:         "ch-acq-1",
+		RepoRoot:           "r",
+		Token:              acq.Token,
+		RequestID:          "req-settle-1",
+		Outcome:            "passed",
+		EvidenceRevision:   "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Diagnosis:          "ok",
 		HarnessDisposition: "reused",
 		CleanupEvidence:    "cleanup ok",
 		ProcessEvidence:    "process ok",
@@ -181,13 +181,13 @@ func TestAcquire_BlockedWhenComplete(t *testing.T) {
 		t.Fatalf("Acquire: %v", err)
 	}
 	if _, err := Settle(SettleParams{
-		ChangeName:       "ch-acq-4",
-		RepoRoot:         "r",
-		Token:            acq.Token,
-		RequestID:        "req-settle-4",
-		Outcome:          "passed",
-		EvidenceRevision: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		Diagnosis:        "ok",
+		ChangeName:         "ch-acq-4",
+		RepoRoot:           "r",
+		Token:              acq.Token,
+		RequestID:          "req-settle-4",
+		Outcome:            "passed",
+		EvidenceRevision:   "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Diagnosis:          "ok",
 		HarnessDisposition: "reused",
 		CleanupEvidence:    "c",
 		ProcessEvidence:    "p",
@@ -235,13 +235,13 @@ func TestAcquire_BudgetExhaustedWithObligation(t *testing.T) {
 		t.Fatalf("Acquire: %v", err)
 	}
 	if _, err := Settle(SettleParams{
-		ChangeName:       "ch-acq-5",
-		RepoRoot:         "r",
-		Token:            acq.Token,
-		RequestID:        "req-settle-5",
-		Outcome:          "failed",
-		EvidenceRevision: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-		Diagnosis:        "failed",
+		ChangeName:         "ch-acq-5",
+		RepoRoot:           "r",
+		Token:              acq.Token,
+		RequestID:          "req-settle-5",
+		Outcome:            "failed",
+		EvidenceRevision:   "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+		Diagnosis:          "failed",
 		HarnessDisposition: "reused",
 		CleanupEvidence:    "c",
 		ProcessEvidence:    "p",
@@ -294,13 +294,13 @@ func TestSettle_InvalidToken(t *testing.T) {
 	_ = acq
 
 	_, err = Settle(SettleParams{
-		ChangeName:       "ch-acq-6",
-		RepoRoot:         "r",
-		Token:            "tok-invalid-token",
-		RequestID:        "req-settle-6",
-		Outcome:          "passed",
-		EvidenceRevision: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-		Diagnosis:        "ok",
+		ChangeName:         "ch-acq-6",
+		RepoRoot:           "r",
+		Token:              "tok-invalid-token",
+		RequestID:          "req-settle-6",
+		Outcome:            "passed",
+		EvidenceRevision:   "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+		Diagnosis:          "ok",
 		HarnessDisposition: "reused",
 		CleanupEvidence:    "c",
 		ProcessEvidence:    "p",
@@ -324,13 +324,13 @@ func TestSettle_RequestIDReusedWithDifferentInputs(t *testing.T) {
 		t.Fatalf("Acquire: %v", err)
 	}
 	_, err = Settle(SettleParams{
-		ChangeName:       "ch-acq-7",
-		RepoRoot:         "r",
-		Token:            acq.Token,
-		RequestID:        "req-settle-7",
-		Outcome:          "failed",
-		EvidenceRevision: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-		Diagnosis:        "d",
+		ChangeName:         "ch-acq-7",
+		RepoRoot:           "r",
+		Token:              acq.Token,
+		RequestID:          "req-settle-7",
+		Outcome:            "failed",
+		EvidenceRevision:   "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		Diagnosis:          "d",
 		HarnessDisposition: "reused",
 		CleanupEvidence:    "c",
 		ProcessEvidence:    "p",
@@ -340,13 +340,13 @@ func TestSettle_RequestIDReusedWithDifferentInputs(t *testing.T) {
 	}
 	// Reuse same request ID with different outcome should fail.
 	_, err = Settle(SettleParams{
-		ChangeName:       "ch-acq-7",
-		RepoRoot:         "r",
-		Token:            acq.Token,
-		RequestID:        "req-settle-7",
-		Outcome:          "passed",
-		EvidenceRevision: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-		Diagnosis:        "d",
+		ChangeName:         "ch-acq-7",
+		RepoRoot:           "r",
+		Token:              acq.Token,
+		RequestID:          "req-settle-7",
+		Outcome:            "passed",
+		EvidenceRevision:   "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+		Diagnosis:          "d",
 		HarnessDisposition: "reused",
 		CleanupEvidence:    "c",
 		ProcessEvidence:    "p",
@@ -355,5 +355,3 @@ func TestSettle_RequestIDReusedWithDifferentInputs(t *testing.T) {
 		t.Fatalf("expected reuse error, got %v", err)
 	}
 }
-
-

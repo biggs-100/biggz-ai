@@ -22,11 +22,11 @@ type Profile struct {
 
 // injectable dependencies for testing.
 var (
-	lookPath       = exec.LookPath
-	osReadFile     = os.ReadFile
-	execOutput     = func(name string, args ...string) ([]byte, error) { return exec.Command(name, args...).Output() }
-	userHomeDir    = os.UserHomeDir
-	linuxPMs       = []string{"brew", "apt", "dnf", "pacman", "apk"}
+	lookPath    = exec.LookPath
+	osReadFile  = os.ReadFile
+	execOutput  = func(name string, args ...string) ([]byte, error) { return exec.Command(name, args...).Output() }
+	userHomeDir = os.UserHomeDir
+	linuxPMs    = []string{"brew", "apt", "dnf", "pacman", "apk"}
 )
 
 // Detect gathers platform information.

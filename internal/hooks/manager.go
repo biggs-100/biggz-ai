@@ -14,11 +14,11 @@ import (
 
 // Event names
 const (
-	EventReviewStart     = "on_review_start"
-	EventReviewComplete  = "on_review_complete"
-	EventApplyDone       = "on_apply_done"
-	EventPRCreated       = "on_pr_created"
-	EventInstallDone     = "on_install_done"
+	EventReviewStart    = "on_review_start"
+	EventReviewComplete = "on_review_complete"
+	EventApplyDone      = "on_apply_done"
+	EventPRCreated      = "on_pr_created"
+	EventInstallDone    = "on_install_done"
 )
 
 // HookConfig is the top-level hooks configuration.

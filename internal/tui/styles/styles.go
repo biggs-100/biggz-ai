@@ -104,21 +104,21 @@ var (
 
 	// Menu item
 	MenuItem = lipgloss.NewStyle().
-		Foreground(Text).
-		Padding(0, 2)
+			Foreground(Text).
+			Padding(0, 2)
 
 	MenuItemSelected = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Background(Primary).
-		Padding(0, 2)
+				Foreground(lipgloss.Color("#FFFFFF")).
+				Background(Primary).
+				Padding(0, 2)
 
 	MenuItemKey = lipgloss.NewStyle().
-		Foreground(Secondary).
-		Bold(true)
+			Foreground(Secondary).
+			Bold(true)
 
 	MenuItemDesc = lipgloss.NewStyle().
-		Foreground(Muted).
-		Italic(true)
+			Foreground(Muted).
+			Italic(true)
 
 	// Status
 	StatusEnabled  = lipgloss.NewStyle().Foreground(Success).Bold(true)
@@ -135,7 +135,7 @@ var (
 		Bold(true)
 
 	HelpDesc = lipgloss.NewStyle().
-		Foreground(Muted)
+			Foreground(Muted)
 
 	// Buttons
 	Button = lipgloss.NewStyle().
@@ -146,16 +146,16 @@ var (
 		MarginRight(1)
 
 	ButtonActive = lipgloss.NewStyle().
-		Background(Secondary).
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Bold(true).
-		Padding(0, 3).
-		MarginRight(1)
+			Background(Secondary).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Bold(true).
+			Padding(0, 3).
+			MarginRight(1)
 
 	ButtonInactive = lipgloss.NewStyle().
-		Background(Muted).
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Padding(0, 3)
+			Background(Muted).
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Padding(0, 3)
 
 	// Checkbox
 	CheckboxSelected = lipgloss.NewStyle().Foreground(Success).SetString("● ")

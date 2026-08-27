@@ -10,17 +10,17 @@ import (
 
 // GateDenialReason describes why a gate check failed.
 type GateDenialReason struct {
-	Stage    string `json:"stage"`    // e.g. "chain_integrity", "receipt_validation", "scope_change"
-	Code     string `json:"code"`     // e.g. "chain_corrupt", "receipt_mismatch", "files_changed"
-	Message  string `json:"message"`  // Human-readable explanation
+	Stage   string `json:"stage"`   // e.g. "chain_integrity", "receipt_validation", "scope_change"
+	Code    string `json:"code"`    // e.g. "chain_corrupt", "receipt_mismatch", "files_changed"
+	Message string `json:"message"` // Human-readable explanation
 }
 
 // ScopeChangeDetail describes a detected scope change.
 type ScopeChangeDetail struct {
-	ChangedFiles    []string `json:"changed_files,omitempty"`
-	ExpectedTree    string   `json:"expected_tree,omitempty"`
-	ActualTree      string   `json:"actual_tree,omitempty"`
-	LinesChanged    int      `json:"lines_changed,omitempty"`
+	ChangedFiles []string `json:"changed_files,omitempty"`
+	ExpectedTree string   `json:"expected_tree,omitempty"`
+	ActualTree   string   `json:"actual_tree,omitempty"`
+	LinesChanged int      `json:"lines_changed,omitempty"`
 }
 
 // BaseAdvanceEvidence describes a base branch advance that is compatible.
@@ -32,14 +32,14 @@ type BaseAdvanceEvidence struct {
 
 // GateDiagnostics carries detailed diagnostic information for a gate result.
 type GateDiagnostics struct {
-	LineageID         string              `json:"lineage_id,omitempty"`
-	Generation        int                 `json:"generation,omitempty"`
-	DenialReasons     []GateDenialReason  `json:"denial_reasons,omitempty"`
-	ScopeChange       *ScopeChangeDetail  `json:"scope_change,omitempty"`
-	BaseAdvance       *BaseAdvanceEvidence `json:"base_advance,omitempty"`
-	ChainValid        bool                `json:"chain_valid"`
-	ReceiptValid      bool                `json:"receipt_valid"`
-	HasBlockingFindings bool             `json:"has_blocking_findings"`
+	LineageID           string               `json:"lineage_id,omitempty"`
+	Generation          int                  `json:"generation,omitempty"`
+	DenialReasons       []GateDenialReason   `json:"denial_reasons,omitempty"`
+	ScopeChange         *ScopeChangeDetail   `json:"scope_change,omitempty"`
+	BaseAdvance         *BaseAdvanceEvidence `json:"base_advance,omitempty"`
+	ChainValid          bool                 `json:"chain_valid"`
+	ReceiptValid        bool                 `json:"receipt_valid"`
+	HasBlockingFindings bool                 `json:"has_blocking_findings"`
 }
 
 // detectScopeChange runs git diff-tree to find changed files between trees.
@@ -98,10 +98,10 @@ func detectBaseAdvance(oldBase, upstreamRef string) *BaseAdvanceEvidence {
 
 // EnhancedGateResult extends GateResult with structured diagnostics.
 type EnhancedGateResult struct {
-	Gate        GateKind         `json:"gate"`
-	Passed      bool             `json:"passed"`
-	DryRun      bool             `json:"dry_run"`
+	Gate        GateKind            `json:"gate"`
+	Passed      bool                `json:"passed"`
+	DryRun      bool                `json:"dry_run"`
 	Disposition DeliveryDisposition `json:"disposition"`
-	Diagnostics *GateDiagnostics `json:"diagnostics,omitempty"`
-	Reasons     []string         `json:"reasons,omitempty"`
+	Diagnostics *GateDiagnostics    `json:"diagnostics,omitempty"`
+	Reasons     []string            `json:"reasons,omitempty"`
 }

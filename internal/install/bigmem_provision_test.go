@@ -389,7 +389,7 @@ func TestBigMemStatsAfterInstall(t *testing.T) {
 	// Save something so stats has data
 	_ = store.Save(&bigmem.Observation{Title: "stats-test", Content: "hello stats", Project: "stats-proj"})
 
-		// Stats-like queries — core bigmem stats uses ConflictsStats and Search
+	// Stats-like queries — core bigmem stats uses ConflictsStats and Search
 	conflicts, err := store.ConflictsStats("")
 	if err != nil {
 		t.Fatalf("ConflictsStats: %v", err)

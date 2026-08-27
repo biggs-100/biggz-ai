@@ -61,10 +61,10 @@ func (l *Ledger) Append(entry LedgerEntry) {
 			return // marshal failure is non-fatal for in-memory state
 		}
 		rec := Record{
-			Operation:  entry.Operation,
-			Role:       entry.Actor,
-			Timestamp:  entry.Timestamp.Format(time.RFC3339Nano),
-			Payload:    payload,
+			Operation: entry.Operation,
+			Role:      entry.Actor,
+			Timestamp: entry.Timestamp.Format(time.RFC3339Nano),
+			Payload:   payload,
 		}
 		rev, err := l.store.Append(l.prevRev, rec)
 		if err == nil {

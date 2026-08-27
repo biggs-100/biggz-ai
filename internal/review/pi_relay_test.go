@@ -98,7 +98,7 @@ func TestPiAdapter_Review_WithFakeBinary(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			adapter := &PiAdapter{
-				LookPath: func(string) (string, error) { return "/fake/pi", nil },
+				LookPath:       func(string) (string, error) { return "/fake/pi", nil },
 				CommandContext: fakePiCommandContext(t, tc.fakeOut),
 			}
 			raw, err := adapter.Review(context.Background(), "opaque prompt")

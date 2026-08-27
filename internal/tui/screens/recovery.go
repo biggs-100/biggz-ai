@@ -119,12 +119,18 @@ func (m RecoveryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case recListMsg:
-		if msg.err != "" { m.err = msg.err; return m, nil }
+		if msg.err != "" {
+			m.err = msg.err
+			return m, nil
+		}
 		m.ledgers = msg.ledgers
 		m.err = ""
 
 	case recDetailMsg:
-		if msg.err != "" { m.err = msg.err; return m, nil }
+		if msg.err != "" {
+			m.err = msg.err
+			return m, nil
+		}
 		m.detail = msg.ledgers
 		m.detailName = msg.name
 		m.err = ""
@@ -164,11 +170,17 @@ func (m RecoveryModel) View() string {
 				b.WriteString("\n")
 				start := m.scroll
 				end := start + 10
-				if start > len(rows) { start = len(rows) }
-				if end > len(rows) { end = len(rows) }
+				if start > len(rows) {
+					start = len(rows)
+				}
+				if end > len(rows) {
+					end = len(rows)
+				}
 				for _, row := range rows[start:end] {
 					path := row.Path
-					if len(path) > 45 { path = "..." + path[len(path)-42:] }
+					if len(path) > 45 {
+						path = "..." + path[len(path)-42:]
+					}
 					b.WriteString(fmt.Sprintf("  %-12s %s\n", row.Disposition, path))
 					if row.Invariant != "" {
 						b.WriteString(fmt.Sprintf("              %s\n", row.Invariant))
@@ -193,7 +205,9 @@ func (m RecoveryModel) View() string {
 			b.WriteString("\n\n")
 			for i, l := range m.ledgers {
 				cur := "  "
-				if i == m.cursor { cur = "▸ " }
+				if i == m.cursor {
+					cur = "▸ "
+				}
 				b.WriteString(fmt.Sprintf("%s%s  %-20s  (%d rows)\n", cur, l.ID[:min(24, len(l.ID))], l.Name, l.RowCount))
 				b.WriteString(fmt.Sprintf("   %s\n", l.CreatedAt[:10]))
 			}

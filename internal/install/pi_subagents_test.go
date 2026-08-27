@@ -288,4 +288,3 @@ func TestDeployPiSubAgents_AskUserQuestionPresent(t *testing.T) {
 		t.Errorf("sdd-apply.md should contain ask_user_question, got %q", string(data[:500]))
 	}
 }
-

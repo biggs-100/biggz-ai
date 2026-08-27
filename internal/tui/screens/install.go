@@ -20,13 +20,13 @@ import (
 type installStep int
 
 const (
-	stepInstallIdle      installStep = iota
-	stepInstallDetect               // scanning for agents
-	stepInstallSelect               // pick from multiple agents
-	stepInstallReview               // review what will be installed
-	stepInstallRunning              // installation in progress
-	stepInstallDone                 // success
-	stepInstallError                // failure
+	stepInstallIdle    installStep = iota
+	stepInstallDetect              // scanning for agents
+	stepInstallSelect              // pick from multiple agents
+	stepInstallReview              // review what will be installed
+	stepInstallRunning             // installation in progress
+	stepInstallDone                // success
+	stepInstallError               // failure
 )
 
 // InstallModel handles the guided installation wizard.
@@ -34,7 +34,7 @@ type InstallModel struct {
 	step     installStep
 	adapters []plugin.AgentAdapter
 	cursor   int
-	selected int            // which adapter is selected (-1 = not yet)
+	selected int // which adapter is selected (-1 = not yet)
 	result   *install.Result
 	errMsg   string
 	agent    string

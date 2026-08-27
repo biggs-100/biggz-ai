@@ -138,13 +138,13 @@ func handleToolCall(id any, name string, args map[string]any) {
 		for _, r := range results {
 			entry := map[string]any{
 				"id": r.ID, "title": r.Title, "type": r.Type,
-				"content": truncate(r.Content, 300),
+				"content":    truncate(r.Content, 300),
 				"session_id": r.SessionID, "tool_name": r.ToolName,
 				"topic_key": r.TopicKey, "project": r.Project,
 				"scope": r.Scope, "revision_count": r.RevisionCount,
 				"duplicate_count": r.DuplicateCount,
-				"state": r.State(),
-				"created": r.CreatedAt,
+				"state":           r.State(),
+				"created":         r.CreatedAt,
 			}
 			if r.ReviewAfter != nil {
 				entry["review_after"] = *r.ReviewAfter
@@ -169,13 +169,13 @@ func handleToolCall(id any, name string, args map[string]any) {
 			"content": obs.Content, "session_id": obs.SessionID,
 			"tool_name": obs.ToolName, "topic_key": obs.TopicKey,
 			"project": obs.Project, "scope": obs.Scope,
-			"revision_count": obs.RevisionCount,
+			"revision_count":  obs.RevisionCount,
 			"duplicate_count": obs.DuplicateCount,
-			"last_seen_at": obs.LastSeenAt,
-			"review_after": obs.ReviewAfter,
-			"pinned": obs.Pinned,
-			"state": obs.State(),
-			"created": obs.CreatedAt, "updated": obs.UpdatedAt,
+			"last_seen_at":    obs.LastSeenAt,
+			"review_after":    obs.ReviewAfter,
+			"pinned":          obs.Pinned,
+			"state":           obs.State(),
+			"created":         obs.CreatedAt, "updated": obs.UpdatedAt,
 		})
 
 	case "mem_update":
@@ -185,11 +185,21 @@ func handleToolCall(id any, name string, args map[string]any) {
 			return
 		}
 		updates := map[string]any{}
-		if v, ok := args["title"]; ok { updates["title"] = v }
-		if v, ok := args["content"]; ok { updates["content"] = v }
-		if v, ok := args["type"]; ok { updates["type"] = v }
-		if v, ok := args["topic_key"]; ok { updates["topic_key"] = v }
-		if v, ok := args["scope"]; ok { updates["scope"] = v }
+		if v, ok := args["title"]; ok {
+			updates["title"] = v
+		}
+		if v, ok := args["content"]; ok {
+			updates["content"] = v
+		}
+		if v, ok := args["type"]; ok {
+			updates["type"] = v
+		}
+		if v, ok := args["topic_key"]; ok {
+			updates["topic_key"] = v
+		}
+		if v, ok := args["scope"]; ok {
+			updates["scope"] = v
+		}
 		obs, err := store.Update(obsID, updates)
 		if err != nil {
 			writeError(id, err.Error())
@@ -323,13 +333,19 @@ func handleToolCall(id any, name string, args map[string]any) {
 
 	case "mem_pin":
 		obsID := getStr(args, "id")
-		if obsID == "" { writeError(id, "id required"); return }
+		if obsID == "" {
+			writeError(id, "id required")
+			return
+		}
 		store.Pin(obsID)
 		textResult(id, "Pinned")
 
 	case "mem_unpin":
 		obsID := getStr(args, "id")
-		if obsID == "" { writeError(id, "id required"); return }
+		if obsID == "" {
+			writeError(id, "id required")
+			return
+		}
 		store.Unpin(obsID)
 		textResult(id, "Unpinned")
 
@@ -344,9 +360,15 @@ func handleToolCall(id any, name string, args map[string]any) {
 	case "mem_compare":
 		a := getStr(args, "memory_id_a")
 		b := getStr(args, "memory_id_b")
-		if a == "" || b == "" { writeError(id, "memory_id_a and memory_id_b required"); return }
+		if a == "" || b == "" {
+			writeError(id, "memory_id_a and memory_id_b required")
+			return
+		}
 		result, err := store.Compare(a, b)
-		if err != nil { writeError(id, err.Error()); return }
+		if err != nil {
+			writeError(id, err.Error())
+			return
+		}
 		jsonResult(id, result)
 
 	case "mem_judge":
@@ -354,7 +376,10 @@ func handleToolCall(id any, name string, args map[string]any) {
 		relation := getStr(args, "relation")
 		reason := getStr(args, "reason")
 		confidence := getFloat(args, "confidence", 1.0)
-		if judgmentID == "" || relation == "" { writeError(id, "judgment_id and relation required"); return }
+		if judgmentID == "" || relation == "" {
+			writeError(id, "judgment_id and relation required")
+			return
+		}
 		// judgmentID format: rel-obsA-obsB
 		parts := strings.SplitN(judgmentID, "-", 3)
 		if len(parts) < 3 {
@@ -362,18 +387,29 @@ func handleToolCall(id any, name string, args map[string]any) {
 			return
 		}
 		jr, err := store.SaveRelation(parts[1], parts[2], relation, reason, confidence)
-		if err != nil { writeError(id, err.Error()); return }
+		if err != nil {
+			writeError(id, err.Error())
+			return
+		}
 		jsonResult(id, jr)
 
 	case "mem_capture_passive":
 		content := getStr(args, "content")
 		project := getStr(args, "project")
-		if content == "" { writeError(id, "content required"); return }
+		if content == "" {
+			writeError(id, "content required")
+			return
+		}
 		obs, err := bigmem.CapturePassive(content, project)
-		if err != nil { writeError(id, err.Error()); return }
+		if err != nil {
+			writeError(id, err.Error())
+			return
+		}
 		saved := 0
 		for _, o := range obs {
-			if e := store.Save(o); e == nil { saved++ }
+			if e := store.Save(o); e == nil {
+				saved++
+			}
 		}
 		textResult(id, fmt.Sprintf("Captured %d learnings", saved))
 
@@ -385,7 +421,10 @@ func handleToolCall(id any, name string, args map[string]any) {
 			return
 		}
 		count, err := store.MergeProjects(source, target)
-		if err != nil { writeError(id, err.Error()); return }
+		if err != nil {
+			writeError(id, err.Error())
+			return
+		}
 		textResult(id, fmt.Sprintf("Merged %d observations from %s to %s", count, source, target))
 
 	case "mem_review":
@@ -394,11 +433,20 @@ func handleToolCall(id any, name string, args map[string]any) {
 
 		if action == "list" {
 			ids, err := store.ListNeedsReview()
-			if err != nil { writeError(id, err.Error()); return }
+			if err != nil {
+				writeError(id, err.Error())
+				return
+			}
 			jsonResult(id, map[string]any{"need_review": ids})
 		} else if action == "mark_reviewed" {
-			if obsID == "" { writeError(id, "observation_id required"); return }
-			if err := store.Review("mark_reviewed", obsID); err != nil { writeError(id, err.Error()); return }
+			if obsID == "" {
+				writeError(id, "observation_id required")
+				return
+			}
+			if err := store.Review("mark_reviewed", obsID); err != nil {
+				writeError(id, err.Error())
+				return
+			}
 			textResult(id, "Marked reviewed")
 		} else {
 			writeError(id, "unknown action, use 'list' or 'mark_reviewed'")
@@ -479,9 +527,9 @@ func buildToolList(scope string) []map[string]any {
 		}, []string{"memory_id_a", "memory_id_b"}),
 		toolDef("mem_judge", "Record a judgment between memories.", map[string]any{
 			"judgment_id": map[string]any{"type": "string"},
-			"relation": map[string]any{"type": "string", "description": "related|compatible|scoped|conflicts_with|supersedes|not_conflict"},
-			"reason":     map[string]any{"type": "string"},
-			"confidence": map[string]any{"type": "number"},
+			"relation":    map[string]any{"type": "string", "description": "related|compatible|scoped|conflicts_with|supersedes|not_conflict"},
+			"reason":      map[string]any{"type": "string"},
+			"confidence":  map[string]any{"type": "number"},
 		}, []string{"judgment_id", "relation"}),
 		toolDef("mem_capture_passive", "Extract learnings from text.", map[string]any{
 			"content": map[string]any{"type": "string"}, "project": map[string]any{"type": "string"},
@@ -513,22 +561,30 @@ func toolDef(name, desc string, props map[string]any, required []string) map[str
 }
 
 func getStr(m map[string]any, key string) string {
-	if v, ok := m[key].(string); ok { return v }
+	if v, ok := m[key].(string); ok {
+		return v
+	}
 	return ""
 }
 
 func getInt(m map[string]any, key string, def int) int {
-	if v, ok := m[key].(float64); ok { return int(v) }
+	if v, ok := m[key].(float64); ok {
+		return int(v)
+	}
 	return def
 }
 
 func getFloat(m map[string]any, key string, def float64) float64 {
-	if v, ok := m[key].(float64); ok { return v }
+	if v, ok := m[key].(float64); ok {
+		return v
+	}
 	return def
 }
 
 func truncate(s string, max int) string {
-	if len(s) <= max { return s }
+	if len(s) <= max {
+		return s
+	}
 	return s[:max] + "..."
 }
 

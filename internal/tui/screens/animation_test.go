@@ -60,9 +60,9 @@ func TestAnimationTickRequiresExactOne(t *testing.T) {
 	empty := ""
 	truthy := "true"
 	tests := []struct {
-		name     string
-		value    *string
-		wantNil  bool
+		name    string
+		value   *string
+		wantNil bool
 	}{
 		{name: "exact one disables tick", value: &one, wantNil: true},
 		{name: "unset preserves tick", value: nil, wantNil: false},

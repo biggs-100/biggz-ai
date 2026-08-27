@@ -1480,8 +1480,8 @@ type ConsolidateResult struct {
 
 // ConsolidateGroup is a group of similar project names.
 type ConsolidateGroup struct {
-	Projects []string `json:"projects"`
-	Canonical string  `json:"canonical"`
+	Projects  []string `json:"projects"`
+	Canonical string   `json:"canonical"`
 }
 
 // ConsolidateProjects merges similar project names.

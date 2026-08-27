@@ -20,8 +20,8 @@ type MenuItem struct {
 
 // NavHelper provides common navigation for screens.
 type NavHelper struct {
-	Items   []MenuItem
-	Cursor  int
+	Items  []MenuItem
+	Cursor int
 }
 
 // NewNavHelper creates a nav helper from menu items.

@@ -42,10 +42,10 @@ const (
 
 // Pre-defined support tier constants for convenience.
 const (
-	TierFull        = model.TierFull
-	TierFirst       = model.TierFirst
-	TierExtended    = model.TierExtended
-	TierCommunity   = model.TierCommunity
+	TierFull         = model.TierFull
+	TierFirst        = model.TierFirst
+	TierExtended     = model.TierExtended
+	TierCommunity    = model.TierCommunity
 	TierExperimental = model.TierExperimental
-	TierRetired     = model.TierRetired
+	TierRetired      = model.TierRetired
 )

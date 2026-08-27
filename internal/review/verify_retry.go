@@ -27,15 +27,15 @@ const (
 
 // VerificationReport describes the outcome of retry-final-verification.
 type VerificationReport struct {
-	Schema                  string   `json:"schema"`
-	LineageID               string   `json:"lineage_id"`
-	Passed                  bool     `json:"passed"`
-	ChainValid              bool     `json:"chain_valid"`
-	ReceiptMatch            bool     `json:"receipt_match"`
-	ReceiptReMaterialized   bool     `json:"receipt_re_materialized"`
-	ReceiptPath             string   `json:"receipt_path,omitempty"`
-	ReceiptHash             string   `json:"receipt_hash,omitempty"`
-	Reasons                 []string `json:"reasons"`
+	Schema                string   `json:"schema"`
+	LineageID             string   `json:"lineage_id"`
+	Passed                bool     `json:"passed"`
+	ChainValid            bool     `json:"chain_valid"`
+	ReceiptMatch          bool     `json:"receipt_match"`
+	ReceiptReMaterialized bool     `json:"receipt_re_materialized"`
+	ReceiptPath           string   `json:"receipt_path,omitempty"`
+	ReceiptHash           string   `json:"receipt_hash,omitempty"`
+	Reasons               []string `json:"reasons"`
 }
 
 // RetryFinalVerification recomputes chain validity and the receipt match for

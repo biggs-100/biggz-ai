@@ -10,9 +10,9 @@ import (
 
 // UpdatePromptModel shows a pre-welcome update notification.
 type UpdatePromptModel struct {
-	version    string
-	visible    bool
-	dismissed  bool
+	version   string
+	visible   bool
+	dismissed bool
 }
 
 func NewUpdatePromptModel() UpdatePromptModel {

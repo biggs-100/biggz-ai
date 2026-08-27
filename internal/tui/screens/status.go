@@ -15,11 +15,11 @@ import (
 
 // StatusModel shows real RDD, SDD, and system status.
 type StatusModel struct {
-	rddStatus  *review.RDDStatusReport
-	sddActive  int
+	rddStatus   *review.RDDStatusReport
+	sddActive   int
 	sddArchived int
-	hasSDD     bool
-	err        string
+	hasSDD      bool
+	err         string
 }
 
 // NewStatusModel creates the status screen.
@@ -112,7 +112,7 @@ func (m StatusModel) View() string {
 	b.WriteString("\n\n")
 
 	if m.err != "" {
-		b.WriteString(styles.ErrorBox.Render("Error: "+m.err))
+		b.WriteString(styles.ErrorBox.Render("Error: " + m.err))
 		b.WriteString("\n\n")
 	}
 

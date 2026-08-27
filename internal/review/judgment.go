@@ -9,13 +9,13 @@ import (
 // Two judges review the same candidate blindly, their findings are compared,
 // and a refuter resolves any disagreements. Fix rounds are limited.
 type JudgmentDay struct {
-	JudgeA     *JudgeVerdict
-	JudgeB     *JudgeVerdict
-	Refuter    *RefuterVerdict
-	FixRounds  int
-	MaxRounds  int
-	Status     string // pending, judging, refuting, fixing, completed, failed
-	CreatedAt  time.Time
+	JudgeA      *JudgeVerdict
+	JudgeB      *JudgeVerdict
+	Refuter     *RefuterVerdict
+	FixRounds   int
+	MaxRounds   int
+	Status      string // pending, judging, refuting, fixing, completed, failed
+	CreatedAt   time.Time
 	CompletedAt time.Time
 }
 
@@ -30,8 +30,8 @@ type JudgeVerdict struct {
 // RefuterVerdict resolves disagreements between judges.
 type RefuterVerdict struct {
 	Corroborated []Finding `json:"corroborated"` // both judges agreed
-	Refuted      []string  `json:"refuted"`       // finding IDs that were refuted
-	Inconclusive []string  `json:"inconclusive"`  // could not determine
+	Refuted      []string  `json:"refuted"`      // finding IDs that were refuted
+	Inconclusive []string  `json:"inconclusive"` // could not determine
 }
 
 // NewJudgmentDay creates a new judgment day review.

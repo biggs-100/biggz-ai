@@ -16,8 +16,8 @@ import (
 
 // VerificationSubject captures the Git tree state being verified.
 type VerificationSubject struct {
-	Kind          string `json:"kind"`           // "current-changes", "base-diff", "fix-diff"
-	Projection    string `json:"projection"`     // "workspace", "staged"
+	Kind          string `json:"kind"`       // "current-changes", "base-diff", "fix-diff"
+	Projection    string `json:"projection"` // "workspace", "staged"
 	BaseTree      string `json:"base_tree"`
 	CandidateTree string `json:"candidate_tree"`
 	TreeHash      string `json:"tree_hash"` // SHA-256 of all tree OIDs

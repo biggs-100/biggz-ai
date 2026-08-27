@@ -27,9 +27,9 @@ func NewAdapter() *Adapter {
 	return &Adapter{lookPath: exec.LookPath}
 }
 
-func (a *Adapter) ID() model.AgentID                       { return agents.AgentWindsurf }
-func (a *Adapter) Name() string                             { return "Windsurf" }
-func (a *Adapter) Tier() model.SupportTier                  { return agents.TierFull }
+func (a *Adapter) ID() model.AgentID       { return agents.AgentWindsurf }
+func (a *Adapter) Name() string            { return "Windsurf" }
+func (a *Adapter) Tier() model.SupportTier { return agents.TierFull }
 
 func (a *Adapter) Detect(ctx context.Context, homeDir string) (bool, string, string, bool, error) {
 	binPath, err := a.lookPath("windsurf")
@@ -53,13 +53,13 @@ func (a *Adapter) Capabilities() []string {
 	}
 }
 
-func (a *Adapter) SupportsAutoInstall() bool    { return true }
-func (a *Adapter) SupportsSkills() bool         { return true }
-func (a *Adapter) SupportsSystemPrompt() bool   { return true }
-func (a *Adapter) SupportsMCP() bool            { return true }
-func (a *Adapter) SupportsOutputStyles() bool   { return false }
-func (a *Adapter) SupportsSlashCommands() bool  { return false }
-func (a *Adapter) SupportsSubAgents() bool      { return false }
+func (a *Adapter) SupportsAutoInstall() bool   { return true }
+func (a *Adapter) SupportsSkills() bool        { return true }
+func (a *Adapter) SupportsSystemPrompt() bool  { return true }
+func (a *Adapter) SupportsMCP() bool           { return true }
+func (a *Adapter) SupportsOutputStyles() bool  { return false }
+func (a *Adapter) SupportsSlashCommands() bool { return false }
+func (a *Adapter) SupportsSubAgents() bool     { return false }
 
 func (a *Adapter) SystemPromptStrategy() model.SystemPromptStrategy {
 	return agents.StrategyFileReplace

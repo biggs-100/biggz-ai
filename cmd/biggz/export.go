@@ -62,9 +62,9 @@ func exportReview(id, format string) int {
 
 	if format == "json" {
 		data, _ := json.MarshalIndent(map[string]string{
-			"id":        id,
-			"exported":  time.Now().UTC().Format(time.RFC3339),
-			"content":   content,
+			"id":       id,
+			"exported": time.Now().UTC().Format(time.RFC3339),
+			"content":  content,
 		}, "", "  ")
 		fmt.Println(string(data))
 	} else {
@@ -128,5 +128,3 @@ func exportChangelog(since, format string) int {
 	}
 	return 0
 }
-
-

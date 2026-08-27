@@ -65,9 +65,9 @@ func TestForAgent_AllAgentIDs(t *testing.T) {
 	ids := AllAgentIDs()
 	if len(ids) != 16 {
 		expected := 27
-	if len(ids) != expected {
-		t.Fatalf("AllAgentIDs() returned %d ids, want %d", len(ids), expected)
-	}
+		if len(ids) != expected {
+			t.Fatalf("AllAgentIDs() returned %d ids, want %d", len(ids), expected)
+		}
 	}
 	// Every AllAgentIDs result must be findable via ForAgent
 	for _, id := range ids {

@@ -265,32 +265,51 @@ func (m MemoryModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case memoryListMsg:
-		if msg.err != "" { m.err = msg.err; return m, nil }
+		if msg.err != "" {
+			m.err = msg.err
+			return m, nil
+		}
 		m.items = msg.items
-		if m.items == nil { m.items = []*bigmem.Observation{} }
+		if m.items == nil {
+			m.items = []*bigmem.Observation{}
+		}
 		m.loaded = true
 		m.view = memViewList
 		m.err = ""
 
 	case memSearchMsg:
-		if msg.err != "" { m.err = msg.err; return m, nil }
+		if msg.err != "" {
+			m.err = msg.err
+			return m, nil
+		}
 		m.items = msg.items
-		if m.items == nil { m.items = []*bigmem.Observation{} }
+		if m.items == nil {
+			m.items = []*bigmem.Observation{}
+		}
 		m.view = memViewList
 		m.err = ""
 
 	case memDetailMsg:
-		if msg.err != "" { m.err = msg.err; return m, nil }
+		if msg.err != "" {
+			m.err = msg.err
+			return m, nil
+		}
 		m.detail = msg.obs
 		m.view = memViewDetail
 		m.err = ""
 	case memTimelineMsg:
-		if msg.err != "" { m.err = msg.err; return m, nil }
+		if msg.err != "" {
+			m.err = msg.err
+			return m, nil
+		}
 		m.tlEntries = msg.entries
 		m.view = memViewTimeline
 		m.err = ""
 	case memGraphMsg:
-		if msg.err != "" { m.err = msg.err; return m, nil }
+		if msg.err != "" {
+			m.err = msg.err
+			return m, nil
+		}
 		m.graphContent = msg.content
 		m.view = memViewGraph
 		m.err = ""
@@ -379,7 +398,9 @@ func (m MemoryModel) View() string {
 			b.WriteString("\n\n")
 			for i, item := range m.items {
 				cur := "  "
-				if i == m.cursor { cur = "▸ " }
+				if i == m.cursor {
+					cur = "▸ "
+				}
 				b.WriteString(fmt.Sprintf("%s[%s] %s\n", cur, item.Type, item.Title))
 			}
 			b.WriteString("\n")
