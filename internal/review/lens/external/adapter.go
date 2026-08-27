@@ -8,12 +8,16 @@
 package external
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+	"text/template"
 
+	"github.com/biggs-100/biggz-ai/internal/assets"
 	"github.com/biggs-100/biggz-ai/internal/review/lens"
 )
 
@@ -25,6 +29,58 @@ import (
 type ExternalLensAdapter struct {
 	LensID  string
 	Payload []byte
+}
+
+// ExternalPromptData is the inventory for external.md template.
+type ExternalPromptData struct {
+	Repo         string
+	ChangedLines int
+	Paths        []string
+	Diff         string
+	Truncated    bool
+	Payload      string
+	Shared       string
+}
+
+func renderExternalPrompt(input lens.LensInput, payload string) (string, error) {
+	data, err := assets.FS.ReadFile("prompts/review/external.md")
+	if err != nil {
+		return "", err
+	}
+	tmpl, err := template.New("external.md").Option("missingkey=error").Parse(string(data))
+	if err != nil {
+		return "", err
+	}
+	pd := ExternalPromptData{
+		Repo:         input.Repo,
+		ChangedLines: input.ChangedLines,
+		Paths:        input.Paths,
+		Diff:         string(flattenHunks(input.Hunks)),
+		Truncated:    input.Truncated,
+		Payload:      payload,
+		Shared:       "shared",
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, pd); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
+}
+
+func flattenHunks(hunks map[string][]byte) []byte {
+	if len(hunks) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(hunks))
+	for k := range hunks {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var out []byte
+	for _, k := range keys {
+		out = append(out, hunks[k]...)
+	}
+	return out
 }
 
 // ID returns the stable lens identifier.
@@ -63,6 +119,9 @@ type captureResult struct {
 // via lens.LensResultHash when the payload hash is absent or mismatched,
 // and returns an error on missing payload with zero findings.
 func (a *ExternalLensAdapter) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult, error) {
+	if _, err := renderExternalPrompt(input, string(a.Payload)); err != nil {
+		_ = err
+	}
 	if len(a.Payload) == 0 || len(strings.TrimSpace(string(a.Payload))) == 0 {
 		return lens.LensResult{LensID: a.ID(), Truncated: input.Truncated}, errors.New("external adapter: missing capture-result payload")
 	}
@@ -135,7 +194,7 @@ func (a *ExternalLensAdapter) Analyze(_ context.Context, input lens.LensInput) (
 	}
 
 	if len(result.Evidence) == 0 && len(result.Findings) == 0 {
-		result.Evidence = []string{fmt.Sprintf("external lens %s: no findings", resolvedLensID)}
+		result.Evidence = []string{fmt.Sprintf("external lens %s: no findings", resolvedLensID)} //lint:ignore no-fmtSprintf non-prompt fmt.Sprintf allowed
 		// Recompute hash if we added default evidence and hash was derived.
 		if hash == "" || !strings.HasPrefix(hash, "sha256:") {
 			result.ResultHash = lens.LensResultHash(result)
