@@ -38,6 +38,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/bigmem"
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
 	_ "modernc.org/sqlite"
 )
@@ -59,17 +60,12 @@ func SetBigMemStoreRootForTest(root string) { bigmemStoreRootOverride = root }
 // (ignored for existence). It mirrors gentle-ai's engramTitlePattern.
 var bigmemTitlePattern = regexp.MustCompile(`^sdd/([^/]+)/(proposal|spec|design|tasks|apply-progress|verify-report|archive-report|state|explore)$`)
 
-// bigmemDBPath returns the bigmem.db file path for a store root.
-// Empty root means the default ~/.biggz/bigmem.
+// bigmemDBPath returns the bigmem.db file path for a store root using
+// the unified bigmem.ResolveDBPath helper. Empty root means the default
+// ~/.biggz/bigmem. This ensures Store.Open and engram_status share ghost
+// WAL/SHM handling, checkpoint-before-copy, and max(updated_at) merge.
 func bigmemDBPath(root string) (string, error) {
-	if root != "" {
-		return filepath.Join(root, "bigmem.db"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".biggz", "bigmem", "bigmem.db"), nil
+	return bigmem.ResolveDBPath(root)
 }
 
 // inferBigMemProject mirrors gentle-ai's inferEngramProject for BigMem:

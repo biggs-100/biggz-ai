@@ -28,6 +28,12 @@ import (
 	"time"
 )
 
+// SyncDBPath returns the canonical BigMem DB path for the given root using the
+// unified ResolveDBPath helper (ghost WAL handling, checkpoint, VACUUM INTO,
+// max(updated_at) merge). Exposed for sync diagnostics and to ensure sync.go
+// shares the same path resolver as Store.Open and engram_status.go.
+func SyncDBPath(rootDir string) (string, error) { return ResolveDBPath(rootDir) }
+
 // ─── Manifest ────────────────────────────────────────────────────────────────
 
 // SyncManifest is the append-only index of all chunks for a project.

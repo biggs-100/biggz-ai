@@ -98,84 +98,288 @@ const (
 	defaultDedupeWindow         = 15 * time.Minute
 )
 
+// ─── Unified DB Path Resolution (A1) ───────────────────────────────────────
+
+// defaultBigmemRoot returns the default BigMem root (~/.biggz/bigmem).
+func defaultBigmemRoot() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".biggz", "bigmem")
+}
+
+// bigmemDBPathForRoot returns bigmem.db path for a given root.
+func bigmemDBPathForRoot(root string) string { return filepath.Join(root, "bigmem.db") }
+
+// recoveredDBPathForRoot returns the recovered DB path sibling to root.
+func recoveredDBPathForRoot(root string) string {
+	return filepath.Join(filepath.Dir(root), "bigmem_recovered", "bigmem.db")
+}
+
+// isGhostWAL reports whether dbPath has a stale WAL=0 + SHM>0 zombie lock (Windows).
+func isGhostWAL(dbPath string) bool {
+	walPath := dbPath + "-wal"
+	shmPath := dbPath + "-shm"
+	walInfo, err := os.Stat(walPath)
+	if err != nil || walInfo.Size() != 0 {
+		return false
+	}
+	shmInfo, err := os.Stat(shmPath)
+	if err != nil || shmInfo.Size() == 0 {
+		return false
+	}
+	return true
+}
+
+// checkpointDB runs PRAGMA wal_checkpoint(TRUNCATE) on the given DB file.
+func checkpointDB(dbPath string) {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return
+	}
+	defer db.Close()
+	db.Exec("PRAGMA busy_timeout=5000")
+	_, _ = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+}
+
+// safeCopyDB copies srcPath to dstPath with a WAL checkpoint before copy.
+// It first tries VACUUM INTO (SQLite backup API) which is crash-safe and
+// handles WAL atomically; on failure it falls back to checkpoint+ReadFile
+// with a documented risk comment (raw copy may miss uncheckpointed WAL if
+// VACUUM INTO is unavailable).
+func safeCopyDB(srcPath, dstPath string) error {
+	if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+		return err
+	}
+	// Checkpoint src before any copy to flush WAL into main DB.
+	checkpointDB(srcPath)
+	db, err := sql.Open("sqlite", srcPath)
+	if err == nil {
+		defer db.Close()
+		db.Exec("PRAGMA busy_timeout=5000")
+		escaped := strings.ReplaceAll(dstPath, "'", "''")
+		if _, err := db.Exec(fmt.Sprintf("VACUUM INTO '%s'", escaped)); err == nil {
+			return nil
+		}
+	}
+	// Fallback: raw file copy after checkpoint (risk: if checkpoint failed,
+	// WAL pages remain in -wal and raw copy will be stale; VACUUM INTO above
+	// is preferred for atomicity).
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dstPath, data, 0644)
+}
+
+// getMaxUpdatedAt returns MAX(updated_at) from observations for the given DB.
+func getMaxUpdatedAt(dbPath string) string {
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return ""
+	}
+	defer db.Close()
+	db.Exec("PRAGMA busy_timeout=5000")
+	var max sql.NullString
+	_ = db.QueryRow("SELECT MAX(updated_at) FROM observations").Scan(&max)
+	if max.Valid {
+		return max.String
+	}
+	return ""
+}
+
+// mergeRecoveredIntoPrimary merges recovered DB into primary dedup by id,
+// keeping the row with max(updated_at). Uses Go iteration to avoid SQLite
+// version-sensitive UPSERT SELECT syntax; compares updated_at as RFC3339 strings.
+func mergeRecoveredIntoPrimary(primaryPath, recoveredPath string) error {
+	primDB, err := sql.Open("sqlite", primaryPath)
+	if err != nil {
+		return err
+	}
+	defer primDB.Close()
+	primDB.Exec("PRAGMA busy_timeout=5000")
+	recDB, err := sql.Open("sqlite", recoveredPath)
+	if err != nil {
+		return err
+	}
+	defer recDB.Close()
+	recDB.Exec("PRAGMA busy_timeout=5000")
+	// Ensure target tables exist (no-op if already)
+	_, _ = primDB.Exec(`CREATE TABLE IF NOT EXISTS observations (
+		id TEXT PRIMARY KEY, title TEXT, type TEXT, content TEXT, session_id TEXT,
+		tool_name TEXT, topic_key TEXT, project TEXT, scope TEXT,
+		normalized_hash TEXT, revision_count INTEGER, duplicate_count INTEGER,
+		last_seen_at TEXT, review_after TEXT, pinned INTEGER,
+		created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	_, _ = primDB.Exec(`CREATE TABLE IF NOT EXISTS sessions
+		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT)`)
+	_, _ = primDB.Exec(`CREATE TABLE IF NOT EXISTS prompts (id TEXT PRIMARY KEY, content TEXT, session_id TEXT, created_at TEXT)`)
+	// Merge observations row by row
+	rows, err := recDB.Query(`SELECT id, title, type, content, session_id, tool_name, topic_key, project, scope, normalized_hash, revision_count, duplicate_count, last_seen_at, review_after, pinned, created_at, updated_at, deleted_at FROM observations`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id, title, typ, content, sessionID, toolName, topicKey, project, scope, normalizedHash, createdAt, updatedAt string
+			var revisionCount, duplicateCount, pinned int
+			var lastSeenAt, reviewAfter, deletedAt sql.NullString
+			if err := rows.Scan(&id, &title, &typ, &content, &sessionID, &toolName, &topicKey, &project, &scope, &normalizedHash, &revisionCount, &duplicateCount, &lastSeenAt, &reviewAfter, &pinned, &createdAt, &updatedAt, &deletedAt); err != nil {
+				continue
+			}
+			var primUpdated sql.NullString
+			err := primDB.QueryRow("SELECT updated_at FROM observations WHERE id = ?", id).Scan(&primUpdated)
+			if err == sql.ErrNoRows {
+				_, _ = primDB.Exec(`INSERT INTO observations (id, title, type, content, session_id, tool_name, topic_key, project, scope, normalized_hash, revision_count, duplicate_count, last_seen_at, review_after, pinned, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					id, title, typ, content, sessionID, toolName, topicKey, project, scope, normalizedHash, revisionCount, duplicateCount, lastSeenAt, reviewAfter, pinned, createdAt, updatedAt, deletedAt)
+			} else if err == nil && primUpdated.Valid && updatedAt > primUpdated.String {
+				_, _ = primDB.Exec(`UPDATE observations SET title=?, type=?, content=?, session_id=?, tool_name=?, topic_key=?, project=?, scope=?, normalized_hash=?, revision_count=?, duplicate_count=?, last_seen_at=?, review_after=?, pinned=?, created_at=?, updated_at=?, deleted_at=? WHERE id=?`,
+					title, typ, content, sessionID, toolName, topicKey, project, scope, normalizedHash, revisionCount, duplicateCount, lastSeenAt, reviewAfter, pinned, createdAt, updatedAt, deletedAt, id)
+			} else if err == nil && !primUpdated.Valid && updatedAt != "" {
+				_, _ = primDB.Exec(`UPDATE observations SET title=?, type=?, content=?, session_id=?, tool_name=?, topic_key=?, project=?, scope=?, normalized_hash=?, revision_count=?, duplicate_count=?, last_seen_at=?, review_after=?, pinned=?, created_at=?, updated_at=?, deleted_at=? WHERE id=?`,
+					title, typ, content, sessionID, toolName, topicKey, project, scope, normalizedHash, revisionCount, duplicateCount, lastSeenAt, reviewAfter, pinned, createdAt, updatedAt, deletedAt, id)
+			}
+		}
+		_ = rows.Err()
+	}
+	// Merge sessions: insert or ignore
+	sRows, err := recDB.Query(`SELECT id, start_time, end_time, summary, project, directory FROM sessions`)
+	if err == nil {
+		defer sRows.Close()
+		for sRows.Next() {
+			var id, startTime, endTime, summary, project, directory sql.NullString
+			if err := sRows.Scan(&id, &startTime, &endTime, &summary, &project, &directory); err != nil {
+				continue
+			}
+			if !id.Valid {
+				continue
+			}
+			_, _ = primDB.Exec(`INSERT OR IGNORE INTO sessions (id, start_time, end_time, summary, project, directory) VALUES (?, ?, ?, ?, ?, ?)`, id.String, startTime.String, endTime.String, summary.String, project.String, directory.String)
+		}
+	}
+	// Merge prompts
+	pRows, err := recDB.Query(`SELECT id, content, session_id, created_at FROM prompts`)
+	if err == nil {
+		defer pRows.Close()
+		for pRows.Next() {
+			var id, content, sessionID, createdAt sql.NullString
+			if err := pRows.Scan(&id, &content, &sessionID, &createdAt); err != nil {
+				continue
+			}
+			if !id.Valid {
+				continue
+			}
+			_, _ = primDB.Exec(`INSERT OR IGNORE INTO prompts (id, content, session_id, created_at) VALUES (?, ?, ?, ?)`, id.String, content.String, sessionID.String, createdAt.String)
+		}
+	}
+	return nil
+}
+
+// ResolveDBPath returns the canonical DB path for rootDir, handling ghost WAL/SHM,
+// WAL checkpoint before copy, VACUUM INTO backup, and merging recovered DB by
+// max(updated_at) dedup. It emits a warning to stderr if both DBs exist.
+func ResolveDBPath(rootDir string) (string, error) {
+	if rootDir == "" {
+		rootDir = defaultBigmemRoot()
+		if rootDir == "" {
+			return "", fmt.Errorf("home dir: not found")
+		}
+	}
+	// Ensure caller root exists for primary
+	_ = os.MkdirAll(rootDir, 0755)
+	primaryPath := bigmemDBPathForRoot(rootDir)
+	recoveredPath := recoveredDBPathForRoot(rootDir)
+	walPath := primaryPath + "-wal"
+	shmPath := primaryPath + "-shm"
+	needsFallback := false
+	if isGhostWAL(primaryPath) {
+		// Try to clean stale WAL/SHM
+		_ = os.Remove(walPath)
+		_ = os.Remove(shmPath)
+		if _, err := os.Stat(shmPath); err == nil {
+			if f, err := os.OpenFile(shmPath, os.O_WRONLY, 0644); err == nil {
+				_ = f.Truncate(0)
+				f.Close()
+				_ = os.Remove(shmPath)
+			}
+		}
+		if _, err := os.Stat(walPath); err == nil {
+			if f, err := os.OpenFile(walPath, os.O_WRONLY, 0644); err == nil {
+				_ = f.Truncate(0)
+				f.Close()
+				_ = os.Remove(walPath)
+			}
+		}
+		if _, err := os.Stat(shmPath); err == nil {
+			needsFallback = true
+		}
+		if _, err := os.Stat(walPath); err == nil {
+			needsFallback = true
+		}
+	}
+	if needsFallback {
+		recoveredDir := filepath.Dir(recoveredPath)
+		_ = os.MkdirAll(recoveredDir, 0755)
+		if _, err := os.Stat(recoveredPath); os.IsNotExist(err) {
+			if _, err := os.Stat(primaryPath); err == nil {
+				_ = safeCopyDB(primaryPath, recoveredPath)
+			}
+		} else {
+			fmt.Fprintf(os.Stderr, "[bigmem] warning: ghost WAL/SHM detected; using recovered DB at %s (primary %s blocked)\n", recoveredPath, primaryPath)
+		}
+		if _, err := os.Stat(recoveredPath); err == nil {
+			return recoveredPath, nil
+		}
+		return primaryPath, nil
+	}
+	// No ghost — handle recovered existence
+	if _, err := os.Stat(recoveredPath); err == nil {
+		if _, err := os.Stat(primaryPath); err == nil {
+			// Both exist — warn and merge by max(updated_at)
+			fmt.Fprintf(os.Stderr, "[bigmem] warning: both primary (%s) and recovered (%s) exist; merging by max(updated_at)\n", primaryPath, recoveredPath)
+			primMax := getMaxUpdatedAt(primaryPath)
+			recMax := getMaxUpdatedAt(recoveredPath)
+			// Log comparison for observability
+			if recMax > primMax {
+				fmt.Fprintf(os.Stderr, "[bigmem] recovered max updated_at %q newer than primary %q\n", recMax, primMax)
+			}
+			if err := mergeRecoveredIntoPrimary(primaryPath, recoveredPath); err != nil {
+				fmt.Fprintf(os.Stderr, "[bigmem] merge warning: %v\n", err)
+			}
+			checkpointDB(primaryPath)
+		} else {
+			// Primary missing — promote recovered
+			fmt.Fprintf(os.Stderr, "[bigmem] recovered DB promoted to primary: %s -> %s\n", recoveredPath, primaryPath)
+			_ = safeCopyDB(recoveredPath, primaryPath)
+		}
+	}
+	return primaryPath, nil
+}
+
+// BigmemStorePath is an alias for ResolveDBPath for external callers (e.g. sdd engram).
+func BigmemStorePath(rootDir string) (string, error) { return ResolveDBPath(rootDir) }
+
 // ─── Open / Schema ───────────────────────────────────────────────────────────
 
 // Open creates or opens the SQLite store at the given root directory.
 // Runs schema migration to add missing columns from previous versions.
 func Open(rootDir string) (*Store, error) {
+	origRoot := rootDir
 	if rootDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("home dir: %w", err)
+		rootDir = defaultBigmemRoot()
+		if rootDir == "" {
+			return nil, fmt.Errorf("home dir: not found")
 		}
-		rootDir = filepath.Join(home, ".biggz", "bigmem")
 	}
 	if err := os.MkdirAll(rootDir, 0755); err != nil {
 		return nil, fmt.Errorf("mkdir: %w", err)
 	}
-
-	dbPath := filepath.Join(rootDir, "bigmem.db")
-
-	// Pre-open stale WAL/SHM cleanup: if WAL is 0 bytes but SHM holds a stale
-	// lock from a zombie pid (Windows job-object ghost), the DB will be BUSY
-	// forever. Detect and remove stale files before opening.
-	// If ghost handles block removal, fall back to a recovered copy without WAL/SHM.
-	walPath := dbPath + "-wal"
-	shmPath := dbPath + "-shm"
-	needsFallback := false
-	if walInfo, err := os.Stat(walPath); err == nil && walInfo.Size() == 0 {
-		if shmInfo, err := os.Stat(shmPath); err == nil && shmInfo.Size() > 0 {
-			_ = os.Remove(walPath)
-			_ = os.Remove(shmPath)
-			if _, err := os.Stat(shmPath); err == nil {
-				if f, err := os.OpenFile(shmPath, os.O_WRONLY, 0644); err == nil {
-					_ = f.Truncate(0)
-					f.Close()
-					_ = os.Remove(shmPath)
-				}
-			}
-			if _, err := os.Stat(walPath); err == nil {
-				if f, err := os.OpenFile(walPath, os.O_WRONLY, 0644); err == nil {
-					_ = f.Truncate(0)
-					f.Close()
-					_ = os.Remove(walPath)
-				}
-			}
-			// If SHM still exists after cleanup attempts, ghost handles block it.
-			if _, err := os.Stat(shmPath); err == nil {
-				needsFallback = true
-			}
-			if _, err := os.Stat(walPath); err == nil {
-				needsFallback = true
-			}
-		}
+	dbPath, err := ResolveDBPath(origRoot)
+	if err != nil {
+		return nil, err
 	}
-	if needsFallback {
-		// Ghost handles hold WAL/SHM — use a recovered copy without them.
-		recoveredDir := filepath.Join(filepath.Dir(rootDir), "bigmem_recovered")
-		_ = os.MkdirAll(recoveredDir, 0755)
-		recoveredPath := filepath.Join(recoveredDir, "bigmem.db")
-		if _, err := os.Stat(recoveredPath); err != nil {
-			if data, err := os.ReadFile(dbPath); err == nil {
-				_ = os.WriteFile(recoveredPath, data, 0644)
-			}
-		}
-		// Use recovered DB if it exists and is valid.
-		if _, err := os.Stat(recoveredPath); err == nil {
-			dbPath = recoveredPath
-			rootDir = recoveredDir
-		}
-	} else {
-		// No fallback needed — ghost lock cleared. If recovered exists and is newer,
-		// consolidate it back to primary (one-way sync on clean restart).
-		recoveredPath := filepath.Join(filepath.Dir(rootDir), "bigmem_recovered", "bigmem.db")
-		if recInfo, err := os.Stat(recoveredPath); err == nil {
-			if primInfo, err := os.Stat(dbPath); err == nil && recInfo.Size() > primInfo.Size() {
-				if data, err := os.ReadFile(recoveredPath); err == nil {
-					_ = os.WriteFile(dbPath, data, 0644)
-				}
-			}
-		}
+	rootDir = filepath.Dir(dbPath)
+	if err := os.MkdirAll(rootDir, 0755); err != nil {
+		return nil, fmt.Errorf("mkdir: %w", err)
 	}
 
 	db, err := sql.Open("sqlite", dbPath)

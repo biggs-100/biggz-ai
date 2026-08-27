@@ -150,11 +150,10 @@ func (c *BigmemCheck) Remedy() *Remedy {
 				_ = store.Close()
 				return fixErr
 			}
-			home, herr := os.UserHomeDir()
+			dbPath, herr := bigmem.ResolveDBPath("")
 			if herr != nil {
 				return fmt.Errorf("bigmem remedy: cannot determine home dir: %w", herr)
 			}
-			dbPath := filepath.Join(home, ".biggz", "bigmem", "bigmem.db")
 			if _, statErr := os.Stat(dbPath); os.IsNotExist(statErr) {
 				// No database file yet — create a fresh store.
 				s, oerr := c.opener()
