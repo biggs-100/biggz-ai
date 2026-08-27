@@ -466,6 +466,37 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, "unknown action, use 'list' or 'mark_reviewed'")
 		}
 
+	case "bigmem_branch_create":
+		parentID := getStr(args, "parent_id")
+		summary := getStr(args, "branch_summary")
+		sess, err := store.CreateBranch(parentID, summary)
+		if err != nil {
+			writeError(id, err.Error())
+			return
+		}
+		jsonResult(id, sess)
+
+	case "bigmem_branch_list":
+		sessions, err := store.ListBranches()
+		if err != nil {
+			writeError(id, err.Error())
+			return
+		}
+		jsonResult(id, sessions)
+
+	case "bigmem_branch_get":
+		sid := getStr(args, "id")
+		if sid == "" {
+			writeError(id, "id required")
+			return
+		}
+		sess, err := store.GetBranch(sid)
+		if err != nil {
+			writeError(id, err.Error())
+			return
+		}
+		jsonResult(id, sess)
+
 	default:
 		writeError(id, fmt.Sprintf("unknown tool: %s", name))
 	}
@@ -556,6 +587,14 @@ func buildToolList(scope string) []map[string]any {
 			"action":         map[string]any{"type": "string", "description": "list|mark_reviewed"},
 			"observation_id": map[string]any{"type": "string", "description": "Observation ID (required for mark_reviewed)"},
 		}, []string{"action"}),
+		toolDef("bigmem_branch_create", "Create a branching session (internal-only).", map[string]any{
+			"parent_id":      map[string]any{"type": "string", "description": "Parent session ID, empty for root"},
+			"branch_summary": map[string]any{"type": "string", "description": "Optional branch summary"},
+		}, nil),
+		toolDef("bigmem_branch_list", "List branching sessions (internal-only).", nil, nil),
+		toolDef("bigmem_branch_get", "Get branching session by ID (internal-only).", map[string]any{
+			"id": map[string]any{"type": "string"},
+		}, []string{"id"}),
 	}
 	return tools
 }

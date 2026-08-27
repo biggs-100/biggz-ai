@@ -8,33 +8,44 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
 // ─── Session ─────────────────────────────────────────────────────────────────
 
-// Session represents a coding session with directory tracking.
+// Session represents a coding session with directory tracking and branching (REQ-B1).
 type Session struct {
-	ID        string    `json:"id"`
-	StartTime time.Time `json:"start_time"`
-	EndTime   time.Time `json:"end_time,omitempty"`
-	Summary   string    `json:"summary,omitempty"`
-	Project   string    `json:"project,omitempty"`
-	Directory string    `json:"directory,omitempty"`
+	ID            string    `json:"id"`
+	StartTime     time.Time `json:"start_time"`
+	EndTime       time.Time `json:"end_time,omitempty"`
+	Summary       string    `json:"summary,omitempty"`
+	Project       string    `json:"project,omitempty"`
+	Directory     string    `json:"directory,omitempty"`
+	ParentID      *string   `json:"parent_id,omitempty"`
+	LeafID        string    `json:"leaf_id,omitempty"`
+	BranchSummary string    `json:"branch_summary,omitempty"`
 }
 
 // SessionStart registers a new session.
 func (s *Store) SessionStart(id, project string) (*Session, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	session := &Session{ID: id, StartTime: time.Now(), Project: project}
+	session := &Session{ID: id, StartTime: time.Now(), Project: project, LeafID: id}
 	_, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS sessions
-		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT)`)
+		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT, parent_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, leaf_id TEXT, branch_summary TEXT)`)
 	if err != nil {
 		return nil, err
 	}
-	_, err = s.db.Exec("INSERT INTO sessions (id, start_time, project) VALUES (?, ?, ?)",
-		id, session.StartTime.Format(time.RFC3339), project)
+	_ = ensureColumns(s.db, "sessions", []columnDef{
+		{name: "parent_id", ddl: "TEXT REFERENCES sessions(id) ON DELETE SET NULL"},
+		{name: "leaf_id", ddl: "TEXT"},
+		{name: "branch_summary", ddl: "TEXT"},
+	})
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent_id ON sessions(parent_id)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_leaf_id ON sessions(leaf_id)`)
+	_, err = s.db.Exec("INSERT INTO sessions (id, start_time, project, parent_id, leaf_id) VALUES (?, ?, ?, NULL, ?)",
+		id, session.StartTime.Format(time.RFC3339), project, id)
 	return session, err
 }
 
@@ -79,10 +90,10 @@ func (s *Store) SessionContext(limit int) ([]Session, error) {
 		limit = 5
 	}
 	s.db.Exec(`CREATE TABLE IF NOT EXISTS sessions
-		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT)`)
+		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT, parent_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, leaf_id TEXT, branch_summary TEXT)`)
 
 	rows, err := s.db.Query(
-		"SELECT id, start_time, end_time, summary, project, directory FROM sessions ORDER BY start_time DESC LIMIT ?", limit)
+		"SELECT id, start_time, end_time, summary, project, directory, parent_id, leaf_id, branch_summary FROM sessions ORDER BY start_time DESC LIMIT ?", limit)
 	if err != nil {
 		return nil, fmt.Errorf("session query: %w", err)
 	}
@@ -90,8 +101,8 @@ func (s *Store) SessionContext(limit int) ([]Session, error) {
 	var sessions []Session
 	for rows.Next() {
 		var sess Session
-		var st, et, summary, dir sql.NullString
-		if err := rows.Scan(&sess.ID, &st, &et, &summary, &sess.Project, &dir); err != nil {
+		var st, et, summary, dir, parentID, leafID, branchSummary sql.NullString
+		if err := rows.Scan(&sess.ID, &st, &et, &summary, &sess.Project, &dir, &parentID, &leafID, &branchSummary); err != nil {
 			continue
 		}
 		if st.Valid {
@@ -106,9 +117,217 @@ func (s *Store) SessionContext(limit int) ([]Session, error) {
 		if dir.Valid {
 			sess.Directory = dir.String
 		}
+		if parentID.Valid && parentID.String != "" {
+			v := parentID.String
+			sess.ParentID = &v
+		}
+		if leafID.Valid {
+			sess.LeafID = leafID.String
+		}
+		if branchSummary.Valid {
+			sess.BranchSummary = branchSummary.String
+		}
 		sessions = append(sessions, sess)
 	}
 	return sessions, nil
+}
+
+// ─── Branching (REQ-B3/B4/B5) ───────────────────────────────────────────────
+
+// CreateBranch creates a branching session. parentID="" creates a root (parent_id NULL, leaf_id=self).
+// Validates parent exists when non-empty; branch_summary is optional.
+func (s *Store) CreateBranch(parentID, branchSummary string) (*Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Ensure table exists with branching schema.
+	s.db.Exec(`CREATE TABLE IF NOT EXISTS sessions
+		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT, parent_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, leaf_id TEXT, branch_summary TEXT)`)
+	_ = ensureColumns(s.db, "sessions", []columnDef{
+		{name: "parent_id", ddl: "TEXT REFERENCES sessions(id) ON DELETE SET NULL"},
+		{name: "leaf_id", ddl: "TEXT"},
+		{name: "branch_summary", ddl: "TEXT"},
+	})
+	if parentID != "" {
+		var exists int
+		if err := s.db.QueryRow("SELECT COUNT(*) FROM sessions WHERE id = ?", parentID).Scan(&exists); err != nil {
+			return nil, err
+		}
+		if exists == 0 {
+			return nil, fmt.Errorf("parent %q not found", parentID)
+		}
+	}
+	id := fmt.Sprintf("sess-%d-%d", time.Now().UnixNano(), atomic.AddInt64(&globalIDSeq, 1))
+	now := time.Now().UTC().Format(time.RFC3339)
+	var parentVal any
+	if parentID == "" {
+		parentVal = nil
+	} else {
+		parentVal = parentID
+	}
+	if _, err := s.db.Exec(`INSERT INTO sessions (id, start_time, parent_id, leaf_id, branch_summary) VALUES (?, ?, ?, ?, ?)`, id, now, parentVal, id, branchSummary); err != nil {
+		return nil, err
+	}
+	sess := &Session{ID: id, StartTime: parseSessionTime(now), LeafID: id, BranchSummary: branchSummary}
+	if parentID != "" {
+		v := parentID
+		sess.ParentID = &v
+	}
+	return sess, nil
+}
+
+// GetBranch retrieves a session by ID with branching fields.
+func (s *Store) GetBranch(id string) (*Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.getBranchLocked(id)
+}
+
+func (s *Store) getBranchLocked(id string) (*Session, error) {
+	var sess Session
+	var st, et, summary, project, dir, parentID, leafID, branchSummary sql.NullString
+	// Param ? only — SQL injection safe (REQ-B4 threat).
+	err := s.db.QueryRow(`SELECT id, start_time, end_time, summary, project, directory, parent_id, leaf_id, branch_summary FROM sessions WHERE id = ?`, id).Scan(&sess.ID, &st, &et, &summary, &project, &dir, &parentID, &leafID, &branchSummary)
+	if err != nil {
+		return nil, fmt.Errorf("branch %q not found: %w", id, err)
+	}
+	if st.Valid {
+		sess.StartTime = parseSessionTime(st.String)
+	}
+	if et.Valid {
+		sess.EndTime = parseSessionTime(et.String)
+	}
+	if summary.Valid {
+		sess.Summary = summary.String
+	}
+	if project.Valid {
+		sess.Project = project.String
+	}
+	if dir.Valid {
+		sess.Directory = dir.String
+	}
+	if parentID.Valid && parentID.String != "" {
+		v := parentID.String
+		sess.ParentID = &v
+	}
+	if leafID.Valid {
+		sess.LeafID = leafID.String
+	}
+	if branchSummary.Valid {
+		sess.BranchSummary = branchSummary.String
+	}
+	return &sess, nil
+}
+
+// ListBranches returns all sessions ordered by start_time DESC.
+func (s *Store) ListBranches() ([]Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rows, err := s.db.Query(`SELECT id, start_time, end_time, summary, project, directory, parent_id, leaf_id, branch_summary FROM sessions ORDER BY start_time DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Session
+	for rows.Next() {
+		var sess Session
+		var st, et, summary, project, dir, parentID, leafID, branchSummary sql.NullString
+		if err := rows.Scan(&sess.ID, &st, &et, &summary, &project, &dir, &parentID, &leafID, &branchSummary); err != nil {
+			continue
+		}
+		if st.Valid {
+			sess.StartTime = parseSessionTime(st.String)
+		}
+		if et.Valid {
+			sess.EndTime = parseSessionTime(et.String)
+		}
+		if summary.Valid {
+			sess.Summary = summary.String
+		}
+		if project.Valid {
+			sess.Project = project.String
+		}
+		if dir.Valid {
+			sess.Directory = dir.String
+		}
+		if parentID.Valid && parentID.String != "" {
+			v := parentID.String
+			sess.ParentID = &v
+		}
+		if leafID.Valid {
+			sess.LeafID = leafID.String
+		}
+		if branchSummary.Valid {
+			sess.BranchSummary = branchSummary.String
+		}
+		out = append(out, sess)
+	}
+	return out, rows.Err()
+}
+
+// SetLeaf atomically updates leaf_id under Store.mu (single UPDATE, last-writer-wins, REQ-B5).
+func (s *Store) SetLeaf(leafID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if leafID == "" {
+		return fmt.Errorf("leafID required")
+	}
+	var exists int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM sessions WHERE id = ?", leafID).Scan(&exists); err != nil {
+		return err
+	}
+	if exists == 0 {
+		return fmt.Errorf("leaf %q not found", leafID)
+	}
+	// Single UPDATE under mu — all rows leaf_id tracks active leaf (global pointer) without JOIN.
+	// Use param ? only.
+	_, err := s.db.Exec(`UPDATE sessions SET leaf_id = ?`, leafID)
+	return err
+}
+
+// GetLeafPath walks parent_id iteratively leaf→root, depth 100, cycle guard, param ? only (REQ-B4).
+func (s *Store) GetLeafPath(leafID string) ([]Session, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if leafID == "" {
+		return nil, fmt.Errorf("leafID required")
+	}
+	visited := make(map[string]bool, 16)
+	var path []Session
+	current := leafID
+	for i := 0; i < 100 && current != ""; i++ {
+		if visited[current] {
+			break
+		}
+		visited[current] = true
+		sess, err := s.getBranchLocked(current)
+		if err != nil {
+			break
+		}
+		path = append(path, *sess)
+		if sess.ParentID == nil || *sess.ParentID == "" {
+			break
+		}
+		current = *sess.ParentID
+	}
+	return path, nil
+}
+
+// SessionContextBranched returns leaf→root path when leafID non-empty, else fallback to linear SessionContext (REQ-B4).
+func (s *Store) SessionContextBranched(leafID string, limit int) ([]Session, error) {
+	if leafID == "" {
+		return s.SessionContext(limit)
+	}
+	path, err := s.GetLeafPath(leafID)
+	if err != nil {
+		return nil, err
+	}
+	if len(path) == 0 {
+		return s.SessionContext(limit)
+	}
+	if limit > 0 && len(path) > limit {
+		path = path[:limit]
+	}
+	return path, nil
 }
 
 // ─── Prompts ─────────────────────────────────────────────────────────────────
@@ -402,14 +621,16 @@ func (s *Store) Unpin(id string) error {
 
 // DoctorResult reports store health.
 type DoctorResult struct {
-	StoreExists  bool   `json:"store_exists"`
-	Observations int    `json:"observations"`
-	CorruptFiles int    `json:"corrupt_files"`
-	StoragePath  string `json:"storage_path"`
-	Corrupt      bool   `json:"corrupt"`
+	StoreExists          bool   `json:"store_exists"`
+	Observations         int    `json:"observations"`
+	CorruptFiles         int    `json:"corrupt_files"`
+	StoragePath          string `json:"storage_path"`
+	Corrupt              bool   `json:"corrupt"`
+	BranchColumnsMissing bool   `json:"branch_columns_missing,omitempty"`
+	NeedsMigration       bool   `json:"needs_migration,omitempty"`
 }
 
-// Doctor runs diagnostics including PRAGMA integrity_check.
+// Doctor runs diagnostics including PRAGMA integrity_check and branching schema check (REQ-B2).
 func (s *Store) Doctor() (*DoctorResult, error) {
 	r := &DoctorResult{StoragePath: s.rootDir, StoreExists: true}
 	s.db.QueryRow("SELECT COUNT(*) FROM observations").Scan(&r.Observations)
@@ -432,7 +653,36 @@ func (s *Store) Doctor() (*DoctorResult, error) {
 		}
 	}
 	r.Corrupt = len(messages) > 0
+
+	// Branching schema check: flag missing columns as fixable (REQ-B2).
+	missing := hasMissingBranchColumns(s.db)
+	if missing {
+		r.BranchColumnsMissing = true
+		r.NeedsMigration = true
+		r.Corrupt = true // fixable corruption
+	}
 	return r, nil
+}
+
+// hasMissingBranchColumns reports true if sessions lacks parent_id/leaf_id/branch_summary.
+func hasMissingBranchColumns(db *sql.DB) bool {
+	rows, err := db.Query("PRAGMA table_info(sessions)")
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	existing := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
+			continue
+		}
+		existing[name] = true
+	}
+	return !existing["parent_id"] || !existing["leaf_id"] || !existing["branch_summary"]
 }
 
 // DoctorFix repairs WAL, FTS and schema issues, matching engram's behavior.
@@ -452,17 +702,20 @@ func (s *Store) DoctorFix() error {
 	// 2. VACUUM to compact and fix malformed database errors.
 	_, _ = s.db.Exec("VACUUM")
 
-	// 3. Schema migration: ensure sessions table and directory column exists.
+	// 3. Schema migration: ensure sessions table and branching columns (REQ-B1/B2).
 	var sessExists int
 	_ = s.db.QueryRow("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sessions'").Scan(&sessExists)
 	if sessExists == 0 {
 		_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS sessions
-			(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT)`)
+			(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT, parent_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, leaf_id TEXT, branch_summary TEXT)`)
 	} else {
 		rows, err := s.db.Query("PRAGMA table_info(sessions)")
 		if err == nil {
 			hasDir := false
 			hasStartTime := false
+			hasParent := false
+			hasLeaf := false
+			hasBranchSummary := false
 			for rows.Next() {
 				var cid int
 				var name, ctype string
@@ -477,6 +730,15 @@ func (s *Store) DoctorFix() error {
 				if name == "start_time" {
 					hasStartTime = true
 				}
+				if name == "parent_id" {
+					hasParent = true
+				}
+				if name == "leaf_id" {
+					hasLeaf = true
+				}
+				if name == "branch_summary" {
+					hasBranchSummary = true
+				}
 			}
 			rows.Close()
 			if !hasDir {
@@ -485,13 +747,27 @@ func (s *Store) DoctorFix() error {
 			if !hasStartTime {
 				_, _ = s.db.Exec("ALTER TABLE sessions ADD COLUMN start_time TEXT")
 			}
+			if !hasParent {
+				_, _ = s.db.Exec("ALTER TABLE sessions ADD COLUMN parent_id TEXT REFERENCES sessions(id) ON DELETE SET NULL")
+			}
+			if !hasLeaf {
+				_, _ = s.db.Exec("ALTER TABLE sessions ADD COLUMN leaf_id TEXT")
+			}
+			if !hasBranchSummary {
+				_, _ = s.db.Exec("ALTER TABLE sessions ADD COLUMN branch_summary TEXT")
+			}
 		}
 	}
+	// Ensure branching indexes idempotently.
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent_id ON sessions(parent_id)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_leaf_id ON sessions(leaf_id)`)
 	// Migrate NULL/empty/zero start_time to RFC3339 now (covers 0001-01-01 from NULL parsing)
 	nowRFC3339 := time.Now().UTC().Format(time.RFC3339)
 	_, _ = s.db.Exec(`UPDATE sessions SET start_time = ? WHERE start_time IS NULL OR start_time = '' OR start_time = '0001-01-01T00:00:00Z' OR start_time = '0001-01-01 00:00:00 +0000 UTC'`, nowRFC3339)
 	// Also handle sessions with NULL but created via direct SQL that may have empty string
 	_, _ = s.db.Exec("UPDATE sessions SET start_time = ? WHERE start_time IS NULL", nowRFC3339)
+	// Branch backfill: legacy rows leaf_id=self (REQ-B2), parent_id stays NULL.
+	_, _ = s.db.Exec(`UPDATE sessions SET leaf_id = id WHERE leaf_id IS NULL OR leaf_id = ''`)
 
 	// 4. Atomic FTS rebuild — DROP TRIGGER, DELETE, INSERT SELECT, REINDEX, integrity_check, checkpoint.
 	// Always rebuild atomically to fix stale FTS desync (FTS hit that Get cannot find).

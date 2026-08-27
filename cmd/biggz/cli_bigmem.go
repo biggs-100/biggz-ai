@@ -354,7 +354,7 @@ func bigmemRun() int {
 				return 1
 			}
 			if !useJSON {
-				fmt.Fprintln(os.Stderr, "Doctor fix applied: WAL checkpoint, VACUUM, FTS rebuild, schema migration.")
+				fmt.Fprintln(os.Stderr, "Doctor fix applied: WAL checkpoint, VACUUM, FTS rebuild, schema migration, branching migration.")
 			}
 		}
 		if doFixBlobs {

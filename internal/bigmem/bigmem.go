@@ -503,6 +503,23 @@ func Open(rootDir string) (*Store, error) {
 		return nil, err
 	}
 
+	// Ensure sessions branching schema for fresh DB (REQ-B1) + indexes.
+	_, _ = db.Exec(`
+		CREATE TABLE IF NOT EXISTS sessions (
+			id TEXT PRIMARY KEY,
+			start_time TEXT,
+			end_time TEXT,
+			summary TEXT,
+			project TEXT,
+			directory TEXT,
+			parent_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+			leaf_id TEXT,
+			branch_summary TEXT
+		);
+	`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent_id ON sessions(parent_id)`)
+	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_leaf_id ON sessions(leaf_id)`)
+
 	// Create core tables
 	_, err = db.Exec(`
 		CREATE TABLE IF NOT EXISTS observations (
@@ -665,10 +682,20 @@ func migrateSchema(db *sql.DB) error {
 	}); err != nil {
 		return err
 	}
-	// memory_relations gained session provenance after initial release.
-	return ensureColumns(db, "memory_relations", []columnDef{
+	if err := ensureColumns(db, "memory_relations", []columnDef{
 		{name: "session_id", ddl: "TEXT DEFAULT ''"},
-	})
+	}); err != nil {
+		return err
+	}
+	// sessions branching schema (REQ-B1/B2): parent_id FK, leaf_id, branch_summary — O(1) ADD COLUMN.
+	if err := ensureColumns(db, "sessions", []columnDef{
+		{name: "parent_id", ddl: "TEXT REFERENCES sessions(id) ON DELETE SET NULL"},
+		{name: "leaf_id", ddl: "TEXT"},
+		{name: "branch_summary", ddl: "TEXT"},
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 // ensureColumns inspects an existing table and adds any missing column.
@@ -830,9 +857,18 @@ func buildLikeSearchSQL(query string, opts SearchOptions, limit int) (string, []
 //  1. topic_key match → update existing (increment revision_count)
 //  2. normalized_hash + window → increment duplicate_count
 //  3. Otherwise → fresh insert
-func (s *Store) Save(obs *Observation) error {
+//
+// Optional parentID anchoring (REQ-B5): when provided, associates observation with branch.
+func (s *Store) Save(obs *Observation, parentID ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Branch anchoring: optional parentID (no-op when omitted, preserves FTS/dedup).
+	if len(parentID) > 0 && parentID[0] != "" {
+		if obs.SessionID == "" {
+			obs.SessionID = parentID[0]
+		}
+	}
 
 	if obs.ID == "" {
 		obs.ID = fmt.Sprintf("obs-%d-%d", time.Now().UnixNano(), atomic.AddInt64(&globalIDSeq, 1))

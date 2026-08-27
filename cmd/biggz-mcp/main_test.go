@@ -214,6 +214,7 @@ func TestBuildToolList_AllToolsRegistered(t *testing.T) {
 		"mem_save_prompt", "mem_current_project", "mem_suggest_topic_key", "mem_timeline",
 		"mem_stats", "mem_pin", "mem_unpin", "mem_doctor", "mem_compare", "mem_judge",
 		"mem_capture_passive", "mem_merge_projects", "mem_review",
+		"bigmem_branch_create", "bigmem_branch_list", "bigmem_branch_get",
 	}
 
 	if len(tools) != len(expected) {

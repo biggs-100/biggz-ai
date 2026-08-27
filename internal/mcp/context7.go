@@ -101,3 +101,11 @@ func IsContext7Installed(settingsPath string) bool {
 	}
 	return false
 }
+
+// ─── BigMem Branching MCP (REQ-B8) ─────────────────────────────────────────
+// Minimal internal-only tools delegating to bigmem.Store branching API.
+// Exposed as bigmem_branch_create / bigmem_branch_list / bigmem_branch_get.
+// No TUI / branch / rewind logic — strictly Go API delegation.
+
+// BranchToolNames lists branching tool names for verification.
+var BranchToolNames = []string{"bigmem_branch_create", "bigmem_branch_list", "bigmem_branch_get"}
