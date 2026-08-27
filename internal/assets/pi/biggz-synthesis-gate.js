@@ -7,17 +7,23 @@
  *
  * Dual-mode (PR4 advisor):
  * - Blocking gate (default): blocks when preceding markdown lacks ## Sub-agent Result / Artifacts/Paths.
+ *   STRICT same-turn for blocking: only currentTurnMarkdown (assistant markdown emitted in THIS turn,
+ *   adjacent before the tool call) satisfies the block. ctx.history / lastAssistantMarkdown are
+ *   intentionally NOT checked for blocking — they are old history and would cause false positives
+ *   (e.g. synthesis from a previous archived change satisfies history but not current turn).
+ *   History is only used for advise/warning (non-blocking) via getCurrentTurnSynthesis fallback.
  * - Advise mode (opt-in BIGGZ_ADVISE=1 or settings flag, default OFF): when markers present but thin
  *   (Artifacts/Paths count <2 || len <50), does NOT block; injects non-blocking concern via pi.notify / ctx.ui.notify.
  *   Heuristic only, no model call, no auto-fix.
  * - PI_SUBAGENT_CHILD=1 bypasses both modes entirely.
  *
  * Behavior:
- * - Tracks last assistant markdown in this turn via pi.on("assistant_message") / pi.on("message") fallbacks.
+ * - Tracks current-turn assistant markdown via pi.on("assistant_message") / pi.on("message") fallbacks
+ *   into currentTurnMarkdown (reset after each successful ask_user_question/question).
  * - Wraps ask_user_question and question tools via pi.registerTool interception.
- * - On execute, verifies preceding markdown contains required markers.
+ * - On execute, verifies STRICT same-turn markdown contains required markers (currentTurnMarkdown only).
  * - If missing, blocks with instructive error: "Please synthesize before asking — missing ## Sub-agent Result block".
- * - If thin and advise enabled, emits concern warning but allows the call.
+ * - If thin and advise enabled, emits concern warning but allows the call (advise path MAY use history fallback).
  * - Also hooks pi.on("tool_call") as secondary guard to emit warning/concern even if wrapping missed (load-order safe).
  *
  * Minimal but functional — mirrors biggz-thinking-wrap.js pattern.
@@ -301,6 +307,7 @@ export default function biggzSynthesisGate(pi) {
 	}
 
 	function getSynthesisSource(ctx) {
+		// Used only for diagnostics / status — may fallback to history (not for blocking).
 		const ctxText = getCtxHistory(ctx);
 		if (ctxText && (hasSynthesis(ctxText) || hasSynthesisLoose(ctxText) || (ctxText.includes("Sub-agent Result") && ctxText.includes("Artifacts/Paths")))) {
 			return ctxText;
@@ -315,6 +322,8 @@ export default function biggzSynthesisGate(pi) {
 	}
 
 	function getCurrentTurnSynthesis(ctx) {
+		// Advise path: strict same-turn preferred, but history/last are allowed as fallback
+		// (history only for non-blocking concern, never for blocking).
 		const now = Date.now();
 		// Prefer current-turn buffer first — this catches same-turn streaming race where markdown
 		// was emitted milliseconds before tool_call and hasn't yet appeared in ctx.history.
@@ -340,30 +349,20 @@ export default function biggzSynthesisGate(pi) {
 	}
 
 	function checkSynthesisPrecondition(ctx) {
+		// STRICT same-turn for blocking: ONLY currentTurnMarkdown satisfies.
+		// ctx.history and lastAssistantMarkdown are deliberately ignored for blocking;
+		// they are history (stale synthesis from previous turns) and would cause false positives.
+		// History is only for advise/warning via getCurrentTurnSynthesis fallback (non-blocking).
+		// ctx param is kept for signature compat but not used for blocking decision.
+		void ctx;
 		const now = Date.now();
-		// 1) current-turn buffer — catches same-turn markdown emitted just before tool_call (streaming race).
-		if (currentTurnMarkdown) {
-			const has = hasSynthesis(currentTurnMarkdown) || hasSynthesisLoose(currentTurnMarkdown) || (currentTurnMarkdown.includes("Sub-agent Result") && currentTurnMarkdown.includes("Artifacts/Paths"));
-			if (has) {
-				if (now - currentTurnUpdateTime < 120000) return true;
-				// Most recent chunk regardless of window — handles <100ms race.
-				return true;
-			}
-		}
-		// 2) ctx history
-		const ctxText = getCtxHistory(ctx);
-		if (ctxText && hasSynthesis(ctxText)) return true;
-		if (ctxText && hasSynthesisLoose(ctxText)) return true;
-		if (ctxText && ctxText.includes("Sub-agent Result") && ctxText.includes("Artifacts/Paths")) return true;
-		// 3) last recorded assistant markdown with window, plus fallback regardless of window
-		if (lastAssistantMarkdown && Date.now() - lastUpdateTime < 120000) {
-			if (hasSynthesis(lastAssistantMarkdown) || hasSynthesisLoose(lastAssistantMarkdown)) return true;
-			if (lastAssistantMarkdown.includes("Sub-agent Result") && lastAssistantMarkdown.includes("Artifacts/Paths")) return true;
-		}
-		if (lastAssistantMarkdown) {
-			return hasSynthesis(lastAssistantMarkdown) || hasSynthesisLoose(lastAssistantMarkdown) || (lastAssistantMarkdown.includes("Sub-agent Result") && lastAssistantMarkdown.includes("Artifacts/Paths"));
-		}
-		return false;
+		if (!currentTurnMarkdown) return false;
+		const has = hasSynthesis(currentTurnMarkdown) || hasSynthesisLoose(currentTurnMarkdown) || (currentTurnMarkdown.includes("Sub-agent Result") && currentTurnMarkdown.includes("Artifacts/Paths"));
+		if (!has) return false;
+		if (now - currentTurnUpdateTime < 120000) return true;
+		// Most recent chunk regardless of window — handles <100ms streaming race where synthesis
+		// was emitted milliseconds before tool_call (still same turn, adjacent).
+		return true;
 	}
 
 	// Expose helpers for testing (no network, fixture-only)

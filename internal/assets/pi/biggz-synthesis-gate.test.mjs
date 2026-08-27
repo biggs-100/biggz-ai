@@ -168,6 +168,9 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     });
     const wrapped = mock._tools.get('ask_user_question');
     mock._biggzSynthesisGate._test.clearLast();
+    mock._biggzSynthesisGate._test.clearCurrent();
+    // strict same-turn: blocking requires currentTurn, not just ctx.history
+    mock._biggzSynthesisGate._test.setCurrent(thinMarkdown);
     const ctx = makeCtx(thinMarkdown, ctxNotify);
     const result = await wrapped.execute('id1', {}, null, null, ctx);
     // should NOT block — allow
@@ -179,9 +182,11 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     assert.ok(concern, `should emit concern on thin with advise, got ${JSON.stringify(allNotifies)}`);
     assert.ok(String(concern.msg).includes('count=1') || String(concern.msg).includes('len='), 'concern should contain metrics');
 
-    // also verify tool_call secondary handler emits concern
+    // also verify tool_call secondary handler emits concern (strict: must have currentTurn)
     const handler = mock._getToolCallHandler();
     assert.ok(handler, 'tool_call handler registered');
+    // re-set currentTurn for secondary handler (strict same-turn requires currentTurn, not just history)
+    mock._biggzSynthesisGate._test.setCurrent(thinMarkdown);
     const ctx2Notify = [];
     const ctx2 = makeCtx(thinMarkdown, ctx2Notify);
     // need to provide event shape
@@ -214,6 +219,8 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     });
     const wrapped = mock._tools.get('ask_user_question');
     mock._biggzSynthesisGate._test.clearLast();
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.setCurrent(thinMarkdown);
     const ctx = makeCtx(thinMarkdown, ctxNotify);
     const result = await wrapped.execute('id1', {}, null, null, ctx);
     assert.equal(originalCalled, true, 'should allow when advise off');
@@ -221,7 +228,8 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     const allNotifies = [...ctxNotify, ...mock._notifyCalls];
     const concern = allNotifies.find((n) => String(n.msg).toLowerCase().includes('concern'));
     assert.equal(concern, undefined, `should not emit concern when advise off, got ${JSON.stringify(allNotifies)}`);
-    // tool_call handler also silent
+    // tool_call handler also silent (strict: need currentTurn set, but advise off so no concern anyway)
+    mock._biggzSynthesisGate._test.setCurrent(thinMarkdown);
     const handler = mock._getToolCallHandler();
     const ctx2Notify = [];
     const ctx2 = makeCtx(thinMarkdown, ctx2Notify);
@@ -247,6 +255,8 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     });
     const wrapped = mock._tools.get('ask_user_question');
     mock._biggzSynthesisGate._test.clearLast();
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
     // sanity: rich is not thin
     assert.equal(mock._biggzSynthesisGate.isThinSynthesis(richMarkdown), false);
     const ctx = makeCtx(richMarkdown, ctxNotify);
@@ -256,7 +266,8 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     const allNotifies = [...ctxNotify, ...mock._notifyCalls];
     const concern = allNotifies.find((n) => String(n.msg).toLowerCase().includes('concern'));
     assert.equal(concern, undefined, `rich should not emit concern, got ${JSON.stringify(allNotifies)}`);
-    // tool_call also silent
+    // tool_call also silent (strict: ensure currentTurn set)
+    mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
     const handler = mock._getToolCallHandler();
     const ctx2Notify = [];
     const ctx2 = makeCtx(richMarkdown, ctx2Notify);
@@ -335,6 +346,9 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
       },
     });
     const wrapped = mock._tools.get('question');
+    mock._biggzSynthesisGate._test.clearLast();
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.setCurrent(thinMarkdown);
     const ctx = makeCtx(thinMarkdown, ctxNotify);
     await wrapped.execute('id1', {}, null, null, ctx);
     assert.equal(originalCalled, true);
@@ -357,6 +371,9 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
       execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
     });
     const wrapped = mock._tools.get('ask_user_question');
+    mock._biggzSynthesisGate._test.clearLast();
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.setCurrent(thinMarkdown);
     const ctx = makeCtx(thinMarkdown, ctxNotify);
     await wrapped.execute('id1', {}, null, null, ctx);
     assert.equal(modelCalled, false, 'advise must not call model');
@@ -406,5 +423,78 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     assert.ok(source2.includes('Sub-agent Result'), 'getCurrentTurnSynthesis should return currentTurn markdown');
     mock._biggzSynthesisGate._test.clearCurrent();
     mock._biggzSynthesisGate._test.clearLast();
+  });
+
+  it('regression: bloquea cuando solo hay síntesis vieja en ctx.history pero no en currentTurn (strict same-turn)', async () => {
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi();
+    gateFn(mock);
+    let originalCalled = false;
+    const ctxNotify = [];
+    mock.registerTool({
+      name: 'ask_user_question',
+      description: 'test',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => {
+        originalCalled = true;
+        return { content: [{ type: 'text', text: 'ok' }] };
+      },
+    });
+    const wrapped = mock._tools.get('ask_user_question');
+    // Simulate old synthesis lingering in history (e.g. 2026-08-27-synthesis-gate-hardening) but currentTurn empty
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
+    // Also set lastAssistant to rich to simulate old lastAssistantMarkdown — should still be ignored for blocking
+    mock._biggzSynthesisGate._test.setLast(richMarkdown);
+    // Now clear current again to simulate no synthesis in THIS turn (bash intermediates vaciaron buffer)
+    mock._biggzSynthesisGate._test.clearCurrent();
+    const ctx = makeCtx(richMarkdown, ctxNotify); // ctx.history has rich synthesis from previous turn
+    // Also verify that checkSynthesisPrecondition is strictly false when only history/last present
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx), false, 'strict check must be false when only history/last has synthesis');
+    const result = await wrapped.execute('id-regression', {}, null, null, ctx);
+    assert.equal(result.isError, true, 'must block when only old history has synthesis, currentTurn empty');
+    assert.ok(String(result.content[0].text).includes('Please synthesize'));
+    assert.equal(originalCalled, false, 'original must not be called on strict block');
+    // history is still available for advise path (non-blocking) — getCurrentTurnSynthesis should return history
+    const adviseSource = mock._biggzSynthesisGate.getCurrentTurnSynthesis(ctx);
+    assert.ok(adviseSource.includes('Sub-agent Result'), 'advise fallback may still see history');
+    // Now emit synthesis in currentTurn (same turn, adjacent) and retry — should pass
+    mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx), true, 'must pass when currentTurn has synthesis');
+    const ctx2Notify = [];
+    const ctx2 = makeCtx('', ctx2Notify);
+    const result2 = await wrapped.execute('id-regression-2', {}, null, null, ctx2);
+    assert.equal(result2.isError, undefined, 'must allow when currentTurn has synthesis even if ctx.history empty');
+    assert.equal(originalCalled, true, 'original should be called after strict pass');
+    // After successful call, currentTurn must be reset (next turn starts fresh)
+    assert.equal(mock._biggzSynthesisGate._test.getCurrent(), '', 'currentTurn must be reset after successful ask_user_question');
+  });
+
+  it('strict blocking: currentTurn reset after successful ask prevents reuse (no history fallback)', async () => {
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi();
+    gateFn(mock);
+    const ctxNotify = [];
+    mock.registerTool({
+      name: 'ask_user_question',
+      description: 'test',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+    });
+    const wrapped = mock._tools.get('ask_user_question');
+    mock._biggzSynthesisGate._test.clearLast();
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
+    const ctx = makeCtx('', ctxNotify);
+    const r1 = await wrapped.execute('id1', {}, null, null, ctx);
+    assert.equal(r1.isError, undefined, 'first call with currentTurn should pass');
+    // currentTurn should now be empty after reset
+    assert.equal(mock._biggzSynthesisGate._test.getCurrent(), '', 'currentTurn reset after success');
+    // second call without new synthesis, even though history still has old richMarkdown, must BLOCK (strict)
+    const ctx2 = makeCtx(richMarkdown, []);
+    mock._biggzSynthesisGate._test.setLast(richMarkdown);
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx2), false, 'second call without new currentTurn must be blocked even if history/last present');
+    const r2 = await wrapped.execute('id2', {}, null, null, ctx2);
+    assert.equal(r2.isError, true, 'second call must block strict');
   });
 });
