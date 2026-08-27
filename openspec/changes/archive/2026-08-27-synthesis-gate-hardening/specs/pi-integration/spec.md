@@ -1,10 +1,6 @@
-# Pi Integration Specification
+# Delta for pi-integration
 
-## Purpose
-
-The Pi Integration domain covers biggz-ai runtime behavior when hosted inside the Pi coding agent (harness, synthesis gate, and inline watchdog). This spec defines the advisor dual-mode watchdog that complements the native RAR gatekeeper with non-blocking concern injection for thin orchestrator synthesis.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Advisor Inline Watchdog Advise Mode
 
@@ -46,6 +42,8 @@ The system MUST extend `internal/assets/pi/biggz-synthesis-gate.js` as a blockin
 - GIVEN synthesis was emitted milliseconds before `ask` in same turn and not yet in `ctx.history`
 - WHEN `checkSynthesisPrecondition` runs
 - THEN it MUST find markdown via `currentTurnMarkdown` and allow the call
+
+## ADDED Requirements
 
 ### Requirement: Synthesis Gate Verification and CI
 

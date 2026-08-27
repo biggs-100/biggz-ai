@@ -141,6 +141,28 @@ Kill switch stored in:
 
 Any "off" wins. Status is read-only. Re-enabling applies to future candidates only.
 
+### Synthesis Gate (3-layer defense)
+
+Guarantees the human sees audited `## Sub-agent Result` before deciding. Gate `b0d2fc1` enforces the Post-Delegation Human Checkpoint.
+
+**Layer 1 — Prompt (machine-verifiable invariant):** `internal/assets/biggz/biggz-orchestrator.md` contains a copy-pasteable block with 4 markers (`## Sub-agent Result: {phase/agent}`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`) and states `INVALID and will be blocked` for any `ask_user_question`/`question` without immediately preceding markdown. Every `ask` reference is followed by `REMINDER: synthesis markdown is separate chat markdown emitted FIRST...` (12× convergence) so prompt and gate cannot drift.
+
+**Layer 2 — Pi gate (blocking + thin advise):** `internal/assets/pi/biggz-synthesis-gate.js` wraps `pi.registerTool` for `ask_user_question`/`question` and hooks `pi.on("tool_call")` as a secondary guard (load-order safe).
+
+- **Source priority:** `currentTurnMarkdown` → `ctx.history` → `lastAssistant` with a 120 s window. The same-turn buffer (`recordText` via `pi.on("assistant_message")`) fixes the streaming race where markdown is emitted milliseconds before the tool call and has not yet landed in `ctx.history`.
+- **Blocking (default):** when the 4-marker check fails the gate returns `{content:[{type:"text", text:"Please synthesize before asking — missing ## Sub-agent Result block..."}], isError:true}`, does **not** call `original()`, and notifies via `pi.notify`/`ctx.ui.notify`. Synthesis inside the tool's `question` param does not satisfy the check.
+- **Thin advise (opt-in):** when markers are present but `Artifacts/Paths` is thin (`countPaths <2 || len <50` via `extractArtifactsSection` cut at `Risks`/`Next`/`## `) the gate does **not** block. With `BIGGZ_ADVISE=1` (or settings advise flag) it emits a non-blocking warning `concern: synthesis is thin (Artifacts/Paths count=N, len=M)` via `pi.notify` (warning level) and allows the call. Without the flag the thin case passes silently. The heuristic never auto-fixes and never calls a model.
+- **Bypass:** only `PI_SUBAGENT_CHILD=1` bypasses both modes. There is no orchestrator bypass (`BIGGZ_ORCHESTRATOR` is not honored).
+- **Helpers exposed for testing:** `pi._biggzSynthesisGate` exposes `hasSynthesis`, `extractArtifactsSection`, `countPaths`, `getArtifactsMetrics`, `isThinSynthesis`, `isAdviseEnabled`, `checkSynthesisPrecondition`, and `_test` helpers. After a successful `original()` the current-turn buffer is reset for the next turn.
+
+**Layer 3 — Tests / CI:**
+
+- **Unit:** `internal/assets/pi/biggz-synthesis-gate.test.mjs` (`node --test`) covers 4 gate scenarios — missing→`isError:true` not-called, rich→pass, thin+`BIGGZ_ADVISE=1`→warn pass, thin without flag→silent — plus child bypass and same-turn race, and helper checks (`isThinSynthesis`, `hasSynthesis`, metrics).
+- **Integration:** `internal/assets/biggz/orchestrator_test.go` (`go test ./internal/assets/biggz`) reads the embedded `biggz-orchestrator.md` via `assets.FS` and asserts the 4 markers, `INVALID and will be blocked`, and 12× `REMINDER`, failing on drift.
+- **CI:** `go vet ./...`, `go test ./...`, `node --check internal/assets/pi/biggz-synthesis-gate.js`, `node --test internal/assets/pi/biggz-synthesis-gate.test.mjs` must be green; `synthesis-gate-status` command reports `✓`/`⚠`/`✗` in the TUI.
+
+Rollback: `git revert` the 5-file commit; no migration.
+
 ## OpenCode Plugins
 
 biggz ships 3 OpenCode plugins (full parity with gentle-ai), all embedded
