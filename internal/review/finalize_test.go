@@ -617,3 +617,30 @@ func TestStatus_SurfacesPersistedReceiptAfterFinalize(t *testing.T) {
 		t.Errorf("burned marker should exist after finalize: %v", err)
 	}
 }
+
+func TestCanStopSession_Allowed(t *testing.T) {
+	if !CanStopSession(SessionStopState{PendingFindings: 0, PendingLenses: 0}) {
+		t.Error("empty state should allow stop")
+	}
+}
+
+func TestCanStopSession_BlockedIdempotent(t *testing.T) {
+	s := SessionStopState{PendingFindings: 2, PendingLenses: 1}
+	first := CanStopSession(s)
+	second := CanStopSession(s)
+	if first || second {
+		t.Fatalf("blocked state must return false both times, got %v %v", first, second)
+	}
+	if s.PendingFindings != 2 || s.PendingLenses != 1 {
+		t.Error("CanStopSession must not mutate state")
+	}
+}
+
+func TestCanStopSession_PartialPending(t *testing.T) {
+	if CanStopSession(SessionStopState{PendingFindings: 1, PendingLenses: 0}) {
+		t.Error("pending findings must block")
+	}
+	if CanStopSession(SessionStopState{PendingFindings: 0, PendingLenses: 1}) {
+		t.Error("pending lenses must block")
+	}
+}

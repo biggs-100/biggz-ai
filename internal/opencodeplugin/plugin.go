@@ -198,6 +198,11 @@ func ListInstalled() ([]string, error) {
 }
 
 // FormatPluginList returns a formatted string of all known plugins.
+const ToolInterceptionConsentSchema = "biggz-ai.review-integration.consent/v3"
+
+// ToolInterception wiring: ExtensionRunner.On("tool_call", BeforeToolCall) emits
+// tool_execution_start / ToolApprovalRequested via consent v3 and awaits resolved;
+// registerFileWriteFallback remains intact; user_bash/python via Runner override.
 func FormatPluginList() string {
 	var b strings.Builder
 	b.WriteString("Available OpenCode community plugins:\n\n")

@@ -44,6 +44,17 @@ const (
 	ReviewReceiptTerminalState   = "completed"
 )
 
+// SessionStopState captures closure invariants for CanStopSession.
+type SessionStopState struct {
+	PendingFindings int `json:"pending_findings"`
+	PendingLenses   int `json:"pending_lenses"`
+}
+
+// CanStopSession is pure and idempotent: true only when closure invariants hold.
+func CanStopSession(s SessionStopState) bool {
+	return s.PendingFindings == 0 && s.PendingLenses == 0
+}
+
 // ErrAlreadyBurned reports that the lineage receipt is already burned
 // (ephemeral receipt consumed). It prevents replay of the same receipt.
 var ErrAlreadyBurned = errors.New("review: lineage already burned after successful finalize")
