@@ -50,6 +50,29 @@ func (s *Store) SessionEnd(id, summary string) (*Session, error) {
 	return &Session{ID: id, Summary: summary}, nil
 }
 
+// parseSessionTime tries multiple layouts for legacy session timestamps.
+func parseSessionTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+		return t
+	}
+	if t, err := time.Parse("2006-01-02T15:04:05", s); err == nil {
+		return t
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05 -0700", s); err == nil {
+		return t
+	}
+	if t, err := time.Parse(time.RFC3339Nano, s); err == nil {
+		return t
+	}
+	return time.Time{}
+}
+
 // SessionContext returns recent sessions, newest first.
 func (s *Store) SessionContext(limit int) ([]Session, error) {
 	if limit <= 0 {
@@ -72,10 +95,10 @@ func (s *Store) SessionContext(limit int) ([]Session, error) {
 			continue
 		}
 		if st.Valid {
-			sess.StartTime, _ = time.Parse(time.RFC3339, st.String)
+			sess.StartTime = parseSessionTime(st.String)
 		}
 		if et.Valid {
-			sess.EndTime, _ = time.Parse(time.RFC3339, et.String)
+			sess.EndTime = parseSessionTime(et.String)
 		}
 		if summary.Valid {
 			sess.Summary = summary.String
