@@ -339,17 +339,24 @@ func (m MemoryModel) View() string {
 		b.WriteString(styles.Help.Render("Type query, ENTER to search, ESC to cancel"))
 
 	case memViewDetail:
-		b.WriteString(styles.Section.Render(m.detail.Title))
+		title := TruncateToWidth(ReplaceTabs(m.detail.Title), 78)
+		b.WriteString(styles.Section.Render(title))
 		b.WriteString("\n\n")
 		b.WriteString(fmt.Sprintf("  Type:    %s\n", m.detail.Type))
 		b.WriteString(fmt.Sprintf("  Created: %s\n", m.detail.CreatedAt.Format("Jan 2, 2006 15:04")))
 		if m.detail.Project != "" {
-			b.WriteString(fmt.Sprintf("  Project: %s\n", m.detail.Project))
+			proj := ShortenPath(m.detail.Project, 60)
+			b.WriteString(fmt.Sprintf("  Project: %s\n", proj))
 		}
 		if m.detail.TopicKey != "" {
-			b.WriteString(fmt.Sprintf("  Topic:   %s\n", m.detail.TopicKey))
+			topic := TruncateToWidth(ReplaceTabs(m.detail.TopicKey), 60)
+			b.WriteString(fmt.Sprintf("  Topic:   %s\n", topic))
 		}
-		b.WriteString(fmt.Sprintf("\n%s\n", m.detail.Content))
+		// Wrap content to 80 visible width preserving ANSI, then join
+		content := ReplaceTabs(m.detail.Content)
+		lines := WrapTextWithAnsi(content, 78)
+		wrapped := strings.Join(lines, "\n")
+		b.WriteString(fmt.Sprintf("\n%s\n", wrapped))
 		b.WriteString("\n\n")
 		b.WriteString(styles.Help.Render("[C] copy · ESC back"))
 
@@ -361,13 +368,14 @@ func (m MemoryModel) View() string {
 		} else {
 			for _, e := range m.tlEntries {
 				timeStr := e.CreatedAt.Format("15:04")
+				title := TruncateToWidth(ReplaceTabs(e.Title), 60)
 				if e.IsFocus {
-					b.WriteString(styles.StatusEnabled.Render(fmt.Sprintf("\n  >>> [%s] %s\n", e.Type, e.Title)))
+					b.WriteString(styles.StatusEnabled.Render(fmt.Sprintf("\n  >>> [%s] %s\n", e.Type, title)))
 					b.WriteString(fmt.Sprintf("      %s\n", e.CreatedAt.Format("Jan 2, 2006 15:04:05")))
 				} else if e.IsBefore {
-					b.WriteString(fmt.Sprintf("  ↑ %s  [%s] %s\n", timeStr, e.Type, e.Title))
+					b.WriteString(fmt.Sprintf("  ↑ %s  [%s] %s\n", timeStr, e.Type, title))
 				} else {
-					b.WriteString(fmt.Sprintf("  ↓ %s  [%s] %s\n", timeStr, e.Type, e.Title))
+					b.WriteString(fmt.Sprintf("  ↓ %s  [%s] %s\n", timeStr, e.Type, title))
 				}
 			}
 		}
@@ -401,7 +409,10 @@ func (m MemoryModel) View() string {
 				if i == m.cursor {
 					cur = "▸ "
 				}
-				b.WriteString(fmt.Sprintf("%s[%s] %s\n", cur, item.Type, item.Title))
+				title := TruncateToWidth(ReplaceTabs(item.Title), 70)
+				line := fmt.Sprintf("%s[%s] %s", cur, item.Type, title)
+				line = TruncateToWidth(line, 80)
+				b.WriteString(line + "\n")
 			}
 			b.WriteString("\n")
 			b.WriteString(styles.StatusInfo.Render("ENTER detail · / search"))

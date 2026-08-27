@@ -127,7 +127,8 @@ func (m DashboardModel) View() string {
 	} else if !m.loaded {
 		b.WriteString("│  Loading...                                          │\n")
 	} else {
-		b.WriteString(fmt.Sprintf("│  %-30s  │\n", m.err))
+		errStr := TruncateToWidth(ReplaceTabs(m.err), 30)
+		b.WriteString(fmt.Sprintf("│  %-30s  │\n", errStr))
 	}
 	b.WriteString("└──────────────────────────────────────────────────────┘\n\n")
 
@@ -142,7 +143,10 @@ func (m DashboardModel) View() string {
 			maxShow = len(m.projects)
 		}
 		for _, p := range m.projects[:maxShow] {
-			b.WriteString(fmt.Sprintf("  • %s (%d obs, %d sessions)\n", p.Name, p.Observations, p.Sessions))
+			name := ShortenPath(ReplaceTabs(p.Name), 50)
+			line := fmt.Sprintf("  • %s (%d obs, %d sessions)", name, p.Observations, p.Sessions)
+			line = TruncateToWidth(line, 80)
+			b.WriteString(line + "\n")
 		}
 		if len(m.projects) > maxShow {
 			b.WriteString(fmt.Sprintf("  ...and %d more projects\n", len(m.projects)-maxShow))

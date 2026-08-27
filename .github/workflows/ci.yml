@@ -166,6 +166,33 @@ jobs:
           fi
           echo "Complexity gate passed"
 
+  forbid-git:
+    name: Forbid Git Exec Outside Wrapper
+    needs: format
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful format
+        if: needs.format.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          autocrlf: false
+      - name: Forbid exec.Command git outside internal/git
+        run: |
+          set -e
+          # tui-sanitize: internal/git is sole exec.Command("git") owner.
+          # Hard-fail if any Go file outside internal/git contains exec.Command with git.
+          # Allowlist: internal/git/** and test files (*_test.go); e2e and openspec are excluded as fixtures/docs.
+          echo "Checking for forbidden exec.Command git outside internal/git (global)..."
+          if rg -n 'exec\.Command.*git' --glob '!internal/git/**' --glob '!*_test.go' --glob '!e2e/**' --glob '!openspec/**' . 2>/dev/null | grep -q .; then
+            echo "::error::Forbidden exec.Command git found outside internal/git:"
+            rg -n 'exec\.Command.*git' --glob '!internal/git/**' --glob '!*_test.go' --glob '!e2e/**' --glob '!openspec/**' . || true
+            exit 1
+          fi
+          echo "No forbidden git exec found outside internal/git."
+
   e2e:
     name: E2E (${{ matrix.os }})
     needs: format

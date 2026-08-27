@@ -126,10 +126,15 @@ func (m ReviewModel) View() string {
 
 	if m.detail != nil {
 		// Show detail
-		b.WriteString(styles.Section.Render(fmt.Sprintf("Lineage: %s", m.detail.LineageID)))
+		lineage := TruncateToWidth(ReplaceTabs(m.detail.LineageID), 60)
+		b.WriteString(styles.Section.Render(fmt.Sprintf("Lineage: %s", lineage)))
 		b.WriteString("\n\n")
 		b.WriteString(fmt.Sprintf("  Events:   %d\n", m.detail.EventCount))
-		b.WriteString(fmt.Sprintf("  Head:     %s\n", m.detail.HeadHash[:16]))
+		head := m.detail.HeadHash
+		if len(head) > 16 {
+			head = head[:16]
+		}
+		b.WriteString(fmt.Sprintf("  Head:     %s\n", head))
 		b.WriteString(fmt.Sprintf("  Valid:    %v\n", m.detail.ChainValid))
 		b.WriteString("\n")
 		b.WriteString(styles.Help.Render("ESC to go back to list"))
@@ -149,7 +154,10 @@ func (m ReviewModel) View() string {
 			if i == m.cursor {
 				cur = "▸ "
 			}
-			b.WriteString(fmt.Sprintf("%s%s  [%s]\n", cur, li.LineageID, li.State))
+			id := TruncateToWidth(ReplaceTabs(li.LineageID), 50)
+			line := fmt.Sprintf("%s%s  [%s]", cur, id, li.State)
+			line = TruncateToWidth(line, 80)
+			b.WriteString(line + "\n")
 		}
 		b.WriteString("\n")
 		b.WriteString(styles.StatusInfo.Render("ENTER to view details"))

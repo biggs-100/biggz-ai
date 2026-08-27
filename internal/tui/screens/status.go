@@ -3,10 +3,10 @@ package screens
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/sdd"
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
@@ -42,8 +42,8 @@ type refreshStatusMsg struct {
 func doRefresh() tea.Msg {
 	cwd, _ := os.Getwd()
 
-	// Detect git dirs
-	commonDir, worktreeDir := detectGitDirs()
+	// Detect git dirs via single owner wrapper
+	commonDir, worktreeDir := git.DetectGitDirs()
 
 	// RDD status
 	rddStatus, _ := review.RDDStatus(worktreeDir, commonDir)
@@ -91,17 +91,9 @@ func (m StatusModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// detectGitDirs runs git rev-parse commands.
+// detectGitDirs is retained for test parity but delegates to the single wrapper.
 func detectGitDirs() (commonDir, worktreeDir string) {
-	out, _ := exec.Command("git", "rev-parse", "--git-common-dir").Output()
-	if len(out) > 0 {
-		commonDir = strings.TrimSpace(string(out))
-	}
-	out, _ = exec.Command("git", "rev-parse", "--git-dir").Output()
-	if len(out) > 0 {
-		worktreeDir = strings.TrimSpace(string(out))
-	}
-	return
+	return git.DetectGitDirs()
 }
 
 // View renders the status screen.

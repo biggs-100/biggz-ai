@@ -204,10 +204,12 @@ func (m SessionsModel) View() string {
 				b.WriteString(fmt.Sprintf("  Ended:   %s\n", currentSession.EndTime.Format("15:04")))
 			}
 			if currentSession.Summary != "" {
-				b.WriteString(fmt.Sprintf("  Summary: %s\n", currentSession.Summary))
+				sum := TruncateToWidth(ReplaceTabs(currentSession.Summary), 78)
+				b.WriteString(fmt.Sprintf("  Summary: %s\n", sum))
 			}
 			if currentSession.Project != "" {
-				b.WriteString(fmt.Sprintf("  Project: %s\n", currentSession.Project))
+				proj := ShortenPath(currentSession.Project, 70)
+				b.WriteString(fmt.Sprintf("  Project: %s\n", proj))
 			}
 			b.WriteString("\n")
 		}
@@ -225,10 +227,8 @@ func (m SessionsModel) View() string {
 				end = len(m.prompts)
 			}
 			for _, p := range m.prompts[start:end] {
-				content := p.Content
-				if len(content) > 80 {
-					content = content[:80] + "..."
-				}
+				content := ReplaceTabs(p.Content)
+				content = TruncateToWidth(content, 80)
 				b.WriteString(fmt.Sprintf("  • %s\n", content))
 			}
 			if len(m.prompts) > 8 {
@@ -242,7 +242,8 @@ func (m SessionsModel) View() string {
 			b.WriteString(styles.StatusEnabled.Render(fmt.Sprintf("Observations (%d):", len(m.items))))
 			b.WriteString("\n")
 			for _, item := range m.items {
-				b.WriteString(fmt.Sprintf("  [%s] %s\n", item.Type, item.Title))
+				title := TruncateToWidth(ReplaceTabs(item.Title), 78)
+				b.WriteString(fmt.Sprintf("  [%s] %s\n", item.Type, title))
 			}
 		} else if len(m.prompts) == 0 {
 			b.WriteString(styles.StatusInfo.Render("No data for this session yet."))
@@ -266,7 +267,8 @@ func (m SessionsModel) View() string {
 				}
 				b.WriteString(fmt.Sprintf("%s%s  %s\n", cur, s.ID, s.StartTime.Format("Jan 2 15:04")))
 				if s.Summary != "" {
-					b.WriteString(fmt.Sprintf("    %s\n", s.Summary))
+					sum := TruncateToWidth(ReplaceTabs(s.Summary), 76)
+					b.WriteString(fmt.Sprintf("    %s\n", sum))
 				}
 			}
 			b.WriteString("\n")
