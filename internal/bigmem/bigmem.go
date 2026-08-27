@@ -274,6 +274,85 @@ func mergeRecoveredIntoPrimary(primaryPath, recoveredPath string) error {
 	return nil
 }
 
+// mergeDB merges srcPath into dstPath dedup by id, keeping max(updated_at).
+func mergeDB(srcPath, dstPath string) error {
+	srcDB, err := sql.Open("sqlite", srcPath)
+	if err != nil {
+		return err
+	}
+	defer srcDB.Close()
+	srcDB.Exec("PRAGMA busy_timeout=5000")
+	dstDB, err := sql.Open("sqlite", dstPath)
+	if err != nil {
+		return err
+	}
+	defer dstDB.Close()
+	dstDB.Exec("PRAGMA busy_timeout=5000")
+	_, _ = dstDB.Exec(`CREATE TABLE IF NOT EXISTS observations (
+		id TEXT PRIMARY KEY, title TEXT, type TEXT, content TEXT, session_id TEXT,
+		tool_name TEXT, topic_key TEXT, project TEXT, scope TEXT,
+		normalized_hash TEXT, revision_count INTEGER, duplicate_count INTEGER,
+		last_seen_at TEXT, review_after TEXT, pinned INTEGER,
+		created_at TEXT, updated_at TEXT, deleted_at TEXT)`)
+	_, _ = dstDB.Exec(`CREATE TABLE IF NOT EXISTS sessions
+		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT)`)
+	_, _ = dstDB.Exec(`CREATE TABLE IF NOT EXISTS prompts (id TEXT PRIMARY KEY, content TEXT, session_id TEXT, created_at TEXT)`)
+	rows, err := srcDB.Query(`SELECT id, title, type, content, session_id, tool_name, topic_key, project, scope, normalized_hash, revision_count, duplicate_count, last_seen_at, review_after, pinned, created_at, updated_at, deleted_at FROM observations`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var id, title, typ, content, sessionID, toolName, topicKey, project, scope, normalizedHash, createdAt, updatedAt string
+			var revisionCount, duplicateCount, pinned int
+			var lastSeenAt, reviewAfter, deletedAt sql.NullString
+			if err := rows.Scan(&id, &title, &typ, &content, &sessionID, &toolName, &topicKey, &project, &scope, &normalizedHash, &revisionCount, &duplicateCount, &lastSeenAt, &reviewAfter, &pinned, &createdAt, &updatedAt, &deletedAt); err != nil {
+				continue
+			}
+			var dstUpdated sql.NullString
+			err := dstDB.QueryRow("SELECT updated_at FROM observations WHERE id = ?", id).Scan(&dstUpdated)
+			if err == sql.ErrNoRows {
+				_, _ = dstDB.Exec(`INSERT INTO observations (id, title, type, content, session_id, tool_name, topic_key, project, scope, normalized_hash, revision_count, duplicate_count, last_seen_at, review_after, pinned, created_at, updated_at, deleted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+					id, title, typ, content, sessionID, toolName, topicKey, project, scope, normalizedHash, revisionCount, duplicateCount, lastSeenAt, reviewAfter, pinned, createdAt, updatedAt, deletedAt)
+			} else if err == nil && dstUpdated.Valid && updatedAt > dstUpdated.String {
+				_, _ = dstDB.Exec(`UPDATE observations SET title=?, type=?, content=?, session_id=?, tool_name=?, topic_key=?, project=?, scope=?, normalized_hash=?, revision_count=?, duplicate_count=?, last_seen_at=?, review_after=?, pinned=?, created_at=?, updated_at=?, deleted_at=? WHERE id=?`,
+					title, typ, content, sessionID, toolName, topicKey, project, scope, normalizedHash, revisionCount, duplicateCount, lastSeenAt, reviewAfter, pinned, createdAt, updatedAt, deletedAt, id)
+			} else if err == nil && !dstUpdated.Valid && updatedAt != "" {
+				_, _ = dstDB.Exec(`UPDATE observations SET title=?, type=?, content=?, session_id=?, tool_name=?, topic_key=?, project=?, scope=?, normalized_hash=?, revision_count=?, duplicate_count=?, last_seen_at=?, review_after=?, pinned=?, created_at=?, updated_at=?, deleted_at=? WHERE id=?`,
+					title, typ, content, sessionID, toolName, topicKey, project, scope, normalizedHash, revisionCount, duplicateCount, lastSeenAt, reviewAfter, pinned, createdAt, updatedAt, deletedAt, id)
+			}
+		}
+		_ = rows.Err()
+	}
+	sRows, err := srcDB.Query(`SELECT id, start_time, end_time, summary, project, directory FROM sessions`)
+	if err == nil {
+		defer sRows.Close()
+		for sRows.Next() {
+			var id, startTime, endTime, summary, project, directory sql.NullString
+			if err := sRows.Scan(&id, &startTime, &endTime, &summary, &project, &directory); err != nil {
+				continue
+			}
+			if !id.Valid {
+				continue
+			}
+			_, _ = dstDB.Exec(`INSERT OR IGNORE INTO sessions (id, start_time, end_time, summary, project, directory) VALUES (?, ?, ?, ?, ?, ?)`, id.String, startTime.String, endTime.String, summary.String, project.String, directory.String)
+		}
+	}
+	pRows, err := srcDB.Query(`SELECT id, content, session_id, created_at FROM prompts`)
+	if err == nil {
+		defer pRows.Close()
+		for pRows.Next() {
+			var id, content, sessionID, createdAt sql.NullString
+			if err := pRows.Scan(&id, &content, &sessionID, &createdAt); err != nil {
+				continue
+			}
+			if !id.Valid {
+				continue
+			}
+			_, _ = dstDB.Exec(`INSERT OR IGNORE INTO prompts (id, content, session_id, created_at) VALUES (?, ?, ?, ?)`, id.String, content.String, sessionID.String, createdAt.String)
+		}
+	}
+	return nil
+}
+
 // ResolveDBPath returns the canonical DB path for rootDir, handling ghost WAL/SHM,
 // WAL checkpoint before copy, VACUUM INTO backup, and merging recovered DB by
 // max(updated_at) dedup. It emits a warning to stderr if both DBs exist.
@@ -325,6 +404,14 @@ func ResolveDBPath(rootDir string) (string, error) {
 			}
 		} else {
 			fmt.Fprintf(os.Stderr, "[bigmem] warning: ghost WAL/SHM detected; using recovered DB at %s (primary %s blocked)\n", recoveredPath, primaryPath)
+			// Merge primary's newer rows into recovered so recent saves to primary are not lost
+			if _, err := os.Stat(primaryPath); err == nil {
+				if err := mergeDB(primaryPath, recoveredPath); err != nil {
+					fmt.Fprintf(os.Stderr, "[bigmem] ghost merge warning: %v\n", err)
+				} else {
+					checkpointDB(recoveredPath)
+				}
+			}
 		}
 		if _, err := os.Stat(recoveredPath); err == nil {
 			return recoveredPath, nil
