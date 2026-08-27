@@ -521,6 +521,109 @@ export default function biggzSynthesisGate(pi) {
 		return false;
 	}
 
+	function isCheckpointAsk(params) {
+		if (params == null) return false;
+		if (typeof params === "string") {
+			try {
+				params = JSON.parse(params);
+			} catch {
+				return false;
+			}
+		}
+		if (typeof params !== "object") return false;
+		const tokens = new Set(["proceed", "adjust", "stop", "continue", "correct"]);
+		const normalize = (s) => String(s).trim().toLowerCase();
+		const isToken = (s) => {
+			const n = normalize(s);
+			if (tokens.has(n)) return true;
+			for (const tok of tokens) {
+				try {
+					const re = new RegExp(`\\b${tok}\\b`, "i");
+					if (re.test(String(s))) return true;
+				} catch {}
+			}
+			return false;
+		};
+		// Expected shape: params.questions[].options[].label (also handles top-level options)
+		try {
+			const qs = params.questions;
+			if (Array.isArray(qs)) {
+				for (const q of qs) {
+					if (!q || typeof q !== "object") continue;
+					const opts = q.options;
+					if (!Array.isArray(opts)) continue;
+					for (const opt of opts) {
+						if (opt == null) continue;
+						let lab = null;
+						if (typeof opt === "string") lab = opt;
+						else if (typeof opt === "object") {
+							if (typeof opt.label === "string") lab = opt.label;
+							else if (typeof opt.value === "string") lab = opt.value;
+							else if (typeof opt.name === "string") lab = opt.name;
+							else if (typeof opt.id === "string") lab = opt.id;
+							else if (typeof opt.title === "string") lab = opt.title;
+						}
+						if (lab != null && isToken(lab)) return true;
+					}
+				}
+			}
+			// Top-level options fallback (some question implementations)
+			const topOpts = params.options;
+			if (Array.isArray(topOpts)) {
+				for (const opt of topOpts) {
+					if (opt == null) continue;
+					let lab = null;
+					if (typeof opt === "string") lab = opt;
+					else if (typeof opt === "object") {
+						if (typeof opt.label === "string") lab = opt.label;
+						else if (typeof opt.value === "string") lab = opt.value;
+						else if (typeof opt.name === "string") lab = opt.name;
+						else if (typeof opt.id === "string") lab = opt.id;
+					}
+					if (lab != null && isToken(lab)) return true;
+				}
+			}
+		} catch {}
+		// Generic deep search for any label/value-like field containing checkpoint token
+		try {
+			const stack = [params];
+			const seen = new WeakSet();
+			while (stack.length) {
+				const cur = stack.pop();
+				if (!cur || typeof cur !== "object") continue;
+				if (seen.has(cur)) continue;
+				try { seen.add(cur); } catch {}
+				if (Array.isArray(cur)) {
+					for (const el of cur) if (el && typeof el === "object") stack.push(el);
+					continue;
+				}
+				for (const key of ["label", "value", "id", "name", "title"]) {
+					const v = cur[key];
+					if (typeof v === "string" && isToken(v)) return true;
+				}
+				for (const v of Object.values(cur)) {
+					if (v && typeof v === "object") stack.push(v);
+				}
+			}
+		} catch {}
+		return false;
+	}
+
+	function extractParamsFromToolCall(event) {
+		if (!event || typeof event !== "object") return null;
+		const candidates = [event.params, event.args, event.arguments, event.input, event.payload, event.data];
+		for (const c of candidates) {
+			if (c != null) return c;
+		}
+		// Some Pi versions pack params under event.toolCall or event.tool_input
+		if (event.toolCall && typeof event.toolCall === "object") {
+			if (event.toolCall.params != null) return event.toolCall.params;
+			if (event.toolCall.args != null) return event.toolCall.args;
+			if (event.toolCall.input != null) return event.toolCall.input;
+		}
+		return null;
+	}
+
 	function checkSynthesisPrecondition(ctx) {
 		// STRICT same-turn for blocking: ONLY currentTurnMarkdown satisfies.
 		// ctx.history and lastAssistantMarkdown are deliberately ignored for blocking;
@@ -555,6 +658,8 @@ export default function biggzSynthesisGate(pi) {
 			hasSessionRecallInHistory: (ctx) => hasSessionRecallInHistory(ctx),
 			checkSessionRecallInCurrentTurn,
 			checkSynthesisPrecondition,
+			isCheckpointAsk,
+			extractParamsFromToolCall,
 			emitConcern: (ctx, metrics) => emitConcern(ctx, pi, metrics),
 			// test helpers to manipulate internal state
 			_test: {
@@ -594,6 +699,36 @@ export default function biggzSynthesisGate(pi) {
 			if (!ctx && args.length > 0) {
 				const last = args[args.length - 1];
 				if (last && typeof last === "object") ctx = last;
+			}
+			// Checkpoint vs general: only checkpoint asks require synthesis
+			let params = null;
+			if (args.length >= 2) params = args[1];
+			if (!params || typeof params !== "object" || params.ui || params.history || params.sessionManager) {
+				for (const a of args) {
+					if (a && typeof a === "object" && (Array.isArray(a.questions) || Array.isArray(a.options))) {
+						params = a;
+						break;
+					}
+				}
+				if ((!params || params.ui || params.history) && args[0] && typeof args[0] === "object" && (Array.isArray(args[0].questions) || Array.isArray(args[0].options))) {
+					params = args[0];
+				}
+			}
+			if (!isCheckpointAsk(params)) {
+				// General clarification / preflight / non-checkpoint: do not block, optionally advise but allow
+				try {
+					const source = getCurrentTurnSynthesis(ctx);
+					if (source && isAdviseEnabled() && isThinSynthesis(source)) {
+						const metrics = getArtifactsMetrics(source);
+						emitConcern(ctx, pi, metrics);
+					}
+				} catch {}
+				const resultGeneral = await origExecute(...args);
+				try {
+					currentTurnMarkdown = "";
+					currentTurnUpdateTime = 0;
+				} catch {}
+				return resultGeneral;
 			}
 			const has = checkSynthesisPrecondition(ctx);
 			if (!has) {
@@ -769,6 +904,18 @@ export default function biggzSynthesisGate(pi) {
 					if (isChildBypass()) return;
 					const name = event?.toolName ?? event?.name ?? "";
 					if (name !== "ask_user_question" && name !== "question") return;
+					const toolParams = extractParamsFromToolCall(event);
+					if (!isCheckpointAsk(toolParams)) {
+						// General clarification / non-checkpoint: do not block, optionally advise but allow
+						try {
+							const source = getCurrentTurnSynthesis(ctx);
+							if (source && isAdviseEnabled() && isThinSynthesis(source)) {
+								const metrics = getArtifactsMetrics(source);
+								emitConcern(ctx, pi, metrics);
+							}
+						} catch {}
+						return;
+					}
 					const has = checkSynthesisPrecondition(ctx);
 					if (!has) {
 						// Session Recall same-turn exception (narrow)

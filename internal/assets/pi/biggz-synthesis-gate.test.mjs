@@ -116,7 +116,8 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     assert.equal(h.extractArtifactsSection(thinMarkdown).length < 50, true);
   });
 
-  it('scenario 1: blocking still enforced on missing markers (advise off and on)', async () => {
+  it('scenario 1: blocking still enforced on missing markers (advise off and on) — checkpoint only', async () => {
+    const checkpointParams = { questions: [{ question: 'Next?', header: 'Checkpoint', options: [{ label: 'proceed', description: 'continue' }, { label: 'adjust' }, { label: 'stop' }] }] };
     for (const advise of [undefined, '1']) {
       if (advise) process.env.BIGGZ_ADVISE = advise;
       else delete process.env.BIGGZ_ADVISE;
@@ -136,11 +137,11 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
       });
       const wrapped = mock._tools.get('ask_user_question');
       assert.ok(wrapped, 'wrapped tool exists');
-      // ensure post-delegation state: a prior synthesis exists in history so missing currentTurn should block
+      // ensure post-delegation state: a prior synthesis exists in history so missing currentTurn should block for checkpoint asks
       mock._biggzSynthesisGate._test.clearLast();
       mock._biggzSynthesisGate._test.setLast(richMarkdown);
       const ctx = makeCtx(missingMarkdown, ctxNotify);
-      const result = await wrapped.execute('id1', {}, null, null, ctx);
+      const result = await wrapped.execute('id1', checkpointParams, null, null, ctx);
       assert.equal(result.isError, true, `should block when missing (advise=${advise})`);
       assert.ok(String(result.content[0].text).includes('Please synthesize'), 'error instructs synthesis');
       assert.equal(originalCalled, false, 'original should not be called when blocked');
@@ -426,7 +427,8 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     mock._biggzSynthesisGate._test.clearLast();
   });
 
-  it('regression: bloquea cuando solo hay síntesis vieja en ctx.history pero no en currentTurn (strict same-turn)', async () => {
+  it('regression: bloquea cuando solo hay síntesis vieja en ctx.history pero no en currentTurn (strict same-turn) — checkpoint only', async () => {
+    const checkpointParams = { questions: [{ question: 'Next?', header: 'Checkpoint', options: [{ label: 'proceed' }, { label: 'adjust' }, { label: 'stop' }] }] };
     delete process.env.BIGGZ_ADVISE;
     const mock = createMockPi();
     gateFn(mock);
@@ -452,7 +454,7 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     const ctx = makeCtx(richMarkdown, ctxNotify); // ctx.history has rich synthesis from previous turn
     // Also verify that checkSynthesisPrecondition is strictly false when only history/last present
     assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx), false, 'strict check must be false when only history/last has synthesis');
-    const result = await wrapped.execute('id-regression', {}, null, null, ctx);
+    const result = await wrapped.execute('id-regression', checkpointParams, null, null, ctx);
     assert.equal(result.isError, true, 'must block when only old history has synthesis, currentTurn empty');
     assert.ok(String(result.content[0].text).includes('Please synthesize'));
     assert.equal(originalCalled, false, 'original must not be called on strict block');
@@ -464,14 +466,15 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx), true, 'must pass when currentTurn has synthesis');
     const ctx2Notify = [];
     const ctx2 = makeCtx('', ctx2Notify);
-    const result2 = await wrapped.execute('id-regression-2', {}, null, null, ctx2);
+    const result2 = await wrapped.execute('id-regression-2', checkpointParams, null, null, ctx2);
     assert.equal(result2.isError, undefined, 'must allow when currentTurn has synthesis even if ctx.history empty');
     assert.equal(originalCalled, true, 'original should be called after strict pass');
     // After successful call, currentTurn must be reset (next turn starts fresh)
     assert.equal(mock._biggzSynthesisGate._test.getCurrent(), '', 'currentTurn must be reset after successful ask_user_question');
   });
 
-  it('strict blocking: currentTurn reset after successful ask prevents reuse (no history fallback)', async () => {
+  it('strict blocking: currentTurn reset after successful ask prevents reuse (no history fallback) — checkpoint only', async () => {
+    const checkpointParams = { questions: [{ question: 'Next?', header: 'Checkpoint', options: [{ label: 'proceed' }, { label: 'adjust' }, { label: 'stop' }] }] };
     delete process.env.BIGGZ_ADVISE;
     const mock = createMockPi();
     gateFn(mock);
@@ -487,19 +490,20 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     mock._biggzSynthesisGate._test.clearCurrent();
     mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
     const ctx = makeCtx('', ctxNotify);
-    const r1 = await wrapped.execute('id1', {}, null, null, ctx);
+    const r1 = await wrapped.execute('id1', checkpointParams, null, null, ctx);
     assert.equal(r1.isError, undefined, 'first call with currentTurn should pass');
     // currentTurn should now be empty after reset
     assert.equal(mock._biggzSynthesisGate._test.getCurrent(), '', 'currentTurn reset after success');
-    // second call without new synthesis, even though history still has old richMarkdown, must BLOCK (strict)
+    // second call without new synthesis, even though history still has old richMarkdown, must BLOCK (strict) for checkpoint
     const ctx2 = makeCtx(richMarkdown, []);
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
     assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx2), false, 'second call without new currentTurn must be blocked even if history/last present');
-    const r2 = await wrapped.execute('id2', {}, null, null, ctx2);
+    const r2 = await wrapped.execute('id2', checkpointParams, null, null, ctx2);
     assert.equal(r2.isError, true, 'second call must block strict');
   });
 
-  it('load-order race: tool already registered before gate loads must still be blocked when missing synthesis', async () => {
+  it('load-order race: tool already registered before gate loads must still be blocked when missing synthesis — checkpoint only', async () => {
+    const checkpointParams = { questions: [{ question: 'Next?', header: 'Checkpoint', options: [{ label: 'proceed' }, { label: 'adjust' }, { label: 'stop' }] }] };
     delete process.env.BIGGZ_ADVISE;
     const mock = createMockPi();
     // Register BEFORE gate wraps — simulates rpiv-ask-user-question loading before synthesis gate
@@ -523,21 +527,23 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
     const ctxNotify = [];
     const ctxMissing = makeCtx(missingMarkdown, ctxNotify);
-    // Without synthesis in currentTurn, even pre-registered tool must block (strict same-turn) when prior synthesis exists
+    // Without synthesis in currentTurn, even pre-registered tool must block (strict same-turn) when prior synthesis exists — checkpoint
     assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctxMissing), false);
-    const resultMissing = await wrapped.execute('id-pre', {}, null, null, ctxMissing);
+    const resultMissing = await wrapped.execute('id-pre', checkpointParams, null, null, ctxMissing);
     assert.equal(resultMissing.isError, true, 'pre-registered tool must block when missing synthesis');
     assert.ok(String(resultMissing.content[0].text).includes('Please synthesize'));
     assert.equal(originalCalled, false, 'original must not be called for pre-registered blocked');
-    // With currentTurn synthesis, pre-registered tool must allow
+    // With currentTurn synthesis, pre-registered tool must allow (checkpoint with synthesis)
     mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
     const ctxRich = makeCtx('', []);
-    const resultRich = await wrapped.execute('id-pre2', {}, null, null, ctxRich);
+    const resultRich = await wrapped.execute('id-pre2', checkpointParams, null, null, ctxRich);
     assert.equal(resultRich.isError, undefined, 'pre-registered tool must allow with currentTurn synthesis');
     assert.equal(originalCalled, true, 'original must be called when synthesis present');
   });
 
-  it('secondary guard via tool_call actually blocks when missing synthesis (not just warn)', async () => {
+  it('secondary guard via tool_call actually blocks when missing synthesis (not just warn) — checkpoint only', async () => {
+    const checkpointParams = { questions: [{ question: 'Next?', header: 'Checkpoint', options: [{ label: 'proceed' }, { label: 'adjust' }, { label: 'stop' }] }] };
+    const generalParams = { questions: [{ question: '¿por dónde empezamos?', options: [{ label: 'opción A' }, { label: 'opción B' }] }] };
     delete process.env.BIGGZ_ADVISE;
     const mock = createMockPi();
     gateFn(mock);
@@ -545,20 +551,28 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     assert.ok(handler, 'tool_call handler registered');
     mock._biggzSynthesisGate._test.clearCurrent();
     mock._biggzSynthesisGate._test.clearLast();
-    // Simulate prior synthesis so this is post-delegation (should block)
+    // Simulate prior synthesis so this is post-delegation (should block for checkpoint)
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
     const ctxNotify = [];
     const ctx = makeCtx(missingMarkdown, ctxNotify);
-    // tool_call with missing synthesis must return block:true (not just warn)
-    const ret = await handler({ toolName: 'ask_user_question' }, ctx);
+    // tool_call with missing synthesis must return block:true for checkpoint (not just warn)
+    const ret = await handler({ toolName: 'ask_user_question', params: checkpointParams }, ctx);
     assert.ok(ret && ret.block === true, `tool_call handler must block with {block:true}, got ${JSON.stringify(ret)}`);
     assert.ok(String(ret.reason || '').includes('Please synthesize') || String(ret.reason || '').includes('Sub-agent Result'), 'block reason must instruct synthesis');
-    // With currentTurn synthesis, handler must NOT block (allow)
+    // With currentTurn synthesis, handler must NOT block (allow checkpoint)
     mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
     const ctx2Notify = [];
     const ctx2 = makeCtx('', ctx2Notify);
-    const ret2 = await handler({ toolName: 'ask_user_question' }, ctx2);
+    const ret2 = await handler({ toolName: 'ask_user_question', params: checkpointParams }, ctx2);
     assert.equal(ret2, undefined, 'tool_call handler must allow when currentTurn has synthesis');
+    // General question must NOT block even when missing synthesis (checkpoint filter)
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.setLast(richMarkdown);
+    const ctxGeneral = makeCtx(missingMarkdown, []);
+    const retGeneral = await handler({ toolName: 'ask_user_question', params: generalParams }, ctxGeneral);
+    assert.equal(retGeneral, undefined, 'general question must NOT block even without synthesis');
+    const retGeneralEmpty = await handler({ toolName: 'ask_user_question', params: {} }, ctxGeneral);
+    assert.equal(retGeneralEmpty, undefined, 'empty params must be treated as general and not block');
     // Also verify non-question tools are ignored (never block)
     mock._biggzSynthesisGate._test.clearCurrent();
     const ret3 = await handler({ toolName: 'bash' }, makeCtx(missingMarkdown, []));
@@ -595,9 +609,10 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     assert.ok(mock._biggzSynthesisGate._test.getCurrent().includes('Sub-agent Result'), 'message_end should populate currentTurn');
     // Also verify message_update handler exists
     assert.ok(mock._onHandlers['message_update'], 'message_update handler must be registered');
-    // Now tool call should pass strict same-turn
+    // Now tool call should pass strict same-turn for checkpoint
     assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(makeCtx('', [])), true, 'strict check must pass after message_end populated currentTurn');
-    const result = await wrapped.execute('id-msg-end', {}, null, null, makeCtx('', []));
+    const checkpointParams = { questions: [{ question: 'Next?', options: [{ label: 'proceed' }, { label: 'adjust' }, { label: 'stop' }] }] };
+    const result = await wrapped.execute('id-msg-end', checkpointParams, null, null, makeCtx('', []));
     assert.equal(result.isError, undefined);
     assert.equal(originalCalled, true);
   });
@@ -638,13 +653,101 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     assert.equal(mock._biggzSynthesisGate.getCurrentTurnSynthesis(ctxMissing), '', 'no synthesis anywhere');
     assert.equal(mock._biggzSynthesisGate.getSynthesisSource(ctxMissing), '', 'no synthesis anywhere');
     const result = await wrapped.execute('id-preflight', {}, null, null, ctxMissing);
-    assert.equal(result.isError, undefined, 'first ask with no prior synthesis should NOT block (preflight allowance)');
+    assert.equal(result.isError, undefined, 'first ask with no prior synthesis should NOT block (preflight allowance) — general');
     assert.equal(originalCalled, true, 'original should be called for preflight allowance');
+    // checkpoint with no prior synthesis must also be allowed via preflight allowance
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
+    originalCalled = false;
+    const checkpointParams = { questions: [{ question: 'Next?', options: [{ label: 'proceed' }, { label: 'adjust' }, { label: 'stop' }] }] };
+    const resultCp = await wrapped.execute('id-preflight-cp', checkpointParams, null, null, ctxMissing);
+    assert.equal(resultCp.isError, undefined, 'checkpoint with no prior synthesis should also be allowed (preflight)');
+    assert.equal(originalCalled, true);
     // tool_call secondary guard also must allow when no synthesis ever
     const handler = mock._getToolCallHandler();
     mock._biggzSynthesisGate._test.clearCurrent();
     mock._biggzSynthesisGate._test.clearLast();
     const ret = await handler({ toolName: 'ask_user_question' }, makeCtx(missingMarkdown, []));
     assert.equal(ret, undefined, 'tool_call must allow when no synthesis ever (preflight)');
+    const retCp = await handler({ toolName: 'ask_user_question', params: checkpointParams }, makeCtx(missingMarkdown, []));
+    assert.equal(retCp, undefined, 'checkpoint preflight must also allow when no synthesis ever');
+  });
+
+  it('checkpoint detection: isCheckpointAsk identifies proceed/adjust/stop and continue/correct (case-insensitive) vs general', async () => {
+    const mock = createMockPi();
+    gateFn(mock);
+    const h = mock._biggzSynthesisGate;
+    assert.ok(h.isCheckpointAsk, 'isCheckpointAsk exposed');
+    const checkpointParams = { questions: [{ question: 'Next?', header: 'Checkpoint', options: [{ label: 'proceed' }, { label: 'adjust' }, { label: 'stop' }] }] };
+    const checkpointContinue = { questions: [{ question: 'Next?', options: [{ label: 'continue' }, { label: 'correct' }] }] };
+    const checkpointMixedCase = { questions: [{ question: 'Next?', options: [{ label: 'Proceed' }, { label: 'ADJUST' }, { label: 'Stop' }] }] };
+    const generalParams = { questions: [{ question: '¿por dónde empezamos?', options: [{ label: 'opción A' }, { label: 'opción B' }] }] };
+    const generalEmpty = {};
+    const generalNull = null;
+    const questionToolParams = { questions: [{ question: 'Next?', options: [{ label: 'continue' }] }] };
+    assert.equal(h.isCheckpointAsk(checkpointParams), true, 'proceed/adjust/stop should be checkpoint');
+    assert.equal(h.isCheckpointAsk(checkpointContinue), true, 'continue/correct should be checkpoint');
+    assert.equal(h.isCheckpointAsk(checkpointMixedCase), true, 'case-insensitive checkpoint');
+    assert.equal(h.isCheckpointAsk(questionToolParams), true, 'question tool continue is checkpoint');
+    assert.equal(h.isCheckpointAsk(generalParams), false, 'general without checkpoint labels must be false');
+    assert.equal(h.isCheckpointAsk(generalEmpty), false, 'empty object false');
+    assert.equal(h.isCheckpointAsk(generalNull), false, 'null false');
+    assert.equal(h.isCheckpointAsk(undefined), false, 'undefined false');
+    // also test top-level options fallback
+    const topLevelCheckpoint = { options: [{ label: 'proceed' }] };
+    assert.equal(h.isCheckpointAsk(topLevelCheckpoint), true, 'top-level options checkpoint');
+    // tool_call param extraction
+    const extracted = h.extractParamsFromToolCall({ toolName: 'ask_user_question', params: checkpointParams });
+    assert.deepEqual(extracted, checkpointParams, 'extractParamsFromToolCall should return params');
+    assert.equal(h.isCheckpointAsk(extracted), true);
+    const extractedArgs = h.extractParamsFromToolCall({ toolName: 'ask_user_question', args: checkpointParams });
+    assert.equal(h.isCheckpointAsk(extractedArgs), true);
+  });
+
+  it('general question after delegation must NOT block even without synthesis (checkpoint filter)', async () => {
+    const generalParams = { questions: [{ question: '¿por dónde empezamos?', options: [{ label: 'opción A' }, { label: 'opción B' }] }] };
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi();
+    gateFn(mock);
+    let originalCalled = false;
+    mock.registerTool({
+      name: 'ask_user_question',
+      description: 'test',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => { originalCalled = true; return { content: [{ type: 'text', text: 'ok' }] }; },
+    });
+    const wrapped = mock._tools.get('ask_user_question');
+    // Simulate post-delegation: prior synthesis exists, current empty
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.setLast(richMarkdown);
+    const ctx = makeCtx(missingMarkdown, []);
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx), false, 'no current synthesis');
+    // general should pass
+    const resultGeneral = await wrapped.execute('id-general', generalParams, null, null, ctx);
+    assert.equal(resultGeneral.isError, undefined, 'general must not block even without current synthesis');
+    assert.equal(originalCalled, true, 'general should call original');
+    // empty params also general
+    originalCalled = false;
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.setLast(richMarkdown);
+    const resultEmpty = await wrapped.execute('id-empty', {}, null, null, ctx);
+    assert.equal(resultEmpty.isError, undefined, 'empty params must not block');
+    assert.equal(originalCalled, true);
+    // checkpoint must still block in same state
+    originalCalled = false;
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.setLast(richMarkdown);
+    const checkpointParams = { questions: [{ question: 'Next?', options: [{ label: 'proceed' }, { label: 'adjust' }, { label: 'stop' }] }] };
+    const resultCheckpoint = await wrapped.execute('id-cp', checkpointParams, null, null, ctx);
+    assert.equal(resultCheckpoint.isError, true, 'checkpoint must block when missing synthesis');
+    assert.equal(originalCalled, false);
+    // tool_call guard: general must not block
+    const handler = mock._getToolCallHandler();
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.setLast(richMarkdown);
+    const retGeneral = await handler({ toolName: 'ask_user_question', params: generalParams }, ctx);
+    assert.equal(retGeneral, undefined, 'tool_call general must not block');
+    const retCheckpoint = await handler({ toolName: 'ask_user_question', params: checkpointParams }, ctx);
+    assert.ok(retCheckpoint && retCheckpoint.block === true, 'tool_call checkpoint must block');
   });
 });
