@@ -196,6 +196,37 @@ Use `biggz <command>` for SDD operations:
 
 Before routing, continuing, applying, verifying, or archiving an SDD change, determine the session's artifact store from the cached Session Preflight / Artifact Store Mode choice (check BigMem via `biggz_mem_search` if not yet established). The native dispatcher (`biggz sdd-status --json --instructions` and `biggz sdd-continue <change>`) is now authoritative for both `openspec` and `BigMem` via the native hybrid merge (`internal/sdd/engram_status.go`, port of gentle-ai's `resolveEngramStatus`): it scans `openspec/changes/` and merges in BigMem observations (`sdd/{change}/{proposal,spec,design,tasks,apply-progress,verify-report,archive-report}`) with filesystem winning on name conflict. Invoke the dispatcher for `openspec`, `BigMem`, and `hybrid` alike and treat its native status JSON as the single authority. Route only by `nextRecommended` and dependency states; never infer from free text. If `blockedReasons` is non-empty, do not proceed to apply, archive, or terminal work. If `nextRecommended` is `verify`, verification/remediation may run only to refresh evidence; if `nextRecommended` is `resolve-blockers`, report `blockedReasons` and stop; if `nextRecommended` is a planning token (`propose`, `spec`, `design`, or `tasks`), launch the corresponding planning phase. If the binary is unavailable, fall back to the manual BigMem schema (`biggz_mem_search` + `biggz_mem_get_observation` on the change's topic keys).
 
+### Session Boot Recall (HARD GATE)
+
+Before the SDD Session Preflight, you MUST perform Session Recall to restore context from previous sessions. This gate is BLOCKING like preflight, not advisory. Skipping it is INVALID and will be blocked.
+
+REMINDER: Session Recall markdown is separate chat markdown emitted FIRST, adjacent, same turn, before preflight question. Do NOT put recall inside the tool's question param.
+
+Steps (execute in order, all are mandatory):
+1. Call `biggz_mem_context(limit=5)` — get recent sessions (fast, cheap)
+2. Call `biggz_mem_search(query:"sdd {project}" limit=10)` — get SDD artifacts from BigMem for the current project (replace {project} with inferred project: BIGMEM_PROJECT / BIGGZ_PROJECT / ENGRAM_PROJECT / git remote / base dir lower-cased)
+3. Call `biggz_mem_search(query:"session_summary" limit=5)` — get previous session summaries
+4. Inject summary into context: synthesize top observations/sessions for the current project into a short recap (who did what, last decisions, open tasks)
+5. Fallback: if BigMem returns empty (no observations/sessions) or is unavailable, run `biggz sdd-status --json --instructions` to get filesystem status and note fallback in recall block
+
+Required markdown (copy-paste, emit immediately after the three tool calls, before any preflight question):
+```markdown
+## Session Recall
+**Context Loaded:** {count} observations, {count} sessions
+**Project:** {project}
+**Recent Summaries:** {summaries or "none"}
+**Fallback Used:** {yes/no — if yes, why}
+```
+
+REMINDER: Session Recall markdown is separate chat markdown emitted FIRST, adjacent, same turn, before preflight question. Do NOT put recall inside the tool's question param.
+
+Rules:
+- Do NOT proceed to SDD Session Preflight without emitting the ## Session Recall block in this session
+- The three BigMem calls are mandatory even if you expect empty; the fallback to sdd-status must be explicit in the recall block when BigMem is empty
+- Cache the recall summary for this session and include it in later phase prompts (e.g. as "Previous session context: ...")
+- If BigMem is unavailable (binary missing), note "BigMem unavailable" in Fallback Used and proceed with sdd-status fallback
+- This gate is blocking like preflight; a session that asks preflight without a preceding ## Session Recall in the same session history is INVALID
+
 ### SDD Session Preflight (HARD GATE)
 
 Before executing ANY SDD command or natural-language SDD request, ensure this session has an explicit `SDD Session Preflight` decision block.

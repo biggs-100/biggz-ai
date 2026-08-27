@@ -84,3 +84,48 @@ func TestOrchestratorSynthesisTemplateGuardsDrift(t *testing.T) {
 		t.Errorf("missing Next Recommended marker — drift not allowed")
 	}
 }
+
+func TestOrchestratorSessionRecallGateInvariant(t *testing.T) {
+	md := readOrchestrator(t)
+	t.Run("contains Session Recall hard gate", func(t *testing.T) {
+		if !strings.Contains(md, "## Session Recall") {
+			t.Errorf("biggz-orchestrator.md missing ## Session Recall hard gate marker")
+		}
+		if !strings.Contains(md, "Session Boot Recall") {
+			t.Errorf("biggz-orchestrator.md missing Session Boot Recall gate title")
+		}
+		if !strings.Contains(md, "HARD GATE") {
+			t.Errorf("biggz-orchestrator.md missing HARD GATE designation for Session Recall")
+		}
+	})
+	t.Run("recall requires biggz_mem_context and biggz_mem_search", func(t *testing.T) {
+		if !strings.Contains(md, "biggz_mem_context") {
+			t.Errorf("biggz-orchestrator.md Session Recall must require biggz_mem_context")
+		}
+		if !strings.Contains(md, "biggz_mem_search") {
+			t.Errorf("biggz-orchestrator.md Session Recall must require biggz_mem_search")
+		}
+		if !strings.Contains(md, "session_summary") {
+			t.Errorf("biggz-orchestrator.md Session Recall must mention session_summary search")
+		}
+		if !strings.Contains(md, "sdd {project}") && !strings.Contains(md, "sdd ") {
+			t.Errorf("biggz-orchestrator.md Session Recall must mention sdd {project} search")
+		}
+	})
+	t.Run("recall fallback to sdd-status", func(t *testing.T) {
+		if !strings.Contains(md, "sdd-status") {
+			t.Errorf("biggz-orchestrator.md Session Recall must document fallback to sdd-status")
+		}
+		if !strings.Contains(md, "--json --instructions") {
+			t.Errorf("biggz-orchestrator.md Session Recall fallback must be sdd-status --json --instructions")
+		}
+	})
+	t.Run("recall REMINDER separation", func(t *testing.T) {
+		if !strings.Contains(md, "Session Recall markdown is separate") {
+			t.Errorf("biggz-orchestrator.md Session Recall must have REMINDER about separate markdown")
+		}
+		if strings.Count(md, "## Session Recall") < 1 {
+			t.Errorf("expected at least 1 ## Session Recall block")
+		}
+	})
+}

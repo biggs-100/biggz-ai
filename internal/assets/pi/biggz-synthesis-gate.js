@@ -211,6 +211,10 @@ export default function biggzSynthesisGate(pi) {
 		return { section, len, count };
 	}
 
+	function hasSessionRecall(text) {
+		return String(text || "").includes("## Session Recall");
+	}
+
 	function isThinSynthesis(text) {
 		const s = String(text || "");
 		// thin only if markers present (has at least Sub-agent Result + Artifacts/Paths) but metrics thin
@@ -498,6 +502,25 @@ export default function biggzSynthesisGate(pi) {
 		return "";
 	}
 
+	function checkSessionRecallInCurrentTurn() {
+		// Session Boot Recall (HARD GATE) exception: ## Session Recall is emitted before preflight
+		// and must not be blocked as missing synthesis. This helper checks strict same-turn
+		// Session Recall presence (only currentTurnMarkdown, not history) for the recall exception.
+		if (!currentTurnMarkdown) return false;
+		if (hasSessionRecall(currentTurnMarkdown)) return true;
+		return false;
+	}
+
+	function hasSessionRecallInHistory(ctx) {
+		// Non-strict history check for diagnostics (like getSynthesisSource).
+		const cur = currentTurnMarkdown && hasSessionRecall(currentTurnMarkdown) ? currentTurnMarkdown : "";
+		if (cur) return true;
+		const ctxText = getCtxHistory(ctx);
+		if (ctxText && hasSessionRecall(ctxText)) return true;
+		if (lastAssistantMarkdown && hasSessionRecall(lastAssistantMarkdown)) return true;
+		return false;
+	}
+
 	function checkSynthesisPrecondition(ctx) {
 		// STRICT same-turn for blocking: ONLY currentTurnMarkdown satisfies.
 		// ctx.history and lastAssistantMarkdown are deliberately ignored for blocking;
@@ -520,6 +543,7 @@ export default function biggzSynthesisGate(pi) {
 		pi._biggzSynthesisGate = {
 			hasSynthesis,
 			hasSynthesisLoose,
+			hasSessionRecall,
 			extractArtifactsSection,
 			countPaths,
 			getArtifactsMetrics,
@@ -528,6 +552,8 @@ export default function biggzSynthesisGate(pi) {
 			isChildBypass,
 			getSynthesisSource,
 			getCurrentTurnSynthesis,
+			hasSessionRecallInHistory: (ctx) => hasSessionRecallInHistory(ctx),
+			checkSessionRecallInCurrentTurn,
 			checkSynthesisPrecondition,
 			emitConcern: (ctx, metrics) => emitConcern(ctx, pi, metrics),
 			// test helpers to manipulate internal state
@@ -571,6 +597,13 @@ export default function biggzSynthesisGate(pi) {
 			}
 			const has = checkSynthesisPrecondition(ctx);
 			if (!has) {
+				// Session Recall exception: if currentTurn contains ## Session Recall, allow the
+				// subsequent preflight ask without requiring ## Sub-agent Result (recall is not
+				// a delegation result, but a mandatory boot gate before preflight). This exception
+				// is narrow: only same-turn Session Recall satisfies it, not mere history.
+				if (checkSessionRecallInCurrentTurn()) {
+					// Session Recall present in same turn — allow (recall -> preflight transition)
+				} else {
 				// Preflight allowance: if no synthesis has EVER existed in this session,
 				// it's not a post-delegation violation — allow first asks (e.g. SDD Session Preflight)
 				// without requiring prior synthesis. After at least one synthesis exists,
@@ -593,6 +626,7 @@ export default function biggzSynthesisGate(pi) {
 						content: [{ type: "text", text: reason }],
 						isError: true,
 					};
+				}
 				}
 			}
 			// Has synthesis or preflight allowance — check advise thin path (non-blocking concern)
@@ -737,6 +771,10 @@ export default function biggzSynthesisGate(pi) {
 					if (name !== "ask_user_question" && name !== "question") return;
 					const has = checkSynthesisPrecondition(ctx);
 					if (!has) {
+						// Session Recall same-turn exception (narrow)
+						if (checkSessionRecallInCurrentTurn()) {
+							// allow: recall -> preflight
+						} else {
 						const anySynthesis = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
 						if (!anySynthesis) {
 							// Preflight allowance — no synthesis ever in session, allow first asks
@@ -753,6 +791,7 @@ export default function biggzSynthesisGate(pi) {
 							// Pi's tool_call handler blocks via return {block:true}
 							return { block: true, reason };
 						}
+					}
 					}
 					// Has synthesis or preflight allowance — check thin + advise for concern (non-blocking)
 					try {

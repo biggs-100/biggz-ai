@@ -100,6 +100,10 @@ Transitions are validated by the FSM. Business rules are evaluated by PolicyEval
 
 ## BigMem Memory Protocol
 
+22 MCP tools exposed by `biggz-mcp` plus Session Boot Recall hard gate:
+
+**Session Boot Recall (HARD GATE):** before SDD Session Preflight the orchestrator MUST run `biggz_mem_context(limit=5)` + `biggz_mem_search(query:"sdd {project}" limit=10)` + `biggz_mem_search(query:"session_summary" limit=5)`, inject a short recap, emit `## Session Recall` markdown, and fallback to `biggz sdd-status --json --instructions` when BigMem is empty. The gate is blocking like preflight (see `internal/assets/biggz/biggz-orchestrator.md` Session Boot Recall). The synthesis gate has a narrow same-turn exception for `## Session Recall` → preflight, but does not weaken the `## Sub-agent Result` block after delegation.
+
 22 MCP tools exposed by `biggz-mcp`:
 
 - **Save**: `mem_save` (with what/why/where/learned format)
@@ -141,9 +145,9 @@ Kill switch stored in:
 
 Any "off" wins. Status is read-only. Re-enabling applies to future candidates only.
 
-### Synthesis Gate (3-layer defense)
+### Synthesis Gate (3-layer defense) + Session Recall
 
-Guarantees the human sees audited `## Sub-agent Result` before deciding. Gate `b0d2fc1` enforces the Post-Delegation Human Checkpoint.
+Guarantees the human sees audited `## Sub-agent Result` before deciding. Gate `b0d2fc1` enforces the Post-Delegation Human Checkpoint. Session Boot Recall (`## Session Recall`) is a preceding hard gate that restores prior session context via BigMem before preflight.
 
 **Layer 1 — Prompt (machine-verifiable invariant):** `internal/assets/biggz/biggz-orchestrator.md` contains a copy-pasteable block with 4 markers (`## Sub-agent Result: {phase/agent}`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`) and states `INVALID and will be blocked` for any `ask_user_question`/`question` without immediately preceding markdown. Every `ask` reference is followed by `REMINDER: synthesis markdown is separate chat markdown emitted FIRST...` (12× convergence) so prompt and gate cannot drift.
 
@@ -152,13 +156,14 @@ Guarantees the human sees audited `## Sub-agent Result` before deciding. Gate `b
 - **Source priority (blocking STRICT):** **only** `currentTurnMarkdown` satisfies the block — `ctx.history`/`lastAssistant` are history (stale) and are deliberately NOT checked for blocking (they only feed the non-blocking advise path via `getCurrentTurnSynthesis` fallback). The same-turn buffer (`recordText` via `pi.on("message_end")`/`message_update`/`message_start` plus legacy `assistant_message` fallback, reset at `turn_start`/`agent_start` and after each successful question) fixes the streaming race where markdown is emitted milliseconds before the tool call and has not yet landed in `ctx.history` (120 s window).
 - **Blocking (default):** when the 4-marker check fails the gate **blocks** in BOTH paths: (a) wrapped `execute` returns `{content:[{type:"text", text:"Please synthesize before asking — missing ## Sub-agent Result block..."}], isError:true}` and does **not** call `original()`, (b) `tool_call` handler returns `{block:true, reason}` — either path prevents the question reaching the user. Both notify via `pi.notify`/`ctx.ui.notify`. Synthesis inside the tool's `question` param does not satisfy the check. **Preflight allowance:** if no synthesis has ever existed in the session (`currentTurn` + `history` + `last` all empty of markers), the gate **allows** the ask without blocking — this unblocks the SDD Session Preflight (first asks before any delegation) while still enforcing strict same-turn after at least one synthesis exists.
 - **Thin advise (opt-in):** when markers are present but `Artifacts/Paths` is thin (`countPaths <2 || len <50` via `extractArtifactsSection` cut at `Risks`/`Next`/`## `) the gate does **not** block. With `BIGGZ_ADVISE=1` (or settings advise flag) it emits a non-blocking warning `concern: synthesis is thin (Artifacts/Paths count=N, len=M)` via `pi.notify` (warning level) and allows the call. Without the flag the thin case passes silently. The heuristic never auto-fixes and never calls a model.
+- **Session Recall exception (narrow):** before the first synthesis, a same-turn `## Session Recall` block satisfies the gate for the subsequent preflight ask. Only `currentTurnMarkdown` containing `## Session Recall` counts; history does not. After the first `## Sub-agent Result`, strict same-turn synthesis is required and Session Recall no longer bypasses.
 - **Bypass:** only `PI_SUBAGENT_CHILD=1` bypasses both modes. There is no orchestrator bypass (`BIGGZ_ORCHESTRATOR` is not honored).
-- **Helpers exposed for testing:** `pi._biggzSynthesisGate` exposes `hasSynthesis`, `extractArtifactsSection`, `countPaths`, `getArtifactsMetrics`, `isThinSynthesis`, `isAdviseEnabled`, `checkSynthesisPrecondition`, and `_test` helpers. After a successful `original()` the current-turn buffer is reset for the next turn.
+- **Helpers exposed for testing:** `pi._biggzSynthesisGate` exposes `hasSynthesis`, `hasSessionRecall`, `extractArtifactsSection`, `countPaths`, `getArtifactsMetrics`, `isThinSynthesis`, `isAdviseEnabled`, `checkSynthesisPrecondition`, `checkSessionRecallInCurrentTurn`, `hasSessionRecallInHistory`, and `_test` helpers. After a successful `original()` the current-turn buffer is reset for the next turn.
 
 **Layer 3 — Tests / CI:**
 
-- **Unit:** `internal/assets/pi/biggz-synthesis-gate.test.mjs` (`node --test`) covers blocking (missing→`isError:true` not-called, rich→pass), thin advise (`BIGGZ_ADVISE=1`→warn pass vs silent), child bypass, same-turn race, strict history-regression (old history must not satisfy), reset-after-success, **load-order race** (pre-registered tool still blocked), **secondary `tool_call` blocking** (`{block:true}` not just warn), `message_end`/`turn_start` tracking, **preflight allowance** (first ask with no prior synthesis ever must NOT block), plus helper checks (`isThinSynthesis`, `hasSynthesis`, metrics).
-- **Integration:** `internal/assets/biggz/orchestrator_test.go` (`go test ./internal/assets/biggz`) reads the embedded `biggz-orchestrator.md` via `assets.FS` and asserts the 4 markers, `INVALID and will be blocked`, and 12× `REMINDER`, failing on drift.
+- **Unit:** `internal/assets/pi/biggz-synthesis-gate.test.mjs` (`node --test`) covers blocking (missing→`isError:true` not-called, rich→pass), thin advise (`BIGGZ_ADVISE=1`→warn pass vs silent), child bypass, same-turn race, strict history-regression (old history must not satisfy), reset-after-success, **load-order race** (pre-registered tool still blocked), **secondary `tool_call` blocking** (`{block:true}` not just warn), `message_end`/`turn_start` tracking, **preflight allowance** (first ask with no prior synthesis ever must NOT block), **Session Recall narrow exception** (same-turn `## Session Recall` → preflight allowed without synthesis, history-only recall must not bypass after delegation), plus helper checks (`isThinSynthesis`, `hasSynthesis`, `hasSessionRecall`, metrics).
+- **Integration:** `internal/assets/biggz/orchestrator_test.go` (`go test ./internal/assets/biggz`) reads the embedded `biggz-orchestrator.md` via `assets.FS` and asserts the 4 synthesis markers, `INVALID and will be blocked`, 12× `REMINDER`, and the `## Session Recall` hard gate with `biggz_mem_context`/`biggz_mem_search`/`sdd-status` fallback, failing on drift.
 - **CI:** `go vet ./...`, `go test ./...`, `node --check internal/assets/pi/biggz-synthesis-gate.js`, `node --test internal/assets/pi/biggz-synthesis-gate.test.mjs` must be green; `synthesis-gate-status` command reports `✓`/`⚠`/`✗` in the TUI.
 
 Rollback: `git revert` the 5-file commit; no migration.
