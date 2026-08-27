@@ -497,4 +497,116 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     const r2 = await wrapped.execute('id2', {}, null, null, ctx2);
     assert.equal(r2.isError, true, 'second call must block strict');
   });
+
+  it('load-order race: tool already registered before gate loads must still be blocked when missing synthesis', async () => {
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi();
+    // Register BEFORE gate wraps — simulates rpiv-ask-user-question loading before synthesis gate
+    let originalCalled = false;
+    mock.registerTool({
+      name: 'ask_user_question',
+      description: 'pre-registered',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => {
+        originalCalled = true;
+        return { content: [{ type: 'text', text: 'ok' }] };
+      },
+    });
+    // Now load gate — it should sweep pre-registered tools and wrap them
+    gateFn(mock);
+    const wrapped = mock._tools.get('ask_user_question');
+    assert.ok(wrapped, 'pre-registered tool exists after gate');
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
+    const ctxNotify = [];
+    const ctxMissing = makeCtx(missingMarkdown, ctxNotify);
+    // Without synthesis, even pre-registered tool must block
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctxMissing), false);
+    const resultMissing = await wrapped.execute('id-pre', {}, null, null, ctxMissing);
+    assert.equal(resultMissing.isError, true, 'pre-registered tool must block when missing synthesis');
+    assert.ok(String(resultMissing.content[0].text).includes('Please synthesize'));
+    assert.equal(originalCalled, false, 'original must not be called for pre-registered blocked');
+    // With currentTurn synthesis, pre-registered tool must allow
+    mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
+    const ctxRich = makeCtx('', []);
+    const resultRich = await wrapped.execute('id-pre2', {}, null, null, ctxRich);
+    assert.equal(resultRich.isError, undefined, 'pre-registered tool must allow with currentTurn synthesis');
+    assert.equal(originalCalled, true, 'original must be called when synthesis present');
+  });
+
+  it('secondary guard via tool_call actually blocks when missing synthesis (not just warn)', async () => {
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi();
+    gateFn(mock);
+    const handler = mock._getToolCallHandler();
+    assert.ok(handler, 'tool_call handler registered');
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
+    const ctxNotify = [];
+    const ctx = makeCtx(missingMarkdown, ctxNotify);
+    // tool_call with missing synthesis must return block:true (not just warn)
+    const ret = await handler({ toolName: 'ask_user_question' }, ctx);
+    assert.ok(ret && ret.block === true, `tool_call handler must block with {block:true}, got ${JSON.stringify(ret)}`);
+    assert.ok(String(ret.reason || '').includes('Please synthesize') || String(ret.reason || '').includes('Sub-agent Result'), 'block reason must instruct synthesis');
+    // With currentTurn synthesis, handler must NOT block (allow)
+    mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
+    const ctx2Notify = [];
+    const ctx2 = makeCtx('', ctx2Notify);
+    const ret2 = await handler({ toolName: 'ask_user_question' }, ctx2);
+    assert.equal(ret2, undefined, 'tool_call handler must allow when currentTurn has synthesis');
+    // Also verify non-question tools are ignored (never block)
+    mock._biggzSynthesisGate._test.clearCurrent();
+    const ret3 = await handler({ toolName: 'bash' }, makeCtx(missingMarkdown, []));
+    assert.equal(ret3, undefined, 'non-question tool_call must not block');
+  });
+
+  it('message_end tracking populates currentTurn for strict check (pi correct event)', async () => {
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi();
+    gateFn(mock);
+    let originalCalled = false;
+    mock.registerTool({
+      name: 'ask_user_question',
+      description: 'test',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => {
+        originalCalled = true;
+        return { content: [{ type: 'text', text: 'ok' }] };
+      },
+    });
+    const wrapped = mock._tools.get('ask_user_question');
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
+    // Simulate Pi's real message_end event with content array (not legacy assistant_message)
+    const msgEndHandler = mock._onHandlers['message_end'];
+    assert.ok(msgEndHandler, 'message_end handler must be registered (hardened gate tracks Pi correct events)');
+    const piMessage = {
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: richMarkdown }],
+      },
+    };
+    await msgEndHandler(piMessage);
+    assert.ok(mock._biggzSynthesisGate._test.getCurrent().includes('Sub-agent Result'), 'message_end should populate currentTurn');
+    // Also verify message_update handler exists
+    assert.ok(mock._onHandlers['message_update'], 'message_update handler must be registered');
+    // Now tool call should pass strict same-turn
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(makeCtx('', [])), true, 'strict check must pass after message_end populated currentTurn');
+    const result = await wrapped.execute('id-msg-end', {}, null, null, makeCtx('', []));
+    assert.equal(result.isError, undefined);
+    assert.equal(originalCalled, true);
+  });
+
+  it('turn_start resets currentTurn (strict same-turn enforcement across turns)', async () => {
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi();
+    gateFn(mock);
+    mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
+    assert.ok(mock._biggzSynthesisGate.checkSynthesisPrecondition(makeCtx('', [])), 'precondition should be true before turn_start');
+    const turnStartHandler = mock._onHandlers['turn_start'];
+    assert.ok(turnStartHandler, 'turn_start handler must be registered');
+    await turnStartHandler({});
+    assert.equal(mock._biggzSynthesisGate._test.getCurrent(), '', 'turn_start must reset currentTurn for strict same-turn');
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(makeCtx('', [])), false, 'after turn_start without new synthesis, check must be false');
+  });
 });

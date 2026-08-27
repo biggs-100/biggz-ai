@@ -18,13 +18,19 @@
  * - PI_SUBAGENT_CHILD=1 bypasses both modes entirely.
  *
  * Behavior:
- * - Tracks current-turn assistant markdown via pi.on("assistant_message") / pi.on("message") fallbacks
- *   into currentTurnMarkdown (reset after each successful ask_user_question/question).
- * - Wraps ask_user_question and question tools via pi.registerTool interception.
- * - On execute, verifies STRICT same-turn markdown contains required markers (currentTurnMarkdown only).
- * - If missing, blocks with instructive error: "Please synthesize before asking — missing ## Sub-agent Result block".
- * - If thin and advise enabled, emits concern warning but allows the call (advise path MAY use history fallback).
- * - Also hooks pi.on("tool_call") as secondary guard to emit warning/concern even if wrapping missed (load-order safe).
+ * - Tracks current-turn assistant markdown via pi.on("message_end") / pi.on("message_update") / pi.on("assistant_message") fallbacks
+ *   into currentTurnMarkdown (reset after each successful ask_user_question/question and at turn_start).
+ *   The buffer fixes the streaming race where markdown is emitted milliseconds before the tool call and
+ *   has not yet landed in ctx.history.
+ * - Wraps ask_user_question and question tools via pi.registerTool interception AND via pre-registered sweep
+ *   (iterate pi.tools / pi._tools / pi.getAllTools+getToolDefinition if available) — load-order safe.
+ *   Each wrapped execute verifies STRICT same-turn markdown contains required markers (currentTurnMarkdown only).
+ *   If missing, returns {isError:true} with instructive error and does NOT call original.
+ * - Secondary guard via pi.on("tool_call") ALSO blocks (returns {block:true, reason}) when hasSynthesis fails,
+ *   not just warning — ensures bypass via load-order (tool already registered before gate) cannot escape.
+ *   If thin and advise enabled, emits concern warning but allows the call (advise path MAY use history fallback).
+ * - Also hooks pi.on("tool_execution_end") to reset currentTurn after successful question (covers pre-registered
+ *   tools not wrapped via execute path).
  *
  * Minimal but functional — mirrors biggz-thinking-wrap.js pattern.
  */
@@ -232,44 +238,169 @@ export default function biggzSynthesisGate(pi) {
 		return msg;
 	}
 
+	// --- markdown extraction helpers for Pi message shapes ---
+	function extractTextFromMessageContent(content) {
+		if (!content) return "";
+		if (typeof content === "string") return content;
+		if (Array.isArray(content)) {
+			const parts = [];
+			for (const block of content) {
+				if (!block) continue;
+				if (typeof block === "string") parts.push(block);
+				else if (typeof block.text === "string") parts.push(block.text);
+				else if (typeof block.content === "string") parts.push(block.content);
+			}
+			return parts.join("\n");
+		}
+		if (typeof content === "object" && typeof content.text === "string") return content.text;
+		return "";
+	}
+
+	function extractAssistantText(event) {
+		if (!event) return "";
+		if (typeof event === "string") return event;
+		// Common Pi message_end / message_update shapes
+		try {
+			if (event.message) {
+				const msg = event.message;
+				// Only record assistant messages (or messages without role in streaming fallbacks)
+				const role = msg.role;
+				if (role && role !== "assistant" && role !== "custom" && role !== undefined) {
+					// For custom messages, still check if content contains synthesis (some mocks use custom)
+					// but generally ignore user/toolResult.
+					if (role === "user" || role === "toolResult") return "";
+				}
+				const fromMsgContent = extractTextFromMessageContent(msg.content);
+				if (fromMsgContent && fromMsgContent.trim()) return fromMsgContent;
+				if (typeof msg.text === "string" && msg.text.trim()) return msg.text;
+			}
+		} catch {}
+		try {
+			if (typeof event.text === "string" && event.text.trim()) return event.text;
+		} catch {}
+		try {
+			if (typeof event.content === "string" && event.content.trim()) return event.content;
+		} catch {}
+		try {
+			if (Array.isArray(event.content)) {
+				const t = extractTextFromMessageContent(event.content);
+				if (t.trim()) return t;
+			}
+		} catch {}
+		try {
+			if (event.delta && typeof event.delta.text === "string" && event.delta.text.trim()) return event.delta.text;
+		} catch {}
+		try {
+			if (event.data && typeof event.data.text === "string" && event.data.text.trim()) return event.data.text;
+		} catch {}
+		try {
+			if (event.assistantMessageEvent) {
+				const a = event.assistantMessageEvent;
+				if (typeof a.text === "string" && a.text.trim()) return a.text;
+				if (a.delta && typeof a.delta.text === "string" && a.delta.text.trim()) return a.delta.text;
+				if (a.message && a.message.content) {
+					const t = extractTextFromMessageContent(a.message.content);
+					if (t.trim()) return t;
+				}
+			}
+		} catch {}
+		return "";
+	}
+
 	// Track assistant markdown via multiple possible event names (pi version tolerant)
+	// Keep legacy fallbacks (assistant_message, assistant, message, chunk) for tests/back-compat,
+	// plus correct Pi events (message_end, message_update, message_start).
 	try {
-		const events = ["assistant_message", "assistant", "message", "chunk"];
-		for (const ev of events) {
+		const legacyEvents = ["assistant_message", "assistant", "message", "chunk"];
+		for (const ev of legacyEvents) {
 			try {
 				pi.on(ev, (event) => {
 					try {
-						// event may be string, object with text/content, or delta
 						if (!event) return;
+						let text = "";
 						if (typeof event === "string") {
-							recordText(event);
-							return;
-						}
-						// common shapes: {text}, {content:[{text}]}, {delta:{text}}, {message:{content}}
-						const candidates = [
-							event.text,
-							event.content,
-							event.delta?.text,
-							event.message?.content,
-							event.data?.text,
-						];
-						for (const c of candidates) {
-							if (typeof c === "string" && c.includes("Sub-agent Result")) {
-								recordText(c);
-								return;
-							}
-							if (Array.isArray(c)) {
-								for (const block of c) {
-									if (block && typeof block.text === "string" && block.text.includes("Sub-agent Result")) {
-										recordText(block.text);
-										return;
+							text = event;
+						} else {
+							const candidates = [
+								event.text,
+								event.content,
+								event.delta?.text,
+								event.message?.content,
+								event.data?.text,
+							];
+							for (const c of candidates) {
+								if (typeof c === "string" && c.trim()) {
+									// For legacy handlers, preserve old behavior of preferring strings containing marker,
+									// but also handle generic strings to populate buffer for strict check.
+									// We record any non-empty string; hasSynthesis will filter later.
+									text = c;
+									break;
+								}
+								if (Array.isArray(c)) {
+									const joined = c.map((b) => (b && typeof b.text === "string" ? b.text : (typeof b === "string" ? b : ""))).join("\n");
+									if (joined.trim()) {
+										text = joined;
+										break;
 									}
 								}
 							}
+							if (!text) {
+								if (typeof event.text === "string" && event.text.trim()) text = event.text;
+								else if (typeof event.content === "string" && event.content.trim()) text = event.content;
+							}
 						}
-						// fallback: if event looks like full text containing marker, record it
-						if (typeof event.text === "string" && event.text.trim()) recordText(event.text);
-						else if (typeof event.content === "string" && event.content.trim()) recordText(event.content);
+						if (text && text.trim()) recordText(text);
+					} catch {}
+				});
+			} catch {}
+		}
+	} catch {}
+
+	// Correct Pi events (0.84.x): message_end, message_update, message_start
+	try {
+		const piMessageEvents = ["message_end", "message_update", "message_start"];
+		for (const ev of piMessageEvents) {
+			try {
+				pi.on(ev, (event) => {
+					try {
+						const text = extractAssistantText(event);
+						if (text && text.trim()) recordText(text);
+					} catch {}
+				});
+			} catch {}
+		}
+	} catch {}
+
+	// Turn/agent boundaries: reset strict same-turn buffer at start of new turn/agent
+	// Ensures old synthesis from previous turn does not satisfy next turn's check.
+	try {
+		for (const ev of ["turn_start", "agent_start"]) {
+			try {
+				pi.on(ev, () => {
+					try {
+						currentTurnMarkdown = "";
+						currentTurnUpdateTime = 0;
+					} catch {}
+				});
+			} catch {}
+		}
+	} catch {}
+
+	// Reset after successful question tool execution (covers pre-registered tools not wrapped via execute)
+	try {
+		for (const ev of ["tool_execution_end", "tool_result"]) {
+			try {
+				pi.on(ev, (event) => {
+					try {
+						const name = event?.toolName ?? event?.name ?? "";
+						if (name === "ask_user_question" || name === "question") {
+							// Only reset if last execution was not an error (avoid clearing on blocked)
+							const isErr = event?.isError === true || event?.result?.isError === true;
+							if (!isErr) {
+								currentTurnMarkdown = "";
+								currentTurnUpdateTime = 0;
+							}
+						}
 					} catch {}
 				});
 			} catch {}
@@ -302,6 +433,25 @@ export default function biggzSynthesisGate(pi) {
 					if (joined.includes("Sub-agent Result")) return joined;
 				}
 			}
+			// Try sessionManager branch if available (Pi ExtensionContext)
+			try {
+				const br = ctx.sessionManager?.getBranch?.();
+				if (Array.isArray(br)) {
+					const joined = br
+						.map((e) => {
+							if (!e) return "";
+							if (e.type === "message" && e.message) {
+								const c = e.message.content;
+								if (Array.isArray(c)) return c.map((x) => x?.text || "").join("\n");
+								if (typeof c === "string") return c;
+								return e.message.text || "";
+							}
+							return "";
+						})
+						.join("\n");
+					if (joined.includes("Sub-agent Result")) return joined;
+				}
+			} catch {}
 		} catch {}
 		return "";
 	}
@@ -394,7 +544,73 @@ export default function biggzSynthesisGate(pi) {
 		};
 	} catch {}
 
-	// Wrap registerTool to enforce gate (primary path)
+	// --- helper to wrap a single tool definition's execute (idempotent) ---
+	function wrapSingleTool(def) {
+		if (!def || typeof def.execute !== "function" || def._biggzGateWrapped) return false;
+		const origExecute = def.execute;
+		const toolName = def.name || "ask_user_question";
+		def._biggzGateWrapped = true;
+		def.execute = async (...args) => {
+			// Child bypass — skip both blocking and advise entirely
+			if (isChildBypass()) {
+				return origExecute(...args);
+			}
+			// args: toolCallId, params, signal, onUpdate, ctx — ctx is last arg if object with ui/history
+			let ctx = null;
+			for (let i = args.length - 1; i >= 0; i--) {
+				const a = args[i];
+				if (a && typeof a === "object" && (a.ui || a.history || a.messages || a.conversation || a.sessionManager)) {
+					ctx = a;
+					break;
+				}
+			}
+			// Also try args[args.length-1] as ctx fallback
+			if (!ctx && args.length > 0) {
+				const last = args[args.length - 1];
+				if (last && typeof last === "object") ctx = last;
+			}
+			const has = checkSynthesisPrecondition(ctx);
+			if (!has) {
+				const reason =
+					"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
+				console.error(`[biggz-synthesis-gate] blocked ${toolName}: ${reason}`);
+				try {
+					ctx?.ui?.notify?.(reason, "error");
+				} catch {}
+				try {
+					pi.notify?.(reason, "error");
+				} catch {}
+				// Return error payload rather than throw to show in TUI as tool result error
+				return {
+					content: [{ type: "text", text: reason }],
+					isError: true,
+				};
+			}
+			// Has synthesis — check advise thin path (non-blocking concern)
+			try {
+				const source = getCurrentTurnSynthesis(ctx);
+				if (source && isAdviseEnabled() && isThinSynthesis(source)) {
+					const metrics = getArtifactsMetrics(source);
+					emitConcern(ctx, pi, metrics);
+					// do not block — allow the call
+				}
+			} catch {}
+			const result = await origExecute(...args);
+			// Reset current-turn buffer after successful tool call — next turn starts fresh.
+			try {
+				currentTurnMarkdown = "";
+				currentTurnUpdateTime = 0;
+			} catch {}
+			return result;
+		};
+		return true;
+	}
+
+	// Wrap registerTool to enforce gate (primary path) — best-effort for future registrations via this pi instance.
+	// Note: In Pi's ExtensionRunner each extension gets its own api object with its own registerTool closure,
+	// so wrapping this instance only catches tools registered via this instance (i.e. the gate itself).
+	// The secondary pi.on("tool_call") guard is the true load-order-safe blocking path for cross-extension tools
+	// like rpiv-ask-user-question which register via their own api instance before/after the gate loads.
 	try {
 		if (typeof pi.registerTool === "function") {
 			const origRegister = pi.registerTool.bind(pi);
@@ -405,60 +621,7 @@ export default function biggzSynthesisGate(pi) {
 						(def.name === "ask_user_question" || def.name === "question") &&
 						typeof def.execute === "function"
 					) {
-						const origExecute = def.execute;
-						def.execute = async (...args) => {
-							// Child bypass — skip both blocking and advise entirely
-							if (isChildBypass()) {
-								return origExecute(...args);
-							}
-							// args: toolCallId, params, signal, onUpdate, ctx — ctx is last arg if object with ui/history
-							let ctx = null;
-							for (let i = args.length - 1; i >= 0; i--) {
-								const a = args[i];
-								if (a && typeof a === "object" && (a.ui || a.history || a.messages || a.conversation)) {
-									ctx = a;
-									break;
-								}
-							}
-							// Also try args[args.length-1] as ctx fallback
-							if (!ctx && args.length > 0) {
-								const last = args[args.length - 1];
-								if (last && typeof last === "object") ctx = last;
-							}
-							const has = checkSynthesisPrecondition(ctx);
-							if (!has) {
-								const reason =
-									"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
-								console.error(`[biggz-synthesis-gate] blocked ${def.name}: ${reason}`);
-								try {
-									ctx?.ui?.notify?.(reason, "error");
-								} catch {}
-								try {
-									pi.notify?.(reason, "error");
-								} catch {}
-								// Return error payload rather than throw to show in TUI as tool result error
-								return {
-									content: [{ type: "text", text: reason }],
-									isError: true,
-								};
-							}
-							// Has synthesis — check advise thin path (non-blocking concern)
-							try {
-								const source = getCurrentTurnSynthesis(ctx);
-								if (source && isAdviseEnabled() && isThinSynthesis(source)) {
-									const metrics = getArtifactsMetrics(source);
-									emitConcern(ctx, pi, metrics);
-									// do not block — allow the call
-								}
-							} catch {}
-							const result = await origExecute(...args);
-							// Reset current-turn buffer after successful tool call — next turn starts fresh.
-							try {
-								currentTurnMarkdown = "";
-								currentTurnUpdateTime = 0;
-							} catch {}
-							return result;
-						};
+						wrapSingleTool(def);
 					}
 				} catch (e) {
 					console.log(`[biggz-synthesis-gate] wrap error: ${e?.message || e}`);
@@ -471,7 +634,91 @@ export default function biggzSynthesisGate(pi) {
 		console.log(`[biggz-synthesis-gate] failed to wrap registerTool: ${e?.message || e}`);
 	}
 
-	// Secondary guard via tool_call event (if extension loads after tools registered)
+	// Also sweep pre-registered tools (load-order race: tool already registered before gate loaded).
+	// Iterate known access points: pi.tools / pi._tools (test mocks), pi.getAllTools+getToolDefinition, pi.getTool.
+	try {
+		let wrappedCount = 0;
+		// Strategy 1: direct Map/object access (mocks and possible internal exposure)
+		try {
+			const mapCandidates = [pi.tools, pi._tools, pi._extensionTools, pi._toolMap];
+			for (const m of mapCandidates) {
+				if (!m) continue;
+				if (m instanceof Map) {
+					for (const [name, def] of m.entries()) {
+						if (name !== "ask_user_question" && name !== "question") continue;
+						const target = def && def.definition ? def.definition : def;
+						if (wrapSingleTool(target)) wrappedCount++;
+						// Also handle case where Map value is definition itself
+						if (def && def !== target && typeof def.execute === "function") {
+							if (wrapSingleTool(def)) wrappedCount++;
+						}
+					}
+				} else if (typeof m === "object") {
+					for (const k of Object.keys(m)) {
+						if (k !== "ask_user_question" && k !== "question") continue;
+						const v = m[k];
+						const target = v && v.definition ? v.definition : v;
+						if (target && typeof target.execute === "function") {
+							if (wrapSingleTool(target)) wrappedCount++;
+						}
+					}
+				}
+			}
+		} catch {}
+		// Strategy 2: via getAllTools + getToolDefinition if available (real Pi ExtensionAPI)
+		try {
+			if (typeof pi.getAllTools === "function") {
+				const all = pi.getAllTools();
+				if (Array.isArray(all)) {
+					for (const info of all) {
+						if (!info || (info.name !== "ask_user_question" && info.name !== "question")) continue;
+						let def = null;
+						try {
+							if (typeof pi.getToolDefinition === "function") def = pi.getToolDefinition(info.name);
+						} catch {}
+						// Fallback: try pi.getTool
+						if (!def) {
+							try {
+								if (typeof pi.getTool === "function") def = pi.getTool(info.name);
+							} catch {}
+						}
+						const target = def && def.definition ? def.definition : def;
+						if (target && typeof target.execute === "function") {
+							if (wrapSingleTool(target)) wrappedCount++;
+						} else if (def && typeof def.execute === "function") {
+							if (wrapSingleTool(def)) wrappedCount++;
+						}
+					}
+				}
+			}
+		} catch {}
+		// Strategy 3: direct pi.getTool / pi.getToolDefinition without getAllTools
+		for (const name of ["ask_user_question", "question"]) {
+			try {
+				if (typeof pi.getToolDefinition === "function") {
+					const def = pi.getToolDefinition(name);
+					const target = def && def.definition ? def.definition : def;
+					if (target && typeof target.execute === "function") {
+						if (wrapSingleTool(target)) wrappedCount++;
+					}
+				}
+			} catch {}
+			try {
+				if (typeof pi.getTool === "function") {
+					const def = pi.getTool(name);
+					if (def && typeof def.execute === "function") {
+						if (wrapSingleTool(def)) wrappedCount++;
+					}
+				}
+			} catch {}
+		}
+		if (wrappedCount > 0) console.log(`[biggz-synthesis-gate] wrapped ${wrappedCount} pre-registered tool(s) (load-order race)`);
+	} catch (e) {
+		console.log(`[biggz-synthesis-gate] pre-register sweep error: ${e?.message || e}`);
+	}
+
+	// Secondary guard via tool_call event — MUST actually block (load-order safe, cross-extension).
+	// Earlier versions only warned; this now returns {block:true, reason} to prevent bypass.
 	try {
 		if (typeof pi.on === "function") {
 			pi.on("tool_call", async (event, ctx) => {
@@ -481,16 +728,17 @@ export default function biggzSynthesisGate(pi) {
 					if (name !== "ask_user_question" && name !== "question") return;
 					const has = checkSynthesisPrecondition(ctx);
 					if (!has) {
-						const warn =
-							"[biggz-synthesis-gate] warning: ask_user_question/question called without preceding ## Sub-agent Result synthesis (Artifacts/Paths + Risks + Next missing)";
-						console.warn(warn);
+						const reason =
+							"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
+						console.error(`[biggz-synthesis-gate] blocked (tool_call) ${name}: ${reason}`);
 						try {
-							ctx?.ui?.notify?.(warn, "warning");
+							ctx?.ui?.notify?.(reason, "error");
 						} catch {}
 						try {
-							pi.notify?.(warn, "warning");
+							pi.notify?.(reason, "error");
 						} catch {}
-						return;
+						// Pi's tool_call handler blocks via return {block:true}
+						return { block: true, reason };
 					}
 					// Has synthesis — check thin + advise for concern (non-blocking)
 					try {
