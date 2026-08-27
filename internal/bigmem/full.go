@@ -563,6 +563,56 @@ func (s *Store) DoctorFix() error {
 	return nil
 }
 
+// FixResult reports blob migration results.
+type FixResult struct {
+	Migrated int `json:"migrated"`
+	Skipped  int `json:"skipped"`
+	Errors   int `json:"errors"`
+}
+
+// DoctorFixBlobs migrates legacy large rows to blob storage.
+func (s *Store) DoctorFixBlobs() (*FixResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	res := &FixResult{}
+	_ = s.db.QueryRow("SELECT COUNT(*) FROM observations WHERE content LIKE 'blob:sha256:%' AND deleted_at IS NULL").Scan(&res.Skipped)
+	rows, err := s.db.Query(`SELECT id, content FROM observations WHERE (length(content) > 100000 OR content LIKE 'data:image/%') AND content NOT LIKE 'blob:sha256:%' AND deleted_at IS NULL`)
+	if err != nil {
+		return res, err
+	}
+	defer rows.Close()
+	var ids []string
+	var contents []string
+	for rows.Next() {
+		var id, content string
+		if err := rows.Scan(&id, &content); err != nil {
+			res.Errors++
+			continue
+		}
+		ids = append(ids, id)
+		contents = append(contents, content)
+	}
+	if err := rows.Err(); err != nil {
+		return res, err
+	}
+	for i, id := range ids {
+		content := contents[i]
+		addr, err := PutBlob([]byte(content))
+		if err != nil {
+			res.Errors++
+			continue
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		_, err = s.db.Exec("UPDATE observations SET content = ?, updated_at = ? WHERE id = ?", addr, now, id)
+		if err != nil {
+			res.Errors++
+			continue
+		}
+		res.Migrated++
+	}
+	return res, nil
+}
+
 // ─── Compare ─────────────────────────────────────────────────────────────────
 
 // CompareResult compares two observations.

@@ -116,6 +116,14 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, "title is required")
 			return
 		}
+		// BlobStore externalization: len>100000 OR data:image/ → PutBlob → addr
+		if bigmem.ShouldExternalize(obs.Content) {
+			if addr, err := bigmem.PutBlob([]byte(obs.Content)); err == nil {
+				obs.Content = addr
+			} else {
+				fmt.Fprintf(os.Stderr, "[bigmem] PutBlob failed: %v\n", err)
+			}
+		}
 		if err := store.Save(obs); err != nil {
 			writeError(id, err.Error())
 			return
@@ -163,6 +171,12 @@ func handleToolCall(id any, name string, args map[string]any) {
 		if err != nil {
 			writeError(id, err.Error())
 			return
+		}
+		// Transparent blob resolve fallback (Store.Get already resolves)
+		if bigmem.IsBlobAddr(obs.Content) {
+			if data, err := bigmem.GetBlob(obs.Content); err == nil {
+				obs.Content = string(data)
+			}
 		}
 		jsonResult(id, map[string]any{
 			"id": obs.ID, "title": obs.Title, "type": obs.Type,

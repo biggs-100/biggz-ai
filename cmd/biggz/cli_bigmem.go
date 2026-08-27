@@ -337,12 +337,15 @@ func bigmemRun() int {
 	case "doctor":
 		useJSON := false
 		doFix := false
+		doFixBlobs := false
 		for i := 1; i < len(args); i++ {
 			switch args[i] {
 			case "--json":
 				useJSON = true
 			case "--fix":
 				doFix = true
+			case "--fix-blobs":
+				doFixBlobs = true
 			}
 		}
 		if doFix {
@@ -353,6 +356,20 @@ func bigmemRun() int {
 			if !useJSON {
 				fmt.Fprintln(os.Stderr, "Doctor fix applied: WAL checkpoint, VACUUM, FTS rebuild, schema migration.")
 			}
+		}
+		if doFixBlobs {
+			res, err := store.DoctorFixBlobs()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: doctor --fix-blobs: %v\n", err)
+				return 1
+			}
+			if useJSON {
+				data, _ := json.MarshalIndent(res, "", "  ")
+				fmt.Println(string(data))
+				return 0
+			}
+			fmt.Printf("Blobs migrated: %d, skipped: %d, errors: %d\n", res.Migrated, res.Skipped, res.Errors)
+			fmt.Println("Hint: find ~/.biggz/blobs -type f -mtime +30  # manual GC only (orphans tolerated)")
 		}
 		r, err := store.Doctor()
 		if err != nil {
