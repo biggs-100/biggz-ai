@@ -136,8 +136,9 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
       });
       const wrapped = mock._tools.get('ask_user_question');
       assert.ok(wrapped, 'wrapped tool exists');
-      // ensure internal last is clear and ctx has missing
+      // ensure post-delegation state: a prior synthesis exists in history so missing currentTurn should block
       mock._biggzSynthesisGate._test.clearLast();
+      mock._biggzSynthesisGate._test.setLast(richMarkdown);
       const ctx = makeCtx(missingMarkdown, ctxNotify);
       const result = await wrapped.execute('id1', {}, null, null, ctx);
       assert.equal(result.isError, true, `should block when missing (advise=${advise})`);
@@ -518,9 +519,11 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     assert.ok(wrapped, 'pre-registered tool exists after gate');
     mock._biggzSynthesisGate._test.clearCurrent();
     mock._biggzSynthesisGate._test.clearLast();
+    // Simulate prior synthesis in session history so this is post-delegation (should block without currentTurn)
+    mock._biggzSynthesisGate._test.setLast(richMarkdown);
     const ctxNotify = [];
     const ctxMissing = makeCtx(missingMarkdown, ctxNotify);
-    // Without synthesis, even pre-registered tool must block
+    // Without synthesis in currentTurn, even pre-registered tool must block (strict same-turn) when prior synthesis exists
     assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctxMissing), false);
     const resultMissing = await wrapped.execute('id-pre', {}, null, null, ctxMissing);
     assert.equal(resultMissing.isError, true, 'pre-registered tool must block when missing synthesis');
@@ -542,6 +545,8 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     assert.ok(handler, 'tool_call handler registered');
     mock._biggzSynthesisGate._test.clearCurrent();
     mock._biggzSynthesisGate._test.clearLast();
+    // Simulate prior synthesis so this is post-delegation (should block)
+    mock._biggzSynthesisGate._test.setLast(richMarkdown);
     const ctxNotify = [];
     const ctx = makeCtx(missingMarkdown, ctxNotify);
     // tool_call with missing synthesis must return block:true (not just warn)
@@ -608,5 +613,38 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     await turnStartHandler({});
     assert.equal(mock._biggzSynthesisGate._test.getCurrent(), '', 'turn_start must reset currentTurn for strict same-turn');
     assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(makeCtx('', [])), false, 'after turn_start without new synthesis, check must be false');
+  });
+
+  it('preflight allowance: first ask with no prior synthesis ever must NOT block (SDD Session Preflight)', async () => {
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi();
+    gateFn(mock);
+    let originalCalled = false;
+    mock.registerTool({
+      name: 'ask_user_question',
+      description: 'preflight',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => {
+        originalCalled = true;
+        return { content: [{ type: 'text', text: 'ok' }] };
+      },
+    });
+    const wrapped = mock._tools.get('ask_user_question');
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
+    // No synthesis ever in session (current empty, last empty, history missing) — preflight should be allowed
+    const ctxMissing = makeCtx(missingMarkdown, []);
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctxMissing), false, 'strict check is false (no current)');
+    assert.equal(mock._biggzSynthesisGate.getCurrentTurnSynthesis(ctxMissing), '', 'no synthesis anywhere');
+    assert.equal(mock._biggzSynthesisGate.getSynthesisSource(ctxMissing), '', 'no synthesis anywhere');
+    const result = await wrapped.execute('id-preflight', {}, null, null, ctxMissing);
+    assert.equal(result.isError, undefined, 'first ask with no prior synthesis should NOT block (preflight allowance)');
+    assert.equal(originalCalled, true, 'original should be called for preflight allowance');
+    // tool_call secondary guard also must allow when no synthesis ever
+    const handler = mock._getToolCallHandler();
+    mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
+    const ret = await handler({ toolName: 'ask_user_question' }, makeCtx(missingMarkdown, []));
+    assert.equal(ret, undefined, 'tool_call must allow when no synthesis ever (preflight)');
   });
 });

@@ -571,22 +571,31 @@ export default function biggzSynthesisGate(pi) {
 			}
 			const has = checkSynthesisPrecondition(ctx);
 			if (!has) {
-				const reason =
-					"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
-				console.error(`[biggz-synthesis-gate] blocked ${toolName}: ${reason}`);
-				try {
-					ctx?.ui?.notify?.(reason, "error");
-				} catch {}
-				try {
-					pi.notify?.(reason, "error");
-				} catch {}
-				// Return error payload rather than throw to show in TUI as tool result error
-				return {
-					content: [{ type: "text", text: reason }],
-					isError: true,
-				};
+				// Preflight allowance: if no synthesis has EVER existed in this session,
+				// it's not a post-delegation violation — allow first asks (e.g. SDD Session Preflight)
+				// without requiring prior synthesis. After at least one synthesis exists,
+				// strict same-turn is enforced.
+				const anySynthesis = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
+				if (!anySynthesis) {
+					// No synthesis anywhere in session history — likely preflight/first ask — allow
+				} else {
+					const reason =
+						"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
+					console.error(`[biggz-synthesis-gate] blocked ${toolName}: ${reason}`);
+					try {
+						ctx?.ui?.notify?.(reason, "error");
+					} catch {}
+					try {
+						pi.notify?.(reason, "error");
+					} catch {}
+					// Return error payload rather than throw to show in TUI as tool result error
+					return {
+						content: [{ type: "text", text: reason }],
+						isError: true,
+					};
+				}
 			}
-			// Has synthesis — check advise thin path (non-blocking concern)
+			// Has synthesis or preflight allowance — check advise thin path (non-blocking concern)
 			try {
 				const source = getCurrentTurnSynthesis(ctx);
 				if (source && isAdviseEnabled() && isThinSynthesis(source)) {
@@ -728,19 +737,24 @@ export default function biggzSynthesisGate(pi) {
 					if (name !== "ask_user_question" && name !== "question") return;
 					const has = checkSynthesisPrecondition(ctx);
 					if (!has) {
-						const reason =
-							"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
-						console.error(`[biggz-synthesis-gate] blocked (tool_call) ${name}: ${reason}`);
-						try {
-							ctx?.ui?.notify?.(reason, "error");
-						} catch {}
-						try {
-							pi.notify?.(reason, "error");
-						} catch {}
-						// Pi's tool_call handler blocks via return {block:true}
-						return { block: true, reason };
+						const anySynthesis = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
+						if (!anySynthesis) {
+							// Preflight allowance — no synthesis ever in session, allow first asks
+						} else {
+							const reason =
+								"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
+							console.error(`[biggz-synthesis-gate] blocked (tool_call) ${name}: ${reason}`);
+							try {
+								ctx?.ui?.notify?.(reason, "error");
+							} catch {}
+							try {
+								pi.notify?.(reason, "error");
+							} catch {}
+							// Pi's tool_call handler blocks via return {block:true}
+							return { block: true, reason };
+						}
 					}
-					// Has synthesis — check thin + advise for concern (non-blocking)
+					// Has synthesis or preflight allowance — check thin + advise for concern (non-blocking)
 					try {
 						const source = getCurrentTurnSynthesis(ctx);
 						if (source && isAdviseEnabled() && isThinSynthesis(source)) {
