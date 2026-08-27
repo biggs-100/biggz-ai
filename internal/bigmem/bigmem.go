@@ -958,6 +958,23 @@ func boolToInt(b bool) int {
 	return 0
 }
 
+// ShouldExternalize reports whether content should be externalized to BlobStore.
+func ShouldExternalize(c string) bool {
+	return len(c) > 100000 || strings.Contains(c, "data:image/")
+}
+
+// resolveBlobContent returns blob bytes if content is a blob address, else content.
+func resolveBlobContent(content string) string {
+	if !IsBlobAddr(content) {
+		return content
+	}
+	data, err := GetBlob(content)
+	if err != nil {
+		return content
+	}
+	return string(data)
+}
+
 // ─── Get ─────────────────────────────────────────────────────────────────────
 
 // Get retrieves an observation by ID.
@@ -992,6 +1009,12 @@ func (s *Store) Get(id string) (*Observation, error) {
 		obs.DeletedAt = &da.String
 	}
 	obs.Pinned = pinnedInt != 0
+	// Transparent blob resolve: blob addr -> bytes, miss -> raw addr, no DB mutate.
+	if IsBlobAddr(obs.Content) {
+		if data, err := GetBlob(obs.Content); err == nil {
+			obs.Content = string(data)
+		}
+	}
 	return obs, nil
 }
 
@@ -1060,6 +1083,11 @@ func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error)
 					obs.DeletedAt = &da.String
 				}
 				obs.Pinned = pinnedInt != 0
+				if IsBlobAddr(obs.Content) {
+					if data, err := GetBlob(obs.Content); err == nil {
+						obs.Content = string(data)
+					}
+				}
 				directResults = append(directResults, obs)
 			}
 		}
@@ -1180,6 +1208,11 @@ func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error)
 			obs.DeletedAt = &da.String
 		}
 		obs.Pinned = pinnedInt != 0
+		if IsBlobAddr(obs.Content) {
+			if data, err := GetBlob(obs.Content); err == nil {
+				obs.Content = string(data)
+			}
+		}
 		results = append(results, obs)
 	}
 	// Fallback to LIKE if FTS returned no rows (covers rebuild race or corrupted FTS)
@@ -1215,6 +1248,11 @@ func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error)
 					obs.DeletedAt = &da.String
 				}
 				obs.Pinned = pinnedInt != 0
+				if IsBlobAddr(obs.Content) {
+					if data, err := GetBlob(obs.Content); err == nil {
+						obs.Content = string(data)
+					}
+				}
 				results = append(results, obs)
 			}
 		}
