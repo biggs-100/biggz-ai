@@ -174,7 +174,8 @@ The system MUST define Tier() SupportTier on AgentAdapter. This method returns t
 
 ### Requirement: LensPlugin Absence Invariant
 
-The system MUST NOT reintroduce `plugin.LensPlugin`, `internal/lens/*`, or embedded static-analysis engine. `Lens` MUST remain in `internal/review/lens/types.go`, not `plugin/`. Any PR reintroducing `LensPlugin` MUST fail `gofmt`/`go test` validation via missing import guard.
+The system MUST NOT reintroduce `plugin.LensPlugin`, `internal/lens/*`, or embedded static-analysis engine. `Lens` MUST remain in `internal/review/lens/types.go`, not `plugin/`. `AgentAdapter` shim delegation via `ExtensionAPI` MUST be the only compatibility layer; it MUST NOT re-expose `LensPlugin` types or interfaces. Any PR reintroducing `LensPlugin` MUST fail `gofmt`/`go test` validation via missing import guard.
+(Previously: forbade LensPlugin without mentioning shim as sole compat layer)
 
 #### Scenario: LensPlugin stays absent
 
@@ -188,6 +189,12 @@ The system MUST NOT reintroduce `plugin.LensPlugin`, `internal/lens/*`, or embed
 - GIVEN filesystem check
 - WHEN `internal/lens/` directory is queried
 - THEN it MUST not exist (lenses live under `internal/review/lens/`)
+
+#### Scenario: Shim is sole compat layer
+
+- GIVEN `internal/extension/shim.go` exists
+- WHEN `plugin/` is inspected for `LensPlugin` or `Lens` types
+- THEN zero such types MUST be found outside the deprecated shim alias
 ### Requirement: ExternalLensAdapter Bridge
 
 The system MUST provide `ExternalLensAdapter` in `internal/review/lens/external/adapter.go` implementing `Lens` by delegating to `biggz review capture-result` JSON. It MUST translate `LensResultHash` with prefix `gentle-ai.lens-result/v1` without changing `capture.go`/`ledger.go` schema. Build-time registry wiring lives in `cmd/biggz` init.
@@ -205,3 +212,26 @@ The system MUST provide `ExternalLensAdapter` in `internal/review/lens/external/
 - WHEN pipeline executes with external lens
 - THEN execution MUST remain sequential `pipeline.Stage` ordered by `PlanLenses`
 - AND no DAG scheduler MUST be invoked
+
+### Requirement: AgentAdapter Shim via ExtensionAPI
+
+The system MUST provide `internal/extension/shim.go` where `AgentAdapter` delegates to `ExtensionAPI` as a provider. Hooks and custom-tool registrations MUST map to `ExtensionAPI.RegisterTool`; adapter methods MUST forward to the underlying `ExtensionAPI` instance. The shim type and its `AgentAdapter` alias MUST be annotated `// Deprecated: use ExtensionAPI` and `LensPlugin` MUST NOT be reintroduced. `install.Deploy` MUST use `ExtensionAPI` for registration.
+
+#### Scenario: Shim delegates RegisterTool
+
+- GIVEN a shimmed `AgentAdapter` backed by `FakeExtensionAPI`
+- WHEN adapter registers a hook/custom tool
+- THEN `FakeExtensionAPI` MUST record a `RegisterTool` call with the same def
+
+#### Scenario: Deprecated annotation present
+
+- GIVEN `internal/extension/shim.go`
+- WHEN inspected for `type AgentAdapter` or shim type
+- THEN it MUST contain `// Deprecated: use ExtensionAPI`
+
+#### Scenario: LensPlugin not reintroduced
+
+- GIVEN codebase after change
+- WHEN searching for `type LensPlugin`
+- THEN zero definitions MUST be found
+

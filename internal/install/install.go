@@ -324,6 +324,9 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		if _, err := DeployPiToolInterception(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi tool interception: %w", err)
 		}
+		if _, err := DeployPiExtensionAPI(homeDir, assets.FS, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy pi extension api: %w", err)
+		}
 		if _, err := DeployPiLastModel(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi last model: %w", err)
 		}
@@ -1620,6 +1623,33 @@ func DeployPiMemoryChrome(homeDir string, ffs fs.FS, dryRun ...bool) (bool, erro
 		data, err = fs.ReadFile(assets.FS, "pi/biggz-memory-chrome.js")
 		if err != nil {
 			return false, fmt.Errorf("read pi memory chrome asset: %w", err)
+		}
+	}
+	if isDry {
+		return true, nil
+	}
+	if err := os.MkdirAll(extensionsDir, 0755); err != nil {
+		return false, fmt.Errorf("mkdir %s: %w", extensionsDir, err)
+	}
+	if _, err := filemerge.WriteFileAtomic(targetPath, data, 0644); err != nil {
+		return false, fmt.Errorf("write %s: %w", targetPath, err)
+	}
+	return true, nil
+}
+
+func DeployPiExtensionAPI(homeDir string, ffs fs.FS, dryRun ...bool) (bool, error) {
+	isDry := len(dryRun) > 0 && dryRun[0]
+	extensionsDir := piExtensionsDir(homeDir)
+	targetPath := filepath.Join(extensionsDir, "biggz-extension-api.js")
+	var data []byte
+	var err error
+	if ffs != nil {
+		data, err = fs.ReadFile(ffs, "pi/biggz-extension-api.js")
+	}
+	if err != nil || len(data) == 0 {
+		data, err = fs.ReadFile(assets.FS, "pi/biggz-extension-api.js")
+		if err != nil {
+			return false, fmt.Errorf("read pi extension api asset: %w", err)
 		}
 	}
 	if isDry {

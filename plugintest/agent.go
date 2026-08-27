@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/biggs-100/biggz-ai/internal/extension/testutil"
 	"github.com/biggs-100/biggz-ai/model"
 	"github.com/biggs-100/biggz-ai/plugin"
 )
@@ -238,3 +239,9 @@ func (a *FakeAgent) DeployConfig(ctx context.Context, cfg plugin.AgentConfig) er
 func (a *FakeAgent) SetTempDir(dir string) {
 	a.tempDir = dir
 }
+
+// FakeExtensionAPI is a compat alias to testutil.FakeExtensionAPI.
+type FakeExtensionAPI = testutil.FakeExtensionAPI
+
+// NewFakeExtensionAPI creates a new FakeExtensionAPI (alias).
+func NewFakeExtensionAPI() *testutil.FakeExtensionAPI { return testutil.NewFake() }

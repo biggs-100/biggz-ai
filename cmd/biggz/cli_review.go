@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/biggs-100/biggz-ai/internal/extension"
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/review/lens"
 	"github.com/biggs-100/biggz-ai/internal/review/lens/external"
@@ -33,7 +34,8 @@ func init() {
 	//   hunks, truncated := deriveLensHunks(repo, input) // ≤8MiB, Truncated flag
 	//   lensInput := lens.NewLensInput(input, hunks, truncated, repo)
 	//   stages := lensStagesForReview(lens.Ordered(review.PlanLenses(tier, declared)), lensInput)
-	lens.RegisterLens(&readability.Lens{})
+	api := extension.New()
+	readability.Register(api)
 	lens.RegisterLens(&reliability.Lens{})
 	lens.RegisterLens(&resilience.Lens{})
 	lens.RegisterLens(&external.ExternalLensAdapter{LensID: "external"})
