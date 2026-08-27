@@ -89,6 +89,10 @@ func TestOverlayDoesNotContainBigMemAllowlist(t *testing.T) {
 // [biggz-mcp --tools=agent --prefix=biggz] type local enabled true,
 // preserves existing keys, and is idempotent.
 func TestDeployMCPMergeIntoSettings_WritesBiggzServer(t *testing.T) {
+	// Isolate from PI_SUBAGENT_CHILD=1 inherited from pi harness (subagent-general).
+	// DeployMCPConfig skips when PI_SUBAGENT_CHILD=1 (fresh child guard), so ensure
+	// parent path runs even when the outer env is already 1. t.Setenv restores after test.
+	t.Setenv("PI_SUBAGENT_CHILD", "")
 	home := t.TempDir()
 	// Use FakeAgent mimicking opencode
 	agent := &plugintest.FakeAgent{
@@ -175,6 +179,9 @@ func TestDeployMCPMergeIntoSettings_WritesBiggzServer(t *testing.T) {
 // both settings.json and mcp.json with mcpServers.bigmem {command, args, type:local},
 // preserves existing keys, cleans legacy vendors, and is idempotent.
 func TestProvisionBigMemMCP_WritesBothFiles(t *testing.T) {
+	// Isolate from PI_SUBAGENT_CHILD=1 inherited from pi harness. ProvisionBigMemMCP
+	// returns changed=false when child=1, so clear for the parent-provision path.
+	t.Setenv("PI_SUBAGENT_CHILD", "")
 	home := t.TempDir()
 	a := pi.NewAdapter()
 
@@ -267,9 +274,11 @@ func TestProvisionBigMemMCP_WritesBothFiles(t *testing.T) {
 // subagents (PI_SUBAGENT_CHILD=1) do not race mcp.json/settings.json writes.
 // Mirrors biggz-last-model.js guard.
 func TestProvisionBigMemMCP_SkipsInFreshChild(t *testing.T) {
+	// Isolate parent provision from outer PI_SUBAGENT_CHILD=1 (pi harness).
+	t.Setenv("PI_SUBAGENT_CHILD", "")
 	home := t.TempDir()
 	a := pi.NewAdapter()
-	// Pre-provision as parent
+	// Pre-provision as parent (must run with child=0; isolated above)
 	if _, _, err := a.ProvisionBigMemMCP(home); err != nil {
 		t.Fatalf("parent provision: %v", err)
 	}
