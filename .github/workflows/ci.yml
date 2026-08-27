@@ -193,6 +193,30 @@ jobs:
           fi
           echo "No forbidden git exec found outside internal/git."
 
+  no-fmtSprintf:
+    name: No fmt.Sprintf in lens prompts
+    needs: format
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful format
+        if: needs.format.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          autocrlf: false
+      - name: No fmt.Sprintf in lens prompts
+        run: |
+          set -e
+          echo "Checking for prompt fmt.Sprintf in internal/review/lens (allowlist //lint:ignore no-fmtSprintf)..."
+          if rg -n 'fmt\.Sprintf' internal/review/lens --glob '!*_test.go' 2>/dev/null | grep -v '//lint:ignore no-fmtSprintf' | grep -q .; then
+            echo "::error::Prompt fmt.Sprintf found without allowlist in internal/review/lens:"
+            rg -n 'fmt\.Sprintf' internal/review/lens --glob '!*_test.go' | grep -v '//lint:ignore no-fmtSprintf' || true
+            exit 1
+          fi
+          echo "No prompt fmt.Sprintf found — guard passed."
+
   e2e:
     name: E2E (${{ matrix.os }})
     needs: format

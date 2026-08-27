@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -46,35 +47,57 @@ type cacheFile struct {
 // Fingerprint computes a content-aware fingerprint for a set of skill files.
 // Includes: schema version + filename + modtime + size + first 256 bytes of content.
 // This detects content edits even when size and timestamp are unchanged.
+func providerDir(provider, projectRoot, home string) string {
+	switch provider {
+	case "user:opencode":
+		if home == "" {
+			return ""
+		}
+		return filepath.Join(home, ".config", "opencode", "skills")
+	case "user:biggz":
+		if home == "" {
+			return ""
+		}
+		return filepath.Join(home, ".biggz", "skills")
+	case "user:claude":
+		if home == "" {
+			return ""
+		}
+		return filepath.Join(home, ".claude", "skills")
+	case "user:kilo":
+		if home == "" {
+			return ""
+		}
+		return filepath.Join(home, ".config", "kilo", "skills")
+	case "project:skills":
+		return filepath.Join(projectRoot, "skills")
+	case "project:opencode":
+		return filepath.Join(projectRoot, ".opencode", "skills")
+	case "project:github":
+		return filepath.Join(projectRoot, ".github", "skills")
+	case "project:claude":
+		return filepath.Join(projectRoot, ".claude", "skills")
+	default:
+		return ""
+	}
+}
+
 func Fingerprint(projectRoot string) string {
 	home, _ := os.UserHomeDir()
 	var lines []string
 	lines = append(lines, fmt.Sprintf("schema:%d", RegistrySchema))
 
-	// Collect all SKILL.md paths from the same dirs scanAllSkills uses
-	scanDirs := []string{}
-
-	// User-level skills dirs
-	if home != "" {
-		userDirs := []string{
-			filepath.Join(home, ".config", "opencode", "skills"),
-			filepath.Join(home, ".biggz", "skills"),
-			filepath.Join(home, ".claude", "skills"),
-			filepath.Join(home, ".config", "kilo", "skills"),
-		}
-		scanDirs = append(scanDirs, userDirs...)
-	}
-
-	// Project-level skills dirs
-	projectDirs := []string{
-		filepath.Join(projectRoot, "skills"),
-		filepath.Join(projectRoot, ".opencode", "skills"),
-		filepath.Join(projectRoot, ".claude", "skills"),
-		filepath.Join(projectRoot, ".github", "skills"),
-	}
-	scanDirs = append(scanDirs, projectDirs...)
-
+	// Collect all SKILL.md paths from ProviderPriority ordered dirs (oh-my-pi parity)
 	seen := map[string]bool{}
+	scanDirs := []string{}
+	for _, p := range ProviderPriority {
+		dir := providerDir(p, projectRoot, home)
+		if dir == "" {
+			continue
+		}
+		scanDirs = append(scanDirs, dir)
+	}
+
 	for _, dir := range scanDirs {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -207,43 +230,62 @@ func Refresh(projectRoot string, force bool) (*Result, error) {
 // ─── Scanning ────────────────────────────────────────────────────────────────
 
 func scanAllSkills(projectRoot string) []Entry {
+	return scanAllSkillsWithOpts(projectRoot, ScanOpts{})
+}
+
+func scanAllSkillsWithOpts(projectRoot string, opts ScanOpts) []Entry {
 	home, _ := os.UserHomeDir()
 	seen := map[string]bool{}
 	var entries []Entry
 
 	scanDirs := []string{}
-
-	// User-level skills dirs
-	if home != "" {
-		userDirs := []string{
-			filepath.Join(home, ".config", "opencode", "skills"),
-			filepath.Join(home, ".biggz", "skills"),
-			filepath.Join(home, ".claude", "skills"),
-			filepath.Join(home, ".config", "kilo", "skills"),
+	for _, p := range ProviderPriority {
+		dir := providerDir(p, projectRoot, home)
+		if dir == "" {
+			continue
 		}
-		scanDirs = append(scanDirs, userDirs...)
+		scanDirs = append(scanDirs, dir)
 	}
-
-	// Project-level skills dirs
-	projectDirs := []string{
-		filepath.Join(projectRoot, "skills"),
-		filepath.Join(projectRoot, ".opencode", "skills"),
-		filepath.Join(projectRoot, ".claude", "skills"),
-		filepath.Join(projectRoot, ".github", "skills"),
-	}
-	scanDirs = append(scanDirs, projectDirs...)
 
 	for _, dir := range scanDirs {
-		entries = append(entries, scanDir(dir, seen, projectRoot)...)
+		entries = append(entries, scanDirWithOpts(dir, seen, projectRoot, opts)...)
 	}
 
 	return entries
 }
 
+func scanAllSkillsWithPriority(projectRoot string, priority [7]string, opts ScanOpts) []Entry {
+	home, _ := os.UserHomeDir()
+	seen := map[string]bool{}
+	var entries []Entry
+	for _, p := range priority {
+		dir := providerDir(p, projectRoot, home)
+		if dir == "" {
+			continue
+		}
+		entries = append(entries, scanDirWithOpts(dir, seen, projectRoot, opts)...)
+	}
+	return entries
+}
+
 func scanDir(dir string, seen map[string]bool, projectRoot string) []Entry {
+	return scanDirWithOpts(dir, seen, projectRoot, ScanOpts{})
+}
+
+func scanDirWithOpts(dir string, seen map[string]bool, projectRoot string, opts ScanOpts) []Entry {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
+	}
+
+	disabled := make(map[string]struct{}, len(opts.DisabledExtensions))
+	for _, d := range opts.DisabledExtensions {
+		if strings.HasPrefix(d, "skill:") {
+			name := strings.TrimPrefix(d, "skill:")
+			if name != "" {
+				disabled[name] = struct{}{}
+			}
+		}
 	}
 
 	var result []Entry
@@ -262,6 +304,15 @@ func scanDir(dir string, seen map[string]bool, projectRoot string) []Entry {
 		if seen[name] {
 			continue
 		}
+		if _, skip := disabled[name]; skip {
+			continue
+		}
+		if matchesGlob(name, opts.Ignored) {
+			continue
+		}
+		if len(opts.Include) > 0 && !matchesGlob(name, opts.Include) {
+			continue
+		}
 
 		skillDir := filepath.Join(dir, name)
 		skillPath := filepath.Join(skillDir, "SKILL.md")
@@ -272,21 +323,33 @@ func scanDir(dir string, seen map[string]bool, projectRoot string) []Entry {
 		desc := extractDescription(skillPath)
 
 		rel, err := filepath.Rel(projectRoot, skillPath)
-		path := skillPath
+		p := skillPath
 		if err == nil {
-			path = rel
+			p = rel
 		}
-		path = filepath.ToSlash(path)
+		p = filepath.ToSlash(p)
 
 		seen[name] = true
 		result = append(result, Entry{
 			Name:        name,
-			Path:        path,
+			Path:        p,
 			Description: desc,
 		})
 	}
 
 	return result
+}
+
+func matchesGlob(name string, patterns []string) bool {
+	for _, pat := range patterns {
+		if ok, _ := path.Match(pat, name); ok {
+			return true
+		}
+		if ok, _ := filepath.Match(pat, name); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func extractDescription(skillPath string) string {
