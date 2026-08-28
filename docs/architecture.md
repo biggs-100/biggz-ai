@@ -9,7 +9,7 @@ biggz-ai is an **AI agent harness** — it runs inside AI coding agents (OpenCod
 1. **Harness, not an agent** — biggz-ai doesn't call AI APIs. The agent IS the AI.
 2. **Human-in-the-loop** — the orchestrator delegates, the human decides every phase transition.
 3. **Protocol-first** — designed with a single data model from day one (unlike gentle-ai's evolved architecture).
-4. **Minimal surface area** — ~36K production Go lines vs gentle-ai's ~112K, and ~60K vs ~313K including tests (measured 2026-08-10).
+4. **Minimal surface area** — ~36K production Go lines vs gentle-ai's ~112K, and ~60K vs ~313K including tests (measured 2026-08-10, parity-v25 added ~1.1K lines (pending 4+6, store, hash) — still minimal).
 5. **Under-demand loading** — skills, tools, and memory are loaded only when needed.
 
 ## Package Map
@@ -22,51 +22,72 @@ cmd/
 internal/
 ├── agents/          — Agent adapters (opencode, claude, qwen)
 ├── agentbuilder/    — Custom SDD agent generation (engines, parser, installer, registry)
-├── assets/          — Embedded skills + configs + OpenCode plugins
+├── assets/          — Embedded skills + configs + OpenCode plugins (opencode plugins + biggz-orchestrator.md + biggz-synthesis-gate.js)
 ├── backup/          — tar.gz snapshot/restore
-├── BigMem/          — Persistent observation store + MCP tools
-├── contracts/       — Wire-envelope formalization engine (test-only validation)
-├── filemerge/       — Atomic write, JSONC merge, section injection
+├── BigMem/          — Persistent observation store + MCP tools (22 tools, SQLite)
+├── contracts/       — Wire-envelope formalization engine (test-only validation, draft 2020-12)
+├── filemerge/       — Atomic write, JSONC merge, section injection (domain hash helpers)
 ├── install/         — Agent detection + deploy
-├── lens/            — Review lenses (risk, readability, reliability, resilience)
+├── lens/            — Legacy lens infra — review now uses content-addressed event store (risk, readability, reliability, resilience kept for parity)
 │   ├── gitdiff/     — Shared git diff parsing
 │   ├── risk/        — R1: static analysis
 │   ├── readability/ — R2: code quality heuristics
 │   ├── reliability/ — R3: test coverage, error handling
 │   └── resilience/  — R4: timeouts, context, concurrency
-├── release/         — Version tagging + verification
-├── review/          — Review lifecycle + RDD
-└── sdd/             — SDD native commands
+├── review/          — Review lifecycle + RDD (store, lock, finalize, receipt, snapshot, hash, artifact)
+│   ├── store.go     — GitCommonDir → <commonDir>/biggz/review-transactions/<lineage>/v1/events/<sha256>, publishImmutable, dual-read legacy flat
+│   ├── lock.go      — flock(LOCK_EX|LOCK_NB) on .lock, BusyError, stale 5m PID+mtime
+│   ├── finalize.go  — Finalize + FixDeltaHashForSnapshot + BurnEnabled + burned.json
+│   ├── receipt.go   — Receipt binding via domainHash("biggz-ai.review-receipt/v1")
+│   ├── snapshot.go  — Snapshot chain via domainHash("biggz-ai.review-snapshot/v1")
+│   └── artifact.go  — Artifact subject / manifest / admission (domainHash + writeLengthPrefixed)
+├── sdd/             — SDD native commands (synthesis, pending, question, status_v2)
+│   ├── synthesis.go — RenderSynthesis 4+6 markers, ReadLoop >50KB paginated
+│   ├── pending.go   — Pending dual-write BigMem + state.yaml (biggz-ai.pending-question/v1)
+│   ├── question.go  — ValidateQuestionEnvelope 16/60/4/2-4, IsCheckpointEnvelope
+│   └── status_v2.go — biggz-ai.sdd-status/v2 authority-free projection
+├── sddattempt/      — SDD runtime attempt ledger (acquire/settle, CAS, tokens, grants)
+│   ├── sddattempt.go — Acquire/Settle/Begin/Finish/Grant/Rescope, BlockedError, SettleObligation
+│   └── cas_store.go  — GitCommonDir sdd-runtime/v1/<change>/ record-<sha>.json + HEAD + LOCK
 └── skillregistry/   — Skill registry scan + generation
 
-model/               — Core types (ReviewState, FSM, evidence chain)
-orchestrator/        — Review lifecycle orchestration
-pipeline/            — Sequential + DAG graph execution
+model/               — Core types (ReviewState, FSM 13-state, hash domainHash+writeLengthPrefixed, ReviewStatus, Role)
+├── hash.go          — domainHash(domain+"\x00"+payload) + writeLengthPrefixed(u32 BE), EvidenceDomain/MerkleDomain
+├── review.go        — MaxFixRounds=1, MaxScopedValidations=1, ReviewStatus 13 values, BudgetCounters
+└── fsm.go           — Guard table 13-state + Any→* wildcard + BudgetCheck (<1) verbatim errors
+contracts/           — Frozen JSON Schemas (review-integration/v1 21 schemas + sdd-integration/v1 2 schemas)
+orchestrator/        — (legacy) Review lifecycle orchestration — now superseded by internal/review event store
+pipeline/            — (legacy) Sequential + DAG graph — superseded by capture-result per-slot finalize
 plugin/              — LensPlugin + AgentAdapter interfaces
-plugintest/          — Test helpers
 policy/              — PolicyEvaluator interface
 registry/            — Build-time plugin registry
 ```
 
 ## Data Flow
 
-### Review Pipeline
+### Review Pipeline (content-addressed)
 
 ```
-stdin (ReviewSubject JSON)
-  → cmd/biggz: parse
-  → orchestrator.Execute()
-    → ReviewState (Pending)
-    → Transition to InProgress
-    → Graph.Execute()  ← parallel DAG (SGH multi-ready-unit)
-      ├── RiskLens        \
-      ├── ReadabilityLens  ├── all run in parallel
-      ├── ReliabilityLens  │   (no dependencies)
-      ├── ResilienceLens  /
-      └── PolicyEvaluator ← depends on all lenses
-    → Transition to Completed (or Failed on error)
-    → Compute MerkleRoot
-  → stdout (ReviewState JSON)
+biggz review start --subject <file> [--lineage <id>] [--lenses risk,readability,...]
+  → Store.Open via GitCommonDir: <commonDir>/biggz/review-transactions/<lineage>/v1/events/<sha256>
+  → Append genesis (start_review) with CorrectionBudget = min(200, ceil(changedLines/2)), frozen lens plan
+  → HEAD = genesis
+
+biggz review capture-result --lineage <id> --lens <name> --order <n> \
+    --expected-revision <head> --input <reviewer-json>
+  → Admit: verify subjectHash echo, inspection covers full manifest, findings canonicalized
+  → Append lens_result event via publishImmutable (dual-read legacy fallback)
+  → Repeat per selected lens slot (selected order, lens)
+
+biggz review finalize <lineage>
+  → Under flock(LOCK_EX|LOCK_NB) on .lock: LoadChain + Validate + deriveFinalizeData
+  → Compute FixDeltaHashForSnapshot(baseTree, candidateTree, pathsDigest, cumulative, ledgerIDs) via domainHash("fix-delta/v1\x00"+writeLengthPrefixed(...))
+  → Build PersistedReceipt (domainHash("biggz-ai.review-receipt-binding/v1")) → receipts/<sha256>.json via publishNoReplace
+  → Append complete_review event (receipt_path + receipt_hash)
+  → If BurnEnabled (default true): append burn_review, write burned.json tombstone, delete receipt file (ephemeral); else preserve receipt
+
+biggz review gate <pre-pr|pre-push|post-apply|release> <lineage> [--json]
+  → Validate chain + receipt binding + burn check → DeliveryBurned if burned, otherwise policy verdict
 ```
 
 ### SDD Workflow
@@ -90,15 +111,37 @@ User: "quiero implementar X"
 
 ## State Machine
 
-5 states with external policy evaluation:
+13 states with role-based guard table and budget counters (model/fsm.go, model/review.go). Self-transitions (current == target) are always valid; wildcard `Any` (`From == ""`) covers cross-cutting terminals.
+
+| From | To | Permitted Roles | Precondition | Budget Check |
+|------|----|-----------------|--------------|---------------|
+| unreviewed | in_review | Reviewer, Lead | evidence-non-empty | — |
+| in_review | needs_changes | Reviewer, Lead | — | — |
+| needs_changes | changes_submitted | Author | — | fix-rounds (<1, MaxFixRounds=1) verbatim `"budget exceeded: fix rounds exhausted (1/1)"` |
+| changes_submitted | re_review | Reviewer, Lead | — | scoped-validations (<1, MaxScopedValidations=1) verbatim `"budget exceeded: scoped validations exhausted (1/1)"` |
+| in_review | approved | Reviewer, Lead, Admin | all-policies-pass | — |
+| in_review | escalated | Lead, Admin | escalation-reason-provided | — |
+| Any ("") | invalidated | Admin | scope-change-detected | — |
+| Any ("") | blocked | Lead, Admin | policy-violation | — |
+| Any ("") | withdrawn | Author | — | — |
+| approved | superseded | Lead, Admin | superseding-review-exists | — |
+| Any ("") | completed | Lead, Admin | all-policies-pass-receipt-valid | — |
+| completed | archived | Lead, Admin | 30-day-minimum | — |
+
+Canonical `ReviewStatus` values: `unreviewed`, `in_review`, `needs_changes`, `changes_submitted`, `re_review`, `approved`, `escalated`, `invalidated`, `blocked`, `withdrawn`, `superseded`, `completed`, `archived` (plus legacy `pending`/`in_progress` aliases). `Invalidated`/`Withdrawn` lineages are terminal and MUST NOT be finalizable — `Finalize` returns `Lineage is invalidated/withdrawn` under lock.
+
+Budget enforcement (`checkBudget`) is verbatim gentle parity: `FixRounds >= 1` and `ScopedValidations >= 1` reject with `"budget exceeded: ... (1/1)"`.
 
 ```
-Pending → InProgress → Completed → Archived
-  ↓                        ↓
-  └──→ Failed             └──→ InProgress (correction cycle)
+unreviewed → in_review → needs_changes → changes_submitted → re_review
+                │  │  │          │                      ↘
+                │  │  ├─→ approved → superseded          ╰─→ (budget exhausted blocks correction cycle)
+                │  │  └─→ escalated
+                │  └─→ blocked / invalidated / withdrawn (Any→*)
+                └─→ completed (Any→completed) → archived
 ```
 
-Transitions are validated by the FSM. Business rules are evaluated by PolicyEvaluator, not embedded in transitions.
+Transitions are validated by `FSM.Transition(current, target, role, counters)` via `findGuardEntry` (exact then wildcard). Business rules (policy checks, evidence requirements) are the caller's responsibility, not the FSM's.
 
 ## BigMem Memory Protocol
 
@@ -149,7 +192,7 @@ Any "off" wins. Status is read-only. Re-enabling applies to future candidates on
 
 ### Synthesis Gate (3-layer defense) + Session Recall
 
-Guarantees the human sees audited `## Sub-agent Result` before deciding. Gate `b0d2fc1` enforces the Post-Delegation Human Checkpoint. Session Boot Recall (`## Session Recall`) is a preceding hard gate that restores prior session context via BigMem before preflight.
+Guarantees the human sees audited `## Sub-agent Result` before deciding. Gate `b0d2fc1` enforces the Post-Delegation Human Checkpoint. Session Boot Recall (`## Session Recall`) is a preceding hard gate that restores prior session context via BigMem before preflight. Synthesis rendering uses `internal/sdd/synthesis.go` `RenderSynthesis` with 4 required markers + 6 optional (Preview/Diff/Decisions/Commands/Validation/Failure), omit-empty, >50KB `ReadLoop` paginated `ReadAt` with verify-retry, `ValidateQuestionEnvelope` 16/60/4/2-4, `pending` dual-write BigMem + `state.yaml` (`biggz-ai.pending-question/v1`), `PI_SUBAGENT_CHILD=1` bypass, and `BIGGZ_ADVISE=1` thin-advise.
 
 **Layer 1 — Prompt (machine-verifiable invariant):** `internal/assets/biggz/biggz-orchestrator.md` contains a copy-pasteable block with 4 markers (`## Sub-agent Result: {phase/agent}`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`) and states `INVALID and will be blocked` for any **checkpoint** `ask_user_question`/`question` (those presenting `proceed`/`adjust`/`stop` or `continue`/`correct` after a delegated sub-agent) without immediately preceding markdown. General clarification questions that are NOT a checkpoint do NOT require synthesis and MUST NOT be blocked — e.g. '¿por dónde empezamos?', preflight, or other orchestration clarifications not presenting a delegated result use the question tool directly without synthesis. Every checkpoint `ask` reference is followed by `REMINDER: synthesis markdown is separate chat markdown emitted FIRST...` (12× convergence) so prompt and gate cannot drift.
 

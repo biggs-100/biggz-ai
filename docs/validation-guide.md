@@ -63,7 +63,7 @@ type C:\temp\biggz-test\.config\opencode\opencode.json
 # Check that biggz-orchestrator has a prompt field
 ```
 
-## Test 4: Review Pipeline (end-to-end)
+## Test 4: Review Pipeline (end-to-end) — content-addressed
 
 ```bash
 # Create a test git repo
@@ -76,32 +76,39 @@ git add -A
 git commit -m "init"
 
 # Add a change
-echo "package main" > auth.go
-echo "func auth() { println(\"auth\") }" >> auth.go
+mkdir -p subject && echo '{"repository":"C:/temp/biggz-test-repo","commit_sha":"HEAD"}' > subject.json
 git add -A
-git commit -m "add auth"
 
-# Run the review pipeline
-echo '{"repository":"C:/temp/biggz-test-repo","commit_sha":"HEAD"}' | biggz
-
+# Content-addressed review flow (no stdin pipe)
+biggz review start --subject subject.json --lineage test-lineage-001
+# Expected: genesis appended under .git/biggz/review-transactions/test-lineage-001/v1/events/<sha256>, HEAD set
+biggz review capture-result --lineage test-lineage-001 --lens risk --order 0 --expected-revision <genesis-sha> --input reviewer-risk.json
+biggz review capture-result --lineage test-lineage-001 --lens readability --order 1 --expected-revision <prev-sha> --input reviewer-readability.json
+biggz review capture-result --lineage test-lineage-001 --lens reliability --order 2 --expected-revision <prev-sha> --input reviewer-reliability.json
+biggz review capture-result --lineage test-lineage-001 --lens resilience --order 3 --expected-revision <prev-sha> --input reviewer-resilience.json
+biggz review finalize test-lineage-001
+# Expected: receipts/<sha256>.json via publishImmutable (or burned.json when BurnEnabled), complete_review appended
+biggz review gate pre-pr test-lineage-001 --json
 # Expected output: valid JSON with:
-# - status: "completed"
-# - evidence array with lens results + policy verdict
-# - merkle_root: non-empty string
-# - schema_version: "1.0"
+# - verdict: pass/fail, chainValid: true
+# - evidenceHash via domainHash("biggz-ai.review-evidence/v1\\x00"+writeLengthPrefixed(...)), MerkleRoot via domainHash("biggz-ai.review-merkle/v1")
+# - receipt binding validated, DeliveryBurned when BurnEnabled
 ```
 
-## Test 5: Review with DAG Graph
+## Test 5: Review with per-slot capture (content-addressed, no pipe)
 
-The pipeline uses a DAG graph to run lenses in parallel. Verify by checking
-the output JSON includes evidence from all 4 lenses:
+The review captures each lens slot independently (replaces legacy stdin | biggz DAG). Verify every slot binds the frozen manifest:
 
 ```bash
-echo '{"repository":"C:/temp/biggz-test-repo","commit_sha":"HEAD"}' | biggz > output.json
-type output.json | findstr "lens_result"
-# Should show 4+ lens_result entries (risk, readability, reliability, resilience)
-type output.json | findstr "policy_verdict"
-# Should show 1 policy_verdict
+biggz review capture-result --lineage test-lineage-001 --lens risk --order 0 --expected-revision <genesis-sha> --input reviewer-risk.json
+biggz review capture-result --lineage test-lineage-001 --lens reliability --order 2 --expected-revision <prev> --input reviewer-reliability.json
+# Each capture validates subjectHash echo + full-manifest inspection + canonical findings
+biggz review finalize test-lineage-001 --json > finalize.json
+type finalize.json | findstr "receipt_hash"
+# Should show receipt_hash = domainHash("biggz-ai.review-receipt-binding/v1") + FixDeltaHashForSnapshot
+biggz review gate pre-pr test-lineage-001 --json > gate.json
+type gate.json | findstr "chainValid"
+# Should show chainValid:true, receiptValid:true (or DeliveryBurned when BurnEnabled)
 ```
 
 ## Test 6: RDD Kill Switch
@@ -277,8 +284,10 @@ func main() {
 go build -o server.exe .
 if ($LASTEXITCODE -eq 0) { echo "BUILD OK" } else { echo "BUILD FAILED" }
 
-# Mark tasks as done
-biggz sdd-attempt begin first-feature --budget 200
+# Mark tasks as done — acquire/settle (acquire/settle replace begin/finish)
+# acquire mints a token that settle must present to close that exact attempt
+$acquireOut = biggz sdd-attempt acquire --cwd . --change first-feature --request-id req-001 --work-unit impl --evidence-goal "impl http server" --max-attempts 1 --max-changed-lines 400 | ConvertFrom-Json
+$token = $acquireOut.token
 # Write apply-progress
 @"
 # Apply Progress
@@ -287,15 +296,22 @@ biggz sdd-attempt begin first-feature --budget 200
 - [x] 1.1 main.go created, builds successfully
 "@ | Out-File -FilePath openspec\changes\first-feature\apply-progress.md -Encoding utf8
 
-biggz sdd-attempt finish first-feature --success --lines 30
+$evidenceSha = (git rev-parse HEAD^{tree}).Trim()
+biggz sdd-attempt settle --cwd . --change first-feature --token $token --request-id req-002 --outcome passed --evidence-revision "sha256:$evidenceSha" --diagnosis "http server ok" --harness-disposition completed --cleanup-evidence "none" --process-evidence "go build ok"
+# Note: settle requires --token, --request-id, --outcome, --diagnosis, --harness-disposition, --cleanup-evidence, --process-evidence; --evidence-revision is the candidate tree sha256:<64 hex>
 
 # ===== 8.7 Run review pipeline =====
 git add -A
 git commit -m "feat: add HTTP server with health endpoint"
 
-# Run the full review on this commit
-echo '{"repository":"C:/temp/biggz-full-test","commit_sha":"HEAD"}' | biggz
-# Expected: JSON output with status: completed, evidence entries, merkle_root
+# Run the full content-addressed review on this commit (replaces echo ... | biggz)
+mkdir subject -Force | Out-Null; '{"repository":"C:/temp/biggz-full-test","commit_sha":"HEAD"}' | Out-File -FilePath subject.json -Encoding utf8
+biggz review start --subject subject.json --lineage fulltest-001
+biggz review capture-result --lineage fulltest-001 --lens risk --order 0 --expected-revision <genesis-sha> --input reviewer-risk.json
+biggz review capture-result --lineage fulltest-001 --lens reliability --order 1 --expected-revision <prev> --input reviewer-reliability.json
+biggz review finalize fulltest-001
+biggz review gate pre-pr fulltest-001 --json
+# Expected: JSON gate output with chainValid:true, receipt binding via domainHash+FixDelta, DeliveryBurned handling
 
 # ===== 8.8 Create verify report =====
 @"
@@ -438,9 +454,21 @@ intact content addresses, `IntegrityVerdict` valid, the receipt artifact
 re-read and `PersistedReceipt.Validate()` passing, and every frozen event
 payload conforming to its contract schema.
 
+## Layer 3 Gates (CI parity)
+
+Before marking any SDD/review change green, run the three synthesis/review gate layers locally:
+
+```bash
+go vet ./...
+go test ./...
+node --test internal/assets/pi/biggz-synthesis-gate.test.mjs
+```
+
+Expected: `go vet` clean, `go test` green (including `TestLedgerRegression`, `TestContracts*`, `TestSynthesis*`), and `node --test` green (checkpoint-gated blocking, thin advise, child bypass, same-turn race, preflight allowance). CI enforces the same three commands plus `node --check internal/assets/pi/biggz-synthesis-gate.js`.
+
 ## Success Criteria
 
-All 15 tests must pass. Report any test that fails with:
+All 15 tests plus the Layer 3 gates must pass. Report any test that fails with:
 - Test number and name
 - Actual output vs expected
 - Error message (if any)
