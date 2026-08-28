@@ -9,7 +9,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
 	"github.com/biggs-100/biggz-ai/internal/project"
@@ -17,6 +20,176 @@ import (
 
 var store *bigmem.Store
 var toolPrefix string
+
+// writeQueue serializes write operations (buffered-1 chan parity with Engram's writeQueue).
+var writeQueue = make(chan struct{}, 1)
+
+// sessionActivity tracks tool calls and nudges (Engram parity SessionActivity).
+var sessionActivity = NewSessionActivity(20)
+
+// serverInstructions mirrors Engram's serverInstructions CORE vs DEFERRED (WithDeferLoading parity).
+const serverInstructions = `BigMem provides persistent memory that survives across sessions and compactions.
+
+CORE TOOLS (always available — use without extra loading):
+  mem_save — save decisions, bugs, discoveries, conventions PROACTIVELY (do not wait to be asked)
+  mem_search — find past work, decisions, or context from previous sessions
+  mem_context — get recent session history (call at session start or after compaction)
+  mem_session_summary — save end-of-session summary (MANDATORY before saying "done")
+  mem_get_observation — get full untruncated content of a search result by ID
+  mem_save_prompt — save user prompt for context
+  mem_current_project — detect current project from cwd (recommended first call)
+
+DEFERRED TOOLS (use --tools=admin or --tools=all when needed):
+  mem_update, mem_delete, mem_pin, mem_unpin, mem_suggest_topic_key, mem_session_start, mem_session_end,
+  mem_stats, mem_timeline, mem_compare, mem_judge, mem_capture_passive, mem_merge_projects, mem_review,
+  bigmem_branch_create, bigmem_branch_list, bigmem_branch_get
+
+PROACTIVE SAVE RULE: Call mem_save immediately after ANY decision, bug fix, discovery, or convention — not just when asked.`
+
+// MCPConfig holds optional overrides (Engram parity: BM25Floor, Limit).
+type MCPConfig struct {
+	BM25Floor *float64
+	Limit     *int
+}
+
+// SessionActivity tracks tool calls for nudge logic (parity with engram/internal/mcp SessionActivity).
+type SessionActivity struct {
+	mu        sync.Mutex
+	counts    map[string]int
+	threshold int
+	startedAt time.Time
+}
+
+func NewSessionActivity(threshold int) *SessionActivity {
+	if threshold <= 0 {
+		threshold = 20
+	}
+	return &SessionActivity{
+		counts:    make(map[string]int),
+		threshold: threshold,
+		startedAt: time.Now(),
+	}
+}
+
+func (a *SessionActivity) RecordToolCall(sessionID string) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if sessionID == "" {
+		sessionID = "global"
+	}
+	a.counts[sessionID]++
+}
+
+func (a *SessionActivity) NudgeIfNeeded(sessionID string) string {
+	if a == nil {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if sessionID == "" {
+		sessionID = "global"
+	}
+	c := a.counts[sessionID]
+	if c > 0 && c%a.threshold == 0 {
+		return fmt.Sprintf("\n\n💡 Reminder: %d tool calls without mem_session_summary — consider persisting session work.", c)
+	}
+	return ""
+}
+
+func (a *SessionActivity) ActivityScore(sessionID string) string {
+	if a == nil {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if sessionID == "" {
+		sessionID = "global"
+	}
+	c := a.counts[sessionID]
+	return fmt.Sprintf("Activity: %d tool calls (threshold %d)", c, a.threshold)
+}
+
+// queuedWriteHandler serializes write operations via writeQueue (buffered-1).
+func queuedWriteHandler(fn func()) {
+	writeQueue <- struct{}{}
+	defer func() { <-writeQueue }()
+	fn()
+}
+
+// ─── Tool Profiles (Engram parity) ───────────────────────────────────────────
+// agent: 15 tools agents actually use (per skill files)
+// admin: 4 tools for TUI/CLI curation
+// all: 22+3 = 25 (nil allowlist)
+
+var ProfileAgent = map[string]bool{
+	"mem_save":              true,
+	"mem_search":            true,
+	"mem_get_observation":   true,
+	"mem_context":           true,
+	"mem_session_summary":   true,
+	"mem_session_start":     true,
+	"mem_session_end":       true,
+	"mem_save_prompt":       true,
+	"mem_current_project":   true,
+	"mem_suggest_topic_key": true,
+	"mem_timeline":          true,
+	"mem_stats":             true,
+	"mem_pin":               true,
+	"mem_unpin":             true,
+	"mem_compare":           true,
+}
+
+var ProfileAdmin = map[string]bool{
+	"mem_doctor":         true,
+	"mem_update":         true,
+	"mem_delete":         true,
+	"mem_merge_projects": true,
+}
+
+var Profiles = map[string]map[string]bool{
+	"agent": ProfileAgent,
+	"admin": ProfileAdmin,
+}
+
+// ResolveTools takes a comma-separated string of profile names and/or individual
+// tool names and returns the allowlist. Nil means register everything (all).
+func ResolveTools(input string) map[string]bool {
+	input = strings.TrimSpace(input)
+	if input == "" || input == "all" {
+		return nil
+	}
+	result := make(map[string]bool)
+	for _, token := range strings.Split(input, ",") {
+		token = strings.TrimSpace(token)
+		if token == "" {
+			continue
+		}
+		if token == "all" {
+			return nil
+		}
+		if profile, ok := Profiles[token]; ok {
+			for tool := range profile {
+				result[tool] = true
+			}
+		} else {
+			result[token] = true
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func shouldRegister(name string, allowlist map[string]bool) bool {
+	if allowlist == nil {
+		return true
+	}
+	return allowlist[name]
+}
 
 func init() {
 	// Auto-detect: default to "biggz" prefix when engram is installed
@@ -37,11 +210,11 @@ func main() {
 
 	tools := "agent"
 	for _, arg := range os.Args[1:] {
-		if strings.HasPrefix(arg, "--prefix=") {
-			toolPrefix = strings.TrimPrefix(arg, "--prefix=")
+		if after, ok := strings.CutPrefix(arg, "--prefix="); ok {
+			toolPrefix = after
 		}
-		if strings.HasPrefix(arg, "--tools=") {
-			tools = strings.TrimPrefix(arg, "--tools=")
+		if after, ok := strings.CutPrefix(arg, "--tools="); ok {
+			tools = after
 		}
 	}
 
@@ -64,6 +237,7 @@ func main() {
 					"protocolVersion": "2024-11-05",
 					"capabilities":    map[string]any{"tools": map[string]any{}},
 					"serverInfo":      map[string]string{"name": "biggz-ai", "version": "1.0.0"},
+					"instructions":    serverInstructions,
 				},
 			})
 		case "ping":
@@ -99,54 +273,99 @@ func main() {
 
 func handleToolCall(id any, name string, args map[string]any) {
 	// Strip prefix if present (e.g. "biggz_mem_save" → "mem_save")
-	if toolPrefix != "" && strings.HasPrefix(name, toolPrefix+"_") {
-		name = strings.TrimPrefix(name, toolPrefix+"_")
+	if toolPrefix != "" {
+		if after, ok := strings.CutPrefix(name, toolPrefix+"_"); ok {
+			name = after
+		}
 	}
+	// Activity tracking (record every tool call)
+	sessForActivity := getStr(args, "session_id")
+	if sessForActivity == "" {
+		sessForActivity = getStr(args, "sessionId")
+	}
+	// For search/context without session_id, use a stable global bucket
+	if sessForActivity == "" {
+		sessForActivity = "global"
+	}
+	sessionActivity.RecordToolCall(sessForActivity)
+
 	switch name {
 	case "mem_save":
-		obs := &bigmem.Observation{
-			Title:     getStr(args, "title"),
-			Content:   getStr(args, "content"),
-			Type:      getStr(args, "type"),
-			TopicKey:  getStr(args, "topic_key"),
-			Project:   getStr(args, "project"),
-			Scope:     getStr(args, "scope"),
-			SessionID: getStr(args, "session_id"),
-			ToolName:  getStr(args, "tool_name"),
-		}
-		if obs.Title == "" {
-			writeError(id, "title is required")
-			return
-		}
-		// Capture original for truncation warning (Batch S, 50k limit)
-		origContent := obs.Content
-		origWasExternalized := bigmem.ShouldExternalize(origContent)
-		// BlobStore externalization: len>100000 OR data:image/ → PutBlob → addr
-		if bigmem.ShouldExternalize(obs.Content) {
-			if addr, err := bigmem.PutBlob([]byte(obs.Content)); err == nil {
-				obs.Content = addr
-			} else {
-				fmt.Fprintf(os.Stderr, "[bigmem] PutBlob failed: %v\n", err)
+		// Serialize writes via queuedWriteHandler (buffered-1)
+		queuedWriteHandler(func() {
+			obs := &bigmem.Observation{
+				Title:     getStr(args, "title"),
+				Content:   getStr(args, "content"),
+				Type:      getStr(args, "type"),
+				TopicKey:  getStr(args, "topic_key"),
+				Project:   getStr(args, "project"),
+				Scope:     getStr(args, "scope"),
+				SessionID: getStr(args, "session_id"),
+				ToolName:  getStr(args, "tool_name"),
 			}
-		}
-		if err := store.Save(obs); err != nil {
-			writeError(id, err.Error())
-			return
-		}
-		msg := fmt.Sprintf("Saved: %s (id: %s)", obs.Title, obs.ID)
-		if !origWasExternalized && len(origContent) > 50000 {
-			msg += fmt.Sprintf(" ⚠️ content truncated from %d to %d bytes", len(origContent), 50000)
-		}
-		textResult(id, msg)
+			if obs.Title == "" {
+				writeError(id, "title is required")
+				return
+			}
+			origContent := obs.Content
+			origWasExternalized := bigmem.ShouldExternalize(origContent)
+			if bigmem.ShouldExternalize(obs.Content) {
+				if addr, err := bigmem.PutBlob([]byte(obs.Content)); err == nil {
+					obs.Content = addr
+				} else {
+					fmt.Fprintf(os.Stderr, "[bigmem] PutBlob failed: %v\n", err)
+				}
+			}
+			if err := store.Save(obs); err != nil {
+				writeError(id, err.Error())
+				return
+			}
+			msg := fmt.Sprintf("Saved: %s (id: %s)", obs.Title, obs.ID)
+			if !origWasExternalized && len(origContent) > 50000 {
+				msg += fmt.Sprintf(" ⚠️ content truncated from %d to %d bytes", len(origContent), 50000)
+			}
+			if nudge := sessionActivity.NudgeIfNeeded(sessForActivity); nudge != "" {
+				msg += nudge
+			}
+			textResult(id, msg)
+		})
+		return
 
 	case "mem_search":
-		results, err := store.Search(getStr(args, "query"), bigmem.SearchOptions{
-			Project:   getStr(args, "project"),
-			Type:      getStr(args, "type"),
-			Scope:     getStr(args, "scope"),
-			Limit:     getInt(args, "limit", 10),
-			MatchMode: getStr(args, "match_mode"),
-		})
+		query := getStr(args, "query")
+		allProjects := getBool(args, "all_projects", false)
+		// all_projects true means ignore project filter; scope personal also cross-project
+		project := getStr(args, "project")
+		if allProjects {
+			project = ""
+		}
+		matchMode := getStr(args, "match_mode")
+		limit := getInt(args, "limit", 10)
+		// BM25Floor/Limit override via env (Engram parity MCPConfig)
+		var bm25Floor *float64
+		if envVal := strings.TrimSpace(os.Getenv("BIGMEM_BM25_FLOOR")); envVal != "" {
+			if f, err := strconv.ParseFloat(envVal, 64); err == nil {
+				bm25Floor = &f
+			}
+		}
+		// Also allow BIGGZ_BM25_FLOOR alias
+		if bm25Floor == nil {
+			if envVal := strings.TrimSpace(os.Getenv("BIGGZ_BM25_FLOOR")); envVal != "" {
+				if f, err := strconv.ParseFloat(envVal, 64); err == nil {
+					bm25Floor = &f
+				}
+			}
+		}
+		opts := bigmem.SearchOptions{
+			Project:     project,
+			Type:        getStr(args, "type"),
+			Scope:       getStr(args, "scope"),
+			Limit:       limit,
+			MatchMode:   matchMode,
+			AllProjects: allProjects,
+			BM25Floor:   bm25Floor,
+		}
+		results, err := store.Search(query, opts)
 		if err != nil {
 			writeError(id, err.Error())
 			return
@@ -171,6 +390,11 @@ func handleToolCall(id any, name string, args map[string]any) {
 			}
 			entries = append(entries, entry)
 		}
+		// Append activity nudge if needed
+		if nudge := sessionActivity.NudgeIfNeeded(sessForActivity); nudge != "" && len(entries) > 0 {
+			// Append nudge as extra entry hint; for now just log to stderr and keep JSON pure
+			fmt.Fprintln(os.Stderr, nudge)
+		}
 		jsonResult(id, entries)
 
 	case "mem_get_observation", "mem_get":
@@ -184,7 +408,6 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, err.Error())
 			return
 		}
-		// Transparent blob resolve fallback (Store.Get already resolves)
 		if bigmem.IsBlobAddr(obs.Content) {
 			if data, err := bigmem.GetBlob(obs.Content); err == nil {
 				obs.Content = string(data)
@@ -266,7 +489,11 @@ func handleToolCall(id any, name string, args map[string]any) {
 			}
 			parts = append(parts, line)
 		}
-		textResult(id, strings.Join(parts, "\n"))
+		msg := strings.Join(parts, "\n")
+		if nudge := sessionActivity.NudgeIfNeeded(sessForActivity); nudge != "" {
+			msg += nudge
+		}
+		textResult(id, msg)
 
 	case "mem_session_summary":
 		sessionID := getStr(args, "session_id")
@@ -311,23 +538,29 @@ func handleToolCall(id any, name string, args map[string]any) {
 		textResult(id, fmt.Sprintf("Session %s ended", s.ID))
 
 	case "mem_save_prompt":
-		content := getStr(args, "content")
-		sessionID := getStr(args, "session_id")
-		if content == "" {
-			writeError(id, "content is required")
-			return
-		}
-		origPrompt := content
-		p, err := store.SavePrompt(content, sessionID)
-		if err != nil {
-			writeError(id, err.Error())
-			return
-		}
-		msg := fmt.Sprintf("Prompt saved: %s", p.ID)
-		if len(origPrompt) > 50000 {
-			msg += fmt.Sprintf(" ⚠️ content truncated from %d to %d bytes", len(origPrompt), 50000)
-		}
-		textResult(id, msg)
+		queuedWriteHandler(func() {
+			content := getStr(args, "content")
+			sessionID := getStr(args, "session_id")
+			if content == "" {
+				writeError(id, "content is required")
+				return
+			}
+			origPrompt := content
+			p, err := store.SavePrompt(content, sessionID)
+			if err != nil {
+				writeError(id, err.Error())
+				return
+			}
+			msg := fmt.Sprintf("Prompt saved: %s", p.ID)
+			if len(origPrompt) > 50000 {
+				msg += fmt.Sprintf(" ⚠️ content truncated from %d to %d bytes", len(origPrompt), 50000)
+			}
+			if nudge := sessionActivity.NudgeIfNeeded(sessForActivity); nudge != "" {
+				msg += nudge
+			}
+			textResult(id, msg)
+		})
+		return
 
 	case "mem_current_project":
 		cwd, err := os.Getwd()
@@ -349,12 +582,11 @@ func handleToolCall(id any, name string, args map[string]any) {
 			"available_projects": info.AvailableProjects,
 		}
 		if info.Warning != "" {
-				result["warning"] = info.Warning
+			result["warning"] = info.Warning
 		}
 		if detErr != nil && errors.Is(detErr, project.ErrAmbiguousProject) {
-				result["error_hint"] = detErr.Error()
+			result["error_hint"] = detErr.Error()
 		}
-		// Fallback: ensure project is never empty for non-ambiguous cases (mirrors DetectProjectLegacy).
 		if result["project"] == "" && (detErr == nil || !errors.Is(detErr, project.ErrAmbiguousProject)) {
 			cwdCopy := cwd
 			result["project"] = project.NormalizeProjectName(filepath.Base(cwdCopy))
@@ -435,7 +667,6 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, "judgment_id and relation required")
 			return
 		}
-		// judgmentID format: rel-obsA-obsB
 		parts := strings.SplitN(judgmentID, "-", 3)
 		if len(parts) < 3 {
 			writeError(id, "invalid judgment_id format")
@@ -543,8 +774,9 @@ func handleToolCall(id any, name string, args map[string]any) {
 	}
 }
 
-func buildToolList(scope string) []map[string]any {
-	tools := []map[string]any{
+func buildToolList(profile string) []map[string]any {
+	allowlist := ResolveTools(profile)
+	all := []map[string]any{
 		toolDef("mem_save", "Save an observation to persistent memory.", map[string]any{
 			"title":      map[string]any{"type": "string", "description": "Short searchable title"},
 			"content":    map[string]any{"type": "string"},
@@ -557,12 +789,13 @@ func buildToolList(scope string) []map[string]any {
 			"pinned":     map[string]any{"type": "boolean"},
 		}, []string{"title"}),
 		toolDef("mem_search", "Search memory by keywords.", map[string]any{
-			"query":      map[string]any{"type": "string"},
-			"project":    map[string]any{"type": "string"},
-			"type":       map[string]any{"type": "string"},
-			"scope":      map[string]any{"type": "string"},
-			"limit":      map[string]any{"type": "number"},
-			"match_mode": map[string]any{"type": "string", "description": "\"all\" (AND, default) or \"any\" (OR)"},
+			"query":       map[string]any{"type": "string"},
+			"project":     map[string]any{"type": "string", "description": "Filter by project. Ignored when all_projects=true."},
+			"type":        map[string]any{"type": "string"},
+			"scope":       map[string]any{"type": "string"},
+			"limit":       map[string]any{"type": "number", "description": "Max results (default: 10)"},
+			"match_mode":  map[string]any{"type": "string", "description": "\"all\" (AND, default) or \"any\" (OR)"},
+			"all_projects": map[string]any{"type": "boolean", "description": "When true, search across all projects (ignore project filter). Scope=personal also ignores project."},
 		}, []string{}),
 		toolDef("mem_get_observation", "Get full observation by ID.", map[string]any{
 			"id": map[string]any{"type": "string"},
@@ -637,7 +870,16 @@ func buildToolList(scope string) []map[string]any {
 			"id": map[string]any{"type": "string"},
 		}, []string{"id"}),
 	}
-	return tools
+	if allowlist == nil {
+		return all
+	}
+	var filtered []map[string]any
+	for _, t := range all {
+		if name, ok := t["name"].(string); ok && shouldRegister(name, allowlist) {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
 }
 
 func toolDef(name, desc string, props map[string]any, required []string) map[string]any {
@@ -671,6 +913,25 @@ func getInt(m map[string]any, key string, def int) int {
 func getFloat(m map[string]any, key string, def float64) float64 {
 	if v, ok := m[key].(float64); ok {
 		return v
+	}
+	return def
+}
+
+func getBool(m map[string]any, key string, def bool) bool {
+	if v, ok := m[key].(bool); ok {
+		return v
+	}
+	if v, ok := m[key].(string); ok {
+		s := strings.ToLower(strings.TrimSpace(v))
+		if s == "true" || s == "1" {
+			return true
+		}
+		if s == "false" || s == "0" {
+			return false
+		}
+	}
+	if v, ok := m[key].(float64); ok {
+		return v != 0
 	}
 	return def
 }

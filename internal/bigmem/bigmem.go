@@ -148,11 +148,13 @@ func computeReviewAfterAt(now time.Time, obsType string) *string {
 
 // SearchOptions filter search results, matching engram's interface.
 type SearchOptions struct {
-	Project   string `json:"project,omitempty"`
-	Type      string `json:"type,omitempty"`
-	Scope     string `json:"scope,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
-	MatchMode string `json:"match_mode,omitempty"` // "" | "all" (default) | "any"
+	Project     string   `json:"project,omitempty"`
+	Type        string   `json:"type,omitempty"`
+	Scope       string   `json:"scope,omitempty"`
+	Limit       int      `json:"limit,omitempty"`
+	MatchMode   string   `json:"match_mode,omitempty"`   // "" | "all" (default) | "any"
+	AllProjects bool     `json:"all_projects,omitempty"` // when true, project filter is ignored (Engram parity)
+	BM25Floor   *float64 `json:"bm25_floor,omitempty"`   // nil = no floor; forwarded from MCPConfig
 }
 
 // SearchResult wraps an observation with its BM25 rank.
@@ -990,7 +992,8 @@ func buildLikeSearchSQL(query string, opts SearchOptions, limit int) (string, []
 		sqlQ += " AND o.type = ?"
 		args = append(args, opts.Type)
 	}
-	if opts.Project != "" {
+	// all_projects or scope==personal ignores project filter (Engram parity: personal is cross-project)
+	if opts.Project != "" && !opts.AllProjects && normalizeScope(opts.Scope) != "personal" {
 		sqlQ += " AND o.project = ?"
 		args = append(args, opts.Project)
 	}
@@ -1001,6 +1004,11 @@ func buildLikeSearchSQL(query string, opts SearchOptions, limit int) (string, []
 	sqlQ += " ORDER BY o.updated_at DESC LIMIT ?"
 	args = append(args, limit)
 	return sqlQ, args
+}
+
+// shouldFilterProject reports whether the project filter should be applied.
+func shouldFilterProject(opts SearchOptions) bool {
+	return opts.Project != "" && !opts.AllProjects && normalizeScope(opts.Scope) != "personal"
 }
 
 // ─── Save with dedup ─────────────────────────────────────────────────────────
@@ -1235,10 +1243,23 @@ func (s *Store) Search(query string, opts SearchOptions) (results []*Observation
 		}
 	}()
 
+	// Validate match_mode early (Engram parity: any invalid value errors regardless of query shape).
+	switch opts.MatchMode {
+	case "", "all", "any":
+	default:
+		return nil, fmt.Errorf("invalid match_mode %q: must be \"all\" or \"any\"", opts.MatchMode)
+	}
+	// Normalize project for comparison (lowercase) is handled by caller; store keeps original.
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = defaultMaxSearchResults
 	}
+	if limit > defaultMaxSearchResults {
+		// cap to max to avoid excessive rows; allow env override via SearchOptions? keeps parity with engram cfg
+		limit = defaultMaxSearchResults
+	}
+	// BM25Floor is stored for caller instrumentation; Search does not rank-filter (candidates use BM25Floor)
+	_ = opts.BM25Floor
 
 	// Phase 1: topic-key direct lookup if query contains "/"
 	var directResults []*Observation
@@ -1254,7 +1275,7 @@ func (s *Store) Search(query string, opts SearchOptions) (results []*Observation
 			tkSQL += " AND type = ?"
 			tkArgs = append(tkArgs, opts.Type)
 		}
-		if opts.Project != "" {
+		if shouldFilterProject(opts) {
 			tkSQL += " AND project = ?"
 			tkArgs = append(tkArgs, opts.Project)
 		}
@@ -1313,7 +1334,7 @@ func (s *Store) Search(query string, opts SearchOptions) (results []*Observation
 			q += " AND o.type = ?"
 			args = append(args, opts.Type)
 		}
-		if opts.Project != "" {
+		if shouldFilterProject(opts) {
 			q += " AND o.project = ?"
 			args = append(args, opts.Project)
 		}
@@ -1325,7 +1346,7 @@ func (s *Store) Search(query string, opts SearchOptions) (results []*Observation
 		args = append(args, limit)
 		rows, err = s.db.Query(q, args...)
 	} else {
-		// FTS5 with BM25 ranking
+		// FTS5 with BM25 ranking — "all" = AND, "any" = OR (Engram parity)
 		var ftsQuery string
 		if opts.MatchMode == "any" {
 			terms := strings.Fields(query)
@@ -1355,7 +1376,7 @@ func (s *Store) Search(query string, opts SearchOptions) (results []*Observation
 			sqlQ += " AND o.type = ?"
 			args = append(args, opts.Type)
 		}
-		if opts.Project != "" {
+		if shouldFilterProject(opts) {
 			sqlQ += " AND o.project = ?"
 			args = append(args, opts.Project)
 		}

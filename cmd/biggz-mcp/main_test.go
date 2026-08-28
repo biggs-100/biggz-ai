@@ -205,7 +205,7 @@ func TestToolDef(t *testing.T) {
 // --- buildToolList tests ---
 
 func TestBuildToolList_AllToolsRegistered(t *testing.T) {
-	tools := buildToolList("agent")
+	tools := buildToolList("all")
 	names := toolNames(tools)
 
 	expected := []string{
@@ -232,6 +232,66 @@ func TestBuildToolList_AllToolsRegistered(t *testing.T) {
 		if !found {
 			t.Errorf("missing tool: %s", want)
 		}
+	}
+}
+
+func TestBuildToolList_AgentProfile(t *testing.T) {
+	tools := buildToolList("agent")
+	if len(tools) != 15 {
+		t.Errorf("agent profile: got %d tools, want 15: %v", len(tools), toolNames(tools))
+	}
+	// Agent must contain core tools
+	for _, want := range []string{"mem_save", "mem_search", "mem_context", "mem_current_project"} {
+		found := false
+		for _, n := range toolNames(tools) {
+			if n == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("agent missing core tool %s", want)
+		}
+	}
+	// Agent must NOT contain admin-only tools
+	for _, notWant := range []string{"mem_doctor", "mem_delete"} {
+		for _, n := range toolNames(tools) {
+			if n == notWant {
+				t.Errorf("agent should not contain admin tool %s", notWant)
+			}
+		}
+	}
+}
+
+func TestBuildToolList_AdminProfile(t *testing.T) {
+	tools := buildToolList("admin")
+	if len(tools) != 4 {
+		t.Errorf("admin profile: got %d tools, want 4: %v", len(tools), toolNames(tools))
+	}
+}
+
+func TestResolveTools(t *testing.T) {
+	if got := ResolveTools("all"); got != nil {
+		t.Errorf("ResolveTools(all) should be nil (register all), got %v", got)
+	}
+	if got := ResolveTools(""); got != nil {
+		t.Errorf("ResolveTools('') should be nil, got %v", got)
+	}
+	agent := ResolveTools("agent")
+	if len(agent) != 15 {
+		t.Errorf("ResolveTools(agent) len %d want 15", len(agent))
+	}
+	admin := ResolveTools("admin")
+	if len(admin) != 4 {
+		t.Errorf("ResolveTools(admin) len %d want 4", len(admin))
+	}
+	combined := ResolveTools("agent,admin")
+	if len(combined) != 19 {
+		t.Errorf("ResolveTools(agent,admin) len %d want 19", len(combined))
+	}
+	single := ResolveTools("mem_save")
+	if len(single) != 1 || !single["mem_save"] {
+		t.Errorf("ResolveTools(mem_save) got %v", single)
 	}
 }
 
