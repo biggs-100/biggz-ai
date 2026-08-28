@@ -5,11 +5,14 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 )
 
 // ---------------------------------------------------------------------------
@@ -165,17 +168,22 @@ func (s *Store) appendLocked(prevRevision string, rec Record) (revision string, 
 		if !bytes.Equal(existing, data) {
 			return "", fmt.Errorf("hash collision: %s exists with different content", revision)
 		}
-		_ = publishImmutable(path, data)
+		if err := publishImmutable(path, data); err != nil {
+			return "", err
+		}
+		_ = SyncReviewDirectory(filepath.Dir(path))
 	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("stat legacy: %w", err)
 	} else {
 		if err := publishImmutable(path, data); err != nil {
 			return "", err
 		}
+		_ = SyncReviewDirectory(filepath.Dir(path))
 	}
 	if err := atomicWrite(filepath.Join(s.Dir, "HEAD"), []byte(revision+"\n")); err != nil {
 		return "", fmt.Errorf("write HEAD: %w", err)
 	}
+	_ = SyncReviewDirectory(s.Dir)
 	return revision, nil
 }
 
@@ -363,6 +371,28 @@ func readRecord(dir, hash string) (Record, error) {
 	return rec, nil
 }
 
+func canonicalGitDirectory(commonDir string) (string, error) {
+	if commonDir == "" || strings.Contains(commonDir, "\x00") {
+		return "", errors.New("Git directory output is empty or contains NUL")
+	}
+	if strings.HasPrefix(commonDir, "--") || strings.Contains(commonDir, "\r") || strings.Contains(commonDir, "\n") {
+		return "", errors.New("Git directory output is not exactly one valid path record")
+	}
+	resolved, err := filepath.EvalSymlinks(commonDir)
+	if err != nil {
+		return "", err
+	}
+	cleaned := filepath.Clean(resolved)
+	info, err := os.Stat(cleaned)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errors.New("Git directory output is not a directory")
+	}
+	return cleaned, nil
+}
+
 func resolveGitCommonDir(repo string) (string, error) {
 	args := []string{"rev-parse", "--git-common-dir"}
 	if repo != "" {
@@ -383,7 +413,41 @@ func resolveGitCommonDir(repo string) (string, error) {
 		}
 		dir = filepath.Join(base, dir)
 	}
-	return filepath.Clean(dir), nil
+	dir = filepath.Clean(dir)
+	if canonical, err := canonicalGitDirectory(dir); err == nil {
+		dir = canonical
+	} else {
+		return "", err
+	}
+	return dir, nil
+}
+
+var reviewRuntimeGOOS = func() string { return runtime.GOOS }
+
+var syncReviewDirectory = func(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	if err := d.Sync(); err != nil {
+		return err
+	}
+	return d.Close()
+}
+
+// SyncReviewDirectory persists a directory entry when the platform supports it.
+// Windows filesystems may reject directory handles; in that case the file rename
+// remains atomic, but power-loss durability of the directory entry is not claimed.
+func SyncReviewDirectory(path string) error {
+	if err := syncReviewDirectory(path); err != nil {
+		unsupported := errors.Is(err, syscall.EINVAL) || errors.Is(err, errors.ErrUnsupported) ||
+			reviewRuntimeGOOS() == "windows" && errors.Is(err, os.ErrPermission)
+		if !unsupported {
+			return err
+		}
+	}
+	return nil
 }
 
 func publishImmutable(path string, payload []byte) error {

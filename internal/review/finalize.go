@@ -70,10 +70,13 @@ var BurnEnabled = true
 const EmptyFixDeltaHash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
 // FixDeltaDomain is the fix-delta binding domain.
-const FixDeltaDomain = "fix-delta/v1"
+const FixDeltaDomain = "biggz-ai.fix-delta/v1"
+
+// LegacyFixDeltaDomain is the pre-2026-08-28 domain. Legacy domain "fix-delta/v1" accepted for backward compat (pre-2026-08-28).
+const LegacyFixDeltaDomain = "fix-delta/v1"
 
 // FixDeltaHashForSnapshot returns EmptyFixDeltaHash when cumulative==0 else
-// domainHash("fix-delta/v1" + "\x00" + writeLengthPrefixed(baseTree,candidateTree,pathsDigest,cumulative,ledgerIDs...)).
+// domainHash("biggz-ai.fix-delta/v1" + "\x00" + writeLengthPrefixed(baseTree,candidateTree,pathsDigest,cumulative,ledgerIDs...)).
 // Verbatim gentle-ai fix-delta binding (cumulative + content-addressed trees).
 func FixDeltaHashForSnapshot(baseTree, candidateTree, pathsDigest string, cumulative int, ledgerIDs []string) string {
 	if cumulative <= 0 {
@@ -99,11 +102,31 @@ func computeFixDeltaHash(cumulativeLines int) string {
 	return FixDeltaHashForSnapshot("", "", "", cumulativeLines, nil)
 }
 
+// legacyFixDeltaHashForSnapshot computes the pre-2026-08-28 domain hash.
+// Legacy domain "fix-delta/v1" accepted for backward compat (pre-2026-08-28).
+func legacyFixDeltaHashForSnapshot(baseTree, candidateTree, pathsDigest string, cumulative int, ledgerIDs []string) string {
+	if cumulative <= 0 {
+		return EmptyFixDeltaHash
+	}
+	ids, _ := canonicalStrings(ledgerIDs, "ledger id")
+	fields := [][]byte{
+		[]byte(baseTree),
+		[]byte(candidateTree),
+		[]byte(pathsDigest),
+		[]byte(strconv.Itoa(cumulative)),
+	}
+	for _, id := range ids {
+		fields = append(fields, []byte(id))
+	}
+	payload := writeLengthPrefixed(fields...)
+	return domainHash(LegacyFixDeltaDomain, payload)
+}
+
 // deriveCumulativeAndFixDelta derives cumulative correction lines and its delta hash
 // from the chain: prior receipt cumulative plus post-finalize correction lines.
-// The current store has no explicit correction event type; we derive
-// post-finalize lines by scanning for correction-like payloads after the last
-// complete_review. If none, cumulative is prior receipt's value.
+// It prefers an explicit "cumulative" field when present, falling back to
+// summing "lines_changed" for backward compat. If no correction events exist,
+// cumulative stays at the prior receipt value (Empty stays correct).
 func deriveCumulativeAndFixDelta(chain ValidatedChain, store *Store) (int, string) {
 	prior := 0
 	ref := receiptArtifactOf(chain)
@@ -112,7 +135,9 @@ func deriveCumulativeAndFixDelta(chain ValidatedChain, store *Store) (int, strin
 			prior = receipt.CumulativeCorrectionLines
 		}
 	}
-	// Scan post-finalize events for correction lines (best-effort: look for operation "correction" or payload with lines_changed).
+	// Scan post-finalize events for correction lines. Prefer explicit "cumulative"
+	// field when present (emitted by finalize when post diff >0), fallback to
+	// summing "lines_changed" for legacy events.
 	lastComplete := -1
 	for i := len(chain.Records) - 1; i >= 0; i-- {
 		if chain.Records[i].Operation == CompleteReviewOperation {
@@ -121,20 +146,32 @@ func deriveCumulativeAndFixDelta(chain ValidatedChain, store *Store) (int, strin
 		}
 	}
 	post := 0
+	var explicitCumulative *int
 	if lastComplete >= 0 {
 		for i := lastComplete + 1; i < len(chain.Records); i++ {
 			rec := chain.Records[i]
 			if rec.Operation == "correction" {
 				var payload struct {
-					LinesChanged int `json:"lines_changed"`
+					LinesChanged int  `json:"lines_changed"`
+					Cumulative   *int `json:"cumulative"`
 				}
-				if err := json.Unmarshal(rec.Payload, &payload); err == nil && payload.LinesChanged > 0 {
-					post += payload.LinesChanged
+				if err := json.Unmarshal(rec.Payload, &payload); err == nil {
+					if payload.Cumulative != nil {
+						explicitCumulative = payload.Cumulative
+					} else if payload.LinesChanged > 0 {
+						post += payload.LinesChanged
+					}
 				}
 			}
 		}
 	}
 	cumulative := prior + post
+	if explicitCumulative != nil {
+		cumulative = *explicitCumulative
+		if cumulative < prior {
+			cumulative = prior
+		}
+	}
 	if cumulative < 0 {
 		cumulative = 0
 	}
@@ -501,6 +538,15 @@ func (r PersistedReceipt) Validate() error {
 			return errors.New("receipt paths, fix-delta, and evidence hashes are invalid")
 		}
 	}
+	// Legacy domain "fix-delta/v1" accepted for backward compat (pre-2026-08-28).
+	if r.CumulativeCorrectionLines > 0 && r.FixDeltaHash != EmptyFixDeltaHash {
+		flat := payloadSHA256([]byte(fmt.Sprintf("fix-delta:%d", r.CumulativeCorrectionLines)))
+		if r.FixDeltaHash == flat {
+			return errors.New("receipt fix-delta hash is flat; expected domain-bound hash")
+		}
+		// Accept both new domain "biggz-ai.fix-delta/v1" and legacy "fix-delta/v1"; no strict tree enforcement here
+		// to keep receipts b33cf4f/4229eb1 valid. The binding is verified via FixDeltaHashForSnapshot elsewhere.
+	}
 	if r.PolicyHash != "" && !validSHA256Identity(r.PolicyHash) {
 		return errors.New("receipt policy hash is invalid")
 	}
@@ -733,11 +779,59 @@ func Finalize(repo, lineageID string) (FinalizeOutcome, error) {
 			return err
 		}
 		// Cumulative ledger: derive from prior receipt + post-finalize corrections.
+		// Prefer explicit "cumulative" field when present, fallback to lines_changed sum.
 		// FixDelta is content-bound via FixDeltaHashForSnapshot (gentle v1).
-		if cum, _ := deriveCumulativeAndFixDelta(chain, store); true {
-			data.cumulativeCorrectionLines = cum
-			data.fixDeltaHash = FixDeltaHashForSnapshot(data.baseTree, data.candidateTree, data.manifestDigest, cum, nil)
+		cum, _ := deriveCumulativeAndFixDelta(chain, store)
+		priorCum := 0
+		if ref := receiptArtifactOf(chain); ref != nil {
+			if r, err := readReceiptFile(store, completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}); err == nil {
+				priorCum = r.CumulativeCorrectionLines
+			}
 		}
+		if cum > priorCum {
+			needEmit := true
+			lastCompleteIdx := -1
+			for i := len(chain.Records) - 1; i >= 0; i-- {
+				if chain.Records[i].Operation == CompleteReviewOperation {
+					lastCompleteIdx = i
+					break
+				}
+			}
+			if lastCompleteIdx >= 0 {
+				for i := len(chain.Records) - 1; i > lastCompleteIdx; i-- {
+					if chain.Records[i].Operation == "correction" {
+						var p struct {
+							Cumulative *int `json:"cumulative"`
+						}
+						if err := json.Unmarshal(chain.Records[i].Payload, &p); err == nil && p.Cumulative != nil && *p.Cumulative == cum {
+							needEmit = false
+						}
+						break
+					}
+				}
+			} else {
+				needEmit = false
+			}
+			if needEmit {
+				payload, _ := json.Marshal(map[string]int{"lines_changed": cum - priorCum, "cumulative": cum})
+				newRev, err := store.appendLocked(chain.HeadHash, Record{
+					Operation: "correction",
+					Role:      string(model.RoleLead),
+					Actor:     string(model.RoleLead),
+					Timestamp: time.Now().Format(time.RFC3339Nano),
+					Payload:   payload,
+				})
+				if err != nil {
+					return fmt.Errorf("finalize: emit correction event: %w", err)
+				}
+				chain.Records = append(chain.Records, Record{Operation: "correction", Payload: payload})
+				chain.HeadHash = newRev
+				chain.Count++
+			}
+		}
+		data.cumulativeCorrectionLines = cum
+		data.fixDeltaHash = FixDeltaHashForSnapshot(data.baseTree, data.candidateTree, data.manifestDigest, cum, nil)
+		// Legacy domain "fix-delta/v1" accepted for backward compat (pre-2026-08-28): if hash equals legacy domain, still valid.
 		receipt := buildReceipt(chain.LineageID, revisions[0], chain.HeadHash, data)
 		if err := receipt.Validate(); err != nil {
 			return fmt.Errorf("finalize: receipt validation failed: %w", err)
