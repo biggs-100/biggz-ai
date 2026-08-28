@@ -203,13 +203,15 @@ func TestStore_Validate_TamperedFile(t *testing.T) {
 		t.Fatalf("Append: %v", err)
 	}
 
-	// Tamper with the file content.
-	path := filepath.Join(dir, hash)
+	// Tamper with the file content (handle both v1/events and flat).
+	path := filepath.Join(dir, "v1", "events", hash)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		path = filepath.Join(dir, hash)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read event file: %v", err)
 	}
-	// Modify content in place.
 	tampered := strings.Replace(string(data), "genesis", "TAMPERED", 1)
 	if err := os.WriteFile(path, []byte(tampered), 0644); err != nil {
 		t.Fatalf("write tampered file: %v", err)
@@ -431,6 +433,96 @@ func gitInit(t *testing.T, dir string) {
 	// Configure a minimal user for git to avoid warnings.
 	exec.Command("git", "-C", dir, "config", "user.email", "test@test.com").Run()
 	exec.Command("git", "-C", dir, "config", "user.name", "Test User").Run()
+}
+
+func TestStoreGitCommonDir(t *testing.T) {
+	repo := t.TempDir()
+	gitInit(t, repo)
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("hello\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runGitInDir(t, repo, "add", ".")
+	runGitInDir(t, repo, "commit", "-m", "init")
+	// create worktree
+	wtDir := filepath.Join(t.TempDir(), "wt1")
+	out, err := exec.Command("git", "-C", repo, "worktree", "add", wtDir, "-b", "wt-branch").CombinedOutput()
+	if err != nil {
+		t.Fatalf("worktree add: %v %s", err, string(out))
+	}
+	lineage := "wt-lineage"
+	s, err := Open(wtDir, lineage)
+	if err != nil {
+		t.Fatalf("Open worktree: %v", err)
+	}
+	hash, err := s.Append("", Record{Operation: "start", Role: "Author", Timestamp: "2026-01-01T00:00:00Z", Payload: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatalf("Append: %v", err)
+	}
+	commonDirRaw := runGitInDir(t, wtDir, "rev-parse", "--git-common-dir")
+	commonDir := commonDirRaw
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(wtDir, commonDir)
+	}
+	commonDir = filepath.Clean(commonDir)
+	expected := filepath.Join(commonDir, "biggz", "review-transactions", lineage, "v1", "events", hash)
+	if _, err := os.Stat(expected); err != nil {
+		t.Fatalf("expected event at common dir %q: %v", expected, err)
+	}
+	// flat must not be created anew at worktree git dir
+	gitDirRaw := runGitInDir(t, wtDir, "rev-parse", "--git-dir")
+	gitDir := gitDirRaw
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(wtDir, gitDir)
+	}
+	gitDir = filepath.Clean(gitDir)
+	flatPath := filepath.Join(gitDir, "biggz", "review-transactions", lineage, hash)
+	if _, err := os.Stat(flatPath); err == nil {
+		t.Fatalf("flat path %q should not exist (GitCommonDir only)", flatPath)
+	}
+	// validate publishImmutable idempotency: same payload again should be no-op
+	_, err = s.Append("", Record{Operation: "start", Role: "Author", Timestamp: "2026-01-01T00:00:00Z", Payload: json.RawMessage(`{}`)})
+	if err != nil {
+		t.Fatalf("idempotent second append: %v", err)
+	}
+}
+
+func TestLegacyFlatReadable(t *testing.T) {
+	dir := t.TempDir()
+	// manually create legacy flat chain
+	rec := Record{Schema: recordSchemaVersion, PrevRevision: "", Operation: "start", Role: "Author", Timestamp: "2026-01-01T00:00:00Z", Payload: json.RawMessage(`{"l":"legacy"}`)}
+	data, _ := json.Marshal(rec)
+	hash := sha256Hex(data)
+	if err := os.WriteFile(filepath.Join(dir, hash), data, 0644); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte(hash+"\n"), 0644); err != nil {
+		t.Fatalf("write HEAD: %v", err)
+	}
+	s := OpenWithDir(dir, "legacy")
+	vc, err := s.LoadChain()
+	if err != nil {
+		t.Fatalf("LoadChain legacy: %v", err)
+	}
+	if vc.Count != 1 || vc.HeadHash != hash {
+		t.Fatalf("legacy chain mismatch: %+v", vc)
+	}
+	if !vc.Valid {
+		t.Error("legacy chain should be valid")
+	}
+	// dual-read identical: create v1/events copy and ensure same chain
+	if err := os.MkdirAll(filepath.Join(dir, "v1", "events"), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "v1", "events", hash), data, 0644); err != nil {
+		t.Fatalf("write v1: %v", err)
+	}
+	vc2, err := s.LoadChain()
+	if err != nil {
+		t.Fatalf("LoadChain v1: %v", err)
+	}
+	if vc2.HeadHash != vc.HeadHash || vc2.Count != vc.Count {
+		t.Error("dual-read should return identical ValidatedChain")
+	}
 }
 
 // runGitInDir runs a git command in a specific directory and returns output.

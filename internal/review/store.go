@@ -80,20 +80,16 @@ type Store struct {
 	LineageID string
 }
 
-// Open creates or opens a store for the given lineage. The store directory
-// is resolved relative to the repository's git directory.
-//
-// If repo is empty, Open auto-detects the git directory from the current
-// working directory. The actual store directory is created on the first
-// call to Append, not during Open.
 func Open(repo, lineageID string) (*Store, error) {
-	gitDir, err := resolveGitDir(repo)
+	commonDir, err := resolveGitCommonDir(repo)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	dir := filepath.Join(gitDir, "biggz", "review-transactions", lineageID)
+	dir := filepath.Join(commonDir, "biggz", "review-transactions", lineageID)
 	return &Store{Dir: dir, LineageID: lineageID}, nil
 }
+
+func (s *Store) eventsDir() string { return filepath.Join(s.Dir, "v1", "events") }
 
 // OpenWithDir creates a store with an explicit directory path.
 // This is primarily useful for testing with t.TempDir().
@@ -129,47 +125,36 @@ func (s *Store) Append(prevRevision string, rec Record) (revision string, err er
 func (s *Store) appendLocked(prevRevision string, rec Record) (revision string, err error) {
 	rec.Schema = recordSchemaVersion
 	rec.PrevRevision = prevRevision
-
 	data, err := json.Marshal(rec)
 	if err != nil {
 		return "", fmt.Errorf("marshal record: %w", err)
 	}
-
 	revision = sha256Hex(data)
-	path := filepath.Join(s.Dir, revision)
-
-	// Create directory on first append (task 1.4).
-	if err := os.MkdirAll(s.Dir, 0755); err != nil {
+	path := filepath.Join(s.eventsDir(), revision)
+	if err := os.MkdirAll(s.eventsDir(), 0755); err != nil {
 		return "", fmt.Errorf("create store dir: %w", err)
 	}
-
-	// publishNoReplace: check if file already exists.
-	existing, err := os.ReadFile(path)
-	if err == nil {
+	if existing, err := os.ReadFile(path); err == nil {
 		if !bytes.Equal(existing, data) {
 			return "", fmt.Errorf("hash collision: %s exists with different content", revision)
 		}
-		// Same content — idempotent. HEAD is still updated below.
-	} else if os.IsNotExist(err) {
-		// Write to temp file and rename for atomicity.
-		tmpPath := path + ".tmp"
-		if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-			return "", fmt.Errorf("write temp: %w", err)
-		}
-		if err := os.Rename(tmpPath, path); err != nil {
-			os.Remove(tmpPath) // best-effort cleanup
-			return "", fmt.Errorf("rename: %w", err)
-		}
-	} else {
+	} else if !os.IsNotExist(err) {
 		return "", fmt.Errorf("stat: %w", err)
+	} else if existing, err := os.ReadFile(filepath.Join(s.Dir, revision)); err == nil {
+		if !bytes.Equal(existing, data) {
+			return "", fmt.Errorf("hash collision: %s exists with different content", revision)
+		}
+		_ = publishImmutable(path, data)
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat legacy: %w", err)
+	} else {
+		if err := publishImmutable(path, data); err != nil {
+			return "", err
+		}
 	}
-
-	// Update HEAD.
-	headPath := filepath.Join(s.Dir, "HEAD")
-	if err := os.WriteFile(headPath, []byte(revision+"\n"), 0644); err != nil {
+	if err := atomicWrite(filepath.Join(s.Dir, "HEAD"), []byte(revision+"\n")); err != nil {
 		return "", fmt.Errorf("write HEAD: %w", err)
 	}
-
 	return revision, nil
 }
 
@@ -232,33 +217,47 @@ func (s *Store) LoadChain() (ValidatedChain, error) {
 //   - Every event's PrevRevision links correctly
 //   - The HEAD file points to the last event
 func (s *Store) Validate() IntegrityVerdict {
-	entries, err := os.ReadDir(s.Dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return IntegrityVerdict{Valid: true, Reason: "empty store — no events"}
+	eventFiles := make(map[string]bool)
+	if entries, err := os.ReadDir(s.eventsDir()); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || strings.HasSuffix(e.Name(), ".tmp") {
+				continue
+			}
+			if len(e.Name()) == 64 {
+				eventFiles[e.Name()] = true
+			}
 		}
+	} else if !os.IsNotExist(err) {
 		return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read dir: %v", err)}
 	}
-
-	// Collect event file names (64-char hex strings).
-	eventFiles := make(map[string]bool)
-	for _, e := range entries {
-		if e.IsDir() || e.Name() == "HEAD" || e.Name() == ".lock" ||
-			strings.HasSuffix(e.Name(), ".tmp") {
-			continue
+	if entries, err := os.ReadDir(s.Dir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || e.Name() == "HEAD" || e.Name() == ".lock" || strings.HasSuffix(e.Name(), ".tmp") || e.Name() == "v1" || e.Name() == BurnedMarkerFile {
+				continue
+			}
+			if len(e.Name()) == 64 {
+				eventFiles[e.Name()] = true
+			}
 		}
-		if len(e.Name()) == 64 {
-			eventFiles[e.Name()] = true
-		}
+	} else if !os.IsNotExist(err) {
+		return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read dir: %v", err)}
 	}
-
 	if len(eventFiles) == 0 {
 		return IntegrityVerdict{Valid: true, Reason: "empty store — no event files"}
 	}
-
-	// Verify each file: SHA-256(content) == file name.
 	for name := range eventFiles {
-		data, err := os.ReadFile(filepath.Join(s.Dir, name))
+		var data []byte
+		var err error
+		if d, e := os.ReadFile(filepath.Join(s.eventsDir(), name)); e == nil {
+			data = d
+		} else if d, e := os.ReadFile(filepath.Join(s.Dir, name)); e == nil {
+			data = d
+		} else {
+			err = e
+		}
+		if err != nil {
+			return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read %s: %v", name, err)}
+		}
 		if err != nil {
 			return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read %s: %v", name, err)}
 		}
@@ -326,9 +325,13 @@ func readHEAD(dir string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-// readRecord reads and unmarshals a record file by its hash name.
 func readRecord(dir, hash string) (Record, error) {
 	var rec Record
+	if data, err := os.ReadFile(filepath.Join(dir, "v1", "events", hash)); err == nil {
+		if err := json.Unmarshal(data, &rec); err == nil {
+			return rec, nil
+		}
+	}
 	data, err := os.ReadFile(filepath.Join(dir, hash))
 	if err != nil {
 		return rec, err
@@ -337,6 +340,99 @@ func readRecord(dir, hash string) (Record, error) {
 		return rec, err
 	}
 	return rec, nil
+}
+
+func resolveGitCommonDir(repo string) (string, error) {
+	args := []string{"rev-parse", "--git-common-dir"}
+	if repo != "" {
+		args = append([]string{"-C", repo}, args...)
+	}
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return resolveGitDir(repo)
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		return resolveGitDir(repo)
+	}
+	if !filepath.IsAbs(dir) {
+		base := repo
+		if base == "" {
+			base, _ = os.Getwd()
+		}
+		dir = filepath.Join(base, dir)
+	}
+	return filepath.Clean(dir), nil
+}
+
+func publishImmutable(path string, payload []byte) error {
+	if existing, err := os.ReadFile(path); err == nil {
+		if bytes.Equal(existing, payload) {
+			return nil
+		}
+		return fmt.Errorf("publish immutable: %s exists with different content", path)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(payload); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	f.Close()
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if d, err := os.Open(filepath.Dir(path)); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+	return nil
+}
+
+func atomicWrite(path string, payload []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(payload); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	f.Close()
+	if err := os.Rename(tmp, path); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if d, err := os.Open(filepath.Dir(path)); err == nil {
+		_ = d.Sync()
+		d.Close()
+	}
+	return nil
 }
 
 // sha256Hex returns the lowercase hex SHA-256 hash of data (content-address).

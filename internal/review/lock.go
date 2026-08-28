@@ -161,16 +161,16 @@ func IsBusy(err error) bool {
 // prevents deadlocks when a holder crashes without cleaning up.
 const staleLockAge = 5 * time.Minute
 
-// FileLock provides cross-process exclusive locking via a lock file.
+// FileLock provides cross-process exclusive locking via advisory flock.
 // The lock file is stored at:
 //
-//	.git/biggz/review-transactions/<lineage>/.lock
+//	.git/biggz/review-transactions/<lineage>/.lock  (via GitCommonDir)
 //
-// Acquire creates the lock file atomically using O_EXCL | O_CREATE and
-// writes the current PID and timestamp for stale detection. If the file
-// already exists, Acquire checks whether the holder is still alive or the
-// file is older than staleLockAge; stale locks are removed and acquisition
-// is retried once.
+// Acquire uses flock(LOCK_EX|LOCK_NB) on the lock file (advisory flock).
+// REVIEW-MAINTENANCE.lock uses shared (LOCK_SH) for readers and exclusive
+// for writers. Stale detection (PID+mtime>5m) remains as fallback. O_EXCL
+// is no longer primary; flock is authoritative. On Windows flock falls back
+// to O_EXCL with same stale semantics.
 //
 // FileLock is NOT recursive. Calling Acquire twice without Release
 // will deadlock the second caller until the first caller's process
@@ -178,6 +178,8 @@ const staleLockAge = 5 * time.Minute
 type FileLock struct {
 	dir  string
 	name string
+	mu   sync.Mutex
+	file *os.File
 }
 
 // NewFileLock creates a FileLock for the given store directory.
@@ -207,23 +209,56 @@ func LockPathFor(lockRoot, target string) string {
 	return filepath.Join(lockRoot, hex.EncodeToString(sum[:])[:16]+".lock")
 }
 
-// Acquire acquires the exclusive file lock. It creates the lock file
-// atomically. If the file already exists and is not stale, it returns a
-// *BusyError. The lock file contains the PID and timestamp for debugging
-// and stale detection.
+// Acquire acquires the exclusive file lock via flock(LOCK_EX|LOCK_NB).
+// If the file is already locked and not stale, it returns a *BusyError.
+// The lock file contains the PID and timestamp for debugging and stale detection.
 func (fl *FileLock) Acquire() error {
-	// Ensure the directory exists.
+	if runtime.GOOS == "windows" {
+		return fl.acquireOExcl()
+	}
 	if err := os.MkdirAll(fl.dir, 0755); err != nil {
 		return fmt.Errorf("file lock acquire: create dir: %w", err)
 	}
-
 	path := fl.LockFilePath()
-	// Try up to two attempts: first try, then one retry after removing a
-	// stale lock.
+	for attempt := 0; attempt < 2; attempt++ {
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
+		if err != nil {
+			return fmt.Errorf("file lock acquire: %w", err)
+		}
+		err = flockExclusive(f.Fd())
+		if err == nil {
+			// Write PID + timestamp for debugging and stale detection.
+			_ = f.Truncate(0)
+			_, _ = f.Seek(0, 0)
+			_, _ = fmt.Fprintf(f, "%d\n%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))
+			_ = f.Sync()
+			fl.mu.Lock()
+			fl.file = f
+			fl.mu.Unlock()
+			return nil
+		}
+		f.Close()
+		// Check stale: mtime>5m or PID dead.
+		stale, statErr := fl.isStale(path)
+		if statErr != nil {
+			return &BusyError{Path: path}
+		}
+		if !stale {
+			return &BusyError{Path: path}
+		}
+		_ = os.Remove(path)
+	}
+	return &BusyError{Path: fl.LockFilePath()}
+}
+
+func (fl *FileLock) acquireOExcl() error {
+	if err := os.MkdirAll(fl.dir, 0755); err != nil {
+		return fmt.Errorf("file lock acquire: create dir: %w", err)
+	}
+	path := fl.LockFilePath()
 	for attempt := 0; attempt < 2; attempt++ {
 		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
 		if err == nil {
-			// Write PID + timestamp for debugging and stale detection.
 			_, _ = fmt.Fprintf(f, "%d\n%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339Nano))
 			f.Close()
 			return nil
@@ -231,16 +266,10 @@ func (fl *FileLock) Acquire() error {
 		if !os.IsExist(err) {
 			return fmt.Errorf("file lock acquire: %w", err)
 		}
-		// File exists — check if stale.
-		stale, statErr := fl.isStale(path)
-		if statErr != nil {
-			// If we cannot determine staleness, treat as busy.
-			return &BusyError{Path: path}
-		}
+		stale, _ := fl.isStale(path)
 		if !stale {
 			return &BusyError{Path: path}
 		}
-		// Stale — remove and retry.
 		_ = os.Remove(path)
 	}
 	return &BusyError{Path: fl.LockFilePath()}
@@ -321,12 +350,19 @@ func isProcessAlive(pid int) bool {
 	return true
 }
 
-// Release releases the file lock by removing the lock file.
+// Release releases the file lock by unlocking flock and removing the lock file.
 func (fl *FileLock) Release() error {
+	fl.mu.Lock()
+	f := fl.file
+	fl.file = nil
+	fl.mu.Unlock()
+	if f != nil {
+		_ = flockUnlock(f.Fd())
+		f.Close()
+	}
 	path := fl.LockFilePath()
 	if err := os.Remove(path); err != nil {
 		if os.IsNotExist(err) {
-			// Already released — idempotent.
 			return nil
 		}
 		return fmt.Errorf("file lock release: %w", err)

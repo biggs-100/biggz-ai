@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -112,5 +113,54 @@ func TestWithWriteLock(t *testing.T) {
 	}
 	if !called {
 		t.Error("function not called")
+	}
+}
+
+func TestFlockBusyError(t *testing.T) {
+	dir := t.TempDir()
+	fl1 := NewFileLock(dir)
+	if err := fl1.Acquire(); err != nil {
+		t.Fatalf("first Acquire: %v", err)
+	}
+	defer fl1.Release()
+	fl2 := NewFileLock(dir)
+	err := fl2.Acquire()
+	if err == nil {
+		fl2.Release()
+		t.Fatal("expected BusyError for second concurrent acquire")
+	}
+	if !IsBusy(err) {
+		t.Fatalf("expected BusyError, got %v", err)
+	}
+	// AcquireWithTimeout should also busy with short timeout
+	fl3 := NewFileLock(dir)
+	err = fl3.AcquireWithTimeout(150 * time.Millisecond)
+	if err == nil || !IsBusy(err) {
+		t.Fatalf("AcquireWithTimeout should be BusyError, got %v", err)
+	}
+}
+
+func TestStaleReaped(t *testing.T) {
+	dir := t.TempDir()
+	fl := NewFileLock(dir)
+	path := fl.LockFilePath()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// write stale lock file with old mtime
+	if err := os.WriteFile(path, []byte("999999\n2020-01-01T00:00:00Z\n"), 0644); err != nil {
+		t.Fatalf("write stale: %v", err)
+	}
+	old := time.Now().Add(-6 * time.Minute)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatalf("chtimes: %v", err)
+	}
+	fl2 := NewFileLock(dir)
+	if err := fl2.Acquire(); err != nil {
+		t.Fatalf("stale lock should be reaped, got: %v", err)
+	}
+	fl2.Release()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Error("lock file should be removed after Release")
 	}
 }

@@ -286,16 +286,21 @@ func TestFinalize_RejectsChainIntegrityFailure(t *testing.T) {
 	captureLens(t, repo, "finalize-tampered", head, "risk", 0)
 
 	// Tamper with an event file; the content hash no longer matches the name.
-	entries, err := os.ReadDir(store.Dir)
-	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
+	eventsDir := filepath.Join(store.Dir, "v1", "events")
+	entries, err := os.ReadDir(eventsDir)
+	if err != nil || len(entries) == 0 {
+		entries, err = os.ReadDir(store.Dir)
+		if err != nil {
+			t.Fatalf("ReadDir: %v", err)
+		}
+		eventsDir = store.Dir
 	}
 	tampered := false
 	for _, entry := range entries {
 		if entry.IsDir() || len(entry.Name()) != 64 {
 			continue
 		}
-		path := filepath.Join(store.Dir, entry.Name())
+		path := filepath.Join(eventsDir, entry.Name())
 		original, _ := os.ReadFile(path)
 		if err := os.WriteFile(path, append(original, []byte("tamper")...), 0644); err != nil {
 			t.Fatalf("tamper: %v", err)
@@ -643,6 +648,67 @@ func TestCanStopSession_PartialPending(t *testing.T) {
 	if CanStopSession(SessionStopState{PendingFindings: 0, PendingLenses: 1}) {
 		t.Error("pending lenses must block")
 	}
+}
+
+func TestBurnEnabledTrue(t *testing.T) {
+	orig := BurnEnabled
+	BurnEnabled = true
+	defer func() { BurnEnabled = orig }()
+	repo, _, head := finalizeFixtureRepo(t)
+	store, _ := finalizeStart(t, repo, head, "burn-enabled-true", []string{"risk"}, "")
+	captureLens(t, repo, "burn-enabled-true", head, "risk", 0)
+	outcome, err := Finalize(repo, "burn-enabled-true")
+	if err != nil {
+		t.Fatalf("Finalize: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(store.Dir, BurnedMarkerFile)); err != nil {
+		t.Fatalf("burned.json should exist when BurnEnabled=true: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(store.Dir, outcome.ReceiptPath)); !os.IsNotExist(err) {
+		t.Fatalf("receipt file should be deleted after burn")
+	}
+	// gate should be DeliveryBurned
+	res, err := EvaluateGate(GatePrePR, repo, "burn-enabled-true", GateOptions{})
+	if err != nil {
+		t.Fatalf("gate: %v", err)
+	}
+	if res.Delivery != DeliveryBurned {
+		t.Errorf("delivery = %q, want burned", res.Delivery)
+	}
+	// idempotencia: second finalize must be ErrAlreadyBurned
+	if _, err := Finalize(repo, "burn-enabled-true"); err == nil || !strings.Contains(strings.ToLower(err.Error()), "burned") {
+		t.Fatalf("second finalize should be burned, got %v", err)
+	}
+}
+
+func TestBurnEnabledFalse(t *testing.T) {
+	orig := BurnEnabled
+	BurnEnabled = false
+	defer func() { BurnEnabled = orig }()
+	repo, _, head := finalizeFixtureRepo(t)
+	store, _ := finalizeStart(t, repo, head, "burn-enabled-false", []string{"risk"}, "")
+	captureLens(t, repo, "burn-enabled-false", head, "risk", 0)
+	outcome, err := Finalize(repo, "burn-enabled-false")
+	if err != nil {
+		t.Fatalf("Finalize: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(store.Dir, outcome.ReceiptPath)); err != nil {
+		t.Fatalf("receipt should remain when BurnEnabled=false: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(store.Dir, BurnedMarkerFile)); !os.IsNotExist(err) {
+		t.Fatalf("burned.json should not exist when BurnEnabled=false")
+	}
+	chain, _ := store.LoadChain()
+	if IsChainBurned(chain) {
+		t.Error("IsChainBurned should be false")
+	}
+	if store.IsBurned() {
+		t.Error("IsBurned should be false")
+	}
+	// second finalize should be idempotent? BurnEnabled false means finalize is not burned, second should be ErrAlreadyBurned? Actually with BurnEnabled false, lineage is completed but not burned, second should be idempotent success.
+	// For this test, we just check receipt remains.
+	BurnEnabled = true
+	defer func() { BurnEnabled = orig }()
 }
 
 func TestFixDeltaBinding(t *testing.T) {
