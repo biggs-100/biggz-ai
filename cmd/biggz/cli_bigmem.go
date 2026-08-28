@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/project"
 )
 
 // bigmemRun handles the "biggz bigmem" subcommand.
@@ -70,6 +72,7 @@ func bigmemRun() int {
 		fmt.Fprintln(os.Stderr, "  conflicts scan [--project P]     Scan for new conflicts")
 		fmt.Fprintln(os.Stderr, "  graph [--project P] [--format dot|ascii|json] [--limit N] [--scope project|all]")
 		fmt.Fprintln(os.Stderr, "                                Render topic_key hierarchy and relations")
+		fmt.Fprintln(os.Stderr, "  rescue-ownership --project X [--session Y] [--dry-run] [--json]  Rescue null-project sessions")
 		fmt.Fprintln(os.Stderr, "  version                         Show bigmem version")
 		fmt.Fprintln(os.Stderr, "  help                            Show this help")
 		return 1
@@ -777,6 +780,94 @@ func bigmemRun() int {
 				return 1
 			}
 			fmt.Printf("Exported to %s\n", filepath.Join(projectRoot, ".bigmem"))
+		}
+
+	case "rescue-ownership":
+		{
+			projectFlag := ""
+			sessionFlag := ""
+			dryRun := false
+			useJSON := false
+			for i := 1; i < len(args); i++ {
+				switch args[i] {
+				case "--project":
+					if i+1 < len(args) {
+						projectFlag = args[i+1]
+						i++
+					}
+				case "--session":
+					if i+1 < len(args) {
+						sessionFlag = args[i+1]
+						i++
+					}
+				case "--dry-run":
+					dryRun = true
+				case "--json":
+					useJSON = true
+				case "--help", "-h":
+					fmt.Fprintln(os.Stderr, "Usage: biggz bigmem rescue-ownership --project X [--session Y] [--dry-run] [--json]")
+					return 1
+				default:
+					if strings.HasPrefix(args[i], "--project=") {
+						projectFlag = strings.TrimPrefix(args[i], "--project=")
+					} else if strings.HasPrefix(args[i], "--session=") {
+						sessionFlag = strings.TrimPrefix(args[i], "--session=")
+					} else {
+						fmt.Fprintf(os.Stderr, "unknown flag: %s\n", args[i])
+						return 1
+					}
+				}
+			}
+			if strings.TrimSpace(projectFlag) == "" {
+				fmt.Fprintln(os.Stderr, "error: --project is required")
+				if useJSON {
+					data, _ := json.Marshal(map[string]any{"error": "project required", "adopted": 0, "skipped": 0, "ambiguous": []any{}})
+					fmt.Println(string(data))
+				}
+				return 1
+			}
+			normalized := project.NormalizeProjectName(projectFlag)
+			if normalized == "unknown" || normalized == "" {
+				fmt.Fprintf(os.Stderr, "error: invalid project %q\n", projectFlag)
+				if useJSON {
+					data, _ := json.Marshal(map[string]any{"error": fmt.Sprintf("invalid project %q", projectFlag), "adopted": 0, "skipped": 0, "ambiguous": []any{}})
+					fmt.Println(string(data))
+				}
+				return 1
+			}
+			opts := bigmem.RescueOptions{DryRun: dryRun, SessionID: sessionFlag}
+			result, err := store.RescueNullProjectOwnership(normalized, opts)
+			if err != nil {
+				if errors.Is(err, bigmem.ErrProjectRequired) || errors.Is(err, bigmem.ErrProjectOwnershipAmbiguous) {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				} else {
+					fmt.Fprintf(os.Stderr, "error: rescue-ownership: %v\n", err)
+				}
+				if useJSON {
+					data, _ := json.Marshal(map[string]any{"error": err.Error(), "adopted": 0, "skipped": 0, "ambiguous": []any{}})
+					fmt.Println(string(data))
+				}
+				return 1
+			}
+			if useJSON {
+				if result.Ambiguous == nil {
+					result.Ambiguous = []bigmem.AmbiguousEntry{}
+				}
+				data, _ := json.MarshalIndent(result, "", "  ")
+				fmt.Println(string(data))
+				return 0
+			}
+			if dryRun {
+				fmt.Printf("Dry-run: would adopt %d, skipped %d, ambiguous %d\n", result.Adopted, result.Skipped, len(result.Ambiguous))
+			} else {
+				fmt.Printf("Rescued: adopted %d, skipped %d, ambiguous %d\n", result.Adopted, result.Skipped, len(result.Ambiguous))
+			}
+			if len(result.Ambiguous) > 0 {
+				for _, a := range result.Ambiguous {
+					fmt.Printf("  ambiguous: session %s foreign %s\n", a.SessionID, a.ForeignProject)
+				}
+			}
+			return 0
 		}
 
 	case "graph":

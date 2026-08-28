@@ -16,7 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/biggs-100/biggz-ai/internal/project"
+	projpkg "github.com/biggs-100/biggz-ai/internal/project"
 	_ "modernc.org/sqlite"
 )
 
@@ -75,6 +75,35 @@ type Store struct {
 	rootDir string
 }
 
+// ─── Rescue Ownership Types ─────────────────────────────────────────────────
+
+// AmbiguousEntry describes a session that cannot be adopted due to foreign observations.
+type AmbiguousEntry struct {
+	SessionID      string `json:"session_id"`
+	ForeignProject string `json:"foreign_project"`
+}
+
+// RescuePlan is the two-phase plan for bulk rescue (dry-run).
+type RescuePlan struct {
+	Project   string           `json:"project"`
+	Total     int              `json:"total"`
+	Adoptable []string         `json:"adoptable"`
+	Ambiguous []AmbiguousEntry `json:"ambiguous"`
+}
+
+// RescueResult is the result of a rescue operation.
+type RescueResult struct {
+	Adopted   int              `json:"adopted"`
+	Skipped   int              `json:"skipped"`
+	Ambiguous []AmbiguousEntry `json:"ambiguous"`
+}
+
+// RescueOptions controls RescueNullProjectOwnership behavior.
+type RescueOptions struct {
+	DryRun    bool
+	SessionID string
+}
+
 // globalIDSeq ensures obs IDs are unique even when time.Now().UnixNano()
 // collides (Windows clock resolution ~15ms causes rapid Saves to share the
 // same timestamp and ON CONFLICT would overwrite the previous row).
@@ -82,6 +111,12 @@ var globalIDSeq int64
 
 // privateTagRegex redacts <private>...</private> blocks (Engram parity, Batch S).
 var privateTagRegex = regexp.MustCompile("(?is)<private>.*?</private>")
+
+// ErrProjectRequired is returned when project is required but empty.
+var ErrProjectRequired = errors.New("project required")
+
+// ErrProjectOwnershipAmbiguous is returned when session has foreign observations and cannot be adopted.
+var ErrProjectOwnershipAmbiguous = errors.New("project ownership ambiguous")
 
 // TruncationMetadata tracks whether content was truncated to maxStoredBytes.
 type TruncationMetadata struct {
@@ -547,21 +582,21 @@ func BigmemStorePath(rootDir string) (string, error) { return ResolveDBPath(root
 // inferBigMemProject delegates to internal/project 5-case detection.
 // Kept for compatibility; new code should call project.DetectProject directly.
 func inferBigMemProject(dir string) string {
-	info := project.DetectProjectFull(dir)
+	info := projpkg.DetectProjectFull(dir)
 	if info.Error == nil && info.Project != "" {
 		return info.Project
 	}
-	if errors.Is(info.Error, project.ErrAmbiguousProject) {
+	if errors.Is(info.Error, projpkg.ErrAmbiguousProject) {
 		if base := strings.TrimSpace(filepath.Base(dir)); base != "" && base != "." {
-			return project.NormalizeProjectName(base)
+			return projpkg.NormalizeProjectName(base)
 		}
 		return "unknown"
 	}
 	if info.Project != "" {
-		return project.NormalizeProjectName(info.Project)
+		return projpkg.NormalizeProjectName(info.Project)
 	}
 	if base := strings.TrimSpace(filepath.Base(dir)); base != "" && base != "." {
-		return project.NormalizeProjectName(base)
+		return projpkg.NormalizeProjectName(base)
 	}
 	return "unknown"
 }
@@ -1011,6 +1046,348 @@ func shouldFilterProject(opts SearchOptions) bool {
 	return opts.Project != "" && !opts.AllProjects && normalizeScope(opts.Scope) != "personal"
 }
 
+// ─── Rescue Ownership Helpers (REQ-RO1/RO2) ─────────────────────────────────
+
+// foreignRecordOwnerTx checks whether session has foreign observations (project != requested).
+// Returns true with foreign project name if a blocking observation exists.
+func foreignRecordOwnerTx(tx *sql.Tx, sessionID, requestedProject string) (bool, string, error) {
+	var foreign string
+	err := tx.QueryRow(`SELECT project FROM observations WHERE session_id = ? AND trim(coalesce(project,'')) != '' AND project != ? LIMIT 1`, sessionID, requestedProject).Scan(&foreign)
+	if err == sql.ErrNoRows {
+		return false, "", nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	if strings.TrimSpace(foreign) == "" {
+		return false, "", nil
+	}
+	return true, foreign, nil
+}
+
+// adoptSessionOwnershipTx atomically claims an orphan session for the requested project.
+// It updates sessions.project where currently NULL or blank and probes sync_mutations for sync enqueue.
+func (s *Store) adoptSessionOwnershipTx(tx *sql.Tx, sessionID, project string) error {
+	_, err := tx.Exec(`UPDATE sessions SET project = ? WHERE id = ? AND (project IS NULL OR trim(coalesce(project,'')) = '')`, project, sessionID)
+	if err != nil {
+		return err
+	}
+	// Probe sync_mutations existence (Engram parity, no DDL migration)
+	var exists int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sync_mutations'`).Scan(&exists); err != nil {
+		return nil
+	}
+	if exists == 0 {
+		return nil
+	}
+	rows, err := tx.Query(`PRAGMA table_info(sync_mutations)`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	cols := map[string]bool{}
+	for rows.Next() {
+		var cid int
+		var name, ctype string
+		var notnull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err == nil {
+			cols[strings.ToLower(name)] = true
+		}
+	}
+	if cols["entity"] && cols["entity_key"] {
+		opCol := ""
+		if cols["op"] {
+			opCol = "op"
+		} else if cols["operation"] {
+			opCol = "operation"
+		}
+		id := fmt.Sprintf("sync-%d", time.Now().UnixNano())
+		nowStr := time.Now().UTC().Format(time.RFC3339)
+		if opCol != "" && cols["project"] {
+			_, _ = tx.Exec(fmt.Sprintf(`INSERT INTO sync_mutations (id, entity, entity_key, %s, project, created_at) VALUES (?, ?, ?, ?, ?, ?)`, opCol), id, "session", sessionID, "adopt", project, nowStr)
+			return nil
+		}
+		if opCol != "" {
+			_, _ = tx.Exec(fmt.Sprintf(`INSERT INTO sync_mutations (id, entity, entity_key, %s) VALUES (?, ?, ?, ?)`, opCol), id, "session", sessionID, "adopt")
+			return nil
+		}
+		_, _ = tx.Exec(`INSERT INTO sync_mutations (id, entity, entity_key, project) VALUES (?, ?, ?, ?)`, id, "session", sessionID, project)
+		return nil
+	}
+	if cols["project"] {
+		id := fmt.Sprintf("sync-%d", time.Now().UnixNano())
+		_, _ = tx.Exec(`INSERT INTO sync_mutations (id, project) VALUES (?, ?)`, id, project)
+	}
+	return nil
+}
+
+// resolveWriteProjectTx atomically claims an orphan session when no foreign owner exists.
+// Must be called inside the caller's BEGIN IMMEDIATE TX holding Store.mu.
+func (s *Store) resolveWriteProjectTx(tx *sql.Tx, sessionID, requestedProject string) error {
+	if sessionID == "" {
+		return nil
+	}
+	trimmed := strings.TrimSpace(requestedProject)
+	if trimmed == "" || strings.ToLower(trimmed) == "unknown" {
+		return nil
+	}
+	normalizedRequested := projpkg.NormalizeProjectName(trimmed)
+	if normalizedRequested == "unknown" || normalizedRequested == "" {
+		return nil
+	}
+	requestedProject = normalizedRequested
+	var existing sql.NullString
+	err := tx.QueryRow(`SELECT project FROM sessions WHERE id = ?`, sessionID).Scan(&existing)
+	if err == sql.ErrNoRows {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	existingProj := ""
+	if existing.Valid {
+		existingProj = strings.TrimSpace(existing.String)
+	}
+	if existingProj != "" {
+		normalizedExisting := projpkg.NormalizeProjectName(existingProj)
+		if normalizedExisting == requestedProject {
+			return nil
+		}
+		if strings.ToLower(existingProj) == "unknown" {
+			return nil
+		}
+		return fmt.Errorf("%w: session %q owned by project %q (requested %q); run biggz bigmem rescue-ownership --project %s --session %s", ErrProjectOwnershipAmbiguous, sessionID, existingProj, requestedProject, requestedProject, sessionID)
+	}
+	hasForeign, foreignProj, err := foreignRecordOwnerTx(tx, sessionID, requestedProject)
+	if err != nil {
+		return err
+	}
+	if hasForeign {
+		return fmt.Errorf("%w: session %q has foreign observations in project %q; run biggz bigmem rescue-ownership --project %s --session %s", ErrProjectOwnershipAmbiguous, sessionID, foreignProj, requestedProject, sessionID)
+	}
+	return s.adoptSessionOwnershipTx(tx, sessionID, requestedProject)
+}
+
+// ─── Bulk Rescue (REQ-RO3) ────────────────────────────────────────────────────
+
+// PlanRescue returns a two-phase plan for bulk rescue without mutation.
+func (s *Store) PlanRescue(project string) (*RescuePlan, error) {
+	trimmed := strings.TrimSpace(project)
+	if trimmed == "" {
+		return nil, fmt.Errorf("%w: project required for rescue", ErrProjectRequired)
+	}
+	normalized := projpkg.NormalizeProjectName(trimmed)
+	if normalized == "" || normalized == "unknown" {
+		return nil, fmt.Errorf("%w: invalid project %q", ErrProjectRequired, project)
+	}
+	project = normalized
+	s.mu.RLock()
+	rows, err := s.db.Query(`SELECT id FROM sessions WHERE (project IS NULL OR trim(coalesce(project,'')) = '') AND coalesce(project,'') != 'unknown'`)
+	if err != nil {
+		s.mu.RUnlock()
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	s.mu.RUnlock()
+	plan := &RescuePlan{Project: project, Total: len(ids)}
+	for _, sid := range ids {
+		var foreign string
+		qErr := s.db.QueryRow(`SELECT project FROM observations WHERE session_id = ? AND trim(coalesce(project,'')) != '' AND project != ? LIMIT 1`, sid, project).Scan(&foreign)
+		if qErr == sql.ErrNoRows {
+			plan.Adoptable = append(plan.Adoptable, sid)
+			continue
+		}
+		if qErr != nil {
+			continue
+		}
+		if strings.TrimSpace(foreign) == "" {
+			plan.Adoptable = append(plan.Adoptable, sid)
+		} else {
+			plan.Ambiguous = append(plan.Ambiguous, AmbiguousEntry{SessionID: sid, ForeignProject: foreign})
+		}
+	}
+	if plan.Adoptable == nil {
+		plan.Adoptable = []string{}
+	}
+	if plan.Ambiguous == nil {
+		plan.Ambiguous = []AmbiguousEntry{}
+	}
+	return plan, nil
+}
+
+// RescueNullProjectOwnership bulk-adopts orphan sessions to project.
+// When opts.DryRun is true, no mutation occurs and Adopted reflects would-be count.
+// When opts.SessionID is set, scope is limited to that single session.
+func (s *Store) RescueNullProjectOwnership(project string, opts RescueOptions) (*RescueResult, error) {
+	trimmed := strings.TrimSpace(project)
+	if trimmed == "" {
+		return nil, fmt.Errorf("%w: project required", ErrProjectRequired)
+	}
+	normalized := projpkg.NormalizeProjectName(trimmed)
+	if normalized == "" || normalized == "unknown" {
+		return nil, fmt.Errorf("%w: invalid project %q", ErrProjectRequired, project)
+	}
+	project = normalized
+	if opts.SessionID != "" {
+		sessionID := opts.SessionID
+		var existing sql.NullString
+		err := s.db.QueryRow(`SELECT project FROM sessions WHERE id = ?`, sessionID).Scan(&existing)
+		if err == sql.ErrNoRows {
+			return nil, fmt.Errorf("session %q not found", sessionID)
+		}
+		if err != nil {
+			return nil, err
+		}
+		existingProj := ""
+		if existing.Valid {
+			existingProj = strings.TrimSpace(existing.String)
+		}
+		if existingProj != "" {
+			if projpkg.NormalizeProjectName(existingProj) == project {
+				return &RescueResult{Adopted: 0, Skipped: 1, Ambiguous: []AmbiguousEntry{}}, nil
+			}
+			if strings.ToLower(existingProj) == "unknown" {
+				return &RescueResult{Adopted: 0, Skipped: 1, Ambiguous: []AmbiguousEntry{}}, nil
+			}
+			// Check if orphan? already not orphan since existingProj != ""
+			// Treat as skipped (already owned by different project) — ambiguous only if foreign observations?
+			var foreign string
+			fErr := s.db.QueryRow(`SELECT project FROM observations WHERE session_id = ? AND trim(coalesce(project,'')) != '' AND project != ? LIMIT 1`, sessionID, project).Scan(&foreign)
+			if fErr == nil && strings.TrimSpace(foreign) != "" {
+				return &RescueResult{Adopted: 0, Skipped: 0, Ambiguous: []AmbiguousEntry{{SessionID: sessionID, ForeignProject: foreign}}}, nil
+			}
+			return &RescueResult{Adopted: 0, Skipped: 1, Ambiguous: []AmbiguousEntry{}}, nil
+		}
+		// Orphan: check foreign
+		var foreign string
+		fErr := s.db.QueryRow(`SELECT project FROM observations WHERE session_id = ? AND trim(coalesce(project,'')) != '' AND project != ? LIMIT 1`, sessionID, project).Scan(&foreign)
+		if fErr == nil && strings.TrimSpace(foreign) != "" {
+			return &RescueResult{Adopted: 0, Skipped: 0, Ambiguous: []AmbiguousEntry{{SessionID: sessionID, ForeignProject: foreign}}}, nil
+		}
+		if fErr != nil && fErr != sql.ErrNoRows {
+			return nil, fErr
+		}
+		if opts.DryRun {
+			return &RescueResult{Adopted: 1, Skipped: 0, Ambiguous: []AmbiguousEntry{}}, nil
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.db.Exec("PRAGMA busy_timeout=5000")
+		tx, err := s.db.Begin()
+		if err != nil {
+			return nil, err
+		}
+		hasForeign, foreignProj, err := foreignRecordOwnerTx(tx, sessionID, project)
+		if err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+		if hasForeign {
+			_ = tx.Rollback()
+			return &RescueResult{Adopted: 0, Skipped: 0, Ambiguous: []AmbiguousEntry{{SessionID: sessionID, ForeignProject: foreignProj}}}, nil
+		}
+		var projInside sql.NullString
+		if err := tx.QueryRow(`SELECT project FROM sessions WHERE id = ?`, sessionID).Scan(&projInside); err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+		insideProj := ""
+		if projInside.Valid {
+			insideProj = strings.TrimSpace(projInside.String)
+		}
+		if insideProj != "" && strings.ToLower(insideProj) != "unknown" {
+			_ = tx.Rollback()
+			if projpkg.NormalizeProjectName(insideProj) == project {
+				return &RescueResult{Adopted: 0, Skipped: 1, Ambiguous: []AmbiguousEntry{}}, nil
+			}
+			return &RescueResult{Adopted: 0, Skipped: 1, Ambiguous: []AmbiguousEntry{}}, nil
+		}
+		if err := s.adoptSessionOwnershipTx(tx, sessionID, project); err != nil {
+			_ = tx.Rollback()
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		return &RescueResult{Adopted: 1, Skipped: 0, Ambiguous: []AmbiguousEntry{}}, nil
+	}
+	plan, err := s.PlanRescue(project)
+	if err != nil {
+		return nil, err
+	}
+	if opts.DryRun {
+		return &RescueResult{Adopted: len(plan.Adoptable), Skipped: 0, Ambiguous: plan.Ambiguous}, nil
+	}
+	result := &RescueResult{Ambiguous: plan.Ambiguous}
+	if result.Ambiguous == nil {
+		result.Ambiguous = []AmbiguousEntry{}
+	}
+	for _, sessionID := range plan.Adoptable {
+		s.mu.Lock()
+		s.db.Exec("PRAGMA busy_timeout=5000")
+		tx, err := s.db.Begin()
+		if err != nil {
+			s.mu.Unlock()
+			result.Skipped++
+			continue
+		}
+		hasForeign, foreignProj, err := foreignRecordOwnerTx(tx, sessionID, project)
+		if err != nil {
+			_ = tx.Rollback()
+			s.mu.Unlock()
+			result.Skipped++
+			continue
+		}
+		if hasForeign {
+			_ = tx.Rollback()
+			s.mu.Unlock()
+			result.Ambiguous = append(result.Ambiguous, AmbiguousEntry{SessionID: sessionID, ForeignProject: foreignProj})
+			continue
+		}
+		var projInside sql.NullString
+		if err := tx.QueryRow(`SELECT project FROM sessions WHERE id = ?`, sessionID).Scan(&projInside); err != nil {
+			_ = tx.Rollback()
+			s.mu.Unlock()
+			result.Skipped++
+			continue
+		}
+		insideProj := ""
+		if projInside.Valid {
+			insideProj = strings.TrimSpace(projInside.String)
+		}
+		if insideProj != "" && strings.ToLower(insideProj) != "unknown" {
+			_ = tx.Rollback()
+			s.mu.Unlock()
+			result.Skipped++
+			continue
+		}
+		if err := s.adoptSessionOwnershipTx(tx, sessionID, project); err != nil {
+			_ = tx.Rollback()
+			s.mu.Unlock()
+			result.Skipped++
+			continue
+		}
+		if err := tx.Commit(); err != nil {
+			s.mu.Unlock()
+			result.Skipped++
+			continue
+		}
+		s.mu.Unlock()
+		_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		result.Adopted++
+	}
+	return result, nil
+}
+
 // ─── Save with dedup ─────────────────────────────────────────────────────────
 
 // Save persists an observation with full engram-compatible dedup:
@@ -1061,11 +1438,32 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 
 	nowStr := now.Format(time.RFC3339)
 
+	requestedProject := obs.Project
+	if strings.TrimSpace(requestedProject) != "" && strings.ToLower(strings.TrimSpace(requestedProject)) != "unknown" {
+		requestedProject = projpkg.NormalizeProjectName(requestedProject)
+		obs.Project = requestedProject
+	}
+	s.db.Exec("PRAGMA busy_timeout=5000")
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+	if obs.SessionID != "" && strings.TrimSpace(requestedProject) != "" && strings.ToLower(strings.TrimSpace(requestedProject)) != "unknown" {
+		if rErr := s.resolveWriteProjectTx(tx, obs.SessionID, requestedProject); rErr != nil {
+			err = rErr
+			return err
+		}
+	}
 	// Phase 1: topic_key dedup — update existing with same topic_key + project + scope
 	if obs.TopicKey != "" {
 		var existingID string
 		var existingCreated string
-		if qErr := s.db.QueryRow(
+		if qErr := tx.QueryRow(
 			`SELECT id, created_at FROM observations
 			 WHERE topic_key = ? AND project = ? AND scope = ? AND deleted_at IS NULL
 			 ORDER BY updated_at DESC LIMIT 1`,
@@ -1075,7 +1473,7 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 			if t, pErr := time.Parse(time.RFC3339, existingCreated); pErr == nil {
 				obs.CreatedAt = t
 			}
-			_, err = s.db.Exec(`UPDATE observations SET
+			_, err = tx.Exec(`UPDATE observations SET
 				type=?, title=?, content=?, session_id=?, tool_name=?,
 				topic_key=?, project=?, scope=?, normalized_hash=?,
 				revision_count=revision_count+1, last_seen_at=?,
@@ -1084,7 +1482,13 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 				obs.Type, obs.Title, obs.Content, obs.SessionID, obs.ToolName,
 				obs.TopicKey, obs.Project, obs.Scope, obs.NormalizedHash,
 				nowStr, boolToInt(obs.Pinned), nowStr, existingID)
-			return
+			if err != nil {
+				return err
+			}
+			if err = tx.Commit(); err != nil {
+				return err
+			}
+			return nil
 		}
 	}
 
@@ -1092,7 +1496,7 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 	window := dedupeWindowExpression(0)
 	{
 		var existingID string
-		if qErr := s.db.QueryRow(
+		if qErr := tx.QueryRow(
 			`SELECT id FROM observations
 			 WHERE normalized_hash = ? AND project = ? AND scope = ?
 			 AND type = ? AND title = ? AND deleted_at IS NULL
@@ -1104,15 +1508,21 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 			obs.ID = existingID
 			// Preserve original created_at
 			var origCreated string
-			_ = s.db.QueryRow("SELECT created_at FROM observations WHERE id=?", existingID).Scan(&origCreated)
+			_ = tx.QueryRow("SELECT created_at FROM observations WHERE id=?", existingID).Scan(&origCreated)
 			if t, pErr := time.Parse(time.RFC3339, origCreated); pErr == nil {
 				obs.CreatedAt = t
 			}
-			_, err = s.db.Exec(`UPDATE observations SET
+			_, err = tx.Exec(`UPDATE observations SET
 			duplicate_count=duplicate_count+1, last_seen_at=?, updated_at=?
 			WHERE id=?`,
 				nowStr, nowStr, existingID)
-			return
+			if err != nil {
+				return err
+			}
+			if err = tx.Commit(); err != nil {
+				return err
+			}
+			return nil
 		}
 	}
 
@@ -1120,7 +1530,7 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 	// the ID already exists (e.g., from Update → Get → Save path).
 	reviewAfterStr := computeReviewAfterAt(now, obs.Type)
 
-	_, err = s.db.Exec(`INSERT INTO observations
+	_, err = tx.Exec(`INSERT INTO observations
 		(id, title, type, content, session_id, tool_name, topic_key, project, scope,
 		 normalized_hash, revision_count, duplicate_count, last_seen_at, review_after,
 		 pinned, created_at, updated_at)
@@ -1140,7 +1550,13 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 		obs.TopicKey, obs.Project, obs.Scope, obs.NormalizedHash,
 		nowStr, reviewAfterStr, boolToInt(obs.Pinned),
 		obs.CreatedAt.Format(time.RFC3339), nowStr)
-	return
+	if err != nil {
+		return err
+	}
+	if err = tx.Commit(); err != nil {
+		return err
+	}
+	return nil
 }
 
 // computeReviewAfter returns the decay duration for a type, or nil if none.
