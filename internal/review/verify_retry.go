@@ -148,6 +148,24 @@ func deriveExpectedReceipt(store *Store, repo string, chain ValidatedChain) (Per
 	if err != nil {
 		return PersistedReceipt{}, err
 	}
+	// Preserve cumulative ledger from persisted receipt if available (hash-identical re-materialization).
+	if ref := receiptArtifactOf(chain); ref != nil {
+		if stored, err := readReceiptFile(store, completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}); err == nil {
+			data.cumulativeCorrectionLines = stored.CumulativeCorrectionLines
+			data.fixDeltaHash = stored.FixDeltaHash
+		} else if os.IsNotExist(err) {
+			// Missing file: derive via cumulative helper (prior + post). For initial finalize, this is 0.
+			if cum, delta := deriveCumulativeAndFixDelta(chain, store); true {
+				// If derive returns 0 (no prior), keep data defaults (0/Empty) to stay hash-identical for first receipt.
+				// For subsequent receipts after correction where file is missing, helper attempts to recompute.
+				if cum != 0 || delta != EmptyFixDeltaHash {
+					data.cumulativeCorrectionLines = cum
+					data.fixDeltaHash = delta
+				}
+			}
+		}
+		// Tampered case (err not IsNotExist) is not expected here; deriveExpected will be compared and fail elsewhere.
+	}
 	revisions := recordRevisions(chain)
 	receipt := buildReceipt(chain.LineageID, revisions[0], revisions[complete-1], data)
 	if err := receipt.Validate(); err != nil {

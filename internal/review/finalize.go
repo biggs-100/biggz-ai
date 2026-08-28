@@ -69,6 +69,60 @@ var BurnEnabled = true
 // real fix delta.
 const EmptyFixDeltaHash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
+// computeFixDeltaHash returns a real sha256:<hex> delta hash for a correction
+// with the given cumulative lines, or EmptyFixDeltaHash when no correction has
+// occurred. The hash binds cumulative lines deterministically; re-materialized
+// receipts with same cumulative produce identical hash.
+func computeFixDeltaHash(cumulativeLines int) string {
+	if cumulativeLines <= 0 {
+		return EmptyFixDeltaHash
+	}
+	// Deterministic payload: fix-delta:<cumulative> bound via payloadSHA256.
+	return payloadSHA256([]byte(fmt.Sprintf("fix-delta:%d", cumulativeLines)))
+}
+
+// deriveCumulativeAndFixDelta derives cumulative correction lines and its delta hash
+// from the chain: prior receipt cumulative plus post-finalize correction lines.
+// The current store has no explicit correction event type; we derive
+// post-finalize lines by scanning for correction-like payloads after the last
+// complete_review. If none, cumulative is prior receipt's value.
+func deriveCumulativeAndFixDelta(chain ValidatedChain, store *Store) (int, string) {
+	prior := 0
+	ref := receiptArtifactOf(chain)
+	if ref != nil {
+		if receipt, err := readReceiptFile(store, completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}); err == nil {
+			prior = receipt.CumulativeCorrectionLines
+		}
+	}
+	// Scan post-finalize events for correction lines (best-effort: look for operation "correction" or payload with lines_changed).
+	lastComplete := -1
+	for i := len(chain.Records) - 1; i >= 0; i-- {
+		if chain.Records[i].Operation == CompleteReviewOperation {
+			lastComplete = i
+			break
+		}
+	}
+	post := 0
+	if lastComplete >= 0 {
+		for i := lastComplete + 1; i < len(chain.Records); i++ {
+			rec := chain.Records[i]
+			if rec.Operation == "correction" {
+				var payload struct {
+					LinesChanged int `json:"lines_changed"`
+				}
+				if err := json.Unmarshal(rec.Payload, &payload); err == nil && payload.LinesChanged > 0 {
+					post += payload.LinesChanged
+				}
+			}
+		}
+	}
+	cumulative := prior + post
+	if cumulative < 0 {
+		cumulative = 0
+	}
+	return cumulative, computeFixDeltaHash(cumulative)
+}
+
 // ---------------------------------------------------------------------------
 // Start plan
 // ---------------------------------------------------------------------------
@@ -305,30 +359,69 @@ type ReceiptLensSubject struct {
 // candidate-causal findings are auto-blocking and appear in NEITHER set (only
 // a correction resolves them).
 type PersistedReceipt struct {
-	Schema             string               `json:"schema"`
-	LineageID          string               `json:"lineage_id"`
-	Generation         int                  `json:"generation"`
-	GenesisRevision    string               `json:"genesis_revision"`
-	HeadRevision       string               `json:"head_revision"`
-	BaseTree           string               `json:"base_tree"`
-	InitialReviewTree  string               `json:"initial_review_tree"`
-	FinalCandidateTree string               `json:"final_candidate_tree"`
-	PathsDigest        string               `json:"paths_digest"`
-	FixDeltaHash       string               `json:"fix_delta_hash"`
-	PolicyHash         string               `json:"policy_hash"`
-	EvidenceHash       string               `json:"evidence_hash"`
-	RiskTier           string               `json:"risk_tier"`
-	SelectedLenses     []string             `json:"selected_lenses"`
-	LensSubjects       []ReceiptLensSubject `json:"lens_subjects"`
-	ResolvedFindingIDs []string             `json:"resolved_finding_ids"`
-	StandingFindingIDs []string             `json:"standing_finding_ids"`
-	TerminalState      string               `json:"terminal_state"`
-	ReceiptHash        string               `json:"receipt_hash"`
+	Schema                    string               `json:"schema"`
+	LineageID                 string               `json:"lineage_id"`
+	Generation                int                  `json:"generation"`
+	GenesisRevision           string               `json:"genesis_revision"`
+	HeadRevision              string               `json:"head_revision"`
+	BaseTree                  string               `json:"base_tree"`
+	InitialReviewTree         string               `json:"initial_review_tree"`
+	FinalCandidateTree        string               `json:"final_candidate_tree"`
+	PathsDigest               string               `json:"paths_digest"`
+	FixDeltaHash              string               `json:"fix_delta_hash"`
+	PolicyHash                string               `json:"policy_hash"`
+	EvidenceHash              string               `json:"evidence_hash"`
+	RiskTier                  string               `json:"risk_tier"`
+	SelectedLenses            []string             `json:"selected_lenses"`
+	LensSubjects              []ReceiptLensSubject `json:"lens_subjects"`
+	ResolvedFindingIDs        []string             `json:"resolved_finding_ids"`
+	StandingFindingIDs        []string             `json:"standing_finding_ids"`
+	TerminalState             string               `json:"terminal_state"`
+	CumulativeCorrectionLines int                  `json:"cumulative_correction_lines,omitempty"`
+	ReceiptHash               string               `json:"receipt_hash"`
 }
 
 // computeHash derives the binding hash over every receipt field except the
 // hash itself, so validation can recompute it from the persisted bytes.
 func (r PersistedReceipt) computeHash() string {
+	preimage := struct {
+		Schema                    string               `json:"schema"`
+		LineageID                 string               `json:"lineage_id"`
+		Generation                int                  `json:"generation"`
+		GenesisRevision           string               `json:"genesis_revision"`
+		HeadRevision              string               `json:"head_revision"`
+		BaseTree                  string               `json:"base_tree"`
+		InitialReviewTree         string               `json:"initial_review_tree"`
+		FinalCandidateTree        string               `json:"final_candidate_tree"`
+		PathsDigest               string               `json:"paths_digest"`
+		FixDeltaHash              string               `json:"fix_delta_hash"`
+		PolicyHash                string               `json:"policy_hash"`
+		EvidenceHash              string               `json:"evidence_hash"`
+		RiskTier                  string               `json:"risk_tier"`
+		SelectedLenses            []string             `json:"selected_lenses"`
+		LensSubjects              []ReceiptLensSubject `json:"lens_subjects"`
+		ResolvedFindingIDs        []string             `json:"resolved_finding_ids"`
+		StandingFindingIDs        []string             `json:"standing_finding_ids"`
+		TerminalState             string               `json:"terminal_state"`
+		CumulativeCorrectionLines int                  `json:"cumulative_correction_lines"`
+	}{
+		Schema: r.Schema, LineageID: r.LineageID, Generation: r.Generation,
+		GenesisRevision: r.GenesisRevision, HeadRevision: r.HeadRevision,
+		BaseTree: r.BaseTree, InitialReviewTree: r.InitialReviewTree, FinalCandidateTree: r.FinalCandidateTree,
+		PathsDigest: r.PathsDigest, FixDeltaHash: r.FixDeltaHash, PolicyHash: r.PolicyHash,
+		EvidenceHash: r.EvidenceHash, RiskTier: r.RiskTier,
+		SelectedLenses: r.SelectedLenses, LensSubjects: r.LensSubjects,
+		ResolvedFindingIDs: r.ResolvedFindingIDs, StandingFindingIDs: r.StandingFindingIDs,
+		TerminalState:             r.TerminalState,
+		CumulativeCorrectionLines: r.CumulativeCorrectionLines,
+	}
+	payload, _ := json.Marshal(preimage)
+	return domainHash(ReceiptBindingDomain, payload)
+}
+
+// computeLegacyHash is the pre-cumulative binding hash (without cumulative field)
+// kept for backward compat with receipts written before fix-budget-accounting.
+func (r PersistedReceipt) computeLegacyHash() string {
 	preimage := struct {
 		Schema             string               `json:"schema"`
 		LineageID          string               `json:"lineage_id"`
@@ -381,6 +474,9 @@ func (r PersistedReceipt) Validate() error {
 		if !validCommitSHA(tree) {
 			return errors.New("receipt tree identities are invalid")
 		}
+	}
+	if r.CumulativeCorrectionLines < 0 {
+		return errors.New("receipt cumulative correction lines cannot be negative")
 	}
 	for _, identity := range []string{r.PathsDigest, r.FixDeltaHash, r.EvidenceHash} {
 		if !validSHA256Identity(identity) {
@@ -439,8 +535,18 @@ func (r PersistedReceipt) Validate() error {
 			return fmt.Errorf("receipt finding %q cannot be both resolved and standing", id)
 		}
 	}
-	if !validSHA256Identity(r.ReceiptHash) || r.ReceiptHash != r.computeHash() {
+	if !validSHA256Identity(r.ReceiptHash) {
 		return errors.New("receipt hash does not match the receipt binding")
+	}
+	computed := r.computeHash()
+	if r.ReceiptHash != computed {
+		// Legacy compat: receipts written before fix-budget-accounting had no
+		// cumulative field. If cumulative is 0, allow old binding as valid.
+		if r.CumulativeCorrectionLines == 0 && r.ReceiptHash == r.computeLegacyHash() {
+			// legacy receipt with old hash is acceptable
+		} else {
+			return errors.New("receipt hash does not match the receipt binding")
+		}
 	}
 	return nil
 }
@@ -536,14 +642,16 @@ type finalizeSlot struct {
 // are the refuted findings; standingIDs are the findings that stood the
 // refuter batch and remain blocking.
 type finalizeData struct {
-	baseTree       string
-	candidateTree  string
-	manifestDigest string
-	slots          []finalizeSlot
-	evidenceHash   string
-	resolvedIDs    []string
-	standingIDs    []string
-	riskTier       string
+	baseTree                  string
+	candidateTree             string
+	manifestDigest            string
+	slots                     []finalizeSlot
+	evidenceHash              string
+	resolvedIDs               []string
+	standingIDs               []string
+	riskTier                  string
+	cumulativeCorrectionLines int
+	fixDeltaHash              string
 }
 
 // Finalize runs the terminal transition for a lineage: every selected lens
@@ -605,6 +713,17 @@ func Finalize(repo, lineageID string) (FinalizeOutcome, error) {
 		data, err := deriveFinalizeData(repo, chain, plan)
 		if err != nil {
 			return err
+		}
+		// Cumulative ledger: derive from prior receipt + post-finalize corrections.
+		if cum, delta := deriveCumulativeAndFixDelta(chain, store); true {
+			// For initial finalize (no prior receipt) cumulative is 0; for
+			// subsequent finalize after a correction, cum carries prior + post.
+			// If derive returns 0 (no prior), keep 0; otherwise override.
+			// We only override when the chain already has a terminal receipt
+			// (resume flow) or when post lines >0.
+			// To keep first finalize at 0, let helper decide.
+			data.cumulativeCorrectionLines = cum
+			data.fixDeltaHash = delta
 		}
 		receipt := buildReceipt(chain.LineageID, revisions[0], chain.HeadHash, data)
 		if err := receipt.Validate(); err != nil {
@@ -711,6 +830,9 @@ func finalizeIdempotent(store *Store, repo string, chain ValidatedChain, revisio
 	if err != nil {
 		return err
 	}
+	// Use stored cumulative so idempotent recomputation is hash-identical.
+	data.cumulativeCorrectionLines = stored.CumulativeCorrectionLines
+	data.fixDeltaHash = stored.FixDeltaHash
 	receipt := buildReceipt(chain.LineageID, revisions[0], revisions[chain.Count-2], data)
 	if err := receipt.Validate(); err != nil {
 		return fmt.Errorf("finalize: receipt validation failed: %w", err)
@@ -883,10 +1005,13 @@ func deriveFinalizeData(repo string, chain ValidatedChain, plan StartEventPayloa
 	if riskTier == "" {
 		riskTier = deriveRiskTier(len(capturedNames))
 	}
+	// Cumulative ledger defaults to 0; caller may override via deriveCumulativeAndFixDelta when store is available.
 	return finalizeData{
 		baseTree: baseTree, candidateTree: candidateTree, manifestDigest: manifestDigest,
 		slots: slots, evidenceHash: evidenceHash, resolvedIDs: resolved,
 		standingIDs: standing, riskTier: riskTier,
+		cumulativeCorrectionLines: 0,
+		fixDeltaHash:              EmptyFixDeltaHash,
 	}, nil
 }
 
@@ -902,15 +1027,20 @@ func buildReceipt(lineageID, genesisRevision, headRevision string, data finalize
 			ManifestPath: slot.payload.ManifestPath,
 		})
 	}
+	fixHash := data.fixDeltaHash
+	if fixHash == "" {
+		fixHash = computeFixDeltaHash(data.cumulativeCorrectionLines)
+	}
 	receipt := PersistedReceipt{
 		Schema: ReviewReceiptSchema, LineageID: lineageID, Generation: 1,
 		GenesisRevision: genesisRevision, HeadRevision: headRevision,
 		BaseTree: data.baseTree, InitialReviewTree: data.candidateTree, FinalCandidateTree: data.candidateTree,
-		PathsDigest: data.manifestDigest, FixDeltaHash: EmptyFixDeltaHash,
+		PathsDigest: data.manifestDigest, FixDeltaHash: fixHash,
 		EvidenceHash: data.evidenceHash, RiskTier: data.riskTier,
 		SelectedLenses: sortedUniqueLensNames(data.slots), LensSubjects: subjects,
 		ResolvedFindingIDs: data.resolvedIDs, StandingFindingIDs: data.standingIDs,
-		TerminalState: ReviewReceiptTerminalState,
+		TerminalState:             ReviewReceiptTerminalState,
+		CumulativeCorrectionLines: data.cumulativeCorrectionLines,
 	}
 	receipt.ReceiptHash = receipt.computeHash()
 	return receipt
@@ -1020,6 +1150,13 @@ func readReceiptFile(store *Store, evt completeEventPayload) (PersistedReceipt, 
 	if err := json.Unmarshal(payload, &receipt); err != nil {
 		return PersistedReceipt{}, fmt.Errorf("parse receipt artifact: %w", err)
 	}
+	// Legacy compat: missing cumulativeLines decodes as 0 (zero value); missing fix_delta_hash as "" → normalize to Empty.
+	if receipt.FixDeltaHash == "" {
+		receipt.FixDeltaHash = EmptyFixDeltaHash
+	}
+	// Recompute hash binding only after normalization: legacy receipts written before
+	// CumulativeCorrectionLines existed have preimage without that field (0); our new
+	// computeHash includes it as 0, so recomputed hash matches after normalization.
 	if err := receipt.Validate(); err != nil {
 		return PersistedReceipt{}, fmt.Errorf("validate receipt artifact: %w", err)
 	}

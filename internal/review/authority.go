@@ -32,20 +32,22 @@ type LineageInfo struct {
 
 // LineageStatus provides detailed status for a single lineage.
 type LineageStatus struct {
-	LineageID        string               `json:"lineage_id"`
-	HeadHash         string               `json:"head_hash"`
-	EventCount       int                  `json:"event_count"`
-	ChainValid       bool                 `json:"chain_valid"`
-	Receipt          *Receipt             `json:"receipt,omitempty"`
-	IntegrityVerdict *IntegrityVerdict    `json:"integrity_verdict,omitempty"`
-	BudgetCounters   model.BudgetCounters `json:"budget_counters"`
-	Lenses           []CapturedLens       `json:"lenses"`
-	Budget           *FrozenBudgetInfo    `json:"budget,omitempty"`
-	ReceiptArtifact  *ReceiptArtifactRef  `json:"receipt_artifact,omitempty"`
-	NextTransition   *NextTransition      `json:"next_transition,omitempty"`
-	RiskTier         string               `json:"risk_tier,omitempty"`
-	LensPlan         []string             `json:"lens_plan,omitempty"`
-	Refutations      *RefutationSummary   `json:"refutations,omitempty"`
+	LineageID                 string               `json:"lineage_id"`
+	HeadHash                  string               `json:"head_hash"`
+	EventCount                int                  `json:"event_count"`
+	ChainValid                bool                 `json:"chain_valid"`
+	Receipt                   *Receipt             `json:"receipt,omitempty"`
+	IntegrityVerdict          *IntegrityVerdict    `json:"integrity_verdict,omitempty"`
+	BudgetCounters            model.BudgetCounters `json:"budget_counters"`
+	Lenses                    []CapturedLens       `json:"lenses"`
+	Budget                    *FrozenBudgetInfo    `json:"budget,omitempty"`
+	ReceiptArtifact           *ReceiptArtifactRef  `json:"receipt_artifact,omitempty"`
+	NextTransition            *NextTransition      `json:"next_transition,omitempty"`
+	RiskTier                  string               `json:"risk_tier,omitempty"`
+	LensPlan                  []string             `json:"lens_plan,omitempty"`
+	Refutations               *RefutationSummary   `json:"refutations,omitempty"`
+	CumulativeCorrectionLines int                  `json:"cumulative_correction_lines,omitempty"`
+	FixDeltaHash              string               `json:"fix_delta_hash,omitempty"`
 }
 
 // NewAuthority creates an Authority for the given repo root.
@@ -171,6 +173,13 @@ func (a *Authority) Status(lineageID string) (*LineageStatus, error) {
 		}
 	}
 
+	// Surface cumulative ledger for blockedReasons routing: read persisted receipt if available.
+	if ref := st.ReceiptArtifact; ref != nil {
+		if receipt, err := readReceiptFile(store, completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}); err == nil {
+			st.CumulativeCorrectionLines = receipt.CumulativeCorrectionLines
+			st.FixDeltaHash = receipt.FixDeltaHash
+		}
+	}
 	// Derived routing envelope (Phase C2): the orchestrator's ONLY routing
 	// authority. Derived from persisted bytes and the RDD kill switch; all
 	// existing fields are unchanged.

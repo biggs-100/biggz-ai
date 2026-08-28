@@ -106,13 +106,15 @@ type receiptMirror struct {
 }
 
 type gateContextMirror struct {
-	Schema        string `json:"schema"`
-	LineageID     string `json:"lineage_id"`
-	ChainValid    bool   `json:"chain_valid"`
-	TerminalState string `json:"terminal_state"`
-	ReceiptHash   string `json:"receipt_hash,omitempty"`
-	LastOperation string `json:"last_operation"`
-	EventCount    int    `json:"event_count"`
+	Schema                    string `json:"schema"`
+	LineageID                 string `json:"lineage_id"`
+	ChainValid                bool   `json:"chain_valid"`
+	TerminalState             string `json:"terminal_state"`
+	ReceiptHash               string `json:"receipt_hash,omitempty"`
+	FixDeltaHash              string `json:"fix_delta_hash,omitempty"`
+	CumulativeCorrectionLines int    `json:"cumulative_correction_lines,omitempty"`
+	LastOperation             string `json:"last_operation"`
+	EventCount                int    `json:"event_count"`
 }
 
 // mirrorPayloads derives the four mirror payloads from native state.
@@ -186,6 +188,10 @@ func mirrorPayloads(chain ValidatedChain, store *Store) (map[string][]byte, erro
 	}
 	if ref := receiptArtifactOf(chain); ref != nil {
 		gate.ReceiptHash = ref.Hash
+		if stored, err := readReceiptFile(store, completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}); err == nil {
+			gate.FixDeltaHash = stored.FixDeltaHash
+			gate.CumulativeCorrectionLines = stored.CumulativeCorrectionLines
+		}
 	}
 	data, err = json.Marshal(gate)
 	if err != nil {

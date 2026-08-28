@@ -794,6 +794,14 @@ func recomputeGateFindings(chain ValidatedChain, receipt PersistedReceipt) (Gate
 	var summary GateFindingsSummary
 	var reasons []string
 	fixDeltaDelivered := receipt.FixDeltaHash != "" && receipt.FixDeltaHash != EmptyFixDeltaHash
+	// Post-finalize lens results (after last complete_review) are not auto-resolved by prior fixDelta.
+	lastComplete := -1
+	for i := len(chain.Records) - 1; i >= 0; i-- {
+		if chain.Records[i].Operation == CompleteReviewOperation {
+			lastComplete = i
+			break
+		}
+	}
 	findingsByID := make(map[string]ArtifactFinding)
 	for index := range chain.Records {
 		rec := &chain.Records[index]
@@ -827,7 +835,9 @@ func recomputeGateFindings(chain ValidatedChain, receipt PersistedReceipt) (Gate
 			}
 		}
 		for _, id := range payload.CandidateCausalFindingIDs {
-			if containsString(receipt.ResolvedFindingIDs, id) || fixDeltaDelivered {
+			// Post-finalize findings are not auto-resolved by prior fixDelta.
+			isPost := lastComplete >= 0 && index > lastComplete
+			if containsString(receipt.ResolvedFindingIDs, id) || (fixDeltaDelivered && !isPost) {
 				summary.Resolved++
 				continue
 			}

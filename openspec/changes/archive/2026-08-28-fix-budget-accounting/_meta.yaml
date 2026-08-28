@@ -1,0 +1,5 @@
+name: fix-budget-accounting
+created: 2026-08-28T04:18:22Z
+phase: propose
+description: "Fix cumulative correction budget accounting in internal/review/next_transition.go:102 — wire ValidateCorrectionActual cumulative, persist FixDeltaHash and cumulativeLines in receipt, and make deriveNextTransition deduct consumed lines; update finalize/verify to persist cumulative."
+status: active
