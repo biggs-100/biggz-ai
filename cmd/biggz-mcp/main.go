@@ -118,6 +118,9 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, "title is required")
 			return
 		}
+		// Capture original for truncation warning (Batch S, 50k limit)
+		origContent := obs.Content
+		origWasExternalized := bigmem.ShouldExternalize(origContent)
 		// BlobStore externalization: len>100000 OR data:image/ → PutBlob → addr
 		if bigmem.ShouldExternalize(obs.Content) {
 			if addr, err := bigmem.PutBlob([]byte(obs.Content)); err == nil {
@@ -130,7 +133,11 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, err.Error())
 			return
 		}
-		textResult(id, fmt.Sprintf("Saved: %s (id: %s)", obs.Title, obs.ID))
+		msg := fmt.Sprintf("Saved: %s (id: %s)", obs.Title, obs.ID)
+		if !origWasExternalized && len(origContent) > 50000 {
+			msg += fmt.Sprintf(" ⚠️ content truncated from %d to %d bytes", len(origContent), 50000)
+		}
+		textResult(id, msg)
 
 	case "mem_search":
 		results, err := store.Search(getStr(args, "query"), bigmem.SearchOptions{
@@ -158,6 +165,9 @@ func handleToolCall(id any, name string, args map[string]any) {
 			}
 			if r.ReviewAfter != nil {
 				entry["review_after"] = *r.ReviewAfter
+			}
+			if strings.Contains(r.Content, "[truncated]") {
+				entry["truncation_warning"] = "⚠️ content truncated from >50000 to 50000 bytes"
 			}
 			entries = append(entries, entry)
 		}
@@ -307,12 +317,17 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, "content is required")
 			return
 		}
+		origPrompt := content
 		p, err := store.SavePrompt(content, sessionID)
 		if err != nil {
 			writeError(id, err.Error())
 			return
 		}
-		textResult(id, fmt.Sprintf("Prompt saved: %s", p.ID))
+		msg := fmt.Sprintf("Prompt saved: %s", p.ID)
+		if len(origPrompt) > 50000 {
+			msg += fmt.Sprintf(" ⚠️ content truncated from %d to %d bytes", len(origPrompt), 50000)
+		}
+		textResult(id, msg)
 
 	case "mem_current_project":
 		cwd, err := os.Getwd()

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,24 +24,27 @@ import (
 
 // Observation is a single memory entry, matching engram's schema.
 type Observation struct {
-	ID             string    `json:"id"`
-	Title          string    `json:"title"`
-	Type           string    `json:"type"`
-	Content        string    `json:"content"`
-	SessionID      string    `json:"session_id,omitempty"`
-	ToolName       string    `json:"tool_name,omitempty"`
-	TopicKey       string    `json:"topic_key,omitempty"`
-	Project        string    `json:"project,omitempty"`
-	Scope          string    `json:"scope,omitempty"`
-	NormalizedHash string    `json:"-"`
-	RevisionCount  int       `json:"revision_count,omitempty"`
-	DuplicateCount int       `json:"duplicate_count,omitempty"`
-	LastSeenAt     *string   `json:"last_seen_at,omitempty"`
-	ReviewAfter    *string   `json:"review_after,omitempty"`
-	Pinned         bool      `json:"-"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
-	DeletedAt      *string   `json:"deleted_at,omitempty"`
+	ID              string    `json:"id"`
+	Title           string    `json:"title"`
+	Type            string    `json:"type"`
+	Content         string    `json:"content"`
+	SessionID       string    `json:"session_id,omitempty"`
+	ToolName        string    `json:"tool_name,omitempty"`
+	TopicKey        string    `json:"topic_key,omitempty"`
+	Project         string    `json:"project,omitempty"`
+	Scope           string    `json:"scope,omitempty"`
+	NormalizedHash  string    `json:"-"`
+	RevisionCount   int       `json:"revision_count,omitempty"`
+	DuplicateCount  int       `json:"duplicate_count,omitempty"`
+	LastSeenAt      *string   `json:"last_seen_at,omitempty"`
+	ReviewAfter     *string   `json:"review_after,omitempty"`
+	ExpiresAt       *string   `json:"expires_at,omitempty"`
+	EmbeddingModel  string    `json:"embedding_model,omitempty"`
+	EmbeddingVector []byte    `json:"-"`
+	Pinned          bool      `json:"-"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	DeletedAt       *string   `json:"deleted_at,omitempty"`
 }
 
 // State returns "active" or "needs_review" based on review_after vs now.
@@ -76,6 +80,72 @@ type Store struct {
 // same timestamp and ON CONFLICT would overwrite the previous row).
 var globalIDSeq int64
 
+// privateTagRegex redacts <private>...</private> blocks (Engram parity, Batch S).
+var privateTagRegex = regexp.MustCompile("(?is)<private>.*?</private>")
+
+// TruncationMetadata tracks whether content was truncated to maxStoredBytes.
+type TruncationMetadata struct {
+	OriginalBytes int  `json:"original_bytes"`
+	LimitBytes    int  `json:"limit_bytes"`
+	Truncated     bool `json:"truncated"`
+}
+
+// stripPrivateTags replaces <private>...</private> with [REDACTED].
+func stripPrivateTags(s string) string {
+	return privateTagRegex.ReplaceAllString(s, "[REDACTED]")
+}
+
+// truncateIfNeeded enforces maxStoredBytes (50k) Engram parity.
+func truncateIfNeeded(s string) (string, TruncationMetadata) {
+	meta := TruncationMetadata{OriginalBytes: len(s), LimitBytes: maxStoredBytes}
+	if len(s) <= maxStoredBytes {
+		return s, meta
+	}
+	meta.Truncated = true
+	return s[:maxStoredBytes] + " ... [truncated]", meta
+}
+
+// truncationWarning returns a human-readable warning when content was truncated.
+func truncationWarning(meta TruncationMetadata) string {
+	if !meta.Truncated {
+		return ""
+	}
+	return fmt.Sprintf("⚠️ content truncated from %d to %d bytes", meta.OriginalBytes, meta.LimitBytes)
+}
+
+// parseMarkedBy splits "actor:kind:model" into three parts (Engram parity, Batch S).
+func parseMarkedBy(s string) (actor, kind, model string) {
+	parts := strings.SplitN(s, ":", 3)
+	if len(parts) > 0 {
+		actor = parts[0]
+	}
+	if len(parts) > 1 {
+		kind = parts[1]
+	}
+	if len(parts) > 2 {
+		model = parts[2]
+	}
+	return
+}
+
+// computeReviewAfterAt returns RFC3339 review_after using calendar months (Engram parity).
+// Uses AddDate for accurate 6/12/3 month decay (Batch S).
+func computeReviewAfterAt(now time.Time, obsType string) *string {
+	var t time.Time
+	switch obsType {
+	case "decision":
+		t = now.AddDate(0, 6, 0)
+	case "policy":
+		t = now.AddDate(0, 12, 0)
+	case "preference":
+		t = now.AddDate(0, 3, 0)
+	default:
+		return nil
+	}
+	s := t.Format(time.RFC3339)
+	return &s
+}
+
 // SearchOptions filter search results, matching engram's interface.
 type SearchOptions struct {
 	Project   string `json:"project,omitempty"`
@@ -97,6 +167,7 @@ const (
 	defaultMaxObservationLength = 50000
 	defaultMaxSearchResults     = 20
 	defaultDedupeWindow         = 15 * time.Minute
+	maxStoredBytes              = 50000
 )
 
 // ─── Unified DB Path Resolution (A1) ───────────────────────────────────────
@@ -588,6 +659,9 @@ func Open(rootDir string) (*Store, error) {
 			duplicate_count INTEGER DEFAULT 1,
 			last_seen_at TEXT,
 			review_after TEXT,
+			expires_at TEXT,
+			embedding_model TEXT,
+			embedding_vector BLOB,
 			pinned INTEGER DEFAULT 0,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -651,6 +725,9 @@ func Open(rootDir string) (*Store, error) {
 			confidence REAL DEFAULT 0.0,
 			judgment_status TEXT NOT NULL DEFAULT 'pending',
 			marked_by TEXT DEFAULT '',
+			marked_by_actor TEXT,
+			marked_by_kind TEXT,
+			marked_by_model TEXT,
 			session_id TEXT DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -728,6 +805,9 @@ func migrateSchema(db *sql.DB) error {
 		{name: "duplicate_count", ddl: "INTEGER DEFAULT 1"},
 		{name: "last_seen_at", ddl: "TEXT"},
 		{name: "review_after", ddl: "TEXT"},
+		{name: "expires_at", ddl: "TEXT"},
+		{name: "embedding_model", ddl: "TEXT"},
+		{name: "embedding_vector", ddl: "BLOB"},
 		{name: "pinned", ddl: "INTEGER DEFAULT 0"},
 		{name: "deleted_at", ddl: "TEXT"},
 	}); err != nil {
@@ -735,7 +815,14 @@ func migrateSchema(db *sql.DB) error {
 	}
 	if err := ensureColumns(db, "memory_relations", []columnDef{
 		{name: "session_id", ddl: "TEXT DEFAULT ''"},
+		{name: "marked_by_actor", ddl: "TEXT"},
+		{name: "marked_by_kind", ddl: "TEXT"},
+		{name: "marked_by_model", ddl: "TEXT"},
 	}); err != nil {
+		return err
+	}
+	// Backfill marked_by_actor from legacy marked_by for Batch S compat.
+	if err := backfillMarkedByActor(db); err != nil {
 		return err
 	}
 	// sessions branching schema (REQ-B1/B2): parent_id FK, leaf_id, branch_summary — O(1) ADD COLUMN.
@@ -785,6 +872,20 @@ func ensureColumns(db *sql.DB, table string, cols []columnDef) error {
 			return fmt.Errorf("migrate %s.%s: %w", table, c.name, err)
 		}
 	}
+	return nil
+}
+
+// backfillMarkedByActor copies legacy marked_by into marked_by_actor when the new column is empty (Batch S compat).
+func backfillMarkedByActor(db *sql.DB) error {
+	// Only if both columns exist.
+	var n int
+	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('memory_relations') WHERE name='marked_by_actor'").Scan(&n); err != nil || n == 0 {
+		return nil
+	}
+	if err := db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('memory_relations') WHERE name='marked_by'").Scan(&n); err != nil || n == 0 {
+		return nil
+	}
+	_, _ = db.Exec(`UPDATE memory_relations SET marked_by_actor = marked_by WHERE (marked_by_actor IS NULL OR marked_by_actor = '') AND marked_by IS NOT NULL AND marked_by != ''`)
 	return nil
 }
 
@@ -935,6 +1036,19 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 	}
 	obs.UpdatedAt = now
 	obs.Scope = normalizeScope(obs.Scope)
+	// Batch S: private-tag redaction + truncation (Engram parity)
+	obs.Title = stripPrivateTags(obs.Title)
+	stripped := stripPrivateTags(obs.Content)
+	// Do not truncate blob addresses or content eligible for blob externalization (DoctorFixBlobs parity)
+	if IsBlobAddr(stripped) || ShouldExternalize(stripped) {
+		obs.Content = stripped
+	} else {
+		truncated, meta := truncateIfNeeded(stripped)
+		obs.Content = truncated
+		if meta.Truncated {
+			_ = truncationWarning(meta)
+		}
+	}
 	obs.NormalizedHash = hashNormalized(obs.Content)
 
 	nowStr := now.Format(time.RFC3339)
@@ -996,12 +1110,7 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 
 	// Phase 3: upsert — handles both fresh inserts and updates where
 	// the ID already exists (e.g., from Update → Get → Save path).
-	reviewAfter := computeReviewAfter(obs.Type)
-	var reviewAfterStr *string
-	if reviewAfter != nil {
-		ra := now.Add(*reviewAfter).Format(time.RFC3339)
-		reviewAfterStr = &ra
-	}
+	reviewAfterStr := computeReviewAfterAt(now, obs.Type)
 
 	_, err = s.db.Exec(`INSERT INTO observations
 		(id, title, type, content, session_id, tool_name, topic_key, project, scope,
@@ -1027,16 +1136,18 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 }
 
 // computeReviewAfter returns the decay duration for a type, or nil if none.
+// Uses calendar months via AddDate for Engram parity (Batch S).
 func computeReviewAfter(obsType string) *time.Duration {
+	now := time.Now()
 	switch obsType {
 	case "decision":
-		d := 6 * 30 * 24 * time.Hour // ~6 months
+		d := now.AddDate(0, 6, 0).Sub(now)
 		return &d
 	case "policy":
-		d := 12 * 30 * 24 * time.Hour // ~12 months
+		d := now.AddDate(0, 12, 0).Sub(now)
 		return &d
 	case "preference":
-		d := 3 * 30 * 24 * time.Hour // ~3 months
+		d := now.AddDate(0, 3, 0).Sub(now)
 		return &d
 	default:
 		return nil
@@ -1626,6 +1737,21 @@ func (s *Store) JudgeRelation(judgmentID, relation, reason, evidence string, con
 	return nil
 }
 
+// SaveRelationWithMarkedBy creates a pending relation with provenance split (Batch S, Engram parity).
+// markedBy is "actor:kind:model"; it is split into marked_by_actor/kind/model while keeping marked_by for compat.
+func (s *Store) SaveRelationWithMarkedBy(sourceID, targetID, markedBy, sessionID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	actor, kind, model := parseMarkedBy(markedBy)
+	id := fmt.Sprintf("rel-%d", time.Now().UnixNano())
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.Exec(`INSERT INTO memory_relations (id, source_id, target_id, relation, judgment_status, marked_by, marked_by_actor, marked_by_kind, marked_by_model, session_id, created_at, updated_at)
+		VALUES (?, ?, ?, 'pending', 'pending', ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO NOTHING`,
+		id, sourceID, targetID, markedBy, actor, kind, model, sessionID, now, now)
+	return id, err
+}
+
 // RelationCount returns the number of pending judgments.
 func (s *Store) RelationCount() int {
 	var n int
@@ -1643,6 +1769,11 @@ type Relation struct {
 	Reason         string    `json:"reason,omitempty"`
 	Evidence       string    `json:"evidence,omitempty"`
 	Confidence     float64   `json:"confidence,omitempty"`
+	MarkedBy       string    `json:"marked_by,omitempty"`
+	MarkedByActor  string    `json:"marked_by_actor,omitempty"`
+	MarkedByKind   string    `json:"marked_by_kind,omitempty"`
+	MarkedByModel  string    `json:"marked_by_model,omitempty"`
+	SessionID      string    `json:"session_id,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -1653,7 +1784,8 @@ func (s *Store) ListRelations(status string) ([]Relation, error) {
 	defer s.mu.RUnlock()
 	q := `SELECT id, source_id, target_id, relation, judgment_status,
 		COALESCE(reason,''), COALESCE(evidence,''), COALESCE(confidence,0),
-		created_at, updated_at FROM memory_relations`
+		COALESCE(marked_by,''), COALESCE(marked_by_actor,''), COALESCE(marked_by_kind,''), COALESCE(marked_by_model,''),
+		COALESCE(session_id,''), created_at, updated_at FROM memory_relations`
 	var args []any
 	if status != "" {
 		q += " WHERE judgment_status = ?"
@@ -1670,7 +1802,8 @@ func (s *Store) ListRelations(status string) ([]Relation, error) {
 		var r Relation
 		var ca, ua string
 		if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Relation,
-			&r.JudgmentStatus, &r.Reason, &r.Evidence, &r.Confidence, &ca, &ua); err != nil {
+			&r.JudgmentStatus, &r.Reason, &r.Evidence, &r.Confidence,
+			&r.MarkedBy, &r.MarkedByActor, &r.MarkedByKind, &r.MarkedByModel, &r.SessionID, &ca, &ua); err != nil {
 			continue
 		}
 		r.CreatedAt, _ = time.Parse(time.RFC3339, ca)
@@ -1689,9 +1822,11 @@ func (s *Store) GetRelation(id string) (*Relation, error) {
 	err := s.db.QueryRow(
 		`SELECT id, source_id, target_id, relation, judgment_status,
 		 COALESCE(reason,''), COALESCE(evidence,''), COALESCE(confidence,0),
-		 created_at, updated_at FROM memory_relations WHERE id = ?`, id).
+		 COALESCE(marked_by,''), COALESCE(marked_by_actor,''), COALESCE(marked_by_kind,''), COALESCE(marked_by_model,''),
+		 COALESCE(session_id,''), created_at, updated_at FROM memory_relations WHERE id = ?`, id).
 		Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Relation,
-			&r.JudgmentStatus, &r.Reason, &r.Evidence, &r.Confidence, &ca, &ua)
+			&r.JudgmentStatus, &r.Reason, &r.Evidence, &r.Confidence,
+			&r.MarkedBy, &r.MarkedByActor, &r.MarkedByKind, &r.MarkedByModel, &r.SessionID, &ca, &ua)
 	if err != nil {
 		return nil, fmt.Errorf("relation not found: %w", err)
 	}

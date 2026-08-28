@@ -346,6 +346,10 @@ func (s *Store) SavePrompt(content, sessionID string) (*SavedPrompt, error) {
 	defer s.mu.Unlock()
 	s.db.Exec(`CREATE TABLE IF NOT EXISTS prompts
 		(id TEXT PRIMARY KEY, content TEXT, session_id TEXT, created_at TEXT)`)
+	// Batch S: private-tag redaction + truncation (Engram parity)
+	content = stripPrivateTags(content)
+	truncated, _ := truncateIfNeeded(content)
+	content = truncated
 	p := &SavedPrompt{
 		ID:        fmt.Sprintf("prompt-%d", time.Now().UnixNano()),
 		Content:   content,
