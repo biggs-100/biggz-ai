@@ -609,6 +609,9 @@ export default function biggzSynthesisGate(pi) {
 		return false;
 	}
 
+	function validateQuestionEnvelope(p){if(p==null||typeof p!="object")return null;let q=p.questions;if(!Array.isArray(q)){let o=p.options;if(Array.isArray(o)){if(o.length<2||o.length>4)return{isError:!0,limit:"options",message:`options out of range 2-4: got ${o.length}`};for(let x of o){let l=typeof x==="string"?x:x.label??x.value??"";if(String(l).length>60)return{isError:!0,limit:"label",message:`label exceeds limit 60: got ${String(l).length}`}} }return null}if(q.length>4)return{isError:!0,limit:"questions",message:`questions exceed limit 4: got ${q.length}`};for(let i=0;i<q.length;i++){let v=q[i];if(!v||typeof v!="object")continue;let h=v.header??v.title??"";if(typeof h==="string"&&h.length>16)return{isError:!0,limit:"header",message:`header exceeds limit 16: got ${h.length}`};let o=v.options;if(!Array.isArray(o))continue;if(o.length<2||o.length>4)return{isError:!0,limit:"options",message:`options out of range 2-4: got ${o.length} for question ${i}`};for(let x of o){let l=typeof x==="string"?x:x.label??x.value??"";if(String(l).length>60)return{isError:!0,limit:"label",message:`label exceeds limit 60: got ${String(l).length}`}}}return null}
+	function formatFallback(p){if(p==null||typeof p!="object")return"";let q=p.questions;if(!Array.isArray(q)||q.length===0){let o=p.options;if(Array.isArray(o)&&o.length>0){let s="## Questions\n\n";for(let x of o){let l=typeof x==="string"?x:x.label??x.value??"";let d=x.description??x.desc??"";s+="- "+l+(d?": "+d:"")+"\n"}return s}return""}let s="";for(let i=0;i<q.length;i++){let v=q[i];if(!v||typeof v!="object")continue;let h=v.header??v.title??"";let qu=v.question??v.text??"";s+=`### ${h?h+": ":""}Question ${i+1}\n`;if(qu)s+=qu+"\n";let o=v.options??[];for(let x of o){let l=typeof x==="string"?x:x.label??"";let d=x.description??"";s+="- "+l+(d?": "+d:"")+"\n"}s+="\n"}return s.trim()+"\n"}
+
 	function extractParamsFromToolCall(event) {
 		if (!event || typeof event !== "object") return null;
 		const candidates = [event.params, event.args, event.arguments, event.input, event.payload, event.data];
@@ -659,6 +662,8 @@ export default function biggzSynthesisGate(pi) {
 			checkSessionRecallInCurrentTurn,
 			checkSynthesisPrecondition,
 			isCheckpointAsk,
+			validateQuestionEnvelope,
+			formatFallback,
 			extractParamsFromToolCall,
 			emitConcern: (ctx, metrics) => emitConcern(ctx, pi, metrics),
 			// test helpers to manipulate internal state
@@ -682,10 +687,6 @@ export default function biggzSynthesisGate(pi) {
 		const toolName = def.name || "ask_user_question";
 		def._biggzGateWrapped = true;
 		def.execute = async (...args) => {
-			// Child bypass — skip both blocking and advise entirely
-			if (isChildBypass()) {
-				return origExecute(...args);
-			}
 			// args: toolCallId, params, signal, onUpdate, ctx — ctx is last arg if object with ui/history
 			let ctx = null;
 			for (let i = args.length - 1; i >= 0; i--) {
@@ -700,7 +701,7 @@ export default function biggzSynthesisGate(pi) {
 				const last = args[args.length - 1];
 				if (last && typeof last === "object") ctx = last;
 			}
-			// Checkpoint vs general: only checkpoint asks require synthesis
+			// Checkpoint vs general: extract params for ownership/validation
 			let params = null;
 			if (args.length >= 2) params = args[1];
 			if (!params || typeof params !== "object" || params.ui || params.history || params.sessionManager) {
@@ -714,6 +715,32 @@ export default function biggzSynthesisGate(pi) {
 					params = args[0];
 				}
 			}
+			// Single ownership: sub-agent checkpoint asks blocked even with bypass
+			if (isChildBypass()) {
+				if (params && isCheckpointAsk(params)) {
+					const reason = "isError:true checkpoint asks may only be emitted by orchestrator, not sub-agent";
+					console.error(`[biggz-synthesis-gate] blocked sub-agent checkpoint ${toolName}: ${reason}`);
+					try { ctx?.ui?.notify?.(reason, "error"); } catch {}
+					try { pi.notify?.(reason, "error"); } catch {}
+					return { content: [{ type: "text", text: reason }], isError: true };
+				}
+				return origExecute(...args);
+			}
+			// Envelope validation: reject isError:true with limit name, emit fallback, do not call handler
+			try {
+				if (params) {
+					const v = validateQuestionEnvelope(params);
+					if (v) {
+						const fb = formatFallback(params);
+						const reason = `isError:true ${v.message} (limit ${v.limit})`;
+						console.error(`[biggz-synthesis-gate] blocked envelope ${toolName}: ${reason}`);
+						try { if (fb) ctx?.ui?.notify?.(fb, "error"); } catch {}
+						try { if (fb) pi.notify?.(fb, "error"); } catch {}
+						try { if (fb) pi.ui?.notify?.(fb, "error"); } catch {}
+						return { content: [{ type: "text", text: reason + (fb ? "\n\nFallback:\n" + fb : "") }], isError: true };
+					}
+				}
+			} catch {}
 			if (!isCheckpointAsk(params)) {
 				// General clarification / preflight / non-checkpoint: do not block, optionally advise but allow
 				try {
@@ -901,10 +928,32 @@ export default function biggzSynthesisGate(pi) {
 		if (typeof pi.on === "function") {
 			pi.on("tool_call", async (event, ctx) => {
 				try {
-					if (isChildBypass()) return;
 					const name = event?.toolName ?? event?.name ?? "";
 					if (name !== "ask_user_question" && name !== "question") return;
 					const toolParams = extractParamsFromToolCall(event);
+					// Single ownership: block sub-agent checkpoint even before generic bypass
+					if (isChildBypass()) {
+						if (toolParams && isCheckpointAsk(toolParams)) {
+							const reason = "isError:true checkpoint asks may only be emitted by orchestrator, not sub-agent";
+							console.error(`[biggz-synthesis-gate] blocked sub-agent checkpoint (tool_call) ${name}: ${reason}`);
+							try { ctx?.ui?.notify?.(reason, "error"); } catch {}
+							try { pi.notify?.(reason, "error"); } catch {}
+							return { block: true, reason };
+						}
+						return;
+					}
+					// Envelope validation before checkpoint logic
+					try {
+						const v = validateQuestionEnvelope(toolParams);
+						if (v) {
+							const fb = formatFallback(toolParams);
+							const reason = `isError:true ${v.message} (limit ${v.limit})`;
+							console.error(`[biggz-synthesis-gate] blocked envelope (tool_call) ${name}: ${reason}`);
+							try { if (fb) ctx?.ui?.notify?.(fb, "error"); } catch {}
+							try { if (fb) pi.notify?.(fb, "error"); } catch {}
+							return { block: true, reason: reason + (fb ? "\n\nFallback:\n" + fb : "") };
+						}
+					} catch {}
 					if (!isCheckpointAsk(toolParams)) {
 						// General clarification / non-checkpoint: do not block, optionally advise but allow
 						try {

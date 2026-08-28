@@ -1,6 +1,7 @@
 package sdd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -64,9 +65,81 @@ func RenderSynthesis(r SubAgentResult) string {
 		b.WriteString("**Validation:** " + v + "\n")
 	}
 	if v := strings.TrimSpace(r.Failure); v != "" {
-		b.WriteString("**Failure:** " + v + "\n")
+		human := humanizeFailure(v)
+		if human == "" {
+			human = v
+		}
+		b.WriteString("**Failure:** " + human + "\n")
 	}
 	return b.String()
+}
+
+func humanizeFailure(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if i := strings.Index(s, "{"); i > 0 && strings.Contains(strings.TrimSpace(s[:i]), "FAILURE") {
+		s = strings.TrimSpace(s[i:])
+	}
+	if !strings.HasPrefix(s, "{") {
+		s = strings.ReplaceAll(s, "\n", " ")
+		return strings.Join(strings.Fields(s), " ")
+	}
+	var m map[string]any
+	if err := json.Unmarshal([]byte(s), &m); err != nil {
+		s = strings.ReplaceAll(s, "\n", " ")
+		if len(s) > 200 {
+			s = s[:200] + "…"
+		}
+		return "malformed failure payload: " + strings.Join(strings.Fields(s), " ")
+	}
+	get := func(k string) string {
+		if v, ok := m[k]; ok {
+			if s, ok := v.(string); ok {
+				return strings.TrimSpace(s)
+			}
+		}
+		return ""
+	}
+	sum := get("summary")
+	if sum == "" { sum = get("message") }
+	if sum == "" { sum = get("error") }
+	if sum == "" { sum = get("diagnosis") }
+	code, phase, status := get("code"), get("phase"), get("status")
+	if sum != "" {
+		if phase != "" && code != "" {
+			if status != "" {
+				return fmt.Sprintf("%s %s (%s): %s", phase, status, code, sum)
+			}
+			return fmt.Sprintf("%s (%s): %s", phase, code, sum)
+		}
+		if phase != "" {
+			return fmt.Sprintf("%s: %s", phase, sum)
+		}
+		if code != "" {
+			return fmt.Sprintf("%s: %s", code, sum)
+		}
+		return sum
+	}
+	if code != "" && phase != "" {
+		if status != "" {
+			return fmt.Sprintf("%s %s (%s)", phase, status, code)
+		}
+		return fmt.Sprintf("%s (%s)", phase, code)
+	}
+	if code != "" {
+		return code
+	}
+	if phase != "" {
+		return phase + " failed"
+	}
+	for _, k := range []string{"schemaName", "type", "reason"} {
+		if v := get(k); v != "" {
+			return v
+		}
+	}
+	return "failure"
 }
 
 func ReadLoop(path string, capBytes int) (string, error) {

@@ -34,10 +34,10 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: PR2 — Failure, Validation, Ownership
 
-- [ ] 2.1 Create `internal/sdd/question.go` — `ValidateQuestionEnvelope` limits `header≤16, label≤60, qs≤4, opts∈[2,4]` reject `isError:true`; `FormatFallback` plain markdown
-- [ ] 2.2 Enhance `synthesis.go` `RenderSynthesis` — failure JSON → human `**Failure:**` summary (not raw JSON)
-- [ ] 2.3 Single ownership — gate `isCheckpointAsk` blocks sub-agent/Pi checkpoint asks when synthesis missing; only orchestrator emits them
-- [ ] 2.4 Tests PR2 — `TestValidate` rejects 17/61/5/1-opt and allows 12/≤60/3×3; `TestSynthesis` humanized Failure; JS envelope reject→fallback + thin advise/general bypass
+- [x] 2.1 Create `internal/sdd/question.go` — `ValidateQuestionEnvelope` limits `header≤16, label≤60, qs≤4, opts∈[2,4]` reject `isError:true`; `FormatFallback` plain markdown
+- [x] 2.2 Enhance `synthesis.go` `RenderSynthesis` — failure JSON → human `**Failure:**` summary (not raw JSON)
+- [x] 2.3 Single ownership — gate `isCheckpointAsk` blocks sub-agent/Pi checkpoint asks when synthesis missing; only orchestrator emits them
+- [x] 2.4 Tests PR2 — `TestValidate` rejects 17/61/5/1-opt and allows 12/≤60/3×3; `TestSynthesis` humanized Failure; JS envelope reject→fallback + thin advise/general bypass
 
 ## Phase 3: PR3 — Pending Dual-Write, Compaction
 
