@@ -627,21 +627,38 @@ export default function biggzSynthesisGate(pi) {
 		return null;
 	}
 
+	function emitHistoryFallbackWarning(ctx) {
+		const msg = "synthesis from previous turn — showing last known";
+		console.warn(`[biggz-synthesis-gate] ${msg}`);
+		try { ctx?.ui?.notify?.(msg, "warning"); } catch {}
+		try { pi.notify?.(msg, "warning"); } catch {}
+		try { pi.ui?.notify?.(msg, "warning"); } catch {}
+		return msg;
+	}
+
 	function checkSynthesisPrecondition(ctx) {
-		// STRICT same-turn for blocking: ONLY currentTurnMarkdown satisfies.
-		// ctx.history and lastAssistantMarkdown are deliberately ignored for blocking;
-		// they are history (stale synthesis from previous turns) and would cause false positives.
-		// History is only for advise/warning via getCurrentTurnSynthesis fallback (non-blocking).
-		// ctx param is kept for signature compat but not used for blocking decision.
-		void ctx;
+		// Prefer STRICT same-turn: currentTurnMarkdown satisfies immediately.
+		// Fallback: if not in current turn, allow with warning when synthesis exists in history within 120s.
 		const now = Date.now();
-		if (!currentTurnMarkdown) return false;
-		const has = hasSynthesis(currentTurnMarkdown) || hasSynthesisLoose(currentTurnMarkdown) || (currentTurnMarkdown.includes("Sub-agent Result") && currentTurnMarkdown.includes("Artifacts/Paths"));
-		if (!has) return false;
-		if (now - currentTurnUpdateTime < 120000) return true;
-		// Most recent chunk regardless of window — handles <100ms streaming race where synthesis
-		// was emitted milliseconds before tool_call (still same turn, adjacent).
-		return true;
+		if (currentTurnMarkdown) {
+			const has = hasSynthesis(currentTurnMarkdown) || hasSynthesisLoose(currentTurnMarkdown) || (currentTurnMarkdown.includes("Sub-agent Result") && currentTurnMarkdown.includes("Artifacts/Paths"));
+			if (has) {
+				if (now - currentTurnUpdateTime < 120000) return true;
+				return true;
+			}
+		}
+		const fallback = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
+		if (fallback) {
+			const hasFb = hasSynthesis(fallback) || hasSynthesisLoose(fallback) || (fallback.includes("Sub-agent Result") && fallback.includes("Artifacts/Paths"));
+			if (hasFb) {
+				const isRecent = (now - lastUpdateTime < 120000) || (now - currentTurnUpdateTime < 120000) || !!getCtxHistory(ctx);
+				if (isRecent) {
+					emitHistoryFallbackWarning(ctx);
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	// Expose helpers for testing (no network, fixture-only)
@@ -774,20 +791,29 @@ export default function biggzSynthesisGate(pi) {
 				if (!anySynthesis) {
 					// No synthesis anywhere in session history — likely preflight/first ask — allow
 				} else {
-					const reason =
-						"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
-					console.error(`[biggz-synthesis-gate] blocked ${toolName}: ${reason}`);
-					try {
-						ctx?.ui?.notify?.(reason, "error");
-					} catch {}
-					try {
-						pi.notify?.(reason, "error");
-					} catch {}
-					// Return error payload rather than throw to show in TUI as tool result error
-					return {
-						content: [{ type: "text", text: reason }],
-						isError: true,
-					};
+					// History fallback with warning: synthesis in history within 120s — allow with concern instead of blocking
+					const fallback = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
+					const hasFb = fallback && (hasSynthesis(fallback) || hasSynthesisLoose(fallback) || (fallback.includes("Sub-agent Result") && fallback.includes("Artifacts/Paths")));
+					const now2 = Date.now();
+					const isRecent = hasFb && ((now2 - lastUpdateTime < 120000) || (now2 - currentTurnUpdateTime < 120000) || !!getCtxHistory(ctx));
+					if (hasFb && isRecent) {
+						emitHistoryFallbackWarning(ctx);
+					} else {
+						const reason =
+							"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
+						console.error(`[biggz-synthesis-gate] blocked ${toolName}: ${reason}`);
+						try {
+							ctx?.ui?.notify?.(reason, "error");
+						} catch {}
+						try {
+							pi.notify?.(reason, "error");
+						} catch {}
+						// Return error payload rather than throw to show in TUI as tool result error
+						return {
+							content: [{ type: "text", text: reason }],
+							isError: true,
+						};
+					}
 				}
 				}
 			}
@@ -975,17 +1001,26 @@ export default function biggzSynthesisGate(pi) {
 						if (!anySynthesis) {
 							// Preflight allowance — no synthesis ever in session, allow first asks
 						} else {
-							const reason =
-								"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
-							console.error(`[biggz-synthesis-gate] blocked (tool_call) ${name}: ${reason}`);
-							try {
-								ctx?.ui?.notify?.(reason, "error");
-							} catch {}
-							try {
-								pi.notify?.(reason, "error");
-							} catch {}
-							// Pi's tool_call handler blocks via return {block:true}
-							return { block: true, reason };
+							// History fallback with warning: synthesis in history within 120s — allow with concern instead of blocking
+							const fallback = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
+							const hasFb = fallback && (hasSynthesis(fallback) || hasSynthesisLoose(fallback) || (fallback.includes("Sub-agent Result") && fallback.includes("Artifacts/Paths")));
+							const now2 = Date.now();
+							const isRecent = hasFb && ((now2 - lastUpdateTime < 120000) || (now2 - currentTurnUpdateTime < 120000) || !!getCtxHistory(ctx));
+							if (hasFb && isRecent) {
+								emitHistoryFallbackWarning(ctx);
+							} else {
+								const reason =
+									"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
+								console.error(`[biggz-synthesis-gate] blocked (tool_call) ${name}: ${reason}`);
+								try {
+									ctx?.ui?.notify?.(reason, "error");
+								} catch {}
+								try {
+									pi.notify?.(reason, "error");
+								} catch {}
+								// Pi's tool_call handler blocks via return {block:true}
+								return { block: true, reason };
+							}
 						}
 					}
 					}
