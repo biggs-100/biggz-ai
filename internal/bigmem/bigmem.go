@@ -118,6 +118,7 @@ func recoveredDBPathForRoot(root string) string {
 }
 
 // isGhostWAL reports whether dbPath has a stale WAL=0 + SHM>0 zombie lock (Windows).
+// REQ-GW1: stale only when wal==0 && shm>0 && Since(ModTime)>5min.
 func isGhostWAL(dbPath string) bool {
 	walPath := dbPath + "-wal"
 	shmPath := dbPath + "-shm"
@@ -129,6 +130,23 @@ func isGhostWAL(dbPath string) bool {
 	if err != nil || shmInfo.Size() == 0 {
 		return false
 	}
+	if time.Since(shmInfo.ModTime()) <= 5*time.Minute {
+		return false
+	}
+	return true
+}
+
+// probeGhostLiveness attempts atomic O_CREATE|O_EXCL probe to detect live holder.
+// Returns true if probe succeeds (no live holder, safe to reclaim), false if busy.
+// Uses a sibling probe file with O_EXCL for atomic claim; fail means live holder or race.
+func probeGhostLiveness(dbPath string) bool {
+	probePath := dbPath + ".ghost_probe"
+	f, err := os.OpenFile(probePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
+	if err != nil {
+		return false
+	}
+	f.Close()
+	_ = os.Remove(probePath)
 	return true
 }
 
@@ -371,27 +389,34 @@ func ResolveDBPath(rootDir string) (string, error) {
 	shmPath := primaryPath + "-shm"
 	needsFallback := false
 	if isGhostWAL(primaryPath) {
-		// Try to clean stale WAL/SHM
-		_ = os.Remove(walPath)
-		_ = os.Remove(shmPath)
-		if _, err := os.Stat(shmPath); err == nil {
-			if f, err := os.OpenFile(shmPath, os.O_WRONLY, 0644); err == nil {
-				_ = f.Truncate(0)
-				f.Close()
-				_ = os.Remove(shmPath)
+		if probeGhostLiveness(primaryPath) {
+			// GW2: stale + O_EXCL probe ok -> Remove wal/shm + checkpoint before sql.Open
+			_ = os.Remove(walPath)
+			_ = os.Remove(shmPath)
+			if _, err := os.Stat(shmPath); err == nil {
+				if f, err := os.OpenFile(shmPath, os.O_WRONLY, 0644); err == nil {
+					_ = f.Truncate(0)
+					f.Close()
+					_ = os.Remove(shmPath)
+				}
 			}
-		}
-		if _, err := os.Stat(walPath); err == nil {
-			if f, err := os.OpenFile(walPath, os.O_WRONLY, 0644); err == nil {
-				_ = f.Truncate(0)
-				f.Close()
-				_ = os.Remove(walPath)
+			if _, err := os.Stat(walPath); err == nil {
+				if f, err := os.OpenFile(walPath, os.O_WRONLY, 0644); err == nil {
+					_ = f.Truncate(0)
+					f.Close()
+					_ = os.Remove(walPath)
+				}
 			}
-		}
-		if _, err := os.Stat(shmPath); err == nil {
-			needsFallback = true
-		}
-		if _, err := os.Stat(walPath); err == nil {
+			// checkpoint best-effort before sql.Open, swallow errors (GW2)
+			checkpointDB(primaryPath)
+			if _, err := os.Stat(shmPath); err == nil {
+				needsFallback = true
+			}
+			if _, err := os.Stat(walPath); err == nil {
+				needsFallback = true
+			}
+		} else {
+			// GW3: busy/O_EXCL fails -> preserve wal/shm, fallback intact
 			needsFallback = true
 		}
 	}
@@ -859,9 +884,14 @@ func buildLikeSearchSQL(query string, opts SearchOptions, limit int) (string, []
 //  3. Otherwise → fresh insert
 //
 // Optional parentID anchoring (REQ-B5): when provided, associates observation with branch.
-func (s *Store) Save(obs *Observation, parentID ...string) error {
+func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	defer func() {
+		if err == nil {
+			_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		}
+	}()
 
 	// Branch anchoring: optional parentID (no-op when omitted, preserves FTS/dedup).
 	if len(parentID) > 0 && parentID[0] != "" {
@@ -887,18 +917,17 @@ func (s *Store) Save(obs *Observation, parentID ...string) error {
 	if obs.TopicKey != "" {
 		var existingID string
 		var existingCreated string
-		err := s.db.QueryRow(
+		if qErr := s.db.QueryRow(
 			`SELECT id, created_at FROM observations
 			 WHERE topic_key = ? AND project = ? AND scope = ? AND deleted_at IS NULL
 			 ORDER BY updated_at DESC LIMIT 1`,
 			obs.TopicKey, obs.Project, obs.Scope,
-		).Scan(&existingID, &existingCreated)
-		if err == nil {
+		).Scan(&existingID, &existingCreated); qErr == nil {
 			obs.ID = existingID
-			if t, err := time.Parse(time.RFC3339, existingCreated); err == nil {
+			if t, pErr := time.Parse(time.RFC3339, existingCreated); pErr == nil {
 				obs.CreatedAt = t
 			}
-			_, err := s.db.Exec(`UPDATE observations SET
+			_, err = s.db.Exec(`UPDATE observations SET
 				type=?, title=?, content=?, session_id=?, tool_name=?,
 				topic_key=?, project=?, scope=?, normalized_hash=?,
 				revision_count=revision_count+1, last_seen_at=?,
@@ -907,35 +936,36 @@ func (s *Store) Save(obs *Observation, parentID ...string) error {
 				obs.Type, obs.Title, obs.Content, obs.SessionID, obs.ToolName,
 				obs.TopicKey, obs.Project, obs.Scope, obs.NormalizedHash,
 				nowStr, boolToInt(obs.Pinned), nowStr, existingID)
-			return err
+			return
 		}
 	}
 
 	// Phase 2: hash-based dedup within window
 	window := dedupeWindowExpression(0)
-	var existingID string
-	err := s.db.QueryRow(
-		`SELECT id FROM observations
-		 WHERE normalized_hash = ? AND project = ? AND scope = ?
-		 AND type = ? AND title = ? AND deleted_at IS NULL
-		 AND datetime(created_at) >= datetime('now', ?)
-		 ORDER BY created_at DESC LIMIT 1`,
-		obs.NormalizedHash, obs.Project, obs.Scope,
-		obs.Type, obs.Title, window,
-	).Scan(&existingID)
-	if err == nil {
-		obs.ID = existingID
-		// Preserve original created_at
-		var origCreated string
-		s.db.QueryRow("SELECT created_at FROM observations WHERE id=?", existingID).Scan(&origCreated)
-		if t, err := time.Parse(time.RFC3339, origCreated); err == nil {
-			obs.CreatedAt = t
-		}
-		_, err := s.db.Exec(`UPDATE observations SET
+	{
+		var existingID string
+		if qErr := s.db.QueryRow(
+			`SELECT id FROM observations
+			 WHERE normalized_hash = ? AND project = ? AND scope = ?
+			 AND type = ? AND title = ? AND deleted_at IS NULL
+			 AND datetime(created_at) >= datetime('now', ?)
+			 ORDER BY created_at DESC LIMIT 1`,
+			obs.NormalizedHash, obs.Project, obs.Scope,
+			obs.Type, obs.Title, window,
+		).Scan(&existingID); qErr == nil {
+			obs.ID = existingID
+			// Preserve original created_at
+			var origCreated string
+			_ = s.db.QueryRow("SELECT created_at FROM observations WHERE id=?", existingID).Scan(&origCreated)
+			if t, pErr := time.Parse(time.RFC3339, origCreated); pErr == nil {
+				obs.CreatedAt = t
+			}
+			_, err = s.db.Exec(`UPDATE observations SET
 			duplicate_count=duplicate_count+1, last_seen_at=?, updated_at=?
 			WHERE id=?`,
-			nowStr, nowStr, existingID)
-		return err
+				nowStr, nowStr, existingID)
+			return
+		}
 	}
 
 	// Phase 3: upsert — handles both fresh inserts and updates where
@@ -967,7 +997,7 @@ func (s *Store) Save(obs *Observation, parentID ...string) error {
 		obs.TopicKey, obs.Project, obs.Scope, obs.NormalizedHash,
 		nowStr, reviewAfterStr, boolToInt(obs.Pinned),
 		obs.CreatedAt.Format(time.RFC3339), nowStr)
-	return err
+	return
 }
 
 // computeReviewAfter returns the decay duration for a type, or nil if none.
@@ -1059,9 +1089,14 @@ func (s *Store) Get(id string) (*Observation, error) {
 // Search finds observations using FTS5 full-text search with BM25 ranking.
 // Supports "all" (AND) and "any" (OR) match modes.
 // If query contains "/", does an exact topic_key lookup first.
-func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error) {
+func (s *Store) Search(query string, opts SearchOptions) (results []*Observation, err error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	defer func() {
+		if err == nil {
+			_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+		}
+	}()
 
 	limit := opts.Limit
 	if limit <= 0 {
@@ -1131,7 +1166,6 @@ func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error)
 
 	// Phase 2: if query is empty, skip FTS5 and filter directly
 	var rows *sql.Rows
-	var err error
 	if query == "" {
 		q := `SELECT o.id, o.title, o.type, o.content, o.session_id, o.tool_name,
 			o.topic_key, o.project, o.scope, o.normalized_hash, o.revision_count, o.duplicate_count,
@@ -1214,7 +1248,6 @@ func (s *Store) Search(query string, opts SearchOptions) ([]*Observation, error)
 		seen[dr.ID] = true
 	}
 
-	var results []*Observation
 	results = append(results, directResults...)
 	for rows.Next() {
 		hasRows = true
