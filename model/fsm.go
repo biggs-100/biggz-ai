@@ -164,6 +164,8 @@ func containsRole(roles []Role, role Role) bool {
 
 // checkBudget returns an error if the budget check named by check is
 // exceeded, or nil if no check is required or the budget is not exceeded.
+// Verbatim gentle guard: FixRounds <1 and ScopedValidations <1 (Max=1).
+// Errors are verbatim "budget exceeded: fix rounds exhausted (1/1)" etc.
 func checkBudget(check string, counters BudgetCounters) error {
 	switch check {
 	case "fix-rounds":

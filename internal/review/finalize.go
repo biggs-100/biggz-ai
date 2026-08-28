@@ -69,16 +69,34 @@ var BurnEnabled = true
 // real fix delta.
 const EmptyFixDeltaHash = "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 
-// computeFixDeltaHash returns a real sha256:<hex> delta hash for a correction
-// with the given cumulative lines, or EmptyFixDeltaHash when no correction has
-// occurred. The hash binds cumulative lines deterministically; re-materialized
-// receipts with same cumulative produce identical hash.
-func computeFixDeltaHash(cumulativeLines int) string {
-	if cumulativeLines <= 0 {
+// FixDeltaDomain is the fix-delta binding domain.
+const FixDeltaDomain = "fix-delta/v1"
+
+// FixDeltaHashForSnapshot returns EmptyFixDeltaHash when cumulative==0 else
+// domainHash("fix-delta/v1" + "\x00" + writeLengthPrefixed(baseTree,candidateTree,pathsDigest,cumulative,ledgerIDs...)).
+// Verbatim gentle-ai fix-delta binding (cumulative + content-addressed trees).
+func FixDeltaHashForSnapshot(baseTree, candidateTree, pathsDigest string, cumulative int, ledgerIDs []string) string {
+	if cumulative <= 0 {
 		return EmptyFixDeltaHash
 	}
-	// Deterministic payload: fix-delta:<cumulative> bound via payloadSHA256.
-	return payloadSHA256([]byte(fmt.Sprintf("fix-delta:%d", cumulativeLines)))
+	ids, _ := canonicalStrings(ledgerIDs, "ledger id")
+	fields := [][]byte{
+		[]byte(baseTree),
+		[]byte(candidateTree),
+		[]byte(pathsDigest),
+		[]byte(strconv.Itoa(cumulative)),
+	}
+	for _, id := range ids {
+		fields = append(fields, []byte(id))
+	}
+	payload := writeLengthPrefixed(fields...)
+	return domainHash(FixDeltaDomain, payload)
+}
+
+// computeFixDeltaHash is legacy wrapper kept for backward compat.
+// It binds only cumulative via FixDeltaHashForSnapshot with empty trees.
+func computeFixDeltaHash(cumulativeLines int) string {
+	return FixDeltaHashForSnapshot("", "", "", cumulativeLines, nil)
 }
 
 // deriveCumulativeAndFixDelta derives cumulative correction lines and its delta hash
@@ -715,15 +733,10 @@ func Finalize(repo, lineageID string) (FinalizeOutcome, error) {
 			return err
 		}
 		// Cumulative ledger: derive from prior receipt + post-finalize corrections.
-		if cum, delta := deriveCumulativeAndFixDelta(chain, store); true {
-			// For initial finalize (no prior receipt) cumulative is 0; for
-			// subsequent finalize after a correction, cum carries prior + post.
-			// If derive returns 0 (no prior), keep 0; otherwise override.
-			// We only override when the chain already has a terminal receipt
-			// (resume flow) or when post lines >0.
-			// To keep first finalize at 0, let helper decide.
+		// FixDelta is content-bound via FixDeltaHashForSnapshot (gentle v1).
+		if cum, _ := deriveCumulativeAndFixDelta(chain, store); true {
 			data.cumulativeCorrectionLines = cum
-			data.fixDeltaHash = delta
+			data.fixDeltaHash = FixDeltaHashForSnapshot(data.baseTree, data.candidateTree, data.manifestDigest, cum, nil)
 		}
 		receipt := buildReceipt(chain.LineageID, revisions[0], chain.HeadHash, data)
 		if err := receipt.Validate(); err != nil {
@@ -1029,7 +1042,7 @@ func buildReceipt(lineageID, genesisRevision, headRevision string, data finalize
 	}
 	fixHash := data.fixDeltaHash
 	if fixHash == "" {
-		fixHash = computeFixDeltaHash(data.cumulativeCorrectionLines)
+		fixHash = FixDeltaHashForSnapshot(data.baseTree, data.candidateTree, data.manifestDigest, data.cumulativeCorrectionLines, nil)
 	}
 	receipt := PersistedReceipt{
 		Schema: ReviewReceiptSchema, LineageID: lineageID, Generation: 1,

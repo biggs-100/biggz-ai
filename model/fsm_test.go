@@ -217,3 +217,48 @@ func TestFSM_EveryStatusExists(t *testing.T) {
 		}
 	}
 }
+
+// TestBudgetParity verifies hard budget 1/1 parity with gentle v2.5.0-rc.1.
+func TestBudgetParity(t *testing.T) {
+	fsm := FSM{}
+	if MaxFixRounds != 1 || MaxScopedValidations != 1 {
+		t.Fatalf("budget constants must be 1/1, got %d/%d", MaxFixRounds, MaxScopedValidations)
+	}
+	// {0,0} must succeed
+	if err := fsm.Transition(StatusNeedsChanges, StatusChangesSubmitted, RoleAuthor, BudgetCounters{FixRounds: 0, ScopedValidations: 0}); err != nil {
+		t.Errorf("expected {0,0} to succeed, got %v", err)
+	}
+	// {1,0} must reject with budget exceeded (1/1)
+	err := fsm.Transition(StatusNeedsChanges, StatusChangesSubmitted, RoleAuthor, BudgetCounters{FixRounds: 1})
+	if err == nil {
+		t.Fatal("expected {1,0} to be rejected")
+	}
+	if !containsBudgetExceeded(err.Error()) {
+		t.Errorf("error must contain budget exceeded (1/1), got %q", err.Error())
+	}
+	// ScopedValidations {0,1} reject
+	err = fsm.Transition(StatusChangesSubmitted, StatusReReview, RoleReviewer, BudgetCounters{ScopedValidations: 1})
+	if err == nil {
+		t.Fatal("expected scoped {1} to be rejected")
+	}
+	if !containsBudgetExceeded(err.Error()) {
+		t.Errorf("scoped error must contain budget exceeded (1/1), got %q", err.Error())
+	}
+}
+
+func containsBudgetExceeded(s string) bool {
+	return len(s) >= 4 && (contains(s, "budget exceeded") && contains(s, "1/1"))
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && indexOf(s, substr) >= 0
+}
+
+func indexOf(s, substr string) int {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return i
+		}
+	}
+	return -1
+}

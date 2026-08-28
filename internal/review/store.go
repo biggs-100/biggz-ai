@@ -339,10 +339,19 @@ func readRecord(dir, hash string) (Record, error) {
 	return rec, nil
 }
 
-// sha256Hex returns the lowercase hex SHA-256 hash of data.
+// sha256Hex returns the lowercase hex SHA-256 hash of data (content-address).
 func sha256Hex(data []byte) string {
 	h := sha256.Sum256(data)
 	return hex.EncodeToString(h[:])
+}
+
+// StoreChainDomain is the domain for chain identity binding with length prefix.
+const StoreChainDomain = "biggz-ai.review-store-chain/v1"
+
+// chainIdentityHash binds chain fields with domain + length-prefix (gentle parity).
+func chainIdentityHash(fields ...[]byte) string {
+	payload := writeLengthPrefixed(fields...)
+	return domainHash(StoreChainDomain, payload)
 }
 
 // resolveGitDir runs `git rev-parse --git-dir` to find the git directory

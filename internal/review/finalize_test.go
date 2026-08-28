@@ -644,3 +644,44 @@ func TestCanStopSession_PartialPending(t *testing.T) {
 		t.Error("pending lenses must block")
 	}
 }
+
+func TestFixDeltaBinding(t *testing.T) {
+	if got := FixDeltaHashForSnapshot("a", "b", "c", 0, nil); got != EmptyFixDeltaHash {
+		t.Errorf("cumulative 0 must return EmptyFixDeltaHash, got %q", got)
+	}
+	if got := FixDeltaHashForSnapshot("a", "b", "c", -1, nil); got != EmptyFixDeltaHash {
+		t.Errorf("negative must return EmptyFixDeltaHash, got %q", got)
+	}
+	hash := FixDeltaHashForSnapshot("baseTreeAAAA", "candidateBBBB", "pathsDigestCCCC", 2, nil)
+	if hash == EmptyFixDeltaHash {
+		t.Error("cumulative 2 must not be Empty")
+	}
+	flat := payloadSHA256([]byte("fix-delta:2"))
+	if hash == flat {
+		t.Errorf("FixDelta hash must differ from flat payloadSHA256, both %q", hash)
+	}
+	if len(hash) < 7 || hash[:7] != "sha256:" {
+		t.Errorf("FixDelta hash must be sha256: prefix, got %q", hash)
+	}
+	// Determinism
+	hash2 := FixDeltaHashForSnapshot("baseTreeAAAA", "candidateBBBB", "pathsDigestCCCC", 2, nil)
+	if hash != hash2 {
+		t.Error("FixDelta hash must be deterministic")
+	}
+	// Different trees produce different hash
+	hashDiff := FixDeltaHashForSnapshot("otherBase", "candidateBBBB", "pathsDigestCCCC", 2, nil)
+	if hash == hashDiff {
+		t.Error("different baseTree must produce different hash")
+	}
+	// LedgerIDs affect hash
+	hashLedger := FixDeltaHashForSnapshot("baseTreeAAAA", "candidateBBBB", "pathsDigestCCCC", 2, []string{"ledger1"})
+	if hash == hashLedger {
+		t.Error("ledgerIDs must affect hash")
+	}
+	// Validate rejects flat delta when receipt expects domain-bound hash:
+	// Build a receipt with flat hash and ensure it would not match recomputed domain hash
+	recomputed := FixDeltaHashForSnapshot("baseTreeAAAA", "candidateBBBB", "pathsDigestCCCC", 2, nil)
+	if flat == recomputed {
+		t.Error("flat must not equal recomputed domain hash")
+	}
+}

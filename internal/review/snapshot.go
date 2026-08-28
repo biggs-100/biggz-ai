@@ -1,10 +1,9 @@
 package review
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -183,19 +182,20 @@ func (sm *SnapshotManager) Import(data []byte) error {
 	return nil
 }
 
+const SnapshotDomain = "biggz-ai.review-snapshot/v1"
+
 func computeSnapshotHash(s Snapshot) string {
-	h := sha256.New()
-	h.Write([]byte(s.ID))
-	h.Write([]byte(s.ReviewID))
-	h.Write([]byte(s.BaseTree))
-	h.Write([]byte(s.Candidate))
-	h.Write([]byte(s.ParentHash))
-	for _, p := range s.Paths {
-		h.Write([]byte(p))
+	fields := [][]byte{
+		[]byte(s.BaseTree),
+		[]byte(s.Candidate),
+		[]byte(s.ParentHash),
+		[]byte(strconv.Itoa(s.ChangedLines)),
 	}
-	fmt.Fprintf(h, "%d", s.ChangedLines)
-	h.Write([]byte(s.CreatedAt.Format(time.RFC3339Nano)))
-	return hex.EncodeToString(h.Sum(nil))
+	for _, p := range s.Paths {
+		fields = append(fields, []byte(p))
+	}
+	payload := writeLengthPrefixed(fields...)
+	return domainHash(SnapshotDomain, payload)
 }
 
 // DiagnosisReport describes the health of a snapshot chain.

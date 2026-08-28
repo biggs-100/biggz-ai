@@ -1,25 +1,48 @@
 package model
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"time"
 )
 
-// evidenceHash computes the SHA-256 hash of an evidence entry from its
-// content fields. The input to the hash is the canonical string:
-//
-//	Position|Timestamp|Kind|Payload|PrevHash
+const (
+	EvidenceDomain = "biggz-ai.review-evidence/v1"
+	MerkleDomain   = "biggz-ai.review-merkle/v1"
+)
+
+// writeLengthPrefixed encodes fields with u32 BE length prefix.
+func writeLengthPrefixed(fields ...[]byte) []byte {
+	var buf bytes.Buffer
+	for _, f := range fields {
+		var l [4]byte
+		binary.BigEndian.PutUint32(l[:], uint32(len(f)))
+		buf.Write(l[:])
+		buf.Write(f)
+	}
+	return buf.Bytes()
+}
+
+// domainHash computes sha256(domain + "\x00" + payload) with "sha256:" prefix.
+func domainHash(domain string, payload []byte) string {
+	h := sha256.Sum256(append([]byte(domain+"\x00"), payload...))
+	return "sha256:" + hex.EncodeToString(h[:])
+}
+
+// evidenceHash computes the hash as domainHash with length-prefixed fields:
+// Position, Timestamp, Kind, Payload, PrevHash.
 func evidenceHash(e Evidence) string {
-	input := fmt.Sprintf("%d|%s|%s|%s|%s",
-		e.Position,
-		e.Timestamp.Format(time.RFC3339Nano),
-		e.Kind,
-		e.Payload,
-		e.PrevHash,
+	payload := writeLengthPrefixed(
+		[]byte(fmt.Sprintf("%d", e.Position)),
+		[]byte(e.Timestamp.Format(time.RFC3339Nano)),
+		[]byte(e.Kind),
+		[]byte(e.Payload),
+		[]byte(e.PrevHash),
 	)
-	h := sha256.Sum256([]byte(input))
-	return fmt.Sprintf("%x", h)
+	return domainHash(EvidenceDomain, payload)
 }
 
 // AppendEvidence appends a new evidence entry to the chain, computing
@@ -47,15 +70,12 @@ func AppendEvidence(chain []Evidence, kind, payload string) []Evidence {
 	return append(chain, entry)
 }
 
-// MerkleRoot returns the Merkle root of the evidence chain.
-//
-// For a non-empty chain, the Merkle root is SHA-256 of the last entry's
-// Hash. For an empty chain, it returns an empty string.
+// MerkleRoot returns the Merkle root as domainHash of the last entry's Hash.
 func MerkleRoot(chain []Evidence) string {
 	n := len(chain)
 	if n == 0 {
 		return ""
 	}
-	h := sha256.Sum256([]byte(chain[n-1].Hash))
-	return fmt.Sprintf("%x", h)
+	payload := writeLengthPrefixed([]byte(chain[n-1].Hash))
+	return domainHash(MerkleDomain, payload)
 }

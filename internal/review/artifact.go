@@ -10,6 +10,7 @@ package review
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -819,6 +820,17 @@ func evidenceReportsUnavailableInspection(value string) bool {
 // ---------------------------------------------------------------------------
 // Hash helpers
 // ---------------------------------------------------------------------------
+
+func writeLengthPrefixed(fields ...[]byte) []byte {
+	var buf bytes.Buffer
+	for _, f := range fields {
+		var l [4]byte
+		binary.BigEndian.PutUint32(l[:], uint32(len(f)))
+		buf.Write(l[:])
+		buf.Write(f)
+	}
+	return buf.Bytes()
+}
 
 func domainHash(domain string, payload []byte) string {
 	sum := sha256.Sum256(append([]byte(domain+"\x00"), payload...))

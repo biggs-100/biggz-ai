@@ -35,10 +35,10 @@ type BudgetCounters struct {
 const (
 	// MaxFixRounds is the maximum number of correction cycles allowed
 	// per lineage. Defined by the review-authority spec scenario.
-	MaxFixRounds = 3
+	MaxFixRounds = 1
 	// MaxScopedValidations is the maximum number of scoped re-reviews
 	// allowed per lineage. Defined by the core-review spec scenario.
-	MaxScopedValidations = 5
+	MaxScopedValidations = 1
 )
 
 // ReviewStatus represents the current lifecycle state of a review.

@@ -1,8 +1,6 @@
 package review
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strconv"
 
@@ -107,12 +105,11 @@ func VerifyReceipt(r *Receipt, state *model.ReviewState) bool {
 	return r.BindingHash == expected
 }
 
-// computeReceiptHash computes SHA-256(genesis || head || count || lineage).
+const ReceiptDomain = "biggz-ai.review-receipt/v1"
+
+// computeReceiptHash computes domainHash with length-prefixed binding:
+// domainHash("biggz-ai.review-receipt/v1", writeLengthPrefixed(genesis,head,count,lineage)).
 func computeReceiptHash(genesis, head string, count int, lineage string) string {
-	h := sha256.New()
-	h.Write([]byte(genesis))
-	h.Write([]byte(head))
-	h.Write([]byte(strconv.Itoa(count)))
-	h.Write([]byte(lineage))
-	return hex.EncodeToString(h.Sum(nil))
+	payload := writeLengthPrefixed([]byte(genesis), []byte(head), []byte(strconv.Itoa(count)), []byte(lineage))
+	return domainHash(ReceiptDomain, payload)
 }

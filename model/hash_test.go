@@ -94,16 +94,19 @@ func TestMerkleRoot_Empty(t *testing.T) {
 }
 
 // TestMerkleRoot_NonEmpty verifies that MerkleRoot for a non-empty chain
-// equals SHA-256 of the last entry's Hash.
+// equals domainHash of the last entry's Hash with length prefix.
 func TestMerkleRoot_NonEmpty(t *testing.T) {
 	chain := AppendEvidence(nil, "a", `{"n":1}`)
 	chain = AppendEvidence(chain, "b", `{"n":2}`)
 	chain = AppendEvidence(chain, "c", `{"n":3}`)
 
-	expected := sha256Hex(chain[2].Hash)
+	expected := domainHash(MerkleDomain, writeLengthPrefixed([]byte(chain[2].Hash)))
 	root := MerkleRoot(chain)
 	if root != expected {
 		t.Errorf("MerkleRoot mismatch:\n  expected: %q\n  got:      %q", expected, root)
+	}
+	if root == sha256Hex(chain[2].Hash) {
+		t.Error("MerkleRoot must be domain-bound, not plain SHA256")
 	}
 }
 
@@ -163,6 +166,49 @@ func TestMerkleRoot_ChangesAfterTamper(t *testing.T) {
 func sha256Hex(s string) string {
 	h := sha256.Sum256([]byte(s))
 	return fmt.Sprintf("%x", h)
+}
+
+// TestEvidenceHashVectors ensures gentle vectors (domain+lp) differ from legacy pipe.
+func TestEvidenceHashVectors(t *testing.T) {
+	ts := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	e := Evidence{Position: 1, Timestamp: ts, Kind: "kind", Payload: `{"x":1}`, PrevHash: ""}
+	newHash := evidenceHash(e)
+	legacyInput := fmt.Sprintf("%d|%s|%s|%s|%s", e.Position, e.Timestamp.Format(time.RFC3339Nano), e.Kind, e.Payload, e.PrevHash)
+	legacy := fmt.Sprintf("%x", sha256.Sum256([]byte(legacyInput)))
+	if newHash == legacy {
+		t.Errorf("evidenceHash must differ from legacy pipe: %q", newHash)
+	}
+	if len(newHash) < 7 || newHash[:7] != "sha256:" {
+		t.Errorf("evidenceHash must be sha256: prefix, got %q", newHash)
+	}
+	// Verify domain prefix
+	if newHash == domainHash(EvidenceDomain, writeLengthPrefixed([]byte("1"), []byte(ts.Format(time.RFC3339Nano)), []byte("kind"), []byte(`{"x":1}`), []byte(""))) {
+		// ok same
+	} else {
+		t.Error("evidenceHash must equal domainHash with length-prefixed fields")
+	}
+}
+
+// TestChainTamper ensures tampered payload is detected via hash mismatch.
+func TestChainTamper(t *testing.T) {
+	chain := AppendEvidence(nil, "a", `{"n":1}`)
+	chain = AppendEvidence(chain, "b", `{"n":2}`)
+	orig := chain[1].Hash
+	chain[1].Payload = `{"n":999}`
+	recomputed := evidenceHash(chain[1])
+	if recomputed == orig {
+		t.Error("tampered payload must produce different hash")
+	}
+	// Also ensure recomputed differs from stored after tamper and Merkle changes
+	chain2 := AppendEvidence(nil, "a", `{"n":1}`)
+	chain2 = AppendEvidence(chain2, "b", `{"n":2}`)
+	root1 := MerkleRoot(chain2)
+	chain3 := AppendEvidence(nil, "a", `{"n":1}`)
+	chain3 = AppendEvidence(chain3, "b", `{"n":999}`)
+	root2 := MerkleRoot(chain3)
+	if root1 == root2 {
+		t.Error("MerkleRoot must differ after payload tamper")
+	}
 }
 
 // Ensure time is used (imported for compilation).
