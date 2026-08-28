@@ -531,11 +531,15 @@ func occupantRevision(rec *Record) string {
 }
 
 func buildCapturedArtifact(store *Store, subject ArtifactSubject, admission ArtifactAdmission, revision, manifestPath string) CapturedArtifact {
+	// Canonical v1 layout: <store.Dir>/v1/events/<sha256>. Dual-read fallback
+	// for legacy flat files is preserved in store.readRecord / Validate,
+	// but the artifact Path must point to the canonical location so that
+	// os.Stat succeeds when the event was published via store.publishImmutable.
 	return CapturedArtifact{
 		Schema: ResultArtifactSchema, LineageID: subject.LineageID, TargetIdentity: subject.TargetIdentity,
 		Lens: subject.Lens, SelectedOrder: subject.SelectedOrder, SubjectHash: subject.SubjectHash,
 		AdmissionDecision: admission.Decision, Revision: revision,
-		Path: filepath.Join(store.Dir, revision), CanonicalSHA256: admission.CanonicalSHA256,
+		Path: filepath.Join(store.Dir, "v1", "events", revision), CanonicalSHA256: admission.CanonicalSHA256,
 		ResultHash: admission.ResultHash, ManifestPath: manifestPath,
 	}
 }

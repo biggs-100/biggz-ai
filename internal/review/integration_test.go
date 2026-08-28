@@ -41,8 +41,11 @@ func TestIntegration_GatePrePR_BlocksOnTamperedChain(t *testing.T) {
 		t.Fatal("no event files found")
 	}
 
-	// Modify the first event file.
-	eventPath := filepath.Join(s.Dir, eventFiles[0])
+	// Modify the first event file (canonical v1/events with flat fallback).
+	eventPath := filepath.Join(s.Dir, "v1", "events", eventFiles[0])
+	if _, err := os.Stat(eventPath); os.IsNotExist(err) {
+		eventPath = filepath.Join(s.Dir, eventFiles[0])
+	}
 	data, err := os.ReadFile(eventPath)
 	if err != nil {
 		t.Fatalf("read event: %v", err)
@@ -363,17 +366,27 @@ func setupStoreInDir(t *testing.T, parentDir, lineageID string, n int) {
 }
 
 // listEventFiles returns event file names (64-char hex) in a store directory.
+// Migration-aware: checks v1/events first, falls back to flat layout.
 func listEventFiles(t *testing.T, dir string) []string {
 	t.Helper()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read dir: %v", err)
-	}
-	var files []string
-	for _, e := range entries {
-		if !e.IsDir() && len(e.Name()) == 64 {
-			files = append(files, e.Name())
+	// Prefer v1/events (canonical after parity-gentle-v25).
+	for _, candidate := range []string{filepath.Join(dir, "v1", "events"), dir} {
+		entries, err := os.ReadDir(candidate)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatalf("read dir: %v", err)
+		}
+		var files []string
+		for _, e := range entries {
+			if !e.IsDir() && len(e.Name()) == 64 {
+				files = append(files, e.Name())
+			}
+		}
+		if len(files) > 0 {
+			return files
 		}
 	}
-	return files
+	return nil
 }

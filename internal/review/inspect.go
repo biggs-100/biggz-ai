@@ -79,7 +79,9 @@ func Inspect(repo, lineageID string) (InspectResult, error) {
 			Schema: payloadSchemaOf(rec.Payload), Role: rec.Role, Actor: rec.Actor,
 			Timestamp: rec.Timestamp, PrevRevision: rec.PrevRevision,
 		}
-		if info, err := os.Stat(filepath.Join(store.Dir, revisions[index])); err == nil {
+		if info, err := os.Stat(filepath.Join(store.Dir, "v1", "events", revisions[index])); err == nil {
+			summary.Size = info.Size()
+		} else if info, err := os.Stat(filepath.Join(store.Dir, revisions[index])); err == nil {
 			summary.Size = info.Size()
 		}
 		switch rec.Operation {

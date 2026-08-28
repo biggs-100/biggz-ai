@@ -66,7 +66,11 @@ func TestRepair_TruncatesCorruptTail(t *testing.T) {
 
 	// Corrupt the HEAD event file (content that no longer parses as JSON).
 	tail := revisions[3]
-	if err := os.WriteFile(filepath.Join(store.Dir, tail), []byte("garbage"), 0644); err != nil {
+	path := filepath.Join(store.Dir, "v1", "events", tail)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		path = filepath.Join(store.Dir, tail)
+	}
+	if err := os.WriteFile(path, []byte("garbage"), 0644); err != nil {
 		t.Fatalf("corrupt tail: %v", err)
 	}
 
@@ -103,7 +107,11 @@ func TestRepair_MidChainCorruptionRefuses(t *testing.T) {
 
 	// Corrupt a MIDDLE event (not the tail).
 	middle := revisions[1]
-	if err := os.WriteFile(filepath.Join(store.Dir, middle), []byte("garbage"), 0644); err != nil {
+	path := filepath.Join(store.Dir, "v1", "events", middle)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		path = filepath.Join(store.Dir, middle)
+	}
+	if err := os.WriteFile(path, []byte("garbage"), 0644); err != nil {
 		t.Fatalf("corrupt middle: %v", err)
 	}
 

@@ -97,11 +97,15 @@ func TestInvalidate_BrokenChainRefused(t *testing.T) {
 	// Tamper with parseable content so LoadChain succeeds and the integrity
 	// verdict (content address) catches it.
 	genesis := chain.GenesisHash
-	data, err := os.ReadFile(filepath.Join(store.Dir, genesis))
+	path := filepath.Join(store.Dir, "v1", "events", genesis)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		path = filepath.Join(store.Dir, genesis)
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read genesis: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(store.Dir, genesis), append(data, ' '), 0644); err != nil {
+	if err := os.WriteFile(path, append(data, ' '), 0644); err != nil {
 		t.Fatalf("tamper genesis: %v", err)
 	}
 	if _, err := Invalidate(repo, "inval-3", "reason"); err == nil || !strings.Contains(err.Error(), "chain integrity") {

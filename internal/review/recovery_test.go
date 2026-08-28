@@ -102,7 +102,11 @@ func TestRecover_MidChainCorruptionRefuses(t *testing.T) {
 	repo, store, revisions := appendTestRecords(t, "recover-mid", 4)
 
 	middle := revisions[1]
-	if err := os.WriteFile(filepath.Join(store.Dir, middle), []byte("garbage"), 0644); err != nil {
+	path := filepath.Join(store.Dir, "v1", "events", middle)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		path = filepath.Join(store.Dir, middle)
+	}
+	if err := os.WriteFile(path, []byte("garbage"), 0644); err != nil {
 		t.Fatalf("corrupt middle: %v", err)
 	}
 
@@ -126,7 +130,11 @@ func TestRecover_HEADNamingCorruptTailRefuses(t *testing.T) {
 	// belongs to repair — recover only restores a lost HEAD and never
 	// truncates.
 	tail := revisions[2]
-	if err := os.WriteFile(filepath.Join(store.Dir, tail), []byte("garbage"), 0644); err != nil {
+	path := filepath.Join(store.Dir, "v1", "events", tail)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		path = filepath.Join(store.Dir, tail)
+	}
+	if err := os.WriteFile(path, []byte("garbage"), 0644); err != nil {
 		t.Fatalf("corrupt tail: %v", err)
 	}
 
@@ -280,23 +288,34 @@ func TestReclaim_NoOrphansIsNoOp(t *testing.T) {
 func TestReclaim_BrokenChainFailsClosed(t *testing.T) {
 	repo, store := finalizedLineage(t, "reclaim-broken")
 
-	entries, err := os.ReadDir(store.Dir)
-	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || len(entry.Name()) != 64 {
+	// Tamper canonical v1 event (fallback legacy flat)
+	tampered := false
+	for _, dir := range []string{filepath.Join(store.Dir, "v1", "events"), store.Dir} {
+		entries, rErr := os.ReadDir(dir)
+		if rErr != nil {
 			continue
 		}
-		path := filepath.Join(store.Dir, entry.Name())
-		original, _ := os.ReadFile(path)
-		if err := os.WriteFile(path, append(original, []byte("tamper")...), 0644); err != nil {
-			t.Fatalf("tamper: %v", err)
+		for _, entry := range entries {
+			if entry.IsDir() || len(entry.Name()) != 64 {
+				continue
+			}
+			path := filepath.Join(dir, entry.Name())
+			original, _ := os.ReadFile(path)
+			if wErr := os.WriteFile(path, append(original, []byte("tamper")...), 0644); wErr != nil {
+				t.Fatalf("tamper: %v", wErr)
+			}
+			tampered = true
+			break
 		}
-		break
+		if tampered {
+			break
+		}
+	}
+	if !tampered {
+		t.Fatal("no event file found to tamper")
 	}
 
-	_, err = Reclaim(repo, "reclaim-broken")
+	_, err := Reclaim(repo, "reclaim-broken")
 	if err == nil || !strings.Contains(err.Error(), "load chain") {
 		t.Fatalf("error = %v, want fail-closed load chain error", err)
 	}
@@ -421,20 +440,30 @@ func TestReconcileAuthority_BrokenChainRefuses(t *testing.T) {
 	}
 	defer mem.Close()
 
-	entries, err := os.ReadDir(store.Dir)
-	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || len(entry.Name()) != 64 {
+	tampered := false
+	for _, dir := range []string{filepath.Join(store.Dir, "v1", "events"), store.Dir} {
+		entries, rErr := os.ReadDir(dir)
+		if rErr != nil {
 			continue
 		}
-		path := filepath.Join(store.Dir, entry.Name())
-		original, _ := os.ReadFile(path)
-		if err := os.WriteFile(path, append(original, []byte("tamper")...), 0644); err != nil {
-			t.Fatalf("tamper: %v", err)
+		for _, entry := range entries {
+			if entry.IsDir() || len(entry.Name()) != 64 {
+				continue
+			}
+			path := filepath.Join(dir, entry.Name())
+			original, _ := os.ReadFile(path)
+			if wErr := os.WriteFile(path, append(original, []byte("tamper")...), 0644); wErr != nil {
+				t.Fatalf("tamper: %v", wErr)
+			}
+			tampered = true
+			break
 		}
-		break
+		if tampered {
+			break
+		}
+	}
+	if !tampered {
+		t.Fatal("no event file found to tamper")
 	}
 
 	_, err = reconcileWithMem(repo, "reconcile-broken", true, mem, "")
@@ -872,20 +901,31 @@ func TestRetryFinalVerification_TamperedReceiptFailsWithoutOverwrite(t *testing.
 func TestRetryFinalVerification_BrokenChainFails(t *testing.T) {
 	repo, store := finalizedLineage(t, "retry-broken")
 
-	entries, err := os.ReadDir(store.Dir)
-	if err != nil {
-		t.Fatalf("ReadDir: %v", err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || len(entry.Name()) != 64 {
+	var err error
+	tampered := false
+	for _, dir := range []string{filepath.Join(store.Dir, "v1", "events"), store.Dir} {
+		entries, rErr := os.ReadDir(dir)
+		if rErr != nil {
 			continue
 		}
-		path := filepath.Join(store.Dir, entry.Name())
-		original, _ := os.ReadFile(path)
-		if err := os.WriteFile(path, append(original, []byte("tamper")...), 0644); err != nil {
-			t.Fatalf("tamper: %v", err)
+		for _, entry := range entries {
+			if entry.IsDir() || len(entry.Name()) != 64 {
+				continue
+			}
+			path := filepath.Join(dir, entry.Name())
+			original, _ := os.ReadFile(path)
+			if wErr := os.WriteFile(path, append(original, []byte("tamper")...), 0644); wErr != nil {
+				t.Fatalf("tamper: %v", wErr)
+			}
+			tampered = true
+			break
 		}
-		break
+		if tampered {
+			break
+		}
+	}
+	if !tampered {
+		t.Fatal("no event file found to tamper")
 	}
 
 	// A broken chain cannot even be loaded: the retry fails closed with an

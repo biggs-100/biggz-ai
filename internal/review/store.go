@@ -91,6 +91,27 @@ func Open(repo, lineageID string) (*Store, error) {
 
 func (s *Store) eventsDir() string { return filepath.Join(s.Dir, "v1", "events") }
 
+// EventsDir returns the canonical v1 events directory for this store.
+// The canonical path is <store.Dir>/v1/events/<sha256>; legacy flat
+// files at <store.Dir>/<sha256> remain readable via dual-read fallback.
+func (s *Store) EventsDir() string { return s.eventsDir() }
+
+// EventPath returns the canonical path for an event revision, with
+// dual-read fallback: if the v1 path does not exist but a legacy flat
+// file does, the legacy path is returned. This preserves migration
+// compatibility for tools that stat the file directly.
+func (s *Store) EventPath(revision string) string {
+	canonical := filepath.Join(s.eventsDir(), revision)
+	if _, err := os.Stat(canonical); err == nil {
+		return canonical
+	}
+	legacy := filepath.Join(s.Dir, revision)
+	if _, err := os.Stat(legacy); err == nil {
+		return legacy
+	}
+	return canonical
+}
+
 // OpenWithDir creates a store with an explicit directory path.
 // This is primarily useful for testing with t.TempDir().
 func OpenWithDir(dir, lineageID string) *Store {

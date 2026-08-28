@@ -3,6 +3,7 @@ package sdd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // StatusContractV2 is the sole supported contract. Duplicate definition
@@ -181,6 +182,31 @@ func ProjectStatusV2(status ChangeStatus) (StatusV2Projection, error) {
 		r := status.ChangeRoot
 		changeRoot = &r
 	}
+	// Authority-free: strip edit-authority blocked reasons and never report
+	// resolve-blockers solely due to authority. sdd-status never blocks on
+	// edit authority; sdd-apply warns via EditAuthorityBlocked/Consent.
+	filteredReasons := make([]string, 0, len(status.BlockedReasons))
+	for _, r := range status.BlockedReasons {
+		if strings.Contains(r, "edit_authority_missing") || strings.Contains(r, "blocked(edit_authority_missing)") {
+			continue
+		}
+		filteredReasons = append(filteredReasons, r)
+	}
+	nextRecommended := status.NextRecommended
+	if nextRecommended == "resolve-blockers" && len(filteredReasons) == 0 {
+		// Authority was the sole blocker; V2 never forces resolve-blockers for authority.
+		// Map to apply when ApplyState is ready, otherwise preserve non-blocked next.
+		if status.ApplyState == ApplyReady {
+			nextRecommended = "apply"
+		} else if status.ApplyState == ApplyAllDone {
+			nextRecommended = "verify"
+		} else {
+			nextRecommended = "apply"
+		}
+	}
+	if filteredReasons == nil {
+		filteredReasons = []string{}
+	}
 	projected := StatusV2Projection{
 		SchemaName:       status.SchemaName,
 		SchemaVersion:    status.SchemaVersion,
@@ -199,8 +225,8 @@ func ProjectStatusV2(status ChangeStatus) (StatusV2Projection, error) {
 		RemediationState: status.RemediationState,
 		ReviewOffer:      status.ReviewOffer,
 		Consent:          status.Consent,
-		NextRecommended:  status.NextRecommended,
-		BlockedReasons:   status.BlockedReasons,
+		NextRecommended:  nextRecommended,
+		BlockedReasons:   filteredReasons,
 	}
 	if status.PhaseInstructions != nil {
 		projected.PhaseInstructions = status.PhaseInstructions

@@ -166,6 +166,150 @@ func TestSDDStatusV2CleanBreak(t *testing.T) {
 	})
 }
 
+func TestV2AuthorityFree(t *testing.T) {
+	t.Run("projection omits authority keys and clears blockedReasons", func(t *testing.T) {
+		cs := ChangeStatus{
+			SchemaName:    StatusSchemaName,
+			SchemaVersion: StatusSchemaVersion,
+			Name:          "test",
+			ChangeRoot:    "/repo/openspec/changes/test",
+			PlanningHome:  PlanningHome{Mode: "repo-local", Path: "/repo/openspec"},
+			ArtifactStore: ArtifactStoreOpenSpec,
+			ArtifactPaths: ArtifactPaths{
+				Proposal:      []string{"/repo/openspec/changes/test/proposal.md"},
+				Specs:         []string{"/repo/openspec/changes/test/specs/core/spec.md"},
+				Design:        []string{"/repo/openspec/changes/test/design.md"},
+				Tasks:         []string{"/repo/openspec/changes/test/tasks.md"},
+				ApplyProgress: []string{},
+				VerifyReport:  []string{},
+			},
+			ContextFiles: ArtifactPaths{
+				Proposal:      []string{"/repo/openspec/changes/test/proposal.md"},
+				Specs:         []string{"/repo/openspec/changes/test/specs/core/spec.md"},
+				Design:        []string{"/repo/openspec/changes/test/design.md"},
+				Tasks:         []string{"/repo/openspec/changes/test/tasks.md"},
+				ApplyProgress: []string{},
+				VerifyReport:  []string{},
+			},
+			Artifacts: map[string]ArtifactState{
+				"proposal": ArtifactDone, "specs": ArtifactDone, "design": ArtifactDone,
+				"tasks": ArtifactDone, "applyProgress": ArtifactMissing, "verifyReport": ArtifactMissing,
+			},
+			TaskProgress: TaskProgress{Total: 1, Completed: 0, Pending: 1},
+			Dependencies: Dependencies{
+				Proposal: DependencyAllDone, Specs: DependencyAllDone, Design: DependencyAllDone,
+				Tasks: DependencyAllDone, Apply: DependencyReady, Verify: DependencyBlocked, Archive: DependencyBlocked,
+			},
+			ApplyState:       ApplyReady,
+			ActionContext:    ActionContext{Mode: "repo-local", WorkspaceRoot: "/repo", AllowedEditRoots: []string{"/repo"}},
+			Relationships:    Relationships{},
+			RemediationState: RemediationState{},
+			BlockedReasons:   []string{"blocked(edit_authority_missing): tasks.md targets repositories outside the authorized edit roots: \"/other\"; edit tasks.md so every work unit stays inside the authorized edit roots, or grant this change edit authority for those repositories"},
+			NextRecommended:  "resolve-blockers",
+			GrantedRoots:     []string{"/other"},
+			EditAuthorityBlocked: true,
+			MissingRoots:     []string{"/other"},
+		}
+		projected, err := ProjectStatusV2(cs)
+		if err != nil {
+			t.Fatalf("ProjectStatusV2 error = %v", err)
+		}
+		payload, err := json.Marshal(projected)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, forbidden := range []string{"granted_roots", "edit_authority_blocked", "missing_roots"} {
+			if strings.Contains(string(payload), forbidden) {
+				t.Fatalf("v2 projection must NOT emit %q: %s", forbidden, payload)
+			}
+		}
+		if len(projected.BlockedReasons) != 0 {
+			t.Fatalf("blockedReasons = %v, want [] (authority-free)", projected.BlockedReasons)
+		}
+		if projected.NextRecommended == "resolve-blockers" {
+			t.Fatalf("nextRecommended = %q, want != resolve-blockers (authority-free)", projected.NextRecommended)
+		}
+	})
+	t.Run("v2 allowlist keys only", func(t *testing.T) {
+		cs := ChangeStatus{
+			SchemaName:    StatusSchemaName,
+			SchemaVersion: StatusSchemaVersion,
+			Name:          "test",
+			ChangeRoot:    "/repo/openspec/changes/test",
+			PlanningHome:  PlanningHome{Mode: "repo-local", Path: "/repo/openspec"},
+			ArtifactStore: ArtifactStoreOpenSpec,
+			ArtifactPaths: ArtifactPaths{
+				Proposal:      []string{"/repo/openspec/changes/test/proposal.md"},
+				Specs:         []string{"/repo/openspec/changes/test/specs/core/spec.md"},
+				Design:        []string{"/repo/openspec/changes/test/design.md"},
+				Tasks:         []string{"/repo/openspec/changes/test/tasks.md"},
+				ApplyProgress: []string{},
+				VerifyReport:  []string{},
+			},
+			ContextFiles: ArtifactPaths{
+				Proposal:      []string{"/repo/openspec/changes/test/proposal.md"},
+				Specs:         []string{"/repo/openspec/changes/test/specs/core/spec.md"},
+				Design:        []string{"/repo/openspec/changes/test/design.md"},
+				Tasks:         []string{"/repo/openspec/changes/test/tasks.md"},
+				ApplyProgress: []string{},
+				VerifyReport:  []string{},
+			},
+			Artifacts: map[string]ArtifactState{
+				"proposal": ArtifactDone, "specs": ArtifactDone, "design": ArtifactDone,
+				"tasks": ArtifactDone, "applyProgress": ArtifactMissing, "verifyReport": ArtifactMissing,
+			},
+			TaskProgress: TaskProgress{Total: 1, Completed: 0, Pending: 1},
+			Dependencies: Dependencies{
+				Proposal: DependencyAllDone, Specs: DependencyAllDone, Design: DependencyAllDone,
+				Tasks: DependencyAllDone, Apply: DependencyReady, Verify: DependencyBlocked, Archive: DependencyBlocked,
+			},
+			ApplyState:       ApplyReady,
+			ActionContext:    ActionContext{Mode: "repo-local", WorkspaceRoot: "/repo", AllowedEditRoots: []string{"/repo"}},
+			Relationships:    Relationships{},
+			RemediationState: RemediationState{},
+			NextRecommended:  "apply",
+			BlockedReasons:   []string{},
+		}
+		projected, err := ProjectStatusV2(cs)
+		if err != nil {
+			t.Fatalf("ProjectStatusV2 error = %v", err)
+		}
+		payload, err := json.Marshal(projected)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var doc map[string]json.RawMessage
+		if err := json.Unmarshal(payload, &doc); err != nil {
+			t.Fatal(err)
+		}
+		allowed := map[string]bool{
+			"schemaName": true, "schemaVersion": true, "changeName": true, "artifactStore": true, "planningHome": true, "changeRoot": true,
+			"artifactPaths": true, "contextFiles": true, "artifacts": true, "taskProgress": true, "dependencies": true, "applyState": true,
+			"actionContext": true, "relationships": true, "remediationState": true, "nextRecommended": true, "blockedReasons": true,
+			"reviewOffer": true, "consent": true, "phaseInstructions": true,
+		}
+		for k := range doc {
+			if !allowed[k] {
+				t.Fatalf("unexpected key %q in v2 projection (allowlist only)", k)
+			}
+		}
+	})
+}
+
+func TestV1Refused(t *testing.T) {
+	_, err := ParseCommandArgs([]string{"--contract", "biggz-ai.sdd-status/v1"})
+	if err == nil || !strings.Contains(err.Error(), "unsupported sdd-status contract") {
+		t.Fatalf("v1 refusal = %v, want unsupported", err)
+	}
+	if !strings.Contains(err.Error(), freshV2RerunInstruction) {
+		t.Fatalf("v1 refusal missing rerun instruction: %v", err)
+	}
+	_, err = ParseCommandArgs([]string{"--contract=biggz-ai.sdd-status/v1"})
+	if err == nil || !strings.Contains(err.Error(), freshV2RerunInstruction) {
+		t.Fatalf("v1 refusal via = form = %v, want fresh instruction", err)
+	}
+}
+
 func TestProjectStatusV2RejectsUnsupportedValues(t *testing.T) {
 	base := ChangeStatus{
 		SchemaName:    StatusSchemaName,

@@ -125,6 +125,7 @@ func Repair(repo, lineageID string) (RepairReport, error) {
 		truncated := len(verified) - lastDepth
 		for _, name := range corrupt {
 			truncated++
+			_ = os.Remove(filepath.Join(store.Dir, "v1", "events", name))
 			_ = os.Remove(filepath.Join(store.Dir, name))
 		}
 		if err := writeHEADFile(store.Dir, lastValid); err != nil {
@@ -144,33 +145,68 @@ func Repair(repo, lineageID string) (RepairReport, error) {
 // HEAD, LOCK, .lock, and .tmp files): the content hash must match the name
 // and the payload must parse as a Record. Verified records map name → record;
 // corrupt file names are returned separately.
+//
+// Migration-aware: scans both <dir>/v1/events/ (canonical) and <dir>/
+// (legacy flat). Files present in both with identical hash are deduplicated;
+// a file present in both but with differing content is treated as corrupt
+// for repair consistency.
 func verifyEventFiles(dir string) (map[string]Record, []string, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string]Record{}, nil, nil
-		}
-		return nil, nil, fmt.Errorf("repair: read store dir: %w", err)
-	}
 	verified := make(map[string]Record)
 	var corrupt []string
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || name == "HEAD" || name == "LOCK" || name == ".lock" ||
-			strings.HasSuffix(name, ".tmp") || len(name) != 64 {
-			continue
+	seen := make(map[string]struct{})
+	// Helper to scan one directory, respecting dir semantics.
+	scanDir := func(scanPath string, isEventsDir bool) error {
+		entries, err := os.ReadDir(scanPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("repair: read store dir: %w", err)
 		}
-		data, err := os.ReadFile(filepath.Join(dir, name))
-		if err != nil || sha256Hex(data) != name {
-			corrupt = append(corrupt, name)
-			continue
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() {
+				if !isEventsDir && name == "v1" {
+					continue
+				}
+				continue
+			}
+			if name == "HEAD" || name == "LOCK" || name == ".lock" ||
+				strings.HasSuffix(name, ".tmp") || len(name) != 64 {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			// Prefer canonical v1/events path; fallback to legacy flat.
+			var data []byte
+			var readErr error
+			if d, err := os.ReadFile(filepath.Join(dir, "v1", "events", name)); err == nil {
+				data = d
+			} else if d, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+				data = d
+			} else {
+				readErr = err
+			}
+			if readErr != nil || sha256Hex(data) != name {
+				corrupt = append(corrupt, name)
+				continue
+			}
+			var rec Record
+			if err := json.Unmarshal(data, &rec); err != nil {
+				corrupt = append(corrupt, name)
+				continue
+			}
+			verified[name] = rec
 		}
-		var rec Record
-		if err := json.Unmarshal(data, &rec); err != nil {
-			corrupt = append(corrupt, name)
-			continue
-		}
-		verified[name] = rec
+		return nil
+	}
+	if err := scanDir(filepath.Join(dir, "v1", "events"), true); err != nil {
+		return nil, nil, err
+	}
+	if err := scanDir(dir, false); err != nil {
+		return nil, nil, err
 	}
 	return verified, corrupt, nil
 }

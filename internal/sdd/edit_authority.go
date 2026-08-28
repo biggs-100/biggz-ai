@@ -209,23 +209,16 @@ func editAuthorityBlockedReason(roots []string) string {
 	)
 }
 
-// applyEditAuthorityBlock forces applyState blocked before dependencies and
-// nextRecommended derive from it, so a plan whose work units the apply
-// outside-root guard would refuse never reports ready/apply. It runs ONLY
-// when apply would otherwise be ready: completed work needs no forward edit
-// authority, and planning-blocked changes already carry their own expected
-// planning reasons. It wraps detectUnauthorizedEditRoots with the derived
-// (workspaceRoot + granted roots) allowed set; the unauthorized roots
-// themselves and the typed consent envelope are already surfaced by the
-// legacy probe in readChange.
+// applyEditAuthorityBlock is now authority-free for sdd-status V2.
+// Gentle v2.5.0-rc.1 I6: sdd-status never blocks on edit authority;
+// the outside-root check is retained for the pre-apply warning only.
+// readChange still populates EditAuthorityBlocked/MissingRoots/Consent so
+// sdd-apply can warn blocked(edit_authority_missing) with both exits
+// (edit tasks.md or grant), but this derivation hook no longer mutates
+// ApplyState or blockedReasons, keeping blockedReasons=[] and nextRecommended
+// != resolve-blockers for V2.
 func applyEditAuthorityBlock(applyState ApplyState, reasons *blockerReasons, tasksText string, workspaceRoot string, allowedEditRoots []string) ApplyState {
-	if applyState != ApplyReady {
-		return applyState
-	}
-	roots := detectUnauthorizedEditRoots(tasksText, workspaceRoot, allowedEditRoots)
-	if len(roots) == 0 {
-		return applyState
-	}
-	reasons.genuine = append(reasons.genuine, editAuthorityBlockedReason(roots))
-	return ApplyBlocked
+	// V2 authority-free: sdd-status never blocks. Detection stays in
+	// readChange for sdd-apply guard; this hook is intentionally a no-op.
+	return applyState
 }
