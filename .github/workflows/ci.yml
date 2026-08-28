@@ -324,3 +324,110 @@ jobs:
 
       - name: Run E2E tests
         run: go test ./e2e/... -count=1 -timeout 10m -v
+
+  release-checksums:
+    name: Release Checksums Smoke
+    needs: format
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful format
+        if: needs.format.result != 'success'
+        run: exit 1
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          autocrlf: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+
+      - name: Install GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          install-only: true
+
+      - name: Install minisign
+        run: |
+          sudo apt-get update && sudo apt-get install -y minisign
+          minisign -V || true
+
+      - name: Generate throwaway minisign key
+        run: |
+          mkdir -p /tmp
+          minisign -G -W -f -p /tmp/minisign.pub -s /tmp/minisign.key
+          chmod 600 /tmp/minisign.key || true
+          ls -lh /tmp/minisign.*
+
+      - name: Go vet (CGO_ENABLED=0)
+        env:
+          CGO_ENABLED: 0
+        run: go vet ./...
+
+      - name: GoReleaser snapshot release
+        env:
+          CGO_ENABLED: 0
+        run: goreleaser release --snapshot --clean
+
+      - name: Assert exactly 5 targets (10 archives: 5 tar.gz + 5 zip)
+        run: |
+          set -e
+          echo "Checking dist/ contents"
+          ls -R dist | head -n 200
+          tar_count=$(ls dist/*.tar.gz 2>/dev/null | wc -l)
+          zip_count=$(ls dist/*.zip 2>/dev/null | wc -l)
+          archive_count=$(ls dist/*.tar.gz dist/*.zip 2>/dev/null | wc -l)
+          echo "tar.gz: $tar_count zip: $zip_count total: $archive_count"
+          if [ "$tar_count" -ne 5 ] || [ "$zip_count" -ne 5 ]; then
+            echo "::error::Expected 5 tar.gz and 5 zip (10 total) for 5 LEAF_TARGETS, got $tar_count tar.gz and $zip_count zip"
+            ls -1 dist/
+            exit 1
+          fi
+          if ls dist/*windows_arm64* 1>/dev/null 2>&1; then
+            echo "::error::windows/arm64 archive found but must be excluded"
+            exit 1
+          fi
+          echo "5 LEAF_TARGETS verified (5 tar.gz + 5 zip), windows/arm64 excluded"
+
+      - name: Verify checksums and minisign
+        run: |
+          set -e
+          ls -lh dist/checksums.txt dist/checksums.txt.minisig
+          echo "--- sha256sum -c ---"
+          (cd dist && sha256sum -c checksums.txt)
+          echo "--- minisign verify (throwaway key) ---"
+          minisign -Vm dist/checksums.txt -p /tmp/minisign.pub -x dist/checksums.txt.minisig
+          echo "Smoke minisign verification passed"
+
+      - name: Verify BuildVersion
+        run: |
+          set -e
+          bin=$(find dist -type f -name "biggz" | head -n 1)
+          echo "Found binary: $bin"
+          if [ -z "$bin" ]; then
+            archive=$(ls dist/*.tar.gz | head -n 1)
+            echo "No binary found, extracting $archive"
+            mkdir -p /tmp/biggz-smoke
+            tar -xzf "$archive" -C /tmp/biggz-smoke
+            bin=$(find /tmp/biggz-smoke -name "biggz*" -type f | head -n 1)
+            echo "Extracted binary: $bin"
+          fi
+          if [ -z "$bin" ]; then
+            echo "::error::Could not locate biggz binary"
+            exit 1
+          fi
+          chmod +x "$bin" || true
+          echo "Running $bin --version"
+          "$bin" --version
+          ver=$("$bin" --version)
+          echo "Version output: $ver"
+          if [ -z "$ver" ]; then
+            echo "::error::--version output empty"
+            exit 1
+          fi
+          echo "BuildVersion check passed"

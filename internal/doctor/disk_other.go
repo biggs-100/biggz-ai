@@ -5,7 +5,6 @@ package doctor
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"runtime"
 )
 

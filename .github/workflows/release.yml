@@ -16,6 +16,12 @@ jobs:
         with:
           go-version: stable
 
+      - name: Write minisign key
+        run: |
+          mkdir -p /tmp
+          echo "${{ secrets.MINISIGN_PRIVATE_KEY }}" > /tmp/minisign.key
+          chmod 600 /tmp/minisign.key
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           distribution: goreleaser
