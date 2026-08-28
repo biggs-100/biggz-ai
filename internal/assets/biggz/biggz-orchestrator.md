@@ -36,6 +36,10 @@ Additional rules (checkpoint vs non-checkpoint):
 
 This checkpoint is separate from the SDD Interactive gatekeeper. The gatekeeper validates artifact correctness; this checkpoint ensures the human stays in the loop and can steer before the next delegation.
 
+#### Pending Question Persistence (biggz-ai.pending-question/v1)
+
+Before every checkpoint ask, the orchestrator MUST persist the envelope + synthesis via `SavePendingDualWrite` dual-write (BigMem `sdd/{change}/pending-question` + `openspec/changes/{change}/state.yaml` `pending_question`, verify equality retry once). On compaction or when UI unavailable (`ask_user_question`/`question` not available or fallback), the orchestrator MUST reload via `LoadOnCompaction` (BigMem primary, `state.yaml` fallback) and re-emit the full envelope as fallback markdown via `FormatFallback`/`PendingFallbackMD` so no question is lost. See `internal/sdd/pending.go` (`PendingQuestion` `biggz-ai.pending-question/v1`; `SavePendingDualWrite`, `VerifyEquality`, `LoadOnCompaction`) and `internal/sdd/synthesis.go` (`PersistPendingForCheckpoint`, `LoadPendingFallback`).
+
 ### Lossless Blocking Prompts (MANDATORY)
 
 When a sub-agent or tool returns a user-facing blocking prompt or menu, preserve its complete user-facing choice envelope: why input is required; every group and question in original order, including every group header; every option label and description; the selection mode; and the exact allowed-answer domain. Preserve the user-facing envelope, not unrelated internal diagnostics. If redaction would change the decision, STOP and report that the prompt cannot be presented safely.
@@ -186,6 +190,10 @@ Additional rules (checkpoint vs non-checkpoint):
 3. **Never auto-continue** after a delegated result without human confirmation, except when the user explicitly said `auto` in the Session Preflight (and even then, surface gate failures as above). For non-SDD delegated work (general/explore/direct workers), this checkpoint is always interactive — there is no `auto` bypass.
 
 This checkpoint is separate from the SDD Interactive gatekeeper. The gatekeeper validates artifact correctness; this checkpoint ensures the human stays in the loop and can steer before the next delegation.
+
+#### Pending Question Persistence (biggz-ai.pending-question/v1)
+
+Before every checkpoint ask, the orchestrator MUST persist the envelope + synthesis via `SavePendingDualWrite` dual-write (BigMem `sdd/{change}/pending-question` + `openspec/changes/{change}/state.yaml` `pending_question`, verify equality retry once). On compaction or when UI unavailable (`ask_user_question`/`question` not available or fallback), the orchestrator MUST reload via `LoadOnCompaction` (BigMem primary, `state.yaml` fallback) and re-emit the full envelope as fallback markdown via `FormatFallback`/`PendingFallbackMD` so no question is lost. See `internal/sdd/pending.go` (`PendingQuestion` `biggz-ai.pending-question/v1`; `SavePendingDualWrite`, `VerifyEquality`, `LoadOnCompaction`) and `internal/sdd/synthesis.go` (`PersistPendingForCheckpoint`, `LoadPendingFallback`).
 
 ## SDD Workflow (Spec-Driven Development)
 

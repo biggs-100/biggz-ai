@@ -204,6 +204,23 @@ func readPaginated(path string, capBytes int, size int64) (string, error) {
 	return b.String(), nil
 }
 
+// PersistPendingForCheckpoint saves synthesis + envelope for compaction recovery.
+func PersistPendingForCheckpoint(change, synthesisMD string, envelope QuestionEnvelope) error {
+	return SavePendingDualWrite(change, PendingQuestion{Schema: PendingSchema, Change: change, Envelope: envelope, SynthesisMD: synthesisMD})
+}
+// LoadPendingFallback loads pending and returns fallback markdown (FormatFallback).
+func LoadPendingFallback(change string) (string, error) {
+	pq, err := LoadOnCompaction(change)
+	if err != nil {
+		return "", err
+	}
+	md := PendingFallbackMD(pq)
+	if md == "" {
+		md = pq.SynthesisMD
+	}
+	return md, nil
+}
+
 func ReadLoopWithFunc(readFn func(offset, limit int) (string, error), expectedLen int) (string, error) {
 	if readFn == nil {
 		return "", fmt.Errorf("read function is nil")
