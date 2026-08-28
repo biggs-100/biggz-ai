@@ -543,7 +543,9 @@ func defaultStat(path string) statResult {
 // It registers a dummy tool via ExtensionAPI to prove shim-less deployment.
 // The actual JS asset is deployed via install.DeployPiExtensionAPI which uses
 // filemerge.WriteFileAtomic for atomic writes.
-func (a *Adapter) DeployViaExtensionAPI(api interface{ RegisterTool(def interface{}, h interface{}) }) {
+func (a *Adapter) DeployViaExtensionAPI(api interface {
+	RegisterTool(def interface{}, h interface{})
+}) {
 	// No-op placeholder: real deploy uses extension.ExtensionAPI and
 	// install.DeployPiExtensionAPI (filemerge.WriteFileAtomic + JS asset).
 	_ = a

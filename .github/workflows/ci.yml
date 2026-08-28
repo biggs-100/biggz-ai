@@ -217,6 +217,81 @@ jobs:
           fi
           echo "No prompt fmt.Sprintf found — guard passed."
 
+  lint-no-source-grep:
+    name: Lint No Source-Grep
+    needs: format
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful format
+        if: needs.format.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          autocrlf: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - name: Build nosourcegrep vet tool
+        run: go build -o /tmp/nosourcegrep ./tools/nosourcegrep/cmd/nosourcegrep
+      - name: Run nosourcegrep vet (primary)
+        run: |
+          set -e
+          echo "Running go vet -vettool nosourcegrep..."
+          if ! go vet -vettool=/tmp/nosourcegrep ./... 2>&1 | tee /tmp/vet.log; then
+            echo "::error::nosourcegrep vet flagged source-grep"
+            cat /tmp/vet.log
+            exit 1
+          fi
+          echo "nosourcegrep vet passed"
+          # Optional golangci-lint custom (plugin not supported on all platforms, non-blocking if missing)
+          if command -v golangci-lint >/dev/null 2>&1; then
+            echo "Attempting golangci-lint run (custom nosourcegrep)..."
+            golangci-lint run ./... 2>&1 | tee /tmp/golint.log || echo "::warning::golangci-lint custom nosourcegrep not available (plugin not implemented on this runner)"
+          fi
+      - name: Fallback rg guard for source-grep
+        run: |
+          set -e
+          echo "Checking rg fallback for source-grep..."
+          if rg -n "os\.ReadFile.*Contains|expect\(src\)" --glob '*_test.go' . 2>/dev/null | grep -v "tools/nosourcegrep/testdata" | grep -v "internal/extension/shim_test.go" | grep -q .; then
+            echo "::error::rg fallback flagged source-grep:"
+            rg -n "os\.ReadFile.*Contains|expect\(src\)" --glob '*_test.go' . | grep -v "tools/nosourcegrep/testdata" | grep -v "internal/extension/shim_test.go" || true
+            exit 1
+          fi
+          echo "rg source-grep check passed"
+      - name: Ban mock.module (oven-sh/bun#12823)
+        run: |
+          set -e
+          echo "Checking for mock.module..."
+          if rg -n "mock\.module" --glob '*_test.go' . 2>/dev/null | grep -q .; then
+            echo "::error::mock.module found (banned per oven-sh/bun#12823):"
+            rg -n "mock\.module" --glob '*_test.go' . || true
+            exit 1
+          fi
+          echo "No mock.module found — guard passed."
+
+  rapid:
+    name: TestRapid
+    needs: format
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require successful format
+        if: needs.format.result != 'success'
+        run: exit 1
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          autocrlf: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - name: TestRapid
+        run: go test -run TestRapid ./... -count=1 -timeout 180s
+
   e2e:
     name: E2E (${{ matrix.os }})
     needs: format

@@ -157,6 +157,8 @@ func TestBranchMigrationIdempotent(t *testing.T) {
 
 // ─── REQ-B3: CRUD ────────────────────────────────────────────────────────────
 
+// Good: transformation/branch + external contract via modernc.org/sqlite — TestBranch_Traversal anchor (TestBranchCreateChild / TestBranchListGetChain)
+// See docs/testing-guidance.md — traverses parent_id→leaf_id via modernc.org/sqlite, not source-grep.
 func TestBranchCreateChild(t *testing.T) {
 	s := openTestStore(t)
 	root, _ := s.CreateBranch("", "")

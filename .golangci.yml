@@ -1,0 +1,32 @@
+# testing-guidance: bans source-grep in *_test.go (os.ReadFile on *.go/*.md + strings.Contains, expect(src).toContain)
+# Primary: tools/nosourcegrep via go vet -vettool; this config enables golangci-lint custom nosourcegrep with testdata allowlist
+# See docs/testing-guidance.md and tools/nosourcegrep/analyzer.go
+
+version: "2"
+
+linters:
+  enable:
+    - nosourcegrep
+  settings:
+    custom:
+      nosourcegrep:
+        path: ./tools/nosourcegrep
+        description: bans source-grep
+        original-url: github.com/biggs-100/biggz-ai/tools/nosourcegrep
+
+# v1 compatibility (golangci-lint v1 uses linters-settings)
+linters-settings:
+  custom:
+    nosourcegrep:
+      path: ./tools/nosourcegrep
+      description: bans source-grep
+
+issues:
+  exclude-rules:
+    - path: testdata/.*
+      linters:
+        - nosourcegrep
+    # shim_test.go is exempt for initial rollout (extension-api Out of Scope per proposal)
+    - path: internal/extension/shim_test.go
+      linters:
+        - nosourcegrep

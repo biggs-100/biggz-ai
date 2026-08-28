@@ -108,6 +108,9 @@ func TestGetBlob_MissingNotFound(t *testing.T) {
 		t.Fatalf("want ErrBlobNotFound got %v", err)
 	}
 }
+
+// Good: failure mode + external contract — races PutBlob with -race vs TestExpectSrcContains (Bad)
+// See docs/testing-guidance.md — pinned example TestBlob_ConcurrentSameBytes (-race) proves external contract (blobstore file+ValidateAddr) not source-grep.
 func TestBlob_ConcurrentSameBytes(t *testing.T) {
 	isolatedHome(t)
 	data := []byte(strings.Repeat("c", 200*1024))
@@ -130,7 +133,10 @@ func TestBlob_ConcurrentSameBytes(t *testing.T) {
 	}
 }
 func TestShouldExternalize(t *testing.T) {
-	for _, tc := range []struct{ in string; want bool }{
+	for _, tc := range []struct {
+		in   string
+		want bool
+	}{
 		{strings.Repeat("a", 10*1024), false},
 		{strings.Repeat("a", 150*1024), true},
 		{"data:image/png;base64,abcd" + strings.Repeat("a", 5*1024), true},

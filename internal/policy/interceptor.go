@@ -38,11 +38,13 @@ type PolicyEvaluator interface {
 }
 
 type ApprovalMode string
+
 const (
 	ApprovalModeAuto ApprovalMode = "auto"
 	ApprovalModeAsk  ApprovalMode = "ask"
 )
 const ConsentSchema = "biggz-ai.review-integration.consent/v3"
+
 type PolicyInterceptor struct {
 	Evaluator PolicyEvaluator
 	Approval  ApprovalMode

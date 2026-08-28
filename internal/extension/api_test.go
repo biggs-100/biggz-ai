@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"github.com/biggs-100/biggz-ai/internal/policy"
+	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/review/lens"
 	readability "github.com/biggs-100/biggz-ai/internal/review/lens/readability"
-	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
 // TestAPI covers On order, block/revise short-circuit, tool_result no-mutate.

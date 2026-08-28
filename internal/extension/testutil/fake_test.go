@@ -124,5 +124,3 @@ func (f *fakeLens) ID() string { return f.id }
 func (f *fakeLens) Analyze(_ context.Context, _ lens.LensInput) (lens.LensResult, error) {
 	return lens.LensResult{LensID: f.id}, nil
 }
-
-
