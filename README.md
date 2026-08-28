@@ -23,25 +23,36 @@ echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
 
 | Command | Description |
 |---------|-------------|
-| `biggz` | Run review pipeline (stdin → JSON) |
+| `biggz` | Run review pipeline (content-addressed) |
 | `biggz install` | Install skills + config in agent |
 | `biggz uninstall` | Remove managed assets (keeps memory data unless `--purge`) |
-| `biggz sdd-status` | Show active/archived SDD changes |
-| `biggz sdd-verify-validate` | Validate verify reports |
-| `biggz sdd-attempt` | Manage attempt budgets |
-| `biggz sdd-continue <change>` | Determine next SDD phase |
-| `biggz sdd-apply <change>` | Validate edit authority for the apply phase (guard) |
-| `biggz BigMem save|search|get` | Persistent memory |
-| `biggz backup create|list|restore` | Snapshot/restore state |
-| `biggz release status|tag|verify` | Version management |
-| `biggz skill-registry refresh` | Regenerate skill registry |
+| `biggz sdd-status [--json --contract biggz-ai.sdd-status/v2]` | Show active/archived SDD changes (V2 authority-free) |
+| `biggz sdd-verify-validate --input <path\|->` | Validate verify reports (`--requirements`/`--scenarios`, `--json`) |
+| `biggz sdd-attempt acquire\|settle\|status\|grant\|begin\|finish\|reset` | Manage attempt budgets (CAS, tokens, grants) |
+| `biggz sdd-continue [change]` | Determine next SDD phase (picker when omitted) |
+| `biggz sdd-apply <change>` | Validate edit authority for the apply phase (guard, warn `blocked(edit_authority_missing)`) |
+| `biggz sdd-new [change]` | Interactive SDD change wizard |
+| `biggz bigmem save\|search\|get\|delete\|update\|timeline\|context` | Persistent memory core |
+| `biggz bigmem graph [--project P] [--format dot\|ascii\|json]` | Topic hierarchy and relations |
+| `biggz bigmem compare <id-a> <id-b>` | Compare two observations |
+| `biggz bigmem conflicts list\|show\|judge\|scan\|stats\|deferred` | Pending memory conflicts |
+| `biggz bigmem projects list\|consolidate` | Project index and dedup |
+| `biggz bigmem sync [--import\|--status]` | Sync observations via `.bigmem/` |
+| `biggz backup create\|list\|restore` | Snapshot/restore state |
+| `biggz release status\|tag\|verify` | Version management |
+| `biggz skill-registry refresh [--force] [--quiet]` | Regenerate skill registry |
 | `biggz sync` | Deploy skills, config, prompts, and commands |
-| `biggz update` | Update the binary and reconcile managed agent assets (`--no-reconcile` to skip) |
-| `biggz doctor` | Run system health checks (`--json`, `--fix`) |
-| `biggz pr create <change>` | Auto-generate branch and PR from SDD apply |
-| `biggz recovery list\|show\|generate` | Recovery trace ledger |
+| `biggz update` | Check for updates (stable/beta channel) |
+| `biggz upgrade` | Upgrade binary with signature verification |
+| `biggz doctor [--json] [--fix]` | Run system health checks and auto-fix |
+| `biggz pr create <change> [--with-evidence]` | Auto-generate branch and PR from SDD apply |
+| `biggz codegraph init --cwd <dir>` | Initialize CodeGraph index (safe-root validation) |
+| `biggz hooks init` | Create default `.biggz/hooks.yaml` |
+| `biggz export changelog [--format json\|txt] [--since DATE]` | Export changelog from git log |
+| `biggz recovery list\|show\|generate\|validate\|export\|import\|delete` | Recovery trace ledger |
+| `biggz review start\|capture-result\|finalize\|gate\|...` | Content-addressed review pipeline (GitCommonDir, flock, Burn) |
 | `biggz rdd enable\|disable\|status` | Review-Driven Development kill switch |
-| `biggz-mcp` | MCP server for agent memory tools |
+| `biggz-mcp` | MCP server for agent memory tools (22 tools) |
 
 ## Architecture
 
@@ -73,40 +84,39 @@ proposal → spec → design → tasks → apply → verify → archive
                                             design
 ```
 
-Each phase is a skill (`/sdd-propose`, `/sdd-spec`, etc.) that the orchestrator delegates to sub-agents. Lenses run in parallel via the DAG graph executor (SGH-inspired multi-ready-unit scheduling).
+Each phase is a skill (`/sdd-propose`, `/sdd-spec`, etc.) that the orchestrator delegates to sub-agents. Review lenses are captured per-slot via `biggz review capture-result` (content-addressed, strict admission) and committed once via `biggz review finalize` — no DAG; `Graph.Execute()` is legacy (see `docs/architecture.md` for the `review start → capture → finalize → gate` pipeline).
 
 ### Edit authority for multi-repository changes
 
-A change whose `tasks.md` targets repositories outside the planning repository reports
-`blocked(edit_authority_missing)` from `biggz sdd-status` and carries a typed consent envelope
-(`biggz-ai.edit-authority-consent/v1`) whose granted choice is the exact runnable
-`biggz sdd-attempt grant <change> --root <path>... --change-instance <token>` invocation. The
-grant is recorded in the change's runtime ledger, scoped to the change-instance identity
-persisted in the change's own directory (`.biggz-instance`), and dies with archive.
+> **SDD V2 authority-free:** `biggz sdd-status --json --contract biggz-ai.sdd-status/v2` never blocks nor emits `granted_roots`/`missing_roots`/`edit_authority_blocked`. Status is a pure projection (`blockedReasons: []`, `nextRecommended` never `resolve-blockers` on authority). Enforcement lives only in `biggz sdd-apply <change>`, which warns `blocked(edit_authority_missing)` with both exits — edit `tasks.md` so every work unit stays inside the authorized edit roots, or grant via `biggz sdd-attempt grant <change> --root <path>... --change-instance <token> --request-id <id> --actor <name> --reason <text>`. The grant is recorded in the change's runtime ledger, scoped to the change-instance identity persisted in the change's own directory (`.biggz-instance`), and dies with archive.
 
-Apply-side enforcement is native: `biggz sdd-apply <change>` is a guard that consumes
-`granted_roots` from the change's runtime ledger and exits 0 with the allowed roots when
-every `tasks.md` target stays inside them, or prints the same `blocked(edit_authority_missing)`
-reason plus the consent envelope's grant invocation and exits 1 when it does not. The apply
-phase assets (`sdd-apply` prompt and skill) run this guard before any edit and relay the
-consent envelope when it blocks.
+Apply-side enforcement is native: `biggz sdd-apply <change>` is a guard that validates the workspace root plus the runtime-ledger granted roots against the repository roots the task plan targets. It exits 0 with the allowed roots when every `tasks.md` target stays inside them, or prints the same `blocked(edit_authority_missing)` reason plus the consent envelope's grant invocation and exits 1 when it does not. The apply phase assets (`sdd-apply` prompt and skill) run this guard before any edit and relay the consent envelope when it blocks.
 
-## Review Pipeline
+## Review Pipeline (content-addressed — review start → capture → finalize → gate)
 
 ```
-Input (ReviewSubject)
-  → Graph.Execute()
-    ├── Risk Lens (R1)     — static analysis, git diff
-    ├── Readability (R2)   — file length, naming heuristics
-    ├── Reliability (R3)   — test coverage, error handling
-    ├── Resilience (R4)    — timeouts, context, concurrency
-    ├── Performance        — hotspots, complexity, resource usage
-    ├── Dependencies       — imports, transitive risk
-    └── Policy Evaluator   — business rules (depends on all lenses)
-  → ReviewState with evidence chain + MerkleRoot
+biggz review start --subject <file> [--lineage <id>] [--lenses <list>]
+  → Store.Open via GitCommonDir → <commonDir>/biggz/review-transactions/<lineage>/v1/events/<sha256>
+    (publishImmutable, dual-read legacy flat) → append genesis (start_review)
+    with CorrectionBudget = min(200, ceil(changedLines/2)), frozen lens plan
+
+biggz review capture-result --lineage <id> --lens <name> --order <n> --expected-revision <sha> --input <reviewer-json>
+  → Admit (subjectHash echo, full-manifest inspection, findings canonicalized)
+    → append lens_result via flock(LOCK_EX|LOCK_NB) on .lock
+
+biggz review finalize <lineage>
+  → Under flock: LoadChain + Validate + FixDeltaHashForSnapshot(baseTree, candidate, pathsDigest, cumulative, ledgerIDs)
+    via domainHash("fix-delta/v1\x00"+writeLengthPrefixed(...))
+  → Build PersistedReceipt (domainHash("biggz-ai.review-receipt-binding/v1"))
+    → receipts/<sha256>.json → append complete_review (receipt_path + receipt_hash)
+    → if BurnEnabled write burned.json tombstone, delete receipt (ephemeral)
+
+biggz review gate <pre-pr|pre-push|post-apply|release> <lineage> [--json]
+  → Validate chain + receipt binding + burn check → DeliveryBurned if burned, otherwise policy verdict
+    (1/1 budget: FixRounds/ScopedValidations, domainHash + writeLengthPrefixed integrity)
 ```
 
-All 6 lenses run in parallel — they have no dependencies on each other.
+Per-lens capture is strict and per-slot; `finalize` is the single commit. See `docs/architecture.md` and `docs/validation-guide.md` for the full flow and `domainHash`/`writeLengthPrefixed` integrity details.
 
 ## BigMem Memory
 

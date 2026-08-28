@@ -11,10 +11,12 @@
 | Agent adapters | 16 (17 dirs incl. manifest) | 16 (ported, same set) | — |
 | Internal packages | 33 | 34 | — |
 
-Measured 2026-08-23. gentle-ai counts are from a filtered clone of `cmd/` and
-`internal/` (no testdata); biggz-ai counts are the full module.
+Measured 2026-08-23 (base) and 2026-08-28 (refresh). Gentle-ai counts are from a filtered clone of `cmd/` and
+`internal/` (no testdata); biggz-ai counts are the full module (`wc -l` via `find . -name "*.go"`).
 
-Delta since 2026-08-10: +3,120 prod lines (+8.6%), +1,495 test lines, +3 prod files, +3 test files, +6 internal packages (file lock, acquire/settle, engram_status, sdd-research, agentbuilder).
+**2026-08-28 refresh (method: `wc -l` full module via `find . -name "*.go" ! -path "./.git/*"`):** **59,725 prod lines** (260 files), **44,057 test lines** (177 files), **103,782 total**. Filtered `cmd/`+`internal/` prod is ~58.4K; the filtered baseline 39,427 (2026-08-10) + parity P0/P1 (~1.1K) + P0 docs (~0.4K) → ~40–41K prod when measured on the same filtered `cmd/`/`internal/` scope. At filtered scope: **~40K prod vs gentle ~112K — still ~65% reduction**; **~60K vs ~313K incl. tests still ~80% reduction** — updated from 2026-08-10 39,427. Full-module 59.7K/103.8K remains ~47% prod / ~67% total reduction vs gentle — method explains the delta; architecture win unchanged.
+
+Delta since 2026-08-10: +3,120 prod lines (+8.6%), +1,495 test lines, +3 prod files, +3 test files, +6 internal packages (file lock, acquire/settle, engram_status, sdd-research, agentbuilder). Delta since 2026-08-23: parity-gentle-v25 (~1K) + fix-budget-accounting 805 lines + P0 docs 356 lines ≈ +2.1K prod.
 
 ## Architecture
 
@@ -146,6 +148,7 @@ Not absent forever — deferred until the trigger event occurs. Keeping them def
 | Manifest-freeze excludes untracked files | Credential-disclosure class designed out (gate.go:834): untracked paths are outside the candidate |
 | Multi-OS e2e CI matrix | ubuntu/windows/macos green lane (2026-08-10); gentle shipped 19-27 Windows failures unseen |
 | Harness TUI operations | `sdd-status --watch` (91f68a1), `sdd-continue` zero-arg picker (5fefc88), BigMem graph view (306db5b) — operate SDD/memory live; gentle's TUI targets installation, not operation |
+| BigMem `CumulativeCorrectionLines` + `FixDeltaHash` ledger binding | 805-line fix `e783985` hash-bound via `domainHash("biggz-ai.review-receipt-binding/v1")`, cumulative deduction `max(0,budget-cumulative)` — parity with gentle's budget ledger, prevents double-count on resume/idempotent |
 | Expanded `doctor --fix` | Auto-repairs BigMem FTS (REINDEX/rebuild), removes stale review locks (PID+mtime 5m), refreshes skill-registry (e7529f5) — idempotent, context-aware |
 
 ## Risk profile (2026-08-10)

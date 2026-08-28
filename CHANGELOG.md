@@ -5,6 +5,18 @@ All notable changes to biggz-ai are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [Unreleased] — 2026-08-28
+
+### Added
+- **parity-gentle-v25** — 6 invariants fail-closed: budget 1/1 (`MaxFixRounds=1`, `MaxScopedValidations=1`), FixDelta `domainHash("fix-delta/v1\x00"+writeLengthPrefixed(...))` + `EmptyFixDeltaHash`, chain `domainHash` + `writeLengthPrefixed` (u32 BE) for `review-evidence/v1`/`review-merkle/v1`/`review-snapshot/v1`, store `GitCommonDir` (`--git-common-dir` fallback `--git-dir`) + `v1/events/<sha256>` + `publishImmutable` + dual-read, `flock(LOCK_EX|LOCK_NB)` on `.lock` + stale 5m PID+mtime, `BurnEnabled` + `burned.json` → `DeliveryBurned`, SDD V2 authority-free (`biggz-ai.sdd-status/v2` omits `granted_roots`/`missing_roots`/`edit_authority_blocked`). 3 PRs stacked `0587db9`/`4f091d4`/`87c93dd` (task refs `c72cd17`/`961ced6`/`fb27fdf`), archive `42cd08c` (specs `core-review`/`review`/`sdd-status`).
+- **complete-subagent-report** — template 4 required + 6 optional (Preview/Diff/Decisions/Commands/Validation/Failure, omit-empty), `ReadLoop` >50KB paginated `ReadAt` with verify-retry, `ValidateQuestionEnvelope` 16/60/4/2-4, pending dual-write `biggz-ai.pending-question/v1` (BigMem + `state.yaml`, equality retry, compaction reload), checkpoint-only gate (`currentTurnMarkdown` strict, `BIGGZ_ADVISE=1` thin `concern`). 3 PRs stacked `f819f4e`/`48f18d0`/`e64a443` (task refs `a5b1afd`/`867d54b`/`dff57bd`), archive `3c8a247` (specs `orchestrator`/`pi-integration`).
+
+### Fixed
+- **fix-budget-accounting** — `PersistedReceipt` cumulative ledger: `CumulativeCorrectionLines` + `FixDeltaHash` hash-bound via `computeHash` (`domainHash("biggz-ai.review-receipt-binding/v1")`), `deriveNextTransition` deducts `max(0, budget - cumulative)` via `cumulativeLinesViaReceipt`, `ValidateCorrectionActual` wired, `finalizeIdempotent`/`verify_retry`/`reconcile` continuity, legacy `0`/`EmptyFixDeltaHash` compat. 805 lines code + 440 test (1283 total). Commit `e783985`, archive `2026-08-28-fix-budget-accounting`.
+
+### Changed
+- **docs P0** — `b33cf4f` aligns `docs/architecture.md`, `docs/validation-guide.md`, `openspec/specs/review-authority/spec.md` to v1 event store (`GitCommonDir`, `domainHash`, 1/1, `flock`, `Burn`, `acquire`/`settle`).
+
 ## [1.0.0] — 2026-07-29
 
 ### Added
