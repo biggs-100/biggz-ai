@@ -92,9 +92,9 @@ export default function biggzSynthesisGate(pi) {
 		const s = String(text || "");
 		return (
 			s.includes("## Sub-agent Result") &&
-			s.includes("Artifacts/Paths") &&
-			s.includes("Risks") &&
-			s.includes("Next")
+			s.includes("**Artifacts/Paths:**") &&
+			s.includes("**Risks / Open Questions:**") &&
+			s.includes("**Next Recommended:**")
 		);
 	}
 

@@ -1,5 +1,7 @@
 package sdd
 
+// Alias invariant: engram == bigmem  both refer to BigMem store.
+
 import (
 	"fmt"
 	"strings"
@@ -109,17 +111,17 @@ func IsPreproposalReady(record *PreproposalRecord, researchSelected bool, resear
 	}
 	// storeMode readiness for preproposal references themselves
 	switch storeMode {
-	case "openspec", "engram", "hybrid":
+	case "openspec", "engram", "bigmem", "hybrid":
 		// hybrid already validated above; for openspec/engram the artifact
 		// existence was checked. For preproposal itself, hybrid also requires
 		// equal revision+bytes when both stores are used for the gate.
 		if storeMode == "hybrid" {
 			if !HybridResearchEqual(openSpecRev, openSpecBytes, engramRev, engramBytes) && researchSelected {
-				return false, "preproposal: hybrid preproposal divergence — revisions or bytes differ"
+				return false, "preproposal: hybrid preproposal divergence -- revisions or bytes differ"
 			}
 		}
 	case "none":
-		return false, "preproposal: no store — proposal remains blocked"
+		return false, "preproposal: no store -- proposal remains blocked"
 	default:
 		return false, fmt.Sprintf("preproposal: unknown store %q", storeMode)
 	}
@@ -136,7 +138,7 @@ func IsPreproposalReady(record *PreproposalRecord, researchSelected bool, resear
 // explicit re-entry.
 func RecoverHybridPreproposal(retainedRevision int, canonicalBytes []byte) (newRevision int, ready bool, reason string) {
 	if retainedRevision <= 0 || len(canonicalBytes) == 0 {
-		return 0, false, "hybrid preproposal recovery: retained intent unavailable — remain blocked and require explicit re-entry; never invent state"
+		return 0, false, "hybrid preproposal recovery: retained intent unavailable -- remain blocked and require explicit re-entry; never invent state"
 	}
 	newRevision = retainedRevision + 1
 	if !HybridResearchEqual(newRevision, canonicalBytes, newRevision, canonicalBytes) {

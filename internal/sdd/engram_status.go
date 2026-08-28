@@ -1,5 +1,8 @@
 // Package sdd implements native SDD status derivation for the hybrid
 // filesystem + BigMem (Engram) store.
+// Alias invariant: engram == bigmem — both topic prefixes refer to the same
+// BigMem store; drift that renames one without the other must be detected.
+
 //
 // This file ports gentle-ai's resolveEngramStatus / collectEngramChanges /
 // engramObservation machinery as a minimal native derivation that makes

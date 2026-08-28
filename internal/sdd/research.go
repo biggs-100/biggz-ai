@@ -1,5 +1,7 @@
 package sdd
 
+// Alias invariant: engram == bigmem  both refer to BigMem store.
+
 import (
 	"fmt"
 	"strings"
@@ -112,7 +114,7 @@ func EvaluateResearchHybrid(storeMode string, outcome ResearchOutcome, openSpecR
 			return false, "research: missing or invalid OpenSpec artifact"
 		}
 		return true, ""
-	case "engram":
+	case "engram", "bigmem":
 		if engramRev <= 0 || len(engramBytes) == 0 {
 			return false, "research: missing or invalid Engram artifact"
 		}
@@ -122,11 +124,11 @@ func EvaluateResearchHybrid(storeMode string, outcome ResearchOutcome, openSpecR
 			return false, "research: hybrid requires both OpenSpec and Engram artifacts"
 		}
 		if !HybridResearchEqual(openSpecRev, openSpecBytes, engramRev, engramBytes) {
-			return false, "research: hybrid divergence — revisions or bytes differ, neither store is preferred"
+			return false, "research: hybrid divergence -- revisions or bytes differ, neither store is preferred"
 		}
 		return true, ""
 	case "none":
-		return false, "research: no store selected — proposal cannot become ready"
+		return false, "research: no store selected -- proposal cannot become ready"
 	default:
 		return false, fmt.Sprintf("research: unknown artifact store %q", storeMode)
 	}
@@ -145,7 +147,7 @@ func EvaluateResearchHybrid(storeMode string, outcome ResearchOutcome, openSpecR
 // re-entry without inventing state.
 func RecoverHybridResearch(retainedRevision int, canonicalDesiredBytes []byte, openSpecRev int, openSpecBytes []byte, engramRev int, engramBytes []byte) (newRevision int, ready bool, reason string) {
 	if retainedRevision <= 0 || len(canonicalDesiredBytes) == 0 {
-		return 0, false, "hybrid recovery: retained pre-write intent is unavailable — remain blocked and require explicit re-entry; never invent state"
+		return 0, false, "hybrid recovery: retained pre-write intent is unavailable -- remain blocked and require explicit re-entry; never invent state"
 	}
 	// Simulate writing a new positive revision to both stores derived from
 	// the retained intent, not from either surviving store.

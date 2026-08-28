@@ -16,8 +16,21 @@ type ArtifactStore string
 const (
 	ArtifactStoreOpenSpec ArtifactStore = "openspec"
 	ArtifactStoreEngram   ArtifactStore = "engram"
+	ArtifactStoreBigMem   ArtifactStore = "bigmem"
 	ArtifactStoreNone     ArtifactStore = "none"
 )
+
+// Alias invariant: engram == bigmem — both refer to the same BigMem store.
+// Drift that renames one without the other must be detected by orchestrator.test.go.
+
+func IsEngramStore(s ArtifactStore) bool { return s == ArtifactStoreEngram || s == ArtifactStoreBigMem }
+
+func NormalizeArtifactStore(s ArtifactStore) ArtifactStore {
+	if s == ArtifactStoreBigMem {
+		return ArtifactStoreEngram
+	}
+	return s
+}
 
 // Relationships tracks cross-change links (empty by default).
 type Relationships struct {
@@ -214,7 +227,7 @@ func artifactStateKeys(store ArtifactStore) []string {
 }
 
 func isValidArtifactStore(value ArtifactStore) bool {
-	return value == ArtifactStoreOpenSpec || value == ArtifactStoreEngram || value == ArtifactStoreNone
+	return value == ArtifactStoreOpenSpec || value == ArtifactStoreEngram || value == ArtifactStoreBigMem || value == ArtifactStoreNone
 }
 
 func isValidArtifactState(value ArtifactState) bool {
