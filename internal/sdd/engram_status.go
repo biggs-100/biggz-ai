@@ -34,6 +34,7 @@ package sdd
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -42,6 +43,7 @@ import (
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/project"
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
 	_ "modernc.org/sqlite"
 )
@@ -71,23 +73,26 @@ func bigmemDBPath(root string) (string, error) {
 	return bigmem.ResolveDBPath(root)
 }
 
-// inferBigMemProject mirrors gentle-ai's inferEngramProject for BigMem:
-// ENGRAM_PROJECT / BIGMEM_PROJECT / BIGGZ_PROJECT env, then git common-dir
-// config remote URL, then base dir. Lower-cased.
+// inferBigMemProject delegates to internal/project.DetectProjectFull (5-case detection).
+// It preserves fallback behavior: when detection is ambiguous or fails, it falls back to normalized basename.
 func inferBigMemProject(workspaceRoot string) string {
-	for _, env := range []string{"BIGMEM_PROJECT", "BIGGZ_PROJECT", "ENGRAM_PROJECT"} {
-		if p := strings.TrimSpace(os.Getenv(env)); p != "" {
-			return strings.ToLower(p)
-		}
+	info := project.DetectProjectFull(workspaceRoot)
+	if info.Error == nil && info.Project != "" {
+		return info.Project
 	}
-	if path := gitConfigPathFor(workspaceRoot); path != "" {
-		if data, err := os.ReadFile(path); err == nil {
-			if p := projectFromGitConfig(string(data)); p != "" {
-				return p
-			}
+	if errors.Is(info.Error, project.ErrAmbiguousProject) {
+		if base := strings.TrimSpace(filepath.Base(workspaceRoot)); base != "" && base != "." {
+			return project.NormalizeProjectName(base)
 		}
+		return "unknown"
 	}
-	return strings.ToLower(filepath.Base(workspaceRoot))
+	if info.Project != "" {
+		return project.NormalizeProjectName(info.Project)
+	}
+	if base := strings.TrimSpace(filepath.Base(workspaceRoot)); base != "" && base != "." {
+		return project.NormalizeProjectName(base)
+	}
+	return "unknown"
 }
 
 // gitConfigPathFor resolves the config file for workspaceRoot, handling

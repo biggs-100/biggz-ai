@@ -4,6 +4,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/project"
 )
 
 var store *bigmem.Store
@@ -318,7 +320,31 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, err.Error())
 			return
 		}
-		jsonResult(id, map[string]any{"project": filepath.Base(cwd), "path": cwd})
+		info, detErr := project.DetectProject(cwd)
+		if detErr != nil && errors.Is(detErr, project.ErrInvalidConfig) {
+			writeError(id, detErr.Error())
+			return
+		}
+		result := map[string]any{
+			"project":            info.Project,
+			"project_source":     info.Source,
+			"project_path":       info.Path,
+			"path":               info.Path,
+			"cwd":                cwd,
+			"available_projects": info.AvailableProjects,
+		}
+		if info.Warning != "" {
+				result["warning"] = info.Warning
+		}
+		if detErr != nil && errors.Is(detErr, project.ErrAmbiguousProject) {
+				result["error_hint"] = detErr.Error()
+		}
+		// Fallback: ensure project is never empty for non-ambiguous cases (mirrors DetectProjectLegacy).
+		if result["project"] == "" && (detErr == nil || !errors.Is(detErr, project.ErrAmbiguousProject)) {
+			cwdCopy := cwd
+			result["project"] = project.NormalizeProjectName(filepath.Base(cwdCopy))
+		}
+		jsonResult(id, result)
 
 	case "mem_suggest_topic_key":
 		title := getStr(args, "title")

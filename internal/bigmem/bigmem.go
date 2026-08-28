@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/biggs-100/biggz-ai/internal/project"
 	_ "modernc.org/sqlite"
 )
 
@@ -469,6 +470,31 @@ func ResolveDBPath(rootDir string) (string, error) {
 
 // BigmemStorePath is an alias for ResolveDBPath for external callers (e.g. sdd engram).
 func BigmemStorePath(rootDir string) (string, error) { return ResolveDBPath(rootDir) }
+
+// inferBigMemProject delegates to internal/project 5-case detection.
+// Kept for compatibility; new code should call project.DetectProject directly.
+func inferBigMemProject(dir string) string {
+	info := project.DetectProjectFull(dir)
+	if info.Error == nil && info.Project != "" {
+		return info.Project
+	}
+	if errors.Is(info.Error, project.ErrAmbiguousProject) {
+		if base := strings.TrimSpace(filepath.Base(dir)); base != "" && base != "." {
+			return project.NormalizeProjectName(base)
+		}
+		return "unknown"
+	}
+	if info.Project != "" {
+		return project.NormalizeProjectName(info.Project)
+	}
+	if base := strings.TrimSpace(filepath.Base(dir)); base != "" && base != "." {
+		return project.NormalizeProjectName(base)
+	}
+	return "unknown"
+}
+
+// InferProject is the exported wrapper for inferBigMemProject.
+func InferProject(dir string) string { return inferBigMemProject(dir) }
 
 // ─── Open / Schema ───────────────────────────────────────────────────────────
 
