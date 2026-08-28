@@ -1,0 +1,48 @@
+# SDD Change: parity-gentle-v25
+name: parity-gentle-v25
+created: 2026-08-28T15:43:00Z
+created_at: 2026-08-28T15:43:00Z
+phase: propose
+description: "Alinear biggz-ai con gentle-ai HEAD 3e2e8c24 (v2.5.0-rc.1) en los 6 invariantes fail-closed verificados: presupuesto 3x/5x, FixDelta solo cumulative, cadena sin dominio, store/lock GitCommonDir+flock, burn efímero, SDD v2 re-acoplado. Top 3 fix ordenado P0 presupuesto+FixDelta, P1 cadena+store+burn, P2 desacoplar. Cada PR <400 líneas stacked-to-main."
+status: active
+type: feature
+domain: core
+project: biggz-ai
+execution_mode: interactive
+artifact_store: both
+delivery_strategy: ask-on-risk
+review_budget_lines: 400
+chain_strategy: stacked-to-main
+gentle_head: 3e2e8c24
+gentle_version: v2.5.0-rc.1
+invariants:
+  - id: 1
+    title: "Presupuesto 3x/5x"
+    severity: BLOCKER
+    file: "model/review.go"
+    detail: "MaxFixRounds=3 vs 1, MaxScopedValidations=5 vs 1"
+  - id: 2
+    title: "FixDelta solo cumulative"
+    severity: BLOCKER
+    file: "internal/review/finalize.go"
+    detail: "payloadSHA256 fix-delta:%d vs gentle fix-delta/v1\\x00 + trees"
+  - id: 3
+    title: "Cadena sin dominio"
+    severity: CRITICAL
+    file: "model/hash.go + snapshot.go"
+    detail: "pipe sin length-prefix, snapshot concat"
+  - id: 4
+    title: "Store/lock gitDir flat + O_EXCL vs GitCommonDir+flock"
+    severity: CRITICAL
+    file: "store.go, lock.go"
+    detail: "GitCommonDir+flock"
+  - id: 5
+    title: "Burn efímero"
+    severity: BLOCKER
+    file: "internal/review/finalize.go"
+    detail: "BurnEnabled=true os.Remove + gate DeliveryBurned"
+  - id: 6
+    title: "SDD v2 re-acoplado"
+    severity: CRITICAL
+    file: "sdd/status_v2.go + edit_authority.go"
+    detail: "allowedEditRoots"
