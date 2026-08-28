@@ -44,44 +44,50 @@ The orchestrator MUST require explicit user intent before editing, applying, or 
 
 ### Requirement: Post-Delegation Human Checkpoint Synthesis
 
-The orchestrator MUST emit synthesis markdown as separate chat markdown, FIRST adjacent same-turn BEFORE every `ask_user_question`/`question` call. The block MUST contain 4 markers: `## Sub-agent Result: {phase/agent}`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`. Content MUST be derived from sub-agent `executive_summary`, `artifacts`, `risks`, `next_recommended`. Any `ask_user_question`/`question` without immediately preceding markdown MUST be INVALID and blocked (`isError:true`). Synthesis inside tool `question` param MUST NOT satisfy the check. The asset `internal/assets/biggz/biggz-orchestrator.md` MUST contain a copy-paste example block and state `INVALID and will be blocked` same-turn rule with `REMINDER: synthesis markdown is separate chat markdown emitted FIRST...` after every ask reference.
+MUST emit chat FIRST same-turn BEFORE checkpoint `ask`. MUST contain 4 markers: `## Sub-agent Result`, `**What was done:**`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`. SHOULD add 6 optional: Preview, Diff, Decisions, Commands, Validation, Failure (bullets; empty omitted). On failure MUST render summary not raw JSON. On truncation >50KB MUST loop re-reads, verify length. Missing MUST be `isError:true`; param-only MUST NOT count. `hasSynthesis` stays pass.
+(Previously: 4 markers only, raw JSON, no loop.)
 
-#### Scenario: Full synthesis before ask passes
+#### Scenario: Full passes
 
-- GIVEN sub-agent returned summary, artifacts (≥2 paths, ≥50 chars), risks, next
-- WHEN orchestrator emits markdown with 4 markers then calls `ask_user_question` same turn
-- THEN gate MUST allow the call and human decision flow MUST proceed
+- GIVEN summary, artifacts ≥2 ≥50 chars, risks, next
+- WHEN 4 markers then checkpoint ask same turn
+- THEN MUST allow
 
-#### Scenario: Missing synthesis is INVALID and blocked
+#### Scenario: Missing blocked
 
-- GIVEN current turn has no `## Sub-agent Result` markdown
-- WHEN orchestrator calls `ask_user_question` or `question`
-- THEN gate MUST return `{isError:true, text:"Please synthesize before asking"}` and MUST NOT invoke original handler
+- GIVEN no `## Sub-agent Result` in current turn
+- WHEN checkpoint ask
+- THEN MUST `isError:true`
 
-#### Scenario: Synthesis inside tool param does not count
+#### Scenario: Failure and truncated handled
 
-- GIVEN orchestrator embeds synthesis only inside `ask_user_question` `question` param
-- WHEN gate checks `currentTurnMarkdown` → `ctx.history` → `lastAssistant` (120s)
-- THEN it MUST treat as missing and block with `isError:true`
-
-#### Scenario: Thin synthesis satisfies orchestrator checkpoint
-
-- GIVEN markdown has 4 markers but `Artifacts/Paths: -` (1 path, <50 chars)
-- WHEN orchestrator calls `ask`
-- THEN orchestrator checkpoint MUST consider it present (pass); thin handling is pi-integration advise concern, not a block
+- GIVEN `blocked` failure JSON and artifact >50KB truncated
+- WHEN synthesized
+- THEN MUST show human Failure summary and loop re-read to full length
 
 ### Requirement: Orchestrator Synthesis Template Invariant
 
-The file `internal/assets/biggz/biggz-orchestrator.md` MUST keep the mandatory example block and same-turn rule convergent with the gate; prompt drift that removes markers or `INVALID` rule MUST be detectable by integration test.
+`biggz-orchestrator.md` MUST keep 4-marker example + rich placeholders + `INVALID and will be blocked` rule; drift MUST fail `orchestrator.test.go`. `engram` alias MUST equal `bigmem`.
+(Previously: 4 markers + INVALID only.)
 
-#### Scenario: Template contains example and INVALID rule
+#### Scenario: Template holds markers
 
-- GIVEN `biggz-orchestrator.md` is read
-- WHEN searching for the example block
-- THEN it MUST contain `## Sub-agent Result: {phase/agent}` and `**Artifacts/Paths:**` and phrase `INVALID and will be blocked`
+- GIVEN file read
+- WHEN searching
+- THEN MUST contain `## Sub-agent Result`, `**Artifacts/Paths:**`, `**Preview:**`, `INVALID`
 
-#### Scenario: Integration test guards drift
+### Requirement: Single Ownership and Pending Persistence
 
-- GIVEN orchestrator template is changed to remove `REMINDER` or marker
-- WHEN `internal/assets/biggz/orchestrator.test.go` runs
-- THEN it MUST fail asserting synthesis before question
+Only orchestrator SHALL emit checkpoint asks; sub-agents/Pi MUST NOT. MUST persist envelope to `biggz-ai.pending-question/v1` via dual-write BigMem + `state.yaml` with fallback; MUST verify equality (retry once). On compaction MUST reload and emit fallback if UI unavailable.
+
+#### Scenario: Ownership enforced
+
+- GIVEN sub-agent tries checkpoint ask
+- WHEN calling `ask_user_question`
+- THEN MUST be blocked
+
+#### Scenario: Dual-write and fallback
+
+- GIVEN pending persisted then compacted
+- WHEN readback and resumed
+- THEN stores MUST have identical bytes and MUST re-emit full envelope
