@@ -96,9 +96,7 @@ func flattenHunks(hunks map[string][]byte) []byte {
 // otherwise the Repo root is consulted when available. Truncated is
 // propagated to the result without error.
 func (l *Lens) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult, error) {
-	// Render prompt via text/template with missingkey=error before heuristic (pure LensInput retained).
 	if _, err := renderReadabilityPrompt(input); err != nil {
-		// Prompt render errors are non-blocking for heuristic; they would surface in template tests.
 		_ = err
 	}
 	result := lens.LensResult{
@@ -107,11 +105,24 @@ func (l *Lens) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult
 		Evidence:  nil,
 		Truncated: input.Truncated,
 	}
+	paths := l.collectPaths(input)
+	threshFindings, threshEvidence := l.thresholdFindings(paths, input)
+	result.Evidence = append(result.Evidence, threshEvidence...)
+	parserFindings, parserEvidence := l.parserFindings(paths, input)
+	result.Evidence = append(result.Evidence, parserEvidence...)
+	complexFindings, complexEvidence := l.complexityFindings(input)
+	result.Evidence = append(result.Evidence, complexEvidence...)
+	result.Findings = append(parserFindings, threshFindings...)
+	result.Findings = append(result.Findings, complexFindings...)
+	if len(result.Findings) == 0 && len(result.Evidence) == 0 {
+		result.Evidence = []string{"readability: no issues detected"}
+	}
+	return result, nil
+}
 
-	// Stable order for deterministic IDs and snapshot tests.
+// collectPaths merges DiffSummary and Paths into a deterministic sorted list.
+func (l *Lens) collectPaths(input lens.LensInput) []string {
 	paths := sortedKeys(input.DiffSummary)
-	// Also consider Paths that are not in DiffSummary (e.g., empty diff
-	// but hunks present). Merge for parser check.
 	pathSet := make(map[string]struct{}, len(paths)+len(input.Paths))
 	for _, p := range paths {
 		pathSet[p] = struct{}{}
@@ -123,33 +134,26 @@ func (l *Lens) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult
 		}
 	}
 	sort.Strings(paths)
+	return paths
+}
 
-	// Threshold findings: DiffSummary-based, inferential, ProofRefs file:1.
-	thresholdFindings := make([]lens.LensFinding, 0)
+// thresholdFindings returns threshold findings for paths exceeding line limits.
+func (l *Lens) thresholdFindings(paths []string, input lens.LensInput) ([]lens.LensFinding, []string) {
+	var findings []lens.LensFinding
+	var evidence []string
 	for _, p := range paths {
 		lines, hasSummary := input.DiffSummary[p]
 		if !hasSummary {
 			continue
 		}
-		isGo := strings.HasSuffix(strings.ToLower(p), ".go")
-		threshold := 0
-		exceeds := false
-		if lines > 400 {
-			threshold = 400
-			exceeds = true
-		} else if isGo && lines > 200 {
-			threshold = 200
-			exceeds = true
-		}
+		threshold, exceeds := readabilityThreshold(p, lines)
 		if !exceeds {
 			continue
 		}
-		idx := len(thresholdFindings) + 1
-		// IDs are R2-prefixed to bind to the readability lens.
-		id := fmt.Sprintf("R2-threshold-%03d", idx) //lint:ignore no-fmtSprintf
-		// Deduplicate: only one threshold finding per path (above logic).
-		msg := fmt.Sprintf("readability: %s has %d changed lines — exceeds %d-line readability boundary", p, lines, threshold) //lint:ignore no-fmtSprintf
-		proof := fmt.Sprintf("%s:1", p)                                                                                        //lint:ignore no-fmtSprintf
+		idx := len(findings) + 1
+		id := fmt.Sprintf("R2-threshold-%03d", idx)
+		msg := fmt.Sprintf("readability: %s has %d changed lines — exceeds %d-line readability boundary", p, lines, threshold)
+		proof := fmt.Sprintf("%s:1", p)
 		finding := lens.LensFinding{
 			ID:        id,
 			LensID:    l.ID(),
@@ -160,127 +164,154 @@ func (l *Lens) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult
 			Class:     review.EvidenceInferential,
 			Severity:  "info",
 		}
-		thresholdFindings = append(thresholdFindings, finding)
-		result.Evidence = append(result.Evidence, fmt.Sprintf("%s: %d lines (threshold %d)", p, lines, threshold)) //lint:ignore no-fmtSprintf
+		findings = append(findings, finding)
+		evidence = append(evidence, fmt.Sprintf("%s: %d lines (threshold %d)", p, lines, threshold))
 	}
+	return findings, evidence
+}
 
-	// Parser findings: deterministic, ProofRefs file:line from parser error.
-	parserFindings := make([]lens.LensFinding, 0)
+// readabilityThreshold returns the applicable threshold and whether it is exceeded.
+func readabilityThreshold(path string, lines int) (int, bool) {
+	if lines > 400 {
+		return 400, true
+	}
+	if strings.HasSuffix(strings.ToLower(path), ".go") && lines > 200 {
+		return 200, true
+	}
+	return 0, false
+}
+
+// parserFindings returns parser failure findings for Go files.
+func (l *Lens) parserFindings(paths []string, input lens.LensInput) ([]lens.LensFinding, []string) {
+	var findings []lens.LensFinding
+	var evidence []string
 	for _, p := range paths {
 		if !strings.HasSuffix(strings.ToLower(p), ".go") {
 			continue
 		}
-		src, ok := input.Hunks[p]
-		if !ok || len(src) == 0 {
-			// Fallback to Repo file when Hunks absent but Repo available.
-			if input.Repo != "" {
-				// #nosec G304 -- Repo is the frozen input root, path is repo-relative.
-				b, err := readRepoFile(input.Repo, p)
-				if err != nil || len(b) == 0 {
-					continue
-				}
-				src = b
-			} else {
-				continue
-			}
-		}
-		fset := token.NewFileSet()
-		_, err := parser.ParseFile(fset, p, src, parser.AllErrors)
-		if err == nil {
+		finding, ev, ok := l.analyzeFile(p, input, len(findings))
+		if !ok {
 			continue
 		}
-		line := extractParserLine(p, src, fset, err)
-		if line <= 0 {
-			line = 1
-		}
-		proof := fmt.Sprintf("%s:%d", p, line) //lint:ignore no-fmtSprintf
-		idx := len(parserFindings) + 1
-		id := fmt.Sprintf("R2-parser-%03d", idx)                          //lint:ignore no-fmtSprintf
-		msg := fmt.Sprintf("readability: %s fails go/parser: %v", p, err) //lint:ignore no-fmtSprintf
-		finding := lens.LensFinding{
-			ID:        id,
-			LensID:    l.ID(),
-			Message:   msg,
-			File:      p,
-			Line:      line,
-			ProofRefs: []string{proof},
-			Class:     review.EvidenceDeterministic,
-			Severity:  "warning",
-		}
-		parserFindings = append(parserFindings, finding)
-		result.Evidence = append(result.Evidence, fmt.Sprintf("parser failure %s: %v", proof, err)) //lint:ignore no-fmtSprintf
+		findings = append(findings, finding)
+		evidence = append(evidence, ev)
 	}
+	return findings, evidence
+}
 
-	// Complexity findings: hunk-bounded, inferential, via DeriveRiskInput, no second diff.
-	complexityFindings := make([]lens.LensFinding, 0)
+// analyzeFile checks a single Go file for parser errors.
+// It returns a finding and evidence when parsing fails, otherwise ok is false.
+func (l *Lens) analyzeFile(path string, input lens.LensInput, idx int) (lens.LensFinding, string, bool) {
+	src, ok := input.Hunks[path]
+	if !ok || len(src) == 0 {
+		if input.Repo != "" {
+			b, err := readRepoFile(input.Repo, path)
+			if err != nil || len(b) == 0 {
+				return lens.LensFinding{}, "", false
+			}
+			src = b
+		} else {
+			return lens.LensFinding{}, "", false
+		}
+	}
+	fset := token.NewFileSet()
+	_, err := parser.ParseFile(fset, path, src, parser.AllErrors)
+	if err == nil {
+		return lens.LensFinding{}, "", false
+	}
+	line := extractParserLine(path, src, fset, err)
+	if line <= 0 {
+		line = 1
+	}
+	proof := fmt.Sprintf("%s:%d", path, line)
+	id := fmt.Sprintf("R2-parser-%03d", idx+1)
+	msg := fmt.Sprintf("readability: %s fails go/parser: %v", path, err)
+	finding := lens.LensFinding{
+		ID:        id,
+		LensID:    l.ID(),
+		Message:   msg,
+		File:      path,
+		Line:      line,
+		ProofRefs: []string{proof},
+		Class:     review.EvidenceDeterministic,
+		Severity:  "warning",
+	}
+	ev := fmt.Sprintf("parser failure %s: %v", proof, err)
+	return finding, ev, true
+}
+
+// complexityFindings returns complexity findings bounded by hunks.
+func (l *Lens) complexityFindings(input lens.LensInput) ([]lens.LensFinding, []string) {
+	var findings []lens.LensFinding
+	var evidence []string
 	offenders, cWarnings := offendersFromHunks(input)
-	// Surface warnings (rename/no-map, repo path fallback) as evidence, never block.
 	for _, w := range cWarnings {
-		result.Evidence = append(result.Evidence, w)
+		evidence = append(evidence, w)
 	}
 	cycloIdx := 1
 	cognitIdx := 1
 	for _, o := range offenders {
-		isTest := isTestFile(o.File)
-		sev := "warning"
+		f, ev, nc, ng := l.scoreHunk(o, cycloIdx, cognitIdx)
+		findings = append(findings, f...)
+		evidence = append(evidence, ev...)
+		cycloIdx = nc
+		cognitIdx = ng
+	}
+	return findings, evidence
+}
+
+// scoreHunk scores a single offender and returns findings for cyclomatic/cognitive violations.
+func (l *Lens) scoreHunk(o Offender, cycloIdx, cognitIdx int) ([]lens.LensFinding, []string, int, int) {
+	var findings []lens.LensFinding
+	var evidence []string
+	isTest := isTestFile(o.File)
+	sev := "warning"
+	if isTest {
+		sev = "info"
+	}
+	if o.Cyclomatic > CyclomaticThreshold {
+		id := fmt.Sprintf("R2-CYCLO-%03d", cycloIdx)
+		cycloIdx++
+		msg := fmt.Sprintf("readability: %s in %s:%d has cyclomatic %d >%d", o.Function, o.File, o.Line, o.Cyclomatic, CyclomaticThreshold)
+		proof := fmt.Sprintf("%s:%d: %s %d >%d", o.File, o.Line, o.Function, o.Cyclomatic, CyclomaticThreshold)
+		finding := lens.LensFinding{
+			ID:        id,
+			LensID:    l.ID(),
+			Message:   msg,
+			File:      o.File,
+			Line:      o.Line,
+			ProofRefs: []string{proof},
+			Class:     review.EvidenceInferential,
+			Severity:  sev,
+		}
 		if isTest {
-			sev = "info"
+			finding.Message += " (informational test file)"
 		}
-		if o.Cyclomatic > CyclomaticThreshold {
-			id := fmt.Sprintf("R2-CYCLO-%03d", cycloIdx) //lint:ignore no-fmtSprintf
-			cycloIdx++
-			msg := fmt.Sprintf("readability: %s in %s:%d has cyclomatic %d >%d", o.Function, o.File, o.Line, o.Cyclomatic, CyclomaticThreshold) //lint:ignore no-fmtSprintf
-			proof := fmt.Sprintf("%s:%d: %s %d >%d", o.File, o.Line, o.Function, o.Cyclomatic, CyclomaticThreshold)                             //lint:ignore no-fmtSprintf
-			finding := lens.LensFinding{
-				ID:        id,
-				LensID:    l.ID(),
-				Message:   msg,
-				File:      o.File,
-				Line:      o.Line,
-				ProofRefs: []string{proof},
-				Class:     review.EvidenceInferential,
-				Severity:  sev,
-			}
-			if isTest {
-				finding.Message += " (informational test file)"
-			}
-			complexityFindings = append(complexityFindings, finding)
-			result.Evidence = append(result.Evidence, proof)
-		}
-		if o.Cognitive > CognitiveThreshold {
-			id := fmt.Sprintf("R2-COGNIT-%03d", cognitIdx) //lint:ignore no-fmtSprintf
-			cognitIdx++
-			msg := fmt.Sprintf("readability: %s in %s:%d has cognitive %d >%d", o.Function, o.File, o.Line, o.Cognitive, CognitiveThreshold) //lint:ignore no-fmtSprintf
-			proof := fmt.Sprintf("%s:%d: %s %d >%d", o.File, o.Line, o.Function, o.Cognitive, CognitiveThreshold)                            //lint:ignore no-fmtSprintf
-			finding := lens.LensFinding{
-				ID:        id,
-				LensID:    l.ID(),
-				Message:   msg,
-				File:      o.File,
-				Line:      o.Line,
-				ProofRefs: []string{proof},
-				Class:     review.EvidenceInferential,
-				Severity:  sev,
-			}
-			if isTest {
-				finding.Message += " (informational test file)"
-			}
-			complexityFindings = append(complexityFindings, finding)
-			result.Evidence = append(result.Evidence, proof)
-		}
+		findings = append(findings, finding)
+		evidence = append(evidence, proof)
 	}
-
-	// Merge findings: parser (deterministic) first for stable order, then thresholds, then complexity.
-	result.Findings = append(parserFindings, thresholdFindings...)
-	result.Findings = append(result.Findings, complexityFindings...)
-
-	// Ensure Evidence is concrete: if no findings, provide one concrete entry
-	// to satisfy downstream hash stability (optional).
-	if len(result.Findings) == 0 && len(result.Evidence) == 0 {
-		result.Evidence = []string{"readability: no issues detected"}
+	if o.Cognitive > CognitiveThreshold {
+		id := fmt.Sprintf("R2-COGNIT-%03d", cognitIdx)
+		cognitIdx++
+		msg := fmt.Sprintf("readability: %s in %s:%d has cognitive %d >%d", o.Function, o.File, o.Line, o.Cognitive, CognitiveThreshold)
+		proof := fmt.Sprintf("%s:%d: %s %d >%d", o.File, o.Line, o.Function, o.Cognitive, CognitiveThreshold)
+		finding := lens.LensFinding{
+			ID:        id,
+			LensID:    l.ID(),
+			Message:   msg,
+			File:      o.File,
+			Line:      o.Line,
+			ProofRefs: []string{proof},
+			Class:     review.EvidenceInferential,
+			Severity:  sev,
+		}
+		if isTest {
+			finding.Message += " (informational test file)"
+		}
+		findings = append(findings, finding)
+		evidence = append(evidence, proof)
 	}
-
-	return result, nil
+	return findings, evidence, cycloIdx, cognitIdx
 }
 
 // sortedKeys returns sorted keys of m for deterministic iteration.
