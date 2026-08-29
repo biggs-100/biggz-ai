@@ -17,9 +17,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -77,11 +78,7 @@ func flattenHunks(hunks map[string][]byte) []byte {
 	if len(hunks) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(hunks))
-	for k := range hunks {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := slices.Sorted(maps.Keys(hunks))
 	var out []byte
 	for _, k := range keys {
 		out = append(out, hunks[k]...)
@@ -101,12 +98,38 @@ func (l *Lens) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult
 	}
 	result := lens.LensResult{
 		LensID:    l.ID(),
-		Findings:  nil,
-		Evidence:  nil,
 		Truncated: input.Truncated,
 	}
+	allPaths := collectAllPaths(input)
+	goFiles, testBases := splitGoFiles(allPaths)
+	missingFindings, missingEvidence := findMissingTests(goFiles, testBases, input.Repo, l.ID())
+	result.Evidence = append(result.Evidence, missingEvidence...)
+	errorTokens := reliabilityErrorTokens()
+	hunkKeys := slices.Sorted(maps.Keys(input.Hunks))
+	var tokenFindings []lens.LensFinding
+	var tokenEvidence []string
+	for _, p := range hunkKeys {
+		if !isGoFile(p) {
+			continue
+		}
+		hunk := input.Hunks[p]
+		if len(hunk) == 0 {
+			continue
+		}
+		findings, evidence := analyzeFileReliability(p, hunk, l.ID(), len(tokenFindings), errorTokens)
+		tokenFindings = append(tokenFindings, findings...)
+		tokenEvidence = append(tokenEvidence, evidence...)
+	}
+	result.Evidence = append(result.Evidence, tokenEvidence...)
+	result.Findings = append(missingFindings, tokenFindings...)
+	if len(result.Findings) == 0 && len(result.Evidence) == 0 {
+		result.Evidence = []string{"reliability: no issues detected"}
+	}
+	return result, nil
+}
 
-	// Collect candidate Go files from DiffSummary, Paths, and Hunks keys.
+// collectAllPaths merges DiffSummary, Paths, and Hunks keys into a sorted list.
+func collectAllPaths(input lens.LensInput) []string {
 	pathSet := make(map[string]struct{})
 	for p := range input.DiffSummary {
 		pathSet[p] = struct{}{}
@@ -117,47 +140,42 @@ func (l *Lens) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult
 	for p := range input.Hunks {
 		pathSet[p] = struct{}{}
 	}
-	allPaths := make([]string, 0, len(pathSet))
-	for p := range pathSet {
-		allPaths = append(allPaths, p)
-	}
-	sort.Strings(allPaths)
+	return slices.Sorted(maps.Keys(pathSet))
+}
 
-	// Track which base names have a test file present in the change or on disk.
-	goFiles := []string{}
+// splitGoFiles separates Go source files from test bases.
+func splitGoFiles(allPaths []string) ([]string, map[string]struct{}) {
 	testBases := make(map[string]struct{})
+	var goFiles []string
 	for _, p := range allPaths {
 		lower := strings.ToLower(p)
 		if strings.HasSuffix(lower, "_test.go") {
 			base := strings.TrimSuffix(p, "_test.go")
 			testBases[strings.ToLower(base)] = struct{}{}
-		} else if strings.HasSuffix(lower, ".go") {
+			continue
+		}
+		if strings.HasSuffix(lower, ".go") {
 			goFiles = append(goFiles, p)
 		}
 	}
-	sort.Strings(goFiles)
+	slices.Sort(goFiles)
+	return goFiles, testBases
+}
 
-	// Missing-test findings: inferential, ProofRefs file:1.
-	missingFindings := make([]lens.LensFinding, 0)
+// findMissingTests returns findings for Go files without sibling _test.go.
+func findMissingTests(goFiles []string, testBases map[string]struct{}, repo, lensID string) ([]lens.LensFinding, []string) {
+	var findings []lens.LensFinding
+	var evidence []string
 	for idx, p := range goFiles {
-		base := strings.TrimSuffix(p, ".go")
-		if _, hasTest := testBases[strings.ToLower(base)]; hasTest {
+		if checkCoverage(p, testBases, repo) {
 			continue
-		}
-		// Also check if sibling test file exists on disk when Repo is available.
-		if input.Repo != "" {
-			testPath := base + "_test.go"
-			full := filepath.Join(input.Repo, testPath)
-			if _, err := os.Stat(full); err == nil {
-				continue
-			}
 		}
 		id := fmt.Sprintf("R3-missing-test-%03d", idx+1)                                         //lint:ignore no-fmtSprintf
 		msg := fmt.Sprintf("reliability: %s has no sibling _test.go — consider adding tests", p) //lint:ignore no-fmtSprintf
 		proof := fmt.Sprintf("%s:1", p)                                                          //lint:ignore no-fmtSprintf
 		finding := lens.LensFinding{
 			ID:        id,
-			LensID:    l.ID(),
+			LensID:    lensID,
 			Message:   msg,
 			File:      p,
 			Line:      1,
@@ -165,13 +183,31 @@ func (l *Lens) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult
 			Class:     review.EvidenceInferential,
 			Severity:  "warning",
 		}
-		missingFindings = append(missingFindings, finding)
-		result.Evidence = append(result.Evidence, fmt.Sprintf("missing sibling test for %s", p)) //lint:ignore no-fmtSprintf
+		findings = append(findings, finding)
+		evidence = append(evidence, fmt.Sprintf("missing sibling test for %s", p)) //lint:ignore no-fmtSprintf
 	}
+	return findings, evidence
+}
 
-	// Error-token findings: inferential, hunk-bound scan.
-	// Tokens that indicate error-handling concern when present in hunks.
-	errorTokens := []string{
+// checkCoverage reports whether path has a sibling test file.
+func checkCoverage(path string, testBases map[string]struct{}, repo string) bool {
+	base := strings.TrimSuffix(path, ".go")
+	if _, has := testBases[strings.ToLower(base)]; has {
+		return true
+	}
+	if repo != "" {
+		testPath := base + "_test.go"
+		full := filepath.Join(repo, testPath)
+		if _, err := os.Stat(full); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// reliabilityErrorTokens returns the error-handling tokens scanned in hunks.
+func reliabilityErrorTokens() []string {
+	return []string{
 		"panic(",
 		"log.Fatal",
 		"log.Fatalf",
@@ -184,72 +220,58 @@ func (l *Lens) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult
 		"if err != nil",
 		"if err ==",
 	}
+}
 
-	tokenFindings := make([]lens.LensFinding, 0)
-	// Stable hunk iteration order.
-	hunkKeys := make([]string, 0, len(input.Hunks))
-	for k := range input.Hunks {
-		hunkKeys = append(hunkKeys, k)
-	}
-	sort.Strings(hunkKeys)
+// isGoFile reports whether path is a Go source file.
+func isGoFile(p string) bool {
+	return strings.HasSuffix(strings.ToLower(p), ".go")
+}
 
-	for _, p := range hunkKeys {
-		if !strings.HasSuffix(strings.ToLower(p), ".go") {
+// analyzeFileReliability scans a single hunk for error-handling tokens.
+func analyzeFileReliability(path string, hunk []byte, lensID string, startIdx int, errorTokens []string) ([]lens.LensFinding, []string) {
+	var findings []lens.LensFinding
+	var evidence []string
+	lines := strings.Split(string(hunk), "\n")
+	for lineIdx, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
 			continue
 		}
-		hunk := input.Hunks[p]
-		if len(hunk) == 0 {
+		content := trimmed
+		if len(content) > 0 && (content[0] == '+' || content[0] == '-' || content[0] == ' ') {
+			content = strings.TrimSpace(content[1:])
+		}
+		hit := checkErrorHandling(content, line, errorTokens)
+		if hit == "" {
 			continue
 		}
-		lines := strings.Split(string(hunk), "\n")
-		for lineIdx, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" {
-				continue
-			}
-			// Strip unified diff prefix (+, -, space) for token scan.
-			content := trimmed
-			if len(content) > 0 && (content[0] == '+' || content[0] == '-' || content[0] == ' ') {
-				content = strings.TrimSpace(content[1:])
-			}
-			// Also scan raw line for tokens that may appear with prefix.
-			hit := ""
-			for _, tok := range errorTokens {
-				normalizedTok := strings.TrimSpace(tok)
-				if strings.Contains(content, normalizedTok) || strings.Contains(line, normalizedTok) {
-					hit = normalizedTok
-					break
-				}
-			}
-			if hit == "" {
-				continue
-			}
-			// Avoid duplicate: if we already emitted for this file+line token, skip?
-			// Emit one per line hit to keep ≥15 test coverage realistic.
-			lineNum := lineIdx + 1
-			proof := fmt.Sprintf("%s:%d", p, lineNum)                                                              //lint:ignore no-fmtSprintf
-			id := fmt.Sprintf("R3-error-token-%03d", len(tokenFindings)+1)                                         //lint:ignore no-fmtSprintf
-			msg := fmt.Sprintf("reliability: %s contains error-handling token %q — verify error handling", p, hit) //lint:ignore no-fmtSprintf
-			finding := lens.LensFinding{
-				ID:        id,
-				LensID:    l.ID(),
-				Message:   msg,
-				File:      p,
-				Line:      lineNum,
-				ProofRefs: []string{proof},
-				Class:     review.EvidenceInferential,
-				Severity:  "warning",
-			}
-			tokenFindings = append(tokenFindings, finding)
-			result.Evidence = append(result.Evidence, fmt.Sprintf("error token %q at %s", hit, proof)) //lint:ignore no-fmtSprintf
+		lineNum := lineIdx + 1
+		proof := fmt.Sprintf("%s:%d", path, lineNum)                                                              //lint:ignore no-fmtSprintf
+		id := fmt.Sprintf("R3-error-token-%03d", startIdx+len(findings)+1)                                         //lint:ignore no-fmtSprintf
+		msg := fmt.Sprintf("reliability: %s contains error-handling token %q — verify error handling", path, hit) //lint:ignore no-fmtSprintf
+		finding := lens.LensFinding{
+			ID:        id,
+			LensID:    lensID,
+			Message:   msg,
+			File:      path,
+			Line:      lineNum,
+			ProofRefs: []string{proof},
+			Class:     review.EvidenceInferential,
+			Severity:  "warning",
+		}
+		findings = append(findings, finding)
+		evidence = append(evidence, fmt.Sprintf("error token %q at %s", hit, proof)) //lint:ignore no-fmtSprintf
+	}
+	return findings, evidence
+}
+
+// checkErrorHandling returns the first error token found in content/rawLine, or "".
+func checkErrorHandling(content, rawLine string, errorTokens []string) string {
+	for _, tok := range errorTokens {
+		normalized := strings.TrimSpace(tok)
+		if strings.Contains(content, normalized) || strings.Contains(rawLine, normalized) {
+			return normalized
 		}
 	}
-
-	result.Findings = append(missingFindings, tokenFindings...)
-
-	if len(result.Findings) == 0 && len(result.Evidence) == 0 {
-		result.Evidence = []string{"reliability: no issues detected"}
-	}
-
-	return result, nil
+	return ""
 }

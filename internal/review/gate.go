@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/model"
@@ -794,77 +795,106 @@ func recomputeGateFindings(chain ValidatedChain, receipt PersistedReceipt) (Gate
 	var summary GateFindingsSummary
 	var reasons []string
 	fixDeltaDelivered := receipt.FixDeltaHash != "" && receipt.FixDeltaHash != EmptyFixDeltaHash
-	// Post-finalize lens results (after last complete_review) are not auto-resolved by prior fixDelta.
-	lastComplete := -1
-	for i := len(chain.Records) - 1; i >= 0; i-- {
-		if chain.Records[i].Operation == CompleteReviewOperation {
-			lastComplete = i
-			break
-		}
-	}
+	lastComplete := findLastComplete(chain)
 	findingsByID := make(map[string]ArtifactFinding)
 	for index := range chain.Records {
 		rec := &chain.Records[index]
 		if rec.Operation != LensResultOperation {
 			continue
 		}
-		var payload lensResultEventPayload
-		if err := json.Unmarshal(rec.Payload, &payload); err != nil || payload.AdmissionDecision != AdmissionCompleted {
+		payload, ok := parseLensResultPayload(rec)
+		if !ok {
 			continue
 		}
 		for _, finding := range payload.Result.Findings {
 			findingsByID[finding.ID] = finding
-			if !isSevereSeverity(finding.Severity) {
-				if finding.CausalDisposition == CausalPreExisting || finding.CausalDisposition == CausalBaseOnly {
-					summary.FollowUp++
-				}
-				continue
-			}
-			switch finding.CausalDisposition {
-			case CausalPreExisting, CausalBaseOnly:
-				summary.FollowUp++
-			case CausalIntroduced, CausalBehaviorActivated, CausalWorsened:
-				if finding.EvidenceClass == EvidenceInsufficient {
-					reasons = append(reasons, fmt.Sprintf(
-						"finding [%s] has insufficient evidence class; the lineage must escalate and re-capture the lens", finding.ID))
-				}
-				// counted below through the candidate-causal set
-			default:
-				reasons = append(reasons, fmt.Sprintf(
-					"finding [%s] has unknown causal disposition %q; the lineage must escalate", finding.ID, finding.CausalDisposition))
-			}
+			processFindingDisposition(finding, &summary, &reasons)
 		}
 		for _, id := range payload.CandidateCausalFindingIDs {
-			// Post-finalize findings are not auto-resolved by prior fixDelta.
-			isPost := lastComplete >= 0 && index > lastComplete
-			if containsString(receipt.ResolvedFindingIDs, id) || (fixDeltaDelivered && !isPost) {
-				summary.Resolved++
-				continue
-			}
-			finding, known := findingsByID[id]
-			isStanding := containsString(receipt.StandingFindingIDs, id)
-			isDeterministic := known && finding.EvidenceClass == EvidenceDeterministic
-			if !isDeterministic && !isStanding {
-				// Inferential heuristic findings warn but do not block pre-pr.
-				// They are surfaced as FollowUp warnings; gate passes with warning.
-				summary.FollowUp++
-				continue
-			}
-			summary.Blocking++
-			message := fmt.Sprintf(
-				"unresolved finding [%s]: candidate-causal finding is not resolved by the persisted receipt; review it and re-finalize the lineage", id)
-			switch {
-			case isStanding:
-				message = fmt.Sprintf(
-					"unresolved finding [%s]: the refuter verdict stands; the finding remains blocking", id)
-			case isDeterministic:
-				message = fmt.Sprintf(
-					"unresolved finding [%s]: deterministic finding is auto-blocking and cannot be refuted; resolve it with a correction", id)
-			}
-			reasons = append(reasons, message)
+			processCandidateCausal(id, index, lastComplete, findingsByID, receipt, fixDeltaDelivered, &summary, &reasons)
 		}
 	}
 	return summary, reasons
+}
+
+// findLastComplete returns the index of the last complete_review event, or -1.
+func findLastComplete(chain ValidatedChain) int {
+	for i := len(chain.Records) - 1; i >= 0; i-- {
+		if chain.Records[i].Operation == CompleteReviewOperation {
+			return i
+		}
+	}
+	return -1
+}
+
+// parseLensResultPayload unmarshals a lens result payload and validates admission.
+func parseLensResultPayload(rec *Record) (lensResultEventPayload, bool) {
+	var payload lensResultEventPayload
+	if err := json.Unmarshal(rec.Payload, &payload); err != nil || payload.AdmissionDecision != AdmissionCompleted {
+		return payload, false
+	}
+	return payload, true
+}
+
+// processFindingDisposition classifies a single finding's disposition.
+func processFindingDisposition(finding ArtifactFinding, summary *GateFindingsSummary, reasons *[]string) {
+	if !isSevereSeverity(finding.Severity) {
+		if finding.CausalDisposition == CausalPreExisting || finding.CausalDisposition == CausalBaseOnly {
+			summary.FollowUp++
+		}
+		return
+	}
+	switch finding.CausalDisposition {
+	case CausalPreExisting, CausalBaseOnly:
+		summary.FollowUp++
+	case CausalIntroduced, CausalBehaviorActivated, CausalWorsened:
+		if finding.EvidenceClass == EvidenceInsufficient {
+			*reasons = append(*reasons, fmt.Sprintf("finding [%s] has insufficient evidence class; the lineage must escalate and re-capture the lens", finding.ID))
+		}
+	default:
+		*reasons = append(*reasons, fmt.Sprintf("finding [%s] has unknown causal disposition %q; the lineage must escalate", finding.ID, finding.CausalDisposition))
+	}
+}
+
+// isBlockedFinding reports whether a finding blocks the gate.
+func isBlockedFinding(finding ArtifactFinding, isStanding bool) bool {
+	return isStanding || finding.EvidenceClass == EvidenceDeterministic
+}
+
+// gateForFile reports whether the finding for a file should gate delivery.
+func gateForFile(finding ArtifactFinding, receipt PersistedReceipt) bool {
+	isStanding := slices.Contains(receipt.StandingFindingIDs, finding.ID)
+	return isBlockedFinding(finding, isStanding)
+}
+
+// processCandidateCausal evaluates a candidate-causal finding ID for blocking status.
+func processCandidateCausal(id string, index, lastComplete int, findingsByID map[string]ArtifactFinding, receipt PersistedReceipt, fixDeltaDelivered bool, summary *GateFindingsSummary, reasons *[]string) {
+	isPost := lastComplete >= 0 && index > lastComplete
+	if slices.Contains(receipt.ResolvedFindingIDs, id) || (fixDeltaDelivered && !isPost) {
+		summary.Resolved++
+		return
+	}
+	finding, known := findingsByID[id]
+	_ = known
+	isStanding := slices.Contains(receipt.StandingFindingIDs, id)
+	if !isBlockedFinding(finding, isStanding) {
+		summary.FollowUp++
+		return
+	}
+	summary.Blocking++
+	*reasons = append(*reasons, blockedFindingMessage(id, isStanding, finding.EvidenceClass == EvidenceDeterministic))
+}
+
+// blockedFindingMessage returns the blocking reason for an unresolved finding.
+func blockedFindingMessage(id string, isStanding, isDeterministic bool) string {
+	switch {
+	case isStanding:
+		return fmt.Sprintf("unresolved finding [%s]: the refuter verdict stands; the finding remains blocking", id)
+	case isDeterministic:
+		return fmt.Sprintf("unresolved finding [%s]: deterministic finding is auto-blocking and cannot be refuted; resolve it with a correction", id)
+	default:
+		return fmt.Sprintf("unresolved finding [%s]: candidate-causal finding is not resolved by the persisted receipt; review it and re-finalize the lineage", id)
+	}
 }
 
 // BuildLensFindingsBreakdown returns the structured lens finding breakdown for
