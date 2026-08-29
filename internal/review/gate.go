@@ -601,107 +601,17 @@ func EvaluateGate(kind GateKind, repo, lineageID string, opts GateOptions) (Gate
 		repo = opts.Repo
 	}
 	result := GateResult{Gate: kind, LineageID: lineageID, DryRun: opts.DryRun}
-
-	// 0. Kill switch, checked first — exactly like the legacy gates. Disabled
-	// means ANY gate reports allowed=false with delivery disabled/unmanaged,
-	// exit zero, and never invents approval.
-	worktreeDir, commonDir := detectRDDDirs(repo)
-	if status, rddErr := RDDStatus(worktreeDir, commonDir); rddErr == nil && status.EffectiveMode == RDDModeDisabled {
-		result.Delivery = DeliveryDisabledUnmanaged
-		result.Reason = "RDD disabled: delivery unmanaged"
-		return result, nil
+	if stopped, res := evaluateGateKillSwitch(repo, result); stopped {
+		return res, nil
 	}
-	// rddErr != nil means an unreadable switch: NOT a disabled switch. Resolve
-	// as managed and evaluate normally — never fabricate disabled/unmanaged.
-
-	store, err := Open(repo, lineageID)
+	store, chain, err := evaluateGateLoadChain(repo, lineageID)
 	if err != nil {
-		return GateResult{}, fmt.Errorf("gate: open store: %w", err)
+		return GateResult{}, err
 	}
-	chain, err := store.LoadChain()
-	if err != nil {
-		return GateResult{}, fmt.Errorf("gate: load chain: %w", err)
+	if burned, res := evaluateGateBurned(store, chain, result); burned {
+		return res, nil
 	}
-
-	// Burned check: ephemeral receipt already consumed — gate becomes
-	// informational (non-deciding, like gentle's review validate). It never
-	// blocks delivery; ordinary repository policy governs.
-	if IsChainBurned(chain) || store.IsBurned() {
-		result.Delivery = DeliveryBurned
-		result.Reason = "review burned: receipt is ephemeral and burned after finalize; delivery via ordinary repository policy"
-		result.Reasons = []string{result.Reason}
-		result.Allowed = true
-		result.Passed = false
-		return result, nil
-	}
-
-	var reasons []string
-
-	// 1. Chain integrity: content-address verification over the whole store.
-	verdict := store.Validate()
-	if !verdict.Valid {
-		reasons = append(reasons, "review chain is invalid (integrity check failed): "+verdict.Reason)
-	}
-	if chain.Count == 0 {
-		reasons = append(reasons, "review chain is empty (no events)")
-	}
-
-	// 2. Terminal state (Phase C2): an invalidated/withdrawn/escalated/
-	//    blocked/superseded lineage can never pass a gate. The invalidate
-	//    reason is surfaced verbatim — a pass is never fabricated.
-	if state, reason := terminatedStateOf(chain); state != "" {
-		switch {
-		case state == "invalidated" && reason != "":
-			reasons = append(reasons, "lineage is invalidated: "+reason)
-		default:
-			reasons = append(reasons, "lineage is "+state)
-		}
-	}
-
-	// 3. Receipt binding: load the persisted receipt, verify it against the
-	//    lineage state and the repository-derived candidate trees/paths.
-	var receipt PersistedReceipt
-	var binding gateBinding
-	bindingErr := error(nil)
-	if chain.Count > 0 {
-		if binding, bindingErr = deriveGateBinding(repo, chain); bindingErr != nil {
-			reasons = append(reasons, "gate binding: "+bindingErr.Error())
-		}
-	}
-	loadedReceipt, receiptErr := loadPersistedReceipt(store, chain)
-	if receiptErr != nil {
-		reasons = append(reasons, receiptErr.Error())
-	} else {
-		receipt = loadedReceipt
-		result.ReceiptHash = receipt.ReceiptHash
-		if bindingErr == nil {
-			reasons = append(reasons, verifyReceiptBinding(receipt, binding, chain)...)
-		}
-		summary, findingReasons := recomputeGateFindings(chain, receipt)
-		result.Findings = &summary
-		reasons = append(reasons, findingReasons...)
-		// Lens findings breakdown for --json reporting: inferential vs deterministic with ProofRefs.
-		// Single derivation reuse: lens evidence is the DeriveRiskInput output (paths, changed lines, diff summary)
-		// plus hunk-bounded hunks ≤8MiB with Truncated flag — no second git diff --numstat -z parse.
-		result.LensFindings = BuildLensFindingsBreakdown(chain)
-	}
-
-	// 4. Kind-specific checks against the live repository.
-	if receiptErr == nil && bindingErr == nil {
-		switch kind {
-		case GatePostApply:
-			reasons = append(reasons, postApplyChecks(repo, receipt)...)
-		case GatePreCommit:
-			reasons = append(reasons, preCommitChecks(repo, receipt, binding)...)
-		case GatePrePush:
-			reasons = append(reasons, prePushChecks(repo, receipt, binding)...)
-		case GatePrePR:
-			reasons = append(reasons, prePRChecks(repo, opts, receipt, binding)...)
-		case GateRelease:
-			reasons = append(reasons, releaseChecks(repo, receipt)...)
-		}
-	}
-
+	reasons := collectGateReasons(repo, store, chain, kind, opts, &result)
 	result.Reasons = reasons
 	result.Reason = strings.Join(reasons, "; ")
 	if result.Reason == "" {
@@ -713,6 +623,127 @@ func EvaluateGate(kind GateKind, repo, lineageID string, opts GateOptions) (Gate
 		result.Delivery = DeliveryReceiptGoverned
 	}
 	return result, nil
+}
+
+func evaluateGateKillSwitch(repo string, result GateResult) (bool, GateResult) {
+	worktreeDir, commonDir := detectRDDDirs(repo)
+	if status, rddErr := RDDStatus(worktreeDir, commonDir); rddErr == nil && status.EffectiveMode == RDDModeDisabled {
+		result.Delivery = DeliveryDisabledUnmanaged
+		result.Reason = "RDD disabled: delivery unmanaged"
+		return true, result
+	}
+	return false, result
+}
+
+func evaluateGateLoadChain(repo, lineageID string) (*Store, ValidatedChain, error) {
+	store, err := Open(repo, lineageID)
+	if err != nil {
+		return nil, ValidatedChain{}, fmt.Errorf("gate: open store: %w", err)
+	}
+	chain, err := store.LoadChain()
+	if err != nil {
+		return nil, ValidatedChain{}, fmt.Errorf("gate: load chain: %w", err)
+	}
+	return store, chain, nil
+}
+
+func evaluateGateBurned(store *Store, chain ValidatedChain, result GateResult) (bool, GateResult) {
+	if IsChainBurned(chain) || store.IsBurned() {
+		result.Delivery = DeliveryBurned
+		result.Reason = "review burned: receipt is ephemeral and burned after finalize; delivery via ordinary repository policy"
+		result.Reasons = []string{result.Reason}
+		result.Allowed = true
+		result.Passed = false
+		return true, result
+	}
+	return false, result
+}
+
+func collectGateReasons(repo string, store *Store, chain ValidatedChain, kind GateKind, opts GateOptions, result *GateResult) []string {
+	var reasons []string
+	reasons = append(reasons, gateChainReasons(store, chain)...)
+	reasons = append(reasons, gateTerminalReasons(chain)...)
+	receipt, binding, receiptErr, bindingErr := loadGateReceiptAndBinding(repo, store, chain, result)
+	reasons = appendReceiptReasons(reasons, receiptErr, receipt, binding, bindingErr, chain, result)
+	if receiptErr == nil && bindingErr == nil {
+		reasons = append(reasons, gateKindReasons(kind, repo, opts, receipt, binding)...)
+	}
+	return reasons
+}
+
+func gateChainReasons(store *Store, chain ValidatedChain) []string {
+	var reasons []string
+	verdict := store.Validate()
+	if !verdict.Valid {
+		reasons = append(reasons, "review chain is invalid (integrity check failed): "+verdict.Reason)
+	}
+	if chain.Count == 0 {
+		reasons = append(reasons, "review chain is empty (no events)")
+	}
+	return reasons
+}
+
+func gateTerminalReasons(chain ValidatedChain) []string {
+	state, reason := terminatedStateOf(chain)
+	if state == "" {
+		return nil
+	}
+	if state == "invalidated" && reason != "" {
+		return []string{"lineage is invalidated: " + reason}
+	}
+	return []string{"lineage is " + state}
+}
+
+func loadGateReceiptAndBinding(repo string, store *Store, chain ValidatedChain, result *GateResult) (PersistedReceipt, gateBinding, error, error) {
+	var receipt PersistedReceipt
+	var binding gateBinding
+	var bindingErr error
+	if chain.Count > 0 {
+		if binding, bindingErr = deriveGateBinding(repo, chain); bindingErr != nil {
+			// bindingErr returned to caller for reasons
+		}
+	}
+	loadedReceipt, receiptErr := loadPersistedReceipt(store, chain)
+	if receiptErr == nil {
+		receipt = loadedReceipt
+		result.ReceiptHash = receipt.ReceiptHash
+	}
+	return receipt, binding, receiptErr, bindingErr
+}
+
+func appendReceiptReasons(reasons []string, receiptErr error, receipt PersistedReceipt, binding gateBinding, bindingErr error, chain ValidatedChain, result *GateResult) []string {
+	if bindingErr != nil {
+		reasons = append(reasons, "gate binding: "+bindingErr.Error())
+	}
+	if receiptErr != nil {
+		reasons = append(reasons, receiptErr.Error())
+		return reasons
+	}
+	if bindingErr == nil {
+		reasons = append(reasons, verifyReceiptBinding(receipt, binding, chain)...)
+	}
+	summary, findingReasons := recomputeGateFindings(chain, receipt)
+	result.Findings = &summary
+	reasons = append(reasons, findingReasons...)
+	result.LensFindings = BuildLensFindingsBreakdown(chain)
+	return reasons
+}
+
+func gateKindReasons(kind GateKind, repo string, opts GateOptions, receipt PersistedReceipt, binding gateBinding) []string {
+	switch kind {
+	case GatePostApply:
+		return postApplyChecks(repo, receipt)
+	case GatePreCommit:
+		return preCommitChecks(repo, receipt, binding)
+	case GatePrePush:
+		return prePushChecks(repo, receipt, binding)
+	case GatePrePR:
+		return prePRChecks(repo, opts, receipt, binding)
+	case GateRelease:
+		return releaseChecks(repo, receipt)
+	default:
+		return nil
+	}
 }
 
 // loadPersistedReceipt loads the terminal receipt artifact referenced by the

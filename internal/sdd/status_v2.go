@@ -90,49 +90,74 @@ func ParseCommandArgs(args []string) (CommandArgs, error) {
 	parsed := CommandArgs{Contract: StatusContractV2}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
-		switch arg {
-		case "--json":
-			parsed.JSON = true
-		case "--instructions":
-			parsed.IncludeInstructions = true
-		case "--cwd":
-			if i+1 >= len(args) || startsWithDash(args[i+1]) {
-				return CommandArgs{}, fmt.Errorf("--cwd requires a value")
-			}
-			parsed.CWD = args[i+1]
-			i++
-		case "--contract":
-			if i+1 >= len(args) || startsWithDash(args[i+1]) {
-				return CommandArgs{}, fmt.Errorf("--contract requires a value")
-			}
-			parsed.Contract = args[i+1]
-			i++
-			if err := validateStatusContract(parsed.Contract); err != nil {
+		if handled, err := parseKnownFlag(arg, args, &i, &parsed); handled {
+			if err != nil {
 				return CommandArgs{}, err
 			}
-		default:
-			if len(arg) > 11 && arg[:11] == "--contract=" {
-				parsed.Contract = arg[11:]
-				if err := validateStatusContract(parsed.Contract); err != nil {
-					return CommandArgs{}, err
-				}
-				continue
+			continue
+		}
+		if isContractEqualsArg(arg) {
+			if err := parseContractEqualsArg(arg, &parsed); err != nil {
+				return CommandArgs{}, err
 			}
-			if len(arg) > 0 && arg[0] == '-' {
-				return CommandArgs{}, fmt.Errorf("unknown sdd-status argument %q", arg)
-			}
-			if parsed.ChangeName == "" {
-				parsed.ChangeName = arg
-			} else {
-				return CommandArgs{}, fmt.Errorf("unexpected sdd-status argument %q", arg)
-			}
+			continue
+		}
+		if err := parsePositionalArg(arg, &parsed); err != nil {
+			return CommandArgs{}, err
 		}
 	}
-	// Validate final contract even when defaulted (to catch empty or mutated)
 	if err := validateStatusContract(parsed.Contract); err != nil {
 		return CommandArgs{}, err
 	}
 	return parsed, nil
+}
+
+func parseKnownFlag(arg string, args []string, idx *int, parsed *CommandArgs) (bool, error) {
+	switch arg {
+	case "--json":
+		parsed.JSON = true
+		return true, nil
+	case "--instructions":
+		parsed.IncludeInstructions = true
+		return true, nil
+	case "--cwd":
+		if *idx+1 >= len(args) || startsWithDash(args[*idx+1]) {
+			return true, fmt.Errorf("--cwd requires a value")
+		}
+		parsed.CWD = args[*idx+1]
+		*idx++
+		return true, nil
+	case "--contract":
+		if *idx+1 >= len(args) || startsWithDash(args[*idx+1]) {
+			return true, fmt.Errorf("--contract requires a value")
+		}
+		parsed.Contract = args[*idx+1]
+		*idx++
+		if err := validateStatusContract(parsed.Contract); err != nil {
+			return true, err
+		}
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+func isContractEqualsArg(arg string) bool { return len(arg) > 11 && arg[:11] == "--contract=" }
+
+func parseContractEqualsArg(arg string, parsed *CommandArgs) error {
+	parsed.Contract = arg[11:]
+	return validateStatusContract(parsed.Contract)
+}
+
+func parsePositionalArg(arg string, parsed *CommandArgs) error {
+	if len(arg) > 0 && arg[0] == '-' {
+		return fmt.Errorf("unknown sdd-status argument %q", arg)
+	}
+	if parsed.ChangeName == "" {
+		parsed.ChangeName = arg
+		return nil
+	}
+	return fmt.Errorf("unexpected sdd-status argument %q", arg)
 }
 
 func startsWithDash(s string) bool { return len(s) > 0 && s[0] == '-' }

@@ -52,79 +52,98 @@ func deriveNextTransition(store *Store, repo string, chain ValidatedChain, verdi
 	if chain.Count == 0 {
 		return nil
 	}
+	if stop := deriveStopTransition(verdict, repo, chain); stop != nil {
+		return stop
+	}
+	declared, _ := declaredLensSelection(chain)
+	captured := capturedSlotNames(chain)
+	if collect := deriveCollectTransition(declared, captured); collect != nil {
+		return collect
+	}
+	if fin := deriveFinalizeTransition(declared, captured, chain); fin != nil {
+		return fin
+	}
+	if trans := deriveCorrectionOrGateTransition(store, chain); trans != nil {
+		return trans
+	}
+	return nil
+}
 
-	// 1. A tampered chain stops everything: no derivation may trust it.
+func deriveStopTransition(verdict IntegrityVerdict, repo string, chain ValidatedChain) *NextTransition {
 	if !verdict.Valid {
 		return &NextTransition{Action: "stop", Reason: "chain_invalid"}
 	}
-
-	// 2. Kill switch off: delivery is unmanaged, so there is nothing a
-	//    managed workflow can route to. An UNREADABLE switch is not a
-	//    disabled switch (fail closed), exactly like the gates.
 	worktreeDir, commonDir := detectRDDDirs(repo)
 	if status, rddErr := RDDStatus(worktreeDir, commonDir); rddErr == nil && status.EffectiveMode == RDDModeDisabled {
 		return &NextTransition{Action: "stop", Reason: "rdd_disabled"}
 	}
-
-	// 3. Terminal states stop the workflow before any capture-state rule.
 	if state, _ := terminatedStateOf(chain); state != "" {
 		return &NextTransition{Action: "stop", Reason: state}
 	}
+	return nil
+}
 
-	// 4. Collect: the first declared lens slot without a completed capture,
-	//    in declared (canonical, sorted) order. The missing slot's order is
-	//    its index in the declared list — the same index capture-result uses
-	//    for the sibling slots of a multi-lens review.
-	declared, _ := declaredLensSelection(chain)
-	captured := capturedSlotNames(chain)
+func deriveCollectTransition(declared, captured []string) *NextTransition {
 	for _, lens := range declared {
 		if !containsString(captured, lens) {
-			order := 0
-			for i, name := range declared {
-				if name == lens {
-					order = i
-					break
-				}
-			}
+			order := lensOrder(declared, lens)
 			return &NextTransition{Action: "collect", Lens: lens, Order: &order}
 		}
 	}
+	return nil
+}
 
-	// 5. Every declared lens captured (or a declaration-free capture) and no
-	//    terminal complete_review event: finalize.
+func lensOrder(declared []string, lens string) int {
+	for i, name := range declared {
+		if name == lens {
+			return i
+		}
+	}
+	return 0
+}
+
+func deriveFinalizeTransition(declared, captured []string, chain ValidatedChain) *NextTransition {
 	if !hasCompleteReview(chain) && (len(declared) > 0 || len(captured) > 0) {
 		return &NextTransition{Action: "finalize"}
 	}
-
-	// 6/7. Finalized: blocking findings unresolved → correction; else gate.
-	if ref := receiptArtifactOf(chain); ref != nil {
-		blocking := unresolvedBlockingCount(store, chain, ref)
-		if blocking > 0 {
-			remaining := 0
-			cumulative := 0
-			fixHash := ""
-			if budget := frozenBudgetOf(chain); budget != nil {
-				cumulative = cumulativeLinesViaReceipt(store, ref, chain)
-				remaining = budget.CorrectionLines - cumulative
-				if remaining < 0 {
-					remaining = 0
-				}
-			}
-			// Surface cumulative and fix hash for status --json blockedReasons routing.
-			if receipt, err := readReceiptFile(store, completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}); err == nil {
-				fixHash = receipt.FixDeltaHash
-				// Ensure cumulative matches receipt even if post lines added.
-				// Use explicit receipt cumulative + post scan already in helper.
-				// Keep helper's cumulative as authoritative.
-			}
-			return &NextTransition{Action: "correction", BudgetRemaining: remaining, CumulativeCorrectionLines: cumulative, FixDeltaHash: fixHash}
-		}
-		return &NextTransition{Action: "gate", Gates: gateOrder}
-	}
-
-	// No rule matched (e.g. a declaration-free lineage with no captures):
-	// nothing to route.
 	return nil
+}
+
+func deriveCorrectionOrGateTransition(store *Store, chain ValidatedChain) *NextTransition {
+	ref := receiptArtifactOf(chain)
+	if ref == nil {
+		return nil
+	}
+	blocking := unresolvedBlockingCount(store, chain, ref)
+	if blocking > 0 {
+		return buildCorrectionTransition(store, chain, ref)
+	}
+	return &NextTransition{Action: "gate", Gates: gateOrder}
+}
+
+func buildCorrectionTransition(store *Store, chain ValidatedChain, ref *ReceiptArtifactRef) *NextTransition {
+	remaining, cumulative := correctionBudget(store, chain, ref)
+	fixHash := correctionFixHash(store, ref)
+	return &NextTransition{Action: "correction", BudgetRemaining: remaining, CumulativeCorrectionLines: cumulative, FixDeltaHash: fixHash}
+}
+
+func correctionBudget(store *Store, chain ValidatedChain, ref *ReceiptArtifactRef) (int, int) {
+	if budget := frozenBudgetOf(chain); budget != nil {
+		cumulative := cumulativeLinesViaReceipt(store, ref, chain)
+		remaining := budget.CorrectionLines - cumulative
+		if remaining < 0 {
+			remaining = 0
+		}
+		return remaining, cumulative
+	}
+	return 0, 0
+}
+
+func correctionFixHash(store *Store, ref *ReceiptArtifactRef) string {
+	if receipt, err := readReceiptFile(store, completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}); err == nil {
+		return receipt.FixDeltaHash
+	}
+	return ""
 }
 
 // declaredLensSelection returns the canonical declared lens list from the

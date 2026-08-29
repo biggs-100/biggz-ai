@@ -54,28 +54,46 @@ func ValidateQuestionEnvelope(q QuestionEnvelope) error {
 		return fmt.Errorf("isError:true questions exceed limit %d: got %d", maxQuestions, len(q.Questions))
 	}
 	if len(q.Questions) == 0 && len(q.Options) > 0 {
-		if len(q.Options) < minOptions || len(q.Options) > maxOptions {
-			return fmt.Errorf("isError:true options out of range %d-%d: got %d", minOptions, maxOptions, len(q.Options))
-		}
-		for _, o := range q.Options {
-			if len([]rune(o.Label)) > maxLabelLen {
-				return fmt.Errorf("isError:true label exceeds limit %d: got %d", maxLabelLen, len([]rune(o.Label)))
-			}
-		}
-		return nil
+		return validateTopLevelOptions(q.Options)
 	}
 	for i, qu := range q.Questions {
-		if len([]rune(qu.Header)) > maxHeaderLen {
-			return fmt.Errorf("isError:true header exceeds limit %d: got %d for question %d", maxHeaderLen, len([]rune(qu.Header)), i)
+		if err := validateSingleQuestion(i, qu); err != nil {
+			return err
 		}
-		if len(qu.Options) < minOptions || len(qu.Options) > maxOptions {
-			return fmt.Errorf("isError:true options out of range %d-%d: got %d for question %d", minOptions, maxOptions, len(qu.Options), i)
+	}
+	return nil
+}
+
+func validateTopLevelOptions(options []QuestionOption) error {
+	if len(options) < minOptions || len(options) > maxOptions {
+		return fmt.Errorf("isError:true options out of range %d-%d: got %d", minOptions, maxOptions, len(options))
+	}
+	for _, o := range options {
+		if err := validateOptionLabel(o.Label); err != nil {
+			return err
 		}
-		for _, o := range qu.Options {
-			if len([]rune(o.Label)) > maxLabelLen {
-				return fmt.Errorf("isError:true label exceeds limit %d: got %d", maxLabelLen, len([]rune(o.Label)))
-			}
+	}
+	return nil
+}
+
+func validateSingleQuestion(index int, qu Question) error {
+	if len([]rune(qu.Header)) > maxHeaderLen {
+		return fmt.Errorf("isError:true header exceeds limit %d: got %d for question %d", maxHeaderLen, len([]rune(qu.Header)), index)
+	}
+	if len(qu.Options) < minOptions || len(qu.Options) > maxOptions {
+		return fmt.Errorf("isError:true options out of range %d-%d: got %d for question %d", minOptions, maxOptions, len(qu.Options), index)
+	}
+	for _, o := range qu.Options {
+		if err := validateOptionLabel(o.Label); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func validateOptionLabel(label string) error {
+	if len([]rune(label)) > maxLabelLen {
+		return fmt.Errorf("isError:true label exceeds limit %d: got %d", maxLabelLen, len([]rune(label)))
 	}
 	return nil
 }
