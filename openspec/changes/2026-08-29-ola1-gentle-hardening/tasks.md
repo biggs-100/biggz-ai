@@ -39,15 +39,15 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Integration — Pin + CI
 
-- [ ] 3.1 Create `scripts/check-provider-contract.mjs` offline SHA256 for `contracts/review-integration/v1+v2` vs lock; 1-byte drift → exit 1, no fetch
-- [ ] 3.2 Create `scripts/verify-package-files.mjs` offline manifest verify; mismatch → exit 1
-- [ ] 3.3 Commit `contracts/review-integration/v1+v2` SHA256 lock/manifest (add v2 if missing)
-- [ ] 3.4 Modify `.github/workflows/ci.yml`: add jobs `skill-lint` + `provider-contract` after `format`
+- [x] 3.1 Create `scripts/check-provider-contract.mjs` offline SHA256 for `contracts/review-integration/v1+v2` vs lock; 1-byte drift → exit 1, no fetch
+- [x] 3.2 Create `scripts/verify-package-files.mjs` offline manifest verify; mismatch → exit 1
+- [x] 3.3 Commit `contracts/review-integration/v1+v2` SHA256 lock/manifest (add v2 if missing)
+- [x] 3.4 Modify `.github/workflows/ci.yml`: add jobs `skill-lint` + `provider-contract` after `format`
 
 ## Phase 4: Verification
 
 - [x] 4.1 L1 tests `adapter_test.go`: project on>global/env → on; malformed → off no fallback + flag; global off + env on (project absent) → off from global
 - [x] 4.2 L3 tests `surfaces_test.go`: reject `../x` `/etc` `~/x` `*.go` `a[0]` `a b/c`; accept scoped + `./` normalized; 3→allow, 4→per-path + `WRITER_EDIT_SURFACE_REJECTION`
 - [x] 4.3 L2 tests `internal/skills/lint_test.go`: 300 pass; 1001 fail; missing trigger fail; 600 warn
-- [ ] 4.4 L4 tests `scripts/` + `internal/contracts/verify_test.go`: 1-byte drift fails, exact pins pass, offline no fetch
-- [ ] 4.5 Run `go vet ./...` + `go test ./... -count=1 -timeout 180s` + `gofmt -l`; verify PR1 ~340 / PR2 <100 via `git diff --stat`
+- [x] 4.4 L4 tests `scripts/` + `internal/contracts/verify_test.go`: 1-byte drift fails, exact pins pass, offline no fetch
+- [x] 4.5 Run `go vet ./...` + `go test ./... -count=1 -timeout 180s` + `gofmt -l`; verify PR1 ~340 / PR2 <100 via `git diff --stat`

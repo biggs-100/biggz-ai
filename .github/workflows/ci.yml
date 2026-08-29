@@ -27,6 +27,29 @@ jobs:
           fi
           echo "All files are properly formatted."
 
+  skill-lint:
+    name: Skill Lint
+    needs: format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 20}
+      - run: node scripts/check-skill-lint.mjs
+
+  provider-contract:
+    name: Provider Contract
+    needs: format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 20}
+      - uses: actions/setup-go@v5
+        with: {go-version: stable}
+      - run: node scripts/check-provider-contract.mjs
+      - run: node scripts/verify-package-files.mjs
+
   test:
     name: Test (${{ matrix.os }})
     needs: format

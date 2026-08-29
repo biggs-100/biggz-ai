@@ -1,0 +1,20 @@
+{
+  "schema": "biggz-ai.review-integration/v2",
+  "lineage": "lineage-contract-001",
+  "next_transition": {
+    "type": "collect",
+    "inputs": {
+      "capture": {
+        "lineage": "lineage-contract-001",
+        "target": "dba504c5ef0ecb92a006074854ac94a380fa26fe",
+        "lens": "risk",
+        "order": 0,
+        "expected_revision": "c1735848f238c6ae8be8c79226a1708410ec43e299361ffd7ed41a1b296bb72d",
+        "repository_context": {
+          "repository": "C:/Users/dev/acme",
+          "project": "acme"
+        }
+      }
+    }
+  }
+}
