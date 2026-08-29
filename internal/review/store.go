@@ -241,13 +241,34 @@ func (s *Store) LoadChain() (ValidatedChain, error) {
 	return vc, nil
 }
 
-// Validate performs a full chain integrity check:
-//   - Every file's SHA-256 matches its name
-//   - Every event's PrevRevision links correctly
-//   - The HEAD file points to the last event
-func (s *Store) Validate() IntegrityVerdict {
+func resolvePath(eventsDir, dir, name string) (string, []byte, error) {
+	if data, err := os.ReadFile(filepath.Join(eventsDir, name)); err == nil {
+		return filepath.Join(eventsDir, name), data, nil
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
+		return filepath.Join(dir, name), data, nil
+	} else {
+		return "", nil, err
+	}
+}
+
+func validateAndLock(name string, data []byte, eventFiles map[string]bool) *IntegrityVerdict {
+	if sha256Hex(data) != name {
+		return &IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("hash mismatch for file %s", name)}
+	}
+	var rec Record
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return &IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("parse %s: %v", name, err)}
+	}
+	if rec.PrevRevision != "" && !eventFiles[rec.PrevRevision] {
+		return &IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("broken link: %s → prev %s not found", name, rec.PrevRevision)}
+	}
+	return nil
+}
+
+func collectStoreEventFiles(eventsDir, dir string) (map[string]bool, *IntegrityVerdict) {
 	eventFiles := make(map[string]bool)
-	if entries, err := os.ReadDir(s.eventsDir()); err == nil {
+	if entries, err := os.ReadDir(eventsDir); err == nil {
 		for _, e := range entries {
 			if e.IsDir() || strings.HasSuffix(e.Name(), ".tmp") {
 				continue
@@ -257,9 +278,9 @@ func (s *Store) Validate() IntegrityVerdict {
 			}
 		}
 	} else if !os.IsNotExist(err) {
-		return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read dir: %v", err)}
+		return nil, &IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read dir: %v", err)}
 	}
-	if entries, err := os.ReadDir(s.Dir); err == nil {
+	if entries, err := os.ReadDir(dir); err == nil {
 		for _, e := range entries {
 			if e.IsDir() || e.Name() == "HEAD" || e.Name() == ".lock" || strings.HasSuffix(e.Name(), ".tmp") || e.Name() == "v1" || e.Name() == BurnedMarkerFile {
 				continue
@@ -269,47 +290,43 @@ func (s *Store) Validate() IntegrityVerdict {
 			}
 		}
 	} else if !os.IsNotExist(err) {
-		return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read dir: %v", err)}
+		return nil, &IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read dir: %v", err)}
+	}
+	return eventFiles, nil
+}
+
+func validateHeadReference(dir string, eventFiles map[string]bool) *IntegrityVerdict {
+	head, err := readHEAD(dir)
+	if err == nil && head != "" && !eventFiles[head] {
+		return &IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("HEAD %s not found in event files", head)}
+	}
+	return nil
+}
+
+// Validate performs a full chain integrity check:
+//   - Every file's SHA-256 matches its name
+//   - Every event's PrevRevision links correctly
+//   - The HEAD file points to the last event
+func (s *Store) Validate() IntegrityVerdict {
+	eventFiles, verdict := collectStoreEventFiles(s.eventsDir(), s.Dir)
+	if verdict != nil {
+		return *verdict
 	}
 	if len(eventFiles) == 0 {
 		return IntegrityVerdict{Valid: true, Reason: "empty store — no event files"}
 	}
 	for name := range eventFiles {
-		var data []byte
-		var err error
-		if d, e := os.ReadFile(filepath.Join(s.eventsDir(), name)); e == nil {
-			data = d
-		} else if d, e := os.ReadFile(filepath.Join(s.Dir, name)); e == nil {
-			data = d
-		} else {
-			err = e
-		}
+		_, data, err := resolvePath(s.eventsDir(), s.Dir, name)
 		if err != nil {
 			return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read %s: %v", name, err)}
 		}
-		if err != nil {
-			return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read %s: %v", name, err)}
-		}
-		if sha256Hex(data) != name {
-			return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("hash mismatch for file %s", name)}
-		}
-
-		var rec Record
-		if err := json.Unmarshal(data, &rec); err != nil {
-			return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("parse %s: %v", name, err)}
-		}
-
-		if rec.PrevRevision != "" && !eventFiles[rec.PrevRevision] {
-			return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("broken link: %s → prev %s not found", name, rec.PrevRevision)}
+		if v := validateAndLock(name, data, eventFiles); v != nil {
+			return *v
 		}
 	}
-
-	// Verify HEAD points to a valid event file.
-	head, err := readHEAD(s.Dir)
-	if err == nil && head != "" && !eventFiles[head] {
-		return IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("HEAD %s not found in event files", head)}
+	if v := validateHeadReference(s.Dir, eventFiles); v != nil {
+		return *v
 	}
-
 	return IntegrityVerdict{Valid: true, Reason: "chain integrity preserved"}
 }
 

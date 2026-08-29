@@ -260,102 +260,165 @@ func StatusWithOptions(openspecRoot string, opts StatusOptions) (active []Change
 	return active, archived, nil
 }
 
-func readChange(dir, name string, isArchived bool, workspaceRoot string, includeInstructions bool) (ChangeStatus, error) {
-	cs := ChangeStatus{Name: name, IsArchived: isArchived}
-
-	// Check artifacts
+func probeArtifacts(dir, workspaceRoot, name string, cs *ChangeStatus) {
 	cs.HasProposal = fileExists(filepath.Join(dir, "proposal.md"))
 	cs.HasDesign = fileExists(filepath.Join(dir, "design.md"))
 	cs.HasApply = fileExists(filepath.Join(dir, "apply-progress.md"))
-	// Canonical verify-report anchoring (port 91919996+765e46c1): try canonical
-	// paths first (repo/workspace/changeRoot canonicalized through the same
-	// resolution the change root was derived from, with platform-aware case
-	// folding via filepath.Rel probe), fallback to the direct Join for
-	// non-existent or non-canonical layouts.
 	verifyProbe := filepath.Join(dir, verifyReportFileName)
 	if canonicalRel, err := canonicalVerifyReportPaths(workspaceRoot, workspaceRoot, dir, name); err == nil && canonicalRel != "" {
 		cs.HasVerify = fileExists(verifyProbe)
 	} else {
 		cs.HasVerify = fileExists(verifyProbe)
 	}
-
-	// Check specs subdirectory
-	specsDir := filepath.Join(dir, "specs")
-	if specEntries, err := os.ReadDir(specsDir); err == nil && len(specEntries) > 0 {
+	if specEntries, err := os.ReadDir(filepath.Join(dir, "specs")); err == nil && len(specEntries) > 0 {
 		cs.HasSpecs = true
 	}
+}
 
-	// Parse tasks
-	tasksText := ""
-	cs.HasTasks = fileExists(filepath.Join(dir, "tasks.md"))
-	if cs.HasTasks {
-		data, err := os.ReadFile(filepath.Join(dir, "tasks.md"))
-		if err == nil {
-			tasksText = string(data)
-			lines := strings.Split(tasksText, "\n")
-			for _, line := range lines {
-				trimmed := strings.TrimSpace(line)
-				if strings.HasPrefix(trimmed, "- [") {
-					cs.TasksTotal++
-					if strings.HasPrefix(trimmed, "- [x]") || strings.HasPrefix(trimmed, "- [X]") {
-						cs.TasksDone++
-					}
-				}
-			}
+func countTasksFromText(tasksText string) (total, done int) {
+	for _, line := range strings.Split(tasksText, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "- [") {
+			continue
+		}
+		total++
+		if strings.HasPrefix(trimmed, "- [x]") || strings.HasPrefix(trimmed, "- [X]") {
+			done++
 		}
 	}
+	return total, done
+}
 
+func loadTasksInfo(dir string) (hasTasks bool, tasksText string, total, done int) {
+	hasTasks = fileExists(filepath.Join(dir, "tasks.md"))
+	if !hasTasks {
+		return false, "", 0, 0
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "tasks.md"))
+	if err != nil {
+		return true, "", 0, 0
+	}
+	tasksText = string(data)
+	total, done = countTasksFromText(tasksText)
+	return hasTasks, tasksText, total, done
+}
+
+func readGrantedRoots(name, workspaceRoot, instance string) (granted []string, expectedRevision string) {
+	if instance == "" {
+		return nil, ""
+	}
+	status, err := sddattempt.StatusWithInstance(name, workspaceRoot, instance)
+	if err != nil {
+		return nil, ""
+	}
+	return status.GrantedRoots, status.Revision
+}
+
+func applyEditAuthorityForChange(dir, name, workspaceRoot, tasksText string, cs *ChangeStatus) error {
+	instance, err := readChangeInstanceMarker(dir)
+	if err != nil {
+		return fmt.Errorf("read change-instance marker for %s: %w", name, err)
+	}
+	granted, expectedRevision := readGrantedRoots(name, workspaceRoot, instance)
+	allowed := make([]string, 0, 1+len(granted))
+	allowed = append(allowed, workspaceRoot)
+	allowed = append(allowed, granted...)
+	missing := detectUnauthorizedEditRoots(tasksText, workspaceRoot, allowed)
+	if len(missing) > 0 {
+		if instance == "" {
+			instance, err = ensureChangeInstanceMarker(dir)
+			if err != nil {
+				return fmt.Errorf("mint change-instance marker for %s: %w", name, err)
+			}
+			granted, expectedRevision = readGrantedRoots(name, workspaceRoot, instance)
+		}
+		cs.EditAuthorityBlocked = true
+		cs.MissingRoots = missing
+		cs.Consent = newEditAuthorityConsent(name, workspaceRoot, missing, instance, expectedRevision)
+	}
+	cs.GrantedRoots = granted
+	return nil
+}
+
+func readChange(dir, name string, isArchived bool, workspaceRoot string, includeInstructions bool) (ChangeStatus, error) {
+	cs := ChangeStatus{Name: name, IsArchived: isArchived}
+	probeArtifacts(dir, workspaceRoot, name, &cs)
+	hasTasks, tasksText, total, done := loadTasksInfo(dir)
+	cs.HasTasks = hasTasks
+	cs.TasksTotal = total
+	cs.TasksDone = done
 	if tasksText != "" {
-		// The change-instance marker is never minted for an ordinary status:
-		// a change without a marker has no identity to project grants for,
-		// so the ledger is not even read (zero footprint).
-		instance, err := readChangeInstanceMarker(dir)
-		if err != nil {
-			return cs, fmt.Errorf("read change-instance marker for %s: %w", name, err)
+		if err := applyEditAuthorityForChange(dir, name, workspaceRoot, tasksText, &cs); err != nil {
+			return cs, err
 		}
-		var granted []string
-		var expectedRevision string
-		readGranted := func() {
-			if instance == "" {
-				return
-			}
-			status, statusErr := sddattempt.StatusWithInstance(name, workspaceRoot, instance)
-			if statusErr != nil {
-				// A ledger that cannot be read projects nothing: detection
-				// falls back to the conservative planning-only authority.
-				return
-			}
-			granted = status.GrantedRoots
-			expectedRevision = status.Revision
-		}
-		readGranted()
-
-		allowed := make([]string, 0, 1+len(granted))
-		allowed = append(allowed, workspaceRoot)
-		allowed = append(allowed, granted...)
-		missing := detectUnauthorizedEditRoots(tasksText, workspaceRoot, allowed)
-		if len(missing) > 0 {
-			// A blocked status needs a token to embed: mint (or reuse) the
-			// change-instance marker, then re-read the ledger scoped to the
-			// real identity so the envelope chains the exact ledger head.
-			if instance == "" {
-				instance, err = ensureChangeInstanceMarker(dir)
-				if err != nil {
-					return cs, fmt.Errorf("mint change-instance marker for %s: %w", name, err)
-				}
-				readGranted()
-			}
-			cs.EditAuthorityBlocked = true
-			cs.MissingRoots = missing
-			cs.Consent = newEditAuthorityConsent(name, workspaceRoot, missing, instance, expectedRevision)
-		}
-		cs.GrantedRoots = granted
 	}
-
 	if err := deriveChangeStatus(&cs, dir, workspaceRoot, includeInstructions); err != nil {
 		return cs, err
 	}
 	return cs, nil
+}
+
+func collectArtifactDerivation(changeDir string) (ArtifactPaths, map[string]ArtifactState, TaskProgress, string, SpecCounts, verifyResultEvaluation, error) {
+	artifactPaths := resolveArtifactPaths(changeDir)
+	artifacts := map[string]ArtifactState{
+		"proposal":      singleArtifactState(artifactPaths.Proposal),
+		"specs":         multiArtifactState(artifactPaths.Specs, filepath.Join(changeDir, "specs")),
+		"design":        singleArtifactState(artifactPaths.Design),
+		"tasks":         singleArtifactState(artifactPaths.Tasks),
+		"applyProgress": singleArtifactState(artifactPaths.ApplyProgress),
+		"verifyReport":  singleArtifactState(artifactPaths.VerifyReport),
+	}
+	tasksContent := readText(firstPath(artifactPaths.Tasks))
+	taskProgress := countTaskProgressText(tasksContent)
+	specCounts, err := readSpecCounts(artifactPaths.Specs)
+	if err != nil {
+		return ArtifactPaths{}, nil, TaskProgress{}, "", SpecCounts{}, verifyResultEvaluation{}, err
+	}
+	verifyResult := readVerifyResult(firstPath(artifactPaths.VerifyReport), specCounts)
+	return artifactPaths, artifacts, taskProgress, tasksContent, specCounts, verifyResult, nil
+}
+
+func polishRemediationReason(baseReason, changeName, workspaceRoot, instance, evidenceRevision string) string {
+	reason := baseReason
+	store, err := sddattempt.LoadStore(changeName, workspaceRoot)
+	if err != nil || len(store.Attempts) == 0 {
+		return reason
+	}
+	last := store.Attempts[len(store.Attempts)-1]
+	if last.RemediatesEvidenceRevision != evidenceRevision {
+		return reason
+	}
+	switch last.Outcome {
+	case "interrupted":
+		reason += " (last correction interrupted — original failure still bindable)"
+	case "failed":
+		if last.EvidenceRevision != "" && last.EvidenceRevision != evidenceRevision {
+			reason += fmt.Sprintf(" (last correction failed — new failure %s now bindable)", last.EvidenceRevision)
+		} else {
+			reason += " (last correction failed — new failure now bindable)"
+		}
+	}
+	return reason
+}
+
+func buildRemediationState(changeDir, changeName, workspaceRoot string, artifacts map[string]ArtifactState, applyState ApplyState, verifyResult verifyResultEvaluation, blockedReasons *blockerReasons) (RemediationState, bool, bool, string, error) {
+	verifyReportCurrent := artifacts["verifyReport"] == ArtifactDone
+	instance, err := readChangeInstanceMarker(changeDir)
+	if err != nil {
+		return RemediationState{}, false, false, "", fmt.Errorf("read change-instance marker for %s: %w", changeName, err)
+	}
+	remediationComplete := sddattempt.RemediationComplete(changeName, workspaceRoot, instance, verifyResult.EvidenceRevision)
+	staleDecision := isStaleDecisionRequired(changeName, workspaceRoot, instance)
+	remediationState := RemediationState{}
+	if verifyReportCurrent && !verifyResult.Passing && applyState == ApplyAllDone && !remediationComplete && !staleDecision {
+		baseReason := fmt.Sprintf("verify evidence requires unmanaged remediation for %s: %s; receipt-driven review is disabled, so this correction is bounded by the native runtime attempt budget alone", verifyResult.EvidenceRevision, verifyResult.Reason)
+		reason := polishRemediationReason(baseReason, changeName, workspaceRoot, instance, verifyResult.EvidenceRevision)
+		remediationState = RemediationState{Required: true, FailedEvidenceRevision: verifyResult.EvidenceRevision, Reason: reason}
+	}
+	if remediationState.Reason != "" {
+		blockedReasons.genuine = append(blockedReasons.genuine, remediationState.Reason)
+	}
+	return remediationState, staleDecision, remediationComplete, instance, nil
 }
 
 // deriveChangeStatus ports gentle-ai's sdd-status derivation authority:
@@ -369,84 +432,22 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 		cs.NextRecommended = "done"
 		return nil
 	}
-
-	artifactPaths := resolveArtifactPaths(changeDir)
-	artifacts := map[string]ArtifactState{
-		"proposal":      singleArtifactState(artifactPaths.Proposal),
-		"specs":         multiArtifactState(artifactPaths.Specs, filepath.Join(changeDir, "specs")),
-		"design":        singleArtifactState(artifactPaths.Design),
-		"tasks":         singleArtifactState(artifactPaths.Tasks),
-		"applyProgress": singleArtifactState(artifactPaths.ApplyProgress),
-		"verifyReport":  singleArtifactState(artifactPaths.VerifyReport),
-	}
-	taskProgress := countTaskProgressText(readText(firstPath(artifactPaths.Tasks)))
-	specCounts, err := readSpecCounts(artifactPaths.Specs)
+	artifactPaths, artifacts, taskProgress, tasksContent, _, verifyResult, err := collectArtifactDerivation(changeDir)
 	if err != nil {
 		return err
 	}
-	verifyResult := readVerifyResult(firstPath(artifactPaths.VerifyReport), specCounts)
-
 	coreReady := artifacts["proposal"] == ArtifactDone && artifacts["specs"] == ArtifactDone &&
 		artifacts["design"] == ArtifactDone && artifacts["tasks"] == ArtifactDone && taskProgress.Total > 0
 	applyState := resolveApplyState(coreReady, taskProgress)
 	blockedReasons := artifactBlockedReasons(artifacts, taskProgress)
-
 	allowedEditRoots := make([]string, 0, 1+len(cs.GrantedRoots))
 	allowedEditRoots = append(allowedEditRoots, workspaceRoot)
 	allowedEditRoots = append(allowedEditRoots, cs.GrantedRoots...)
-	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, readText(firstPath(artifactPaths.Tasks)), workspaceRoot, allowedEditRoots)
-
-	// Reduced remediation: no review authority, no lineage/generation/
-	// fix-batch/budget machinery, and no resolve-review exit. A failed
-	// current verification report with apply complete requires unmanaged
-	// remediation bounded by the native runtime attempt budget alone, unless
-	// the ledger already records a passed correction of the exact failed
-	// evidence revision.
+	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, tasksContent, workspaceRoot, allowedEditRoots)
 	verifyReportCurrent := artifacts["verifyReport"] == ArtifactDone
-	instance, err := readChangeInstanceMarker(changeDir)
+	remediationState, staleDecision, remediationComplete, _, err := buildRemediationState(changeDir, cs.Name, workspaceRoot, artifacts, applyState, verifyResult, &blockedReasons)
 	if err != nil {
-		return fmt.Errorf("read change-instance marker for %s: %w", cs.Name, err)
-	}
-	remediationComplete := sddattempt.RemediationComplete(cs.Name, workspaceRoot, instance, verifyResult.EvidenceRevision)
-	// Admission probe: if the ledger is in decision-required with a stale
-	// blocked reason (budget_exhausted / corrupt_authority) and a settle
-	// obligation, free verify/archive from the stale remediation block so
-	// they can run without being stranded, mirroring gentle-ai's
-	// applyNativeRuntimeRouting.
-	staleDecision := isStaleDecisionRequired(cs.Name, workspaceRoot, instance)
-	remediationState := RemediationState{}
-	if verifyReportCurrent && !verifyResult.Passing && applyState == ApplyAllDone && !remediationComplete && !staleDecision {
-		reason := fmt.Sprintf(
-			"verify evidence requires unmanaged remediation for %s: %s; receipt-driven review is disabled, so this correction is bounded by the native runtime attempt budget alone",
-			verifyResult.EvidenceRevision, verifyResult.Reason,
-		)
-		// Truthful settlement polish (#3422): distinguish interrupted vs failed.
-		// An interrupted correction discharges nothing (original failure still
-		// bindable); a failed correction records its own new failure as the
-		// next bindable head. Surface the distinction for audit fidelity.
-		if store, err := sddattempt.LoadStore(cs.Name, workspaceRoot); err == nil && len(store.Attempts) > 0 {
-			last := store.Attempts[len(store.Attempts)-1]
-			if last.RemediatesEvidenceRevision == verifyResult.EvidenceRevision {
-				switch last.Outcome {
-				case "interrupted":
-					reason += " (last correction interrupted — original failure still bindable)"
-				case "failed":
-					if last.EvidenceRevision != "" && last.EvidenceRevision != verifyResult.EvidenceRevision {
-						reason += fmt.Sprintf(" (last correction failed — new failure %s now bindable)", last.EvidenceRevision)
-					} else {
-						reason += " (last correction failed — new failure now bindable)"
-					}
-				}
-			}
-		}
-		remediationState = RemediationState{
-			Required:               true,
-			FailedEvidenceRevision: verifyResult.EvidenceRevision,
-			Reason:                 reason,
-		}
-	}
-	if remediationState.Reason != "" {
-		blockedReasons.genuine = append(blockedReasons.genuine, remediationState.Reason)
+		return err
 	}
 
 	// When staleDecision is true, treat remediation as complete for
