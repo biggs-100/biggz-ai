@@ -1,6 +1,7 @@
 package sdd
 
 import (
+	"cmp"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -8,7 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -574,91 +575,123 @@ func CollectComplexityDebtForRoots(roots []string) (map[string]*DebtPackageRepor
 		reports[root] = &DebtPackageReport{Package: root}
 	}
 	for _, root := range roots {
-		report := reports[root]
-		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if d.IsDir() {
-				base := filepath.Base(path)
-				if base == "vendor" || base == "testdata" || strings.HasPrefix(base, ".") || strings.HasPrefix(base, "_") {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !strings.HasSuffix(strings.ToLower(path), ".go") {
-				return nil
-			}
-			src, err := os.ReadFile(path)
-			if err != nil {
-				return nil
-			}
-			fset := token.NewFileSet()
-			f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
-			if err != nil {
-				return nil
-			}
-			isTest := strings.HasSuffix(path, "_test.go")
-			for _, decl := range f.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Body == nil {
-					continue
-				}
-				report.TotalFuncs++
-				cyclo := gocyclo.Complexity(fn)
-				cog := gocognit.Complexity(fn)
-				isCycloViol := cyclo > debtCyclomaticThreshold
-				isCogViol := cog > debtCognitiveThreshold
-				if isCycloViol {
-					report.CyclomaticViolations++
-				}
-				if isCogViol {
-					report.CognitiveViolations++
-				}
-				if isCycloViol || isCogViol {
-					off := DebtOffender{
-						Package:    filepath.ToSlash(filepath.Dir(path)),
-						File:       filepath.ToSlash(path),
-						Line:       fset.Position(fn.Pos()).Line,
-						Function:   debtFuncName(fn),
-						Cyclomatic: cyclo,
-						Cognitive:  cog,
-					}
-					if isTest {
-						report.TestOffenders = append(report.TestOffenders, off)
-					} else {
-						report.TopOffenders = append(report.TopOffenders, off)
-					}
-				}
-			}
-			return nil
-		})
-		if err != nil {
+		if err := collectForRoot(root, reports[root]); err != nil {
 			return nil, err
-		}
-		// Sort top offenders by max(cyclo,cog) descending and cap to 10
-		sort.Slice(report.TopOffenders, func(i, j int) bool {
-			mi := report.TopOffenders[i].Cyclomatic
-			if report.TopOffenders[i].Cognitive > mi {
-				mi = report.TopOffenders[i].Cognitive
-			}
-			mj := report.TopOffenders[j].Cyclomatic
-			if report.TopOffenders[j].Cognitive > mj {
-				mj = report.TopOffenders[j].Cognitive
-			}
-			if mi != mj {
-				return mi > mj
-			}
-			if report.TopOffenders[i].File != report.TopOffenders[j].File {
-				return report.TopOffenders[i].File < report.TopOffenders[j].File
-			}
-			return report.TopOffenders[i].Line < report.TopOffenders[j].Line
-		})
-		if len(report.TopOffenders) > 10 {
-			report.TopOffenders = report.TopOffenders[:10]
 		}
 	}
 	return reports, nil
+}
+
+// collectForRoot scans a single root directory and populates the report.
+// It delegates per-file analysis to DebtForFile and sorts the results.
+func collectForRoot(root string, report *DebtPackageReport) error {
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if isDebtSkippedDir(d.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !isGoFile(path) {
+			return nil
+		}
+		return DebtForFile(path, report)
+	})
+	if err != nil {
+		return err
+	}
+	sortDebtOffenders(report)
+	return nil
+}
+
+// isDebtSkippedDir reports whether the directory should be skipped during debt scanning.
+func isDebtSkippedDir(base string) bool {
+	return base == "vendor" || base == "testdata" || strings.HasPrefix(base, ".") || strings.HasPrefix(base, "_")
+}
+
+// isGoFile reports whether path is a Go source file.
+func isGoFile(path string) bool {
+	return strings.HasSuffix(strings.ToLower(path), ".go")
+}
+
+// DebtForFile analyzes a single Go file for complexity violations and updates the report.
+// It is exported for testing and for the required DebtForFile helper.
+func DebtForFile(path string, report *DebtPackageReport) error {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
+	if err != nil {
+		return nil
+	}
+	isTest := strings.HasSuffix(path, "_test.go")
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		debtAnalyzeFunc(fn, fset, path, report, isTest)
+	}
+	return nil
+}
+
+// debtForFile is an internal alias for DebtForFile to satisfy lower-case naming.
+func debtForFile(path string, report *DebtPackageReport) error {
+	return DebtForFile(path, report)
+}
+
+// debtAnalyzeFunc evaluates a single function for debt and records offenders.
+func debtAnalyzeFunc(fn *ast.FuncDecl, fset *token.FileSet, path string, report *DebtPackageReport, isTest bool) {
+	report.TotalFuncs++
+	cyclo := gocyclo.Complexity(fn)
+	cog := gocognit.Complexity(fn)
+	isCycloViol := cyclo > debtCyclomaticThreshold
+	isCogViol := cog > debtCognitiveThreshold
+	if isCycloViol {
+		report.CyclomaticViolations++
+	}
+	if isCogViol {
+		report.CognitiveViolations++
+	}
+	if !isCycloViol && !isCogViol {
+		return
+	}
+	off := DebtOffender{
+		Package:    filepath.ToSlash(filepath.Dir(path)),
+		File:       filepath.ToSlash(path),
+		Line:       fset.Position(fn.Pos()).Line,
+		Function:   debtFuncName(fn),
+		Cyclomatic: cyclo,
+		Cognitive:  cog,
+	}
+	if isTest {
+		report.TestOffenders = append(report.TestOffenders, off)
+	} else {
+		report.TopOffenders = append(report.TopOffenders, off)
+	}
+}
+
+// sortDebtOffenders sorts top offenders by max complexity descending and caps to 10.
+func sortDebtOffenders(report *DebtPackageReport) {
+	slices.SortFunc(report.TopOffenders, func(a, b DebtOffender) int {
+		ma := max(a.Cyclomatic, a.Cognitive)
+		mb := max(b.Cyclomatic, b.Cognitive)
+		if ma != mb {
+			return cmp.Compare(mb, ma)
+		}
+		if a.File != b.File {
+			return cmp.Compare(a.File, b.File)
+		}
+		return cmp.Compare(a.Line, b.Line)
+	})
+	if len(report.TopOffenders) > 10 {
+		report.TopOffenders = report.TopOffenders[:10]
+	}
 }
 
 func debtFuncName(fn *ast.FuncDecl) string {

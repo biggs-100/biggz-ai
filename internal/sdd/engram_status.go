@@ -33,12 +33,14 @@
 package sdd
 
 import (
+	"cmp"
 	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -374,90 +376,139 @@ func collectBigMemChanges(workspaceRoot string) ([]ChangeStatus, error) {
 // reconstructing ChangeStatus via deriveBigMemChangeStatus. When the BigMem
 // DB is absent or has no sdd/ observations, it returns (nil,nil,nil).
 func collectBigMemChangesWithArchive(workspaceRoot string, includeInstructions bool) (active []ChangeStatus, archived []ChangeStatus, err error) {
-	dbPath, err := bigmemDBPath(bigmemStoreRootOverride)
-	if err != nil {
-		return nil, nil, nil
-	}
-	if _, err := os.Stat(dbPath); err != nil {
-		return nil, nil, nil
-	}
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
+	db, err := openBigMemDB()
+	if err != nil || db == nil {
 		return nil, nil, nil
 	}
 	defer db.Close()
 
-	rows, err := db.Query(`SELECT topic_key, content, project, scope FROM observations WHERE topic_key LIKE 'sdd/%' AND deleted_at IS NULL`)
+	rows, err := queryBigMemRows(db)
 	if err != nil {
 		return nil, nil, nil
 	}
 	defer rows.Close()
 
-	inferredProject := ""
-	// Only apply project filtering in production (override == ""). Tests use
-	// t.TempDir() stores with arbitrary project values; filtering would hide
-	// mocked observations.
-	if bigmemStoreRootOverride == "" {
-		inferredProject = inferBigMemProject(workspaceRoot)
+	inferredProject := inferredBigMemProject(workspaceRoot)
+	byChange, archivedSet, seenSet := scanBigMemTopics(rows, inferredProject)
+	if err := rows.Err(); err != nil {
+		return nil, nil, nil
 	}
+	allNames := collectBigMemNames(byChange, archivedSet, seenSet)
+	active, archived = collectChanges(allNames, byChange, archivedSet, seenSet, workspaceRoot, includeInstructions)
+	sortChanges(active, archived)
+	return active, archived, nil
+}
 
+// openBigMemDB opens the BigMem DB if available, handling ghost WAL/SHM and missing file.
+func openBigMemDB() (*sql.DB, error) {
+	dbPath, err := bigmemDBPath(bigmemStoreRootOverride)
+	if err != nil {
+		return nil, nil
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		return nil, nil
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		return nil, nil
+	}
+	return db, nil
+}
+
+// queryBigMemRows queries all sdd observations from the BigMem DB.
+func queryBigMemRows(db *sql.DB) (*sql.Rows, error) {
+	return db.Query(`SELECT topic_key, content, project, scope FROM observations WHERE topic_key LIKE 'sdd/%' AND deleted_at IS NULL`)
+}
+
+// inferredBigMemProject returns the project filter for BigMem queries.
+func inferredBigMemProject(workspaceRoot string) string {
+	if bigmemStoreRootOverride != "" {
+		return ""
+	}
+	return inferBigMemProject(workspaceRoot)
+}
+
+// scanBigMemTopics scans rows and builds the topic maps using helper predicates.
+func scanBigMemTopics(rows *sql.Rows, inferredProject string) (map[string]map[string]string, map[string]bool, map[string]bool) {
 	byChange := map[string]map[string]string{}
 	archivedSet := map[string]bool{}
 	seenSet := map[string]bool{}
-
 	for rows.Next() {
 		var topicKey, content, project, scope sql.NullString
 		if err := rows.Scan(&topicKey, &content, &project, &scope); err != nil {
 			continue
 		}
-		scopeStr := ""
-		if scope.Valid {
-			scopeStr = scope.String
-		}
-		if strings.EqualFold(strings.TrimSpace(scopeStr), "personal") {
+		if isPersonalScope(scope) {
 			continue
 		}
-		if inferredProject != "" {
-			obsProject := ""
-			if project.Valid {
-				obsProject = strings.TrimSpace(project.String)
-			}
-			if !strings.EqualFold(obsProject, inferredProject) {
-				continue
-			}
-		}
-		topic := ""
-		if topicKey.Valid {
-			topic = strings.TrimSpace(topicKey.String)
-		}
-		matches := bigmemTitlePattern.FindStringSubmatch(topic)
-		if len(matches) != 3 {
+		if inferredProject != "" && isProjectMismatch(project, inferredProject) {
 			continue
 		}
-		changeName := matches[1]
-		suffix := matches[2]
-		if _, ok := byChange[changeName]; !ok {
-			byChange[changeName] = map[string]string{}
+		changeName, suffix, ok := parseTopicKey(topicKey)
+		if !ok {
+			continue
 		}
 		c := ""
 		if content.Valid {
 			c = content.String
 		}
-		byChange[changeName][suffix] = c
-		if suffix == "archive-report" {
-			archivedSet[changeName] = true
-		} else if suffix != "state" {
-			seenSet[changeName] = true
-		}
+		mergeTopic(byChange, archivedSet, seenSet, changeName, suffix, c)
 	}
-	if err := rows.Err(); err != nil {
-		// treat query error as no BigMem changes (fallback)
-		return nil, nil, nil
-	}
+	return byChange, archivedSet, seenSet
+}
 
-	// Build sorted change list for determinism
-	var allNames []string
+// isPersonalScope reports whether the scope is personal.
+func isPersonalScope(scope sql.NullString) bool {
+	if !scope.Valid {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(scope.String), "personal")
+}
+
+// isProjectMismatch reports whether the observation project mismatches the inferred project.
+func isProjectMismatch(project sql.NullString, inferredProject string) bool {
+	obsProject := ""
+	if project.Valid {
+		obsProject = strings.TrimSpace(project.String)
+	}
+	return !strings.EqualFold(obsProject, inferredProject)
+}
+
+// parseTopicKey parses a topic_key into changeName and suffix.
+func parseTopicKey(topicKey sql.NullString) (string, string, bool) {
+	topic := ""
+	if topicKey.Valid {
+		topic = strings.TrimSpace(topicKey.String)
+	}
+	matches := bigmemTitlePattern.FindStringSubmatch(topic)
+	if len(matches) != 3 {
+		return "", "", false
+	}
+	return matches[1], matches[2], true
+}
+
+// isArchived reports whether the suffix denotes an archived change.
+func isArchived(suffix string) bool {
+	return suffix == "archive-report"
+}
+
+// mergeTopic merges a topic into the byChange map and updates archived/seen sets.
+func mergeTopic(byChange map[string]map[string]string, archivedSet, seenSet map[string]bool, changeName, suffix, content string) {
+	if _, ok := byChange[changeName]; !ok {
+		byChange[changeName] = map[string]string{}
+	}
+	byChange[changeName][suffix] = content
+	if isArchived(suffix) {
+		archivedSet[changeName] = true
+	} else if suffix != "state" {
+		seenSet[changeName] = true
+	}
+}
+
+// collectBigMemNames builds a deterministic sorted list of change names.
+func collectBigMemNames(byChange map[string]map[string]string, archivedSet, seenSet map[string]bool) []string {
 	seenNames := map[string]bool{}
+	var allNames []string
 	for n := range seenSet {
 		if !seenNames[n] {
 			seenNames[n] = true
@@ -469,40 +520,48 @@ func collectBigMemChangesWithArchive(workspaceRoot string, includeInstructions b
 			seenNames[n] = true
 			allNames = append(allNames, n)
 		}
-		// also include archived names that have seenSet (already added)
 	}
-	// Also include any change that only has archive-report but not seen (edge)
 	for n := range byChange {
-		if !seenNames[n] {
-			if archivedSet[n] {
-				seenNames[n] = true
-				allNames = append(allNames, n)
-			}
+		if !seenNames[n] && archivedSet[n] {
+			seenNames[n] = true
+			allNames = append(allNames, n)
 		}
 	}
-	sort.Strings(allNames)
+	slices.Sort(allNames)
+	return allNames
+}
 
+// collectChange builds a single ChangeStatus for a change name.
+func collectChange(name string, bySuffix map[string]string, workspaceRoot string, includeInstructions bool, archived bool) ChangeStatus {
+	return deriveBigMemChangeStatus(name, bySuffix, workspaceRoot, includeInstructions, archived)
+}
+
+// collectChanges builds active and archived ChangeStatus slices from the name list.
+func collectChanges(allNames []string, byChange map[string]map[string]string, archivedSet, seenSet map[string]bool, workspaceRoot string, includeInstructions bool) (active, archived []ChangeStatus) {
 	for _, name := range allNames {
 		m := byChange[name]
 		if m == nil {
 			continue
 		}
-		isArchived := archivedSet[name]
+		archivedFlag := archivedSet[name]
 		hasSeen := seenSet[name]
-		// A change with only state is not considered a valid change
-		if !isArchived && !hasSeen {
+		if !archivedFlag && !hasSeen {
 			continue
 		}
-		cs := deriveBigMemChangeStatus(name, m, workspaceRoot, includeInstructions, isArchived)
-		if isArchived {
+		cs := collectChange(name, m, workspaceRoot, includeInstructions, archivedFlag)
+		if archivedFlag {
 			archived = append(archived, cs)
 		} else {
 			active = append(active, cs)
 		}
 	}
-	sort.Slice(active, func(i, j int) bool { return active[i].Name < active[j].Name })
-	sort.Slice(archived, func(i, j int) bool { return archived[i].Name < archived[j].Name })
-	return active, archived, nil
+	return active, archived
+}
+
+// sortChanges sorts active and archived slices by Name for determinism.
+func sortChanges(active, archived []ChangeStatus) {
+	slices.SortFunc(active, func(a, b ChangeStatus) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(archived, func(a, b ChangeStatus) int { return cmp.Compare(a.Name, b.Name) })
 }
 
 // mergeFilesystemAndBigMem merges filesystem and BigMem changes by change name.
