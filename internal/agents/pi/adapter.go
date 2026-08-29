@@ -457,14 +457,9 @@ func containsPiPackage(existing []any, want string) bool {
 	return false
 }
 
-// Background subagent policy — minimal port of gentle-pi's
-// resolveBackgroundSubagentsCapability / loadBackgroundSubagentsPolicy.
-// Gentle-pi resolves policy via project > global > env > default but
-// capability is always probed via the live tool registry or the installed
-// pi-subagents package manifest. For biggz we keep it simple: capability
-// is ready when ~/.pi/agent/npm/node_modules/pi-subagents/package.json exists
-// (via `pi install`, pnpm symlinks under npm/node_modules), and policy
-// is on when capability is ready, off otherwise.
+// Background subagent policy — 4-source fail-closed port of gentle-pi's
+// resolveBackgroundSubagentsPolicy. Resolution order: project > global >
+// env > default off. Malformed file fails closed to off without fallback.
 
 const (
 	backgroundPolicyOn         = "on"
@@ -472,6 +467,227 @@ const (
 	backgroundCapabilityReady  = "ready"
 	backgroundCapabilityAbsent = "absent"
 )
+
+const (
+	BackgroundSubagentsSchema = "gentle-pi.background-subagents/v1"
+	BackgroundSubagentsFile   = "background-subagents.json"
+)
+
+type BackgroundSubagentsPolicy string
+type BackgroundSubagentsSource string
+type BackgroundSubagentsCapability = string
+
+const (
+	BackgroundSourceProject     BackgroundSubagentsSource = "project_file"
+	BackgroundSourceGlobal      BackgroundSubagentsSource = "global_file"
+	BackgroundSourceEnvironment BackgroundSubagentsSource = "environment"
+	BackgroundSourceDefault     BackgroundSubagentsSource = "default"
+)
+
+type BackgroundSubagentsResolution struct {
+	Policy            BackgroundSubagentsPolicy `json:"policy"`
+	Source            BackgroundSubagentsSource `json:"source"`
+	Malformed         bool                      `json:"malformed"`
+	ProjectFile       string                    `json:"projectFile"`
+	GlobalFile        string                    `json:"globalFile"`
+	ProjectFileExists bool                      `json:"projectFileExists"`
+	GlobalFileExists  bool                      `json:"globalFileExists"`
+	EnvValue          *string                   `json:"envValue"`
+}
+
+type LoadBackgroundSubagentsOptions struct {
+	GentleAiConfigHome string
+	Env                map[string]string
+}
+
+type BackgroundSubagentsReport struct {
+	Message string `json:"message"`
+	Type    string `json:"type"` // info | warning
+}
+
+func parseBackgroundSubagentsPolicyFile(raw string) (BackgroundSubagentsPolicy, bool) {
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return "", false
+	}
+	if len(parsed) != 2 {
+		return "", false
+	}
+	schema, ok := parsed["schema"].(string)
+	if !ok || schema != BackgroundSubagentsSchema {
+		return "", false
+	}
+	policy, ok := parsed["policy"].(string)
+	if !ok || (policy != backgroundPolicyOn && policy != backgroundPolicyOff) {
+		return "", false
+	}
+	return BackgroundSubagentsPolicy(policy), true
+}
+
+func ParseBackgroundSubagentsPolicyFile(raw string) (BackgroundSubagentsPolicy, bool) {
+	return parseBackgroundSubagentsPolicyFile(raw)
+}
+
+func gentleAiConfigHome() string {
+	if v := strings.TrimSpace(os.Getenv("GENTLE_PI_CONFIG_HOME")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(os.Getenv("GENTLE_AI_CONFIG_HOME")); v != "" {
+		return v
+	}
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".pi", "gentle-ai")
+}
+
+func GentleAiConfigHome() string { return gentleAiConfigHome() }
+
+func resolveBackgroundSubagentsPolicy(cwd string, opts LoadBackgroundSubagentsOptions) BackgroundSubagentsResolution {
+	configHome := opts.GentleAiConfigHome
+	if configHome == "" {
+		configHome = gentleAiConfigHome()
+	}
+	projectFile := filepath.Join(cwd, ".pi", "gentle-ai", BackgroundSubagentsFile)
+	globalFile := filepath.Join(configHome, BackgroundSubagentsFile)
+	projectExists := false
+	globalExists := false
+	if _, err := os.Stat(projectFile); err == nil {
+		projectExists = true
+	}
+	if _, err := os.Stat(globalFile); err == nil {
+		globalExists = true
+	}
+	envVal, envSet := lookupBackgroundEnv(opts.Env)
+	var envPtr *string
+	if envSet {
+		envPtr = &envVal
+	}
+	locations := BackgroundSubagentsResolution{
+		ProjectFile:       projectFile,
+		GlobalFile:        globalFile,
+		ProjectFileExists: projectExists,
+		GlobalFileExists:  globalExists,
+		EnvValue:          envPtr,
+	}
+	for _, entry := range []struct {
+		source BackgroundSubagentsSource
+		path   string
+		exists bool
+	}{
+		{BackgroundSourceProject, projectFile, projectExists},
+		{BackgroundSourceGlobal, globalFile, globalExists},
+	} {
+		if !entry.exists {
+			continue
+		}
+		raw, err := os.ReadFile(entry.path)
+		if err != nil {
+			locations.Policy = backgroundPolicyOff
+			locations.Source = entry.source
+			locations.Malformed = true
+			return locations
+		}
+		if decoded, ok := parseBackgroundSubagentsPolicyFile(string(raw)); ok {
+			locations.Policy = decoded
+			locations.Source = entry.source
+			locations.Malformed = false
+			return locations
+		}
+		locations.Policy = backgroundPolicyOff
+		locations.Source = entry.source
+		locations.Malformed = true
+		return locations
+	}
+	if envSet && (envVal == backgroundPolicyOn || envVal == backgroundPolicyOff) {
+		locations.Policy = BackgroundSubagentsPolicy(envVal)
+		locations.Source = BackgroundSourceEnvironment
+		locations.Malformed = false
+		return locations
+	}
+	locations.Policy = backgroundPolicyOff
+	locations.Source = BackgroundSourceDefault
+	locations.Malformed = false
+	return locations
+}
+
+func ResolveBackgroundSubagentsPolicy(cwd string, opts LoadBackgroundSubagentsOptions) BackgroundSubagentsResolution {
+	return resolveBackgroundSubagentsPolicy(cwd, opts)
+}
+
+func loadBackgroundSubagentsPolicy(cwd string) string {
+	return resolveBackgroundSubagentsPolicy(cwd, LoadBackgroundSubagentsOptions{}).Policy.String()
+}
+
+func (p BackgroundSubagentsPolicy) String() string { return string(p) }
+
+func lookupBackgroundEnv(env map[string]string) (string, bool) {
+	if env != nil {
+		if v, ok := env["GENTLE_PI_BACKGROUND_SUBAGENTS"]; ok {
+			return v, true
+		}
+		if v, ok := env["BIGGZ_BACKGROUND_SUBAGENTS"]; ok {
+			return v, true
+		}
+		return "", false
+	}
+	if v, ok := os.LookupEnv("GENTLE_PI_BACKGROUND_SUBAGENTS"); ok {
+		return v, true
+	}
+	if v, ok := os.LookupEnv("BIGGZ_BACKGROUND_SUBAGENTS"); ok {
+		return v, true
+	}
+	return "", false
+}
+
+func describeBackgroundSubagentsSource(r BackgroundSubagentsResolution) string {
+	switch r.Source {
+	case BackgroundSourceProject:
+		return fmt.Sprintf("project file %s", r.ProjectFile)
+	case BackgroundSourceGlobal:
+		return fmt.Sprintf("global file %s", r.GlobalFile)
+	case BackgroundSourceEnvironment:
+		return "GENTLE_PI_BACKGROUND_SUBAGENTS"
+	default:
+		return "built-in default"
+	}
+}
+
+func renderBackgroundSubagentsReport(r BackgroundSubagentsResolution, capability string, wrote *BackgroundSubagentsPolicy) BackgroundSubagentsReport {
+	lines := []string{fmt.Sprintf("background subagents: %s (decided by %s; capability: %s)", r.Policy, describeBackgroundSubagentsSource(r), capability)}
+	if wrote != nil {
+		lines = append(lines, fmt.Sprintf("Wrote %s to the global file %s.", *wrote, r.GlobalFile))
+	}
+	if r.Malformed {
+		path := r.GlobalFile
+		if r.Source == BackgroundSourceProject {
+			path = r.ProjectFile
+		}
+		lines = append(lines, fmt.Sprintf("%s is present but malformed, so the policy fails closed to off and no lower-priority source is consulted.", path))
+	}
+	outranks := wrote != nil && r.Source == BackgroundSourceProject
+	if outranks {
+		lines = append(lines, fmt.Sprintf("That global write does not take effect here: the project file %s outranks it. Edit or remove that project file to let the global setting decide.", r.ProjectFile))
+	} else if wrote == nil && r.Source == BackgroundSourceProject && r.GlobalFileExists {
+		lines = append(lines, fmt.Sprintf("The global file %s exists but is outranked by that project file.", r.GlobalFile))
+	}
+	if r.EnvValue != nil && r.Source != BackgroundSourceEnvironment {
+		ev := *r.EnvValue
+		if ev == backgroundPolicyOn || ev == backgroundPolicyOff {
+			lines = append(lines, fmt.Sprintf("GENTLE_PI_BACKGROUND_SUBAGENTS=%s is set, but both files outrank it and it outranks the built-in default; it decides only when neither file exists.", ev))
+		} else {
+			lines = append(lines, fmt.Sprintf("GENTLE_PI_BACKGROUND_SUBAGENTS=\"%s\" is not a recognized value (\"on\" or \"off\"), so it is ignored.", ev))
+		}
+	}
+	lines = append(lines, "Resolution order (first hit wins): project file, global file, GENTLE_PI_BACKGROUND_SUBAGENTS, built-in default off.")
+	tp := "info"
+	if r.Malformed || outranks {
+		tp = "warning"
+	}
+	return BackgroundSubagentsReport{Message: strings.Join(lines, "\n"), Type: tp}
+}
+
+func RenderBackgroundSubagentsReport(r BackgroundSubagentsResolution, capability string, wrote *BackgroundSubagentsPolicy) BackgroundSubagentsReport {
+	return renderBackgroundSubagentsReport(r, capability, wrote)
+}
 
 func resolveBackgroundSubagentsCapability(homeDir string) string {
 	candidates := []string{
@@ -499,21 +715,11 @@ func resolveBackgroundSubagentsCapability(homeDir string) string {
 	return backgroundCapabilityAbsent
 }
 
-func loadBackgroundSubagentsPolicy(homeDir string) string {
-	if resolveBackgroundSubagentsCapability(homeDir) == backgroundCapabilityReady {
-		return backgroundPolicyOn
-	}
-	return backgroundPolicyOff
-}
-
 func renderBackgroundSubagentsStatusLine(homeDir string) string {
+	res := resolveBackgroundSubagentsPolicy(homeDir, LoadBackgroundSubagentsOptions{})
 	capability := resolveBackgroundSubagentsCapability(homeDir)
-	policy := loadBackgroundSubagentsPolicy(homeDir)
-	line := fmt.Sprintf("Background subagent policy: %s (capability: %s)", policy, capability)
-	if capability == backgroundCapabilityAbsent {
-		line += " — run `pi install` to enable FleetView"
-	}
-	return line
+	report := renderBackgroundSubagentsReport(res, capability, nil)
+	return report.Message
 }
 
 // ResolveBackgroundSubagentsCapability is the exported wrapper for install and doctor.

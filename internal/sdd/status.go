@@ -915,3 +915,35 @@ func phaseLabel(cs ChangeStatus) string {
 		return "archive-ready"
 	}
 }
+
+// ShouldEnforceScopedSurfaces reports whether the 4-file heuristic triggers.
+// Strict at >=4: 3 files allow single writer without per-path guard, 4 enforces per-path.
+func ShouldEnforceScopedSurfaces(fileCount int) bool { return fileCount >= 4 }
+
+// ScopedSurfaceRejection is the local rejection type for sdd guard without
+// importing orchestrator (avoids import cycle between sdd and orchestrator).
+type ScopedSurfaceRejection struct {
+	Block  bool
+	Reason string
+}
+
+// ValidateBoundedWriterSurfaces checks writer dispatch surfaces when fileCount >=4.
+// Returns nil when no enforcement needed; otherwise returns a rejection when
+// task/context lack scoped surfaces. Keeps the 4-file strict boundary.
+func ValidateBoundedWriterSurfaces(input map[string]any, fileCount int) *ScopedSurfaceRejection {
+	if !ShouldEnforceScopedSurfaces(fileCount) {
+		return nil
+	}
+	agent, _ := input["agent"].(string)
+	if agent != "worker" && agent != "gentle-ai-worker" {
+		return nil
+	}
+	task, _ := input["task"].(string)
+	ctx, _ := input["context"].(string)
+	// Use shared heading detection without importing orchestrator: check for heading.
+	hasHeading := strings.Contains(strings.ToLower(task), "## allowed edit surfaces") || strings.Contains(strings.ToLower(ctx), "## allowed edit surfaces")
+	if !hasHeading {
+		return &ScopedSurfaceRejection{Block: true, Reason: "Parent must derive or map narrow repository-relative allowed edit surfaces from the delegated task and relaunch the writer. Do not ask the human to author paths or globs."}
+	}
+	return nil
+}
