@@ -766,6 +766,31 @@ func bigmemRun() int {
 			fmt.Printf("  lifecycle: %s\n", lc)
 			fmt.Printf("  Pending: %d\n", pend)
 			fmt.Printf("  pending: %d\n", pend)
+			if js != nil {
+				fmt.Printf("  LastEnqueued: %d\n", js.LastEnqueuedSeq)
+				fmt.Printf("  LastAcked: %d\n", js.LastAckedSeq)
+				fmt.Printf("  LastPulled: %d\n", js.LastPulledSeq)
+				fmt.Printf("  last_enqueued: %d\n", js.LastEnqueuedSeq)
+				fmt.Printf("  last_acked: %d\n", js.LastAckedSeq)
+				fmt.Printf("  last_pulled: %d\n", js.LastPulledSeq)
+				fmt.Printf("  ConsecutiveFailures: %d\n", js.ConsecutiveFailures)
+				fmt.Printf("  consecutive_failures: %d\n", js.ConsecutiveFailures)
+				if js.BackoffUntil != nil {
+					fmt.Printf("  BackoffUntil: %s\n", *js.BackoffUntil)
+					fmt.Printf("  backoff_until: %s\n", *js.BackoffUntil)
+				}
+				if js.LeaseOwner != nil {
+					fmt.Printf("  LeaseOwner: %s\n", *js.LeaseOwner)
+					fmt.Printf("  lease_owner: %s\n", *js.LeaseOwner)
+				}
+				if js.LeaseUntil != nil {
+					fmt.Printf("  LeaseUntil: %s\n", *js.LeaseUntil)
+					fmt.Printf("  lease_until: %s\n", *js.LeaseUntil)
+				}
+				if js.ReasonCode != nil {
+					fmt.Printf("  ReasonCode: %s\n", *js.ReasonCode)
+				}
+			}
 
 		case doImport && fromEngram:
 			resolvedDir, rerr := bigmem.ResolveEngramDir(engramDir)
