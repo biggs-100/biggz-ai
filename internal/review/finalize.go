@@ -128,43 +128,9 @@ func legacyFixDeltaHashForSnapshot(baseTree, candidateTree, pathsDigest string, 
 // summing "lines_changed" for backward compat. If no correction events exist,
 // cumulative stays at the prior receipt value (Empty stays correct).
 func deriveCumulativeAndFixDelta(chain ValidatedChain, store *Store) (int, string) {
-	prior := 0
-	ref := receiptArtifactOf(chain)
-	if ref != nil {
-		if receipt, err := readReceiptFile(store, completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}); err == nil {
-			prior = receipt.CumulativeCorrectionLines
-		}
-	}
-	// Scan post-finalize events for correction lines. Prefer explicit "cumulative"
-	// field when present (emitted by finalize when post diff >0), fallback to
-	// summing "lines_changed" for legacy events.
-	lastComplete := -1
-	for i := len(chain.Records) - 1; i >= 0; i-- {
-		if chain.Records[i].Operation == CompleteReviewOperation {
-			lastComplete = i
-			break
-		}
-	}
-	post := 0
-	var explicitCumulative *int
-	if lastComplete >= 0 {
-		for i := lastComplete + 1; i < len(chain.Records); i++ {
-			rec := chain.Records[i]
-			if rec.Operation == "correction" {
-				var payload struct {
-					LinesChanged int  `json:"lines_changed"`
-					Cumulative   *int `json:"cumulative"`
-				}
-				if err := json.Unmarshal(rec.Payload, &payload); err == nil {
-					if payload.Cumulative != nil {
-						explicitCumulative = payload.Cumulative
-					} else if payload.LinesChanged > 0 {
-						post += payload.LinesChanged
-					}
-				}
-			}
-		}
-	}
+	prior := priorCumulativeFromReceipt(chain, store)
+	lastComplete := lastCompleteIndex(chain)
+	post, explicitCumulative := scanPostCorrections(chain, lastComplete)
 	cumulative := prior + post
 	if explicitCumulative != nil {
 		cumulative = *explicitCumulative
@@ -176,6 +142,45 @@ func deriveCumulativeAndFixDelta(chain ValidatedChain, store *Store) (int, strin
 		cumulative = 0
 	}
 	return cumulative, computeFixDeltaHash(cumulative)
+}
+
+func priorCumulativeFromReceipt(chain ValidatedChain, store *Store) int {
+	ref := receiptArtifactOf(chain)
+	if ref == nil {
+		return 0
+	}
+	receipt, err := readReceiptFile(store, completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash})
+	if err != nil {
+		return 0
+	}
+	return receipt.CumulativeCorrectionLines
+}
+
+func scanPostCorrections(chain ValidatedChain, lastComplete int) (int, *int) {
+	if lastComplete < 0 {
+		return 0, nil
+	}
+	post := 0
+	var explicit *int
+	for i := lastComplete + 1; i < len(chain.Records); i++ {
+		rec := chain.Records[i]
+		if rec.Operation != "correction" {
+			continue
+		}
+		var payload struct {
+			LinesChanged int  `json:"lines_changed"`
+			Cumulative   *int `json:"cumulative"`
+		}
+		if err := json.Unmarshal(rec.Payload, &payload); err != nil {
+			continue
+		}
+		if payload.Cumulative != nil {
+			explicit = payload.Cumulative
+		} else if payload.LinesChanged > 0 {
+			post += payload.LinesChanged
+		}
+	}
+	return post, explicit
 }
 
 // ---------------------------------------------------------------------------
@@ -513,6 +518,31 @@ func (r PersistedReceipt) computeLegacyHash() string {
 // Validate verifies the receipt's canonical shape and self-hash without
 // consulting mutable repository state.
 func (r PersistedReceipt) Validate() error {
+	if err := r.validateReceiptIdentity(); err != nil {
+		return err
+	}
+	if err := r.validateCumulativeLines(); err != nil {
+		return err
+	}
+	if err := r.validateHashBinding(); err != nil {
+		return err
+	}
+	if err := r.validateLensSelection(); err != nil {
+		return err
+	}
+	if err := r.validateLensSubjects(); err != nil {
+		return err
+	}
+	if err := r.validateFindingRouting(); err != nil {
+		return err
+	}
+	if err := r.validateEvidenceChain(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (r PersistedReceipt) validateReceiptIdentity() error {
 	if r.Schema != ReviewReceiptSchema {
 		return errors.New("receipt schema is unsupported")
 	}
@@ -530,25 +560,41 @@ func (r PersistedReceipt) Validate() error {
 			return errors.New("receipt tree identities are invalid")
 		}
 	}
+	return nil
+}
+
+func (r PersistedReceipt) validateCumulativeLines() error {
 	if r.CumulativeCorrectionLines < 0 {
 		return errors.New("receipt cumulative correction lines cannot be negative")
 	}
-	for _, identity := range []string{r.PathsDigest, r.FixDeltaHash, r.EvidenceHash} {
-		if !validSHA256Identity(identity) {
-			return errors.New("receipt paths, fix-delta, and evidence hashes are invalid")
-		}
-	}
-	// Legacy domain "fix-delta/v1" accepted for backward compat (pre-2026-08-28).
 	if r.CumulativeCorrectionLines > 0 && r.FixDeltaHash != EmptyFixDeltaHash {
 		flat := payloadSHA256([]byte(fmt.Sprintf("fix-delta:%d", r.CumulativeCorrectionLines)))
 		if r.FixDeltaHash == flat {
 			return errors.New("receipt fix-delta hash is flat; expected domain-bound hash")
 		}
-		// Accept both new domain "biggz-ai.fix-delta/v1" and legacy "fix-delta/v1"; no strict tree enforcement here
-		// to keep receipts b33cf4f/4229eb1 valid. The binding is verified via FixDeltaHashForSnapshot elsewhere.
+	}
+	return nil
+}
+
+func (r PersistedReceipt) validateHashBinding() error {
+	for _, identity := range []string{r.PathsDigest, r.FixDeltaHash, r.EvidenceHash} {
+		if !validSHA256Identity(identity) {
+			return errors.New("receipt paths, fix-delta, and evidence hashes are invalid")
+		}
 	}
 	if r.PolicyHash != "" && !validSHA256Identity(r.PolicyHash) {
 		return errors.New("receipt policy hash is invalid")
+	}
+	return nil
+}
+
+func (r PersistedReceipt) validateLensSelection() error {
+	lenses, err := canonicalStrings(r.SelectedLenses, "selected lens")
+	if err != nil || !equalStrings(lenses, r.SelectedLenses) {
+		return errors.New("receipt selected lenses must be canonical")
+	}
+	if len(lenses) != len(r.LensSubjects) {
+		return errors.New("receipt lens subjects must cover every selected lens exactly once")
 	}
 	if !validRiskTier(r.RiskTier) {
 		return fmt.Errorf("receipt risk tier %q is unsupported", r.RiskTier)
@@ -556,12 +602,13 @@ func (r PersistedReceipt) Validate() error {
 	if r.TerminalState != ReviewReceiptTerminalState {
 		return fmt.Errorf("receipt terminal state %q is unsupported", r.TerminalState)
 	}
+	return nil
+}
+
+func (r PersistedReceipt) validateLensSubjects() error {
 	lenses, err := canonicalStrings(r.SelectedLenses, "selected lens")
 	if err != nil || !equalStrings(lenses, r.SelectedLenses) {
 		return errors.New("receipt selected lenses must be canonical")
-	}
-	if len(lenses) != len(r.LensSubjects) {
-		return errors.New("receipt lens subjects must cover every selected lens exactly once")
 	}
 	seen := make(map[string]struct{}, len(r.LensSubjects))
 	for index, subject := range r.LensSubjects {
@@ -578,14 +625,24 @@ func (r PersistedReceipt) Validate() error {
 			return fmt.Errorf("receipt lens subject %q is recorded twice", subject.Lens)
 		}
 		seen[subject.Lens] = struct{}{}
-		if index > 0 {
-			prev := r.LensSubjects[index-1]
-			if subject.SelectedOrder < prev.SelectedOrder ||
-				(subject.SelectedOrder == prev.SelectedOrder && subject.Lens <= prev.Lens) {
-				return errors.New("receipt lens subjects must be canonically ordered by order then lens")
-			}
+		if index > 0 && !isLensSubjectsOrdered(r.LensSubjects[index-1], subject) {
+			return errors.New("receipt lens subjects must be canonically ordered by order then lens")
 		}
 	}
+	return nil
+}
+
+func isLensSubjectsOrdered(prev, curr ReceiptLensSubject) bool {
+	if curr.SelectedOrder < prev.SelectedOrder {
+		return false
+	}
+	if curr.SelectedOrder == prev.SelectedOrder && curr.Lens <= prev.Lens {
+		return false
+	}
+	return true
+}
+
+func (r PersistedReceipt) validateFindingRouting() error {
 	ids, err := canonicalStrings(r.ResolvedFindingIDs, "resolved finding id")
 	if err != nil || !equalStrings(ids, r.ResolvedFindingIDs) {
 		return errors.New("receipt resolved finding IDs must be canonical")
@@ -599,20 +656,21 @@ func (r PersistedReceipt) Validate() error {
 			return fmt.Errorf("receipt finding %q cannot be both resolved and standing", id)
 		}
 	}
+	return nil
+}
+
+func (r PersistedReceipt) validateEvidenceChain() error {
 	if !validSHA256Identity(r.ReceiptHash) {
 		return errors.New("receipt hash does not match the receipt binding")
 	}
 	computed := r.computeHash()
-	if r.ReceiptHash != computed {
-		// Legacy compat: receipts written before fix-budget-accounting had no
-		// cumulative field. If cumulative is 0, allow old binding as valid.
-		if r.CumulativeCorrectionLines == 0 && r.ReceiptHash == r.computeLegacyHash() {
-			// legacy receipt with old hash is acceptable
-		} else {
-			return errors.New("receipt hash does not match the receipt binding")
-		}
+	if r.ReceiptHash == computed {
+		return nil
 	}
-	return nil
+	if r.CumulativeCorrectionLines == 0 && r.ReceiptHash == r.computeLegacyHash() {
+		return nil
+	}
+	return errors.New("receipt hash does not match the receipt binding")
 }
 
 // validRiskTier reports whether the tier is one of the derivation outputs.
@@ -731,41 +789,9 @@ func Finalize(repo, lineageID string) (FinalizeOutcome, error) {
 	}
 	var outcome FinalizeOutcome
 	err = WithFileLock(store.Dir, func() error {
-		chain, err := store.LoadChain()
+		chain, revisions, plan, err := loadAndValidateChain(store)
 		if err != nil {
-			return fmt.Errorf("finalize: load chain: %w", err)
-		}
-		if chain.Count == 0 {
-			return errors.New("finalize: lineage has no events")
-		}
-		// Burned check: ephemeral receipt already consumed — prevent replay.
-		if IsChainBurned(chain) {
-			return fmt.Errorf("finalize: %w", ErrAlreadyBurned)
-		}
-		if _, err := os.Stat(filepath.Join(store.Dir, BurnedMarkerFile)); err == nil {
-			return fmt.Errorf("finalize: %w", ErrAlreadyBurned)
-		}
-		// Terminal state (Phase C2): an invalidated/withdrawn lineage must
-		// not be finalizable — a receipt would fabricate reviewed history
-		// the lineage has explicitly disowned.
-		if state, reason := terminatedStateOf(chain); state != "" {
-			if state == "invalidated" && reason != "" {
-				return fmt.Errorf("finalize: lineage is invalidated: %s", reason)
-			}
-			return fmt.Errorf("finalize: lineage is %s", state)
-		}
-		verdict := store.Validate()
-		if !verdict.Valid {
-			return fmt.Errorf("finalize: chain integrity failed: %s", verdict.Reason)
-		}
-		revisions := recordRevisions(chain)
-		genesis := chain.Records[0]
-		if genesis.Operation != "start_review" {
-			return errors.New("finalize: lineage genesis is not a review start")
-		}
-		var plan StartEventPayload
-		if err := json.Unmarshal(genesis.Payload, &plan); err != nil || strings.TrimSpace(plan.CommitSHA) == "" {
-			return errors.New("finalize: genesis event does not carry a review subject")
+			return err
 		}
 		last := chain.Records[chain.Count-1]
 		if last.Operation == CompleteReviewOperation {
@@ -774,103 +800,157 @@ func Finalize(repo, lineageID string) (FinalizeOutcome, error) {
 		if last.Operation == BurnOperation {
 			return fmt.Errorf("finalize: %w", ErrAlreadyBurned)
 		}
-		data, err := deriveFinalizeData(repo, chain, plan)
+		_, receipt, path, err := deriveAndPublishSnapshot(repo, &chain, plan, store, revisions)
 		if err != nil {
 			return err
 		}
-		// Cumulative ledger: derive from prior receipt + post-finalize corrections.
-		// Prefer explicit "cumulative" field when present, fallback to lines_changed sum.
-		// FixDelta is content-bound via FixDeltaHashForSnapshot (gentle v1).
-		cum, _ := deriveCumulativeAndFixDelta(chain, store)
-		priorCum := 0
-		if ref := receiptArtifactOf(chain); ref != nil {
-			if r, err := readReceiptFile(store, completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}); err == nil {
-				priorCum = r.CumulativeCorrectionLines
-			}
-		}
-		if cum > priorCum {
-			needEmit := true
-			lastCompleteIdx := -1
-			for i := len(chain.Records) - 1; i >= 0; i-- {
-				if chain.Records[i].Operation == CompleteReviewOperation {
-					lastCompleteIdx = i
-					break
-				}
-			}
-			if lastCompleteIdx >= 0 {
-				for i := len(chain.Records) - 1; i > lastCompleteIdx; i-- {
-					if chain.Records[i].Operation == "correction" {
-						var p struct {
-							Cumulative *int `json:"cumulative"`
-						}
-						if err := json.Unmarshal(chain.Records[i].Payload, &p); err == nil && p.Cumulative != nil && *p.Cumulative == cum {
-							needEmit = false
-						}
-						break
-					}
-				}
-			} else {
-				needEmit = false
-			}
-			if needEmit {
-				payload, _ := json.Marshal(map[string]int{"lines_changed": cum - priorCum, "cumulative": cum})
-				newRev, err := store.appendLocked(chain.HeadHash, Record{
-					Operation: "correction",
-					Role:      string(model.RoleLead),
-					Actor:     string(model.RoleLead),
-					Timestamp: time.Now().Format(time.RFC3339Nano),
-					Payload:   payload,
-				})
-				if err != nil {
-					return fmt.Errorf("finalize: emit correction event: %w", err)
-				}
-				chain.Records = append(chain.Records, Record{Operation: "correction", Payload: payload})
-				chain.HeadHash = newRev
-				chain.Count++
-			}
-		}
-		data.cumulativeCorrectionLines = cum
-		data.fixDeltaHash = FixDeltaHashForSnapshot(data.baseTree, data.candidateTree, data.manifestDigest, cum, nil)
-		// Legacy domain "fix-delta/v1" accepted for backward compat (pre-2026-08-28): if hash equals legacy domain, still valid.
-		receipt := buildReceipt(chain.LineageID, revisions[0], chain.HeadHash, data)
-		if err := receipt.Validate(); err != nil {
-			return fmt.Errorf("finalize: receipt validation failed: %w", err)
-		}
-		path, err := writeReceiptLocked(store, receipt)
+		revision, err := burnAndGateDelivery(store, chain.HeadHash, receipt, path)
 		if err != nil {
-			return fmt.Errorf("finalize: persist receipt: %w", err)
-		}
-		eventPayload, err := json.Marshal(completeEventPayload{
-			Schema: FinalizeEventSchema, ReceiptPath: path, ReceiptHash: receipt.ReceiptHash,
-		})
-		if err != nil {
-			return fmt.Errorf("finalize: marshal complete event: %w", err)
-		}
-		revision, err := store.appendLocked(chain.HeadHash, Record{
-			Operation: CompleteReviewOperation,
-			Role:      string(model.RoleLead),
-			Actor:     string(model.RoleLead),
-			Timestamp: time.Now().Format(time.RFC3339Nano),
-			Payload:   eventPayload,
-		})
-		if err != nil {
-			return fmt.Errorf("finalize: append complete_review event: %w", err)
-		}
-		// Burn after successful finalize: ephemeral receipt.
-		// Make receipt ephemeral by deleting the receipt file, persisting a
-		// burned marker, and appending a burn_review event that invalidates
-		// further finalize/gate reuse.
-		if BurnEnabled {
-			if err := burnReceiptLocked(store, receipt, path, revision); err != nil {
-				return fmt.Errorf("finalize: burn receipt: %w", err)
-			}
+			return err
 		}
 		outcome = FinalizeOutcome{
 			LineageID: lineageID, ReceiptPath: path, ReceiptHash: receipt.ReceiptHash, Revision: revision,
 		}
-		return nil
+		return enqueueSyncIfNeeded(store, chain)
 	})
 	return outcome, err
+}
+
+func loadAndValidateChain(store *Store) (ValidatedChain, []string, StartEventPayload, error) {
+	chain, err := store.LoadChain()
+	if err != nil {
+		return ValidatedChain{}, nil, StartEventPayload{}, fmt.Errorf("finalize: load chain: %w", err)
+	}
+	if chain.Count == 0 {
+		return ValidatedChain{}, nil, StartEventPayload{}, errors.New("finalize: lineage has no events")
+	}
+	if IsChainBurned(chain) {
+		return ValidatedChain{}, nil, StartEventPayload{}, fmt.Errorf("finalize: %w", ErrAlreadyBurned)
+	}
+	if _, err := os.Stat(filepath.Join(store.Dir, BurnedMarkerFile)); err == nil {
+		return ValidatedChain{}, nil, StartEventPayload{}, fmt.Errorf("finalize: %w", ErrAlreadyBurned)
+	}
+	if state, reason := terminatedStateOf(chain); state != "" {
+		if state == "invalidated" && reason != "" {
+			return ValidatedChain{}, nil, StartEventPayload{}, fmt.Errorf("finalize: lineage is invalidated: %s", reason)
+		}
+		return ValidatedChain{}, nil, StartEventPayload{}, fmt.Errorf("finalize: lineage is %s", state)
+	}
+	verdict := store.Validate()
+	if !verdict.Valid {
+		return ValidatedChain{}, nil, StartEventPayload{}, fmt.Errorf("finalize: chain integrity failed: %s", verdict.Reason)
+	}
+	revisions := recordRevisions(chain)
+	genesis := chain.Records[0]
+	if genesis.Operation != "start_review" {
+		return ValidatedChain{}, nil, StartEventPayload{}, errors.New("finalize: lineage genesis is not a review start")
+	}
+	var plan StartEventPayload
+	if err := json.Unmarshal(genesis.Payload, &plan); err != nil || strings.TrimSpace(plan.CommitSHA) == "" {
+		return ValidatedChain{}, nil, StartEventPayload{}, errors.New("finalize: genesis event does not carry a review subject")
+	}
+	return chain, revisions, plan, nil
+}
+
+func deriveAndPublishSnapshot(repo string, chain *ValidatedChain, plan StartEventPayload, store *Store, revisions []string) (finalizeData, PersistedReceipt, string, error) {
+	data, err := deriveFinalizeData(repo, *chain, plan)
+	if err != nil {
+		return finalizeData{}, PersistedReceipt{}, "", err
+	}
+	cum, _ := deriveCumulativeAndFixDelta(*chain, store)
+	priorCum := 0
+	if ref := receiptArtifactOf(*chain); ref != nil {
+		if r, err := readReceiptFile(store, completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}); err == nil {
+			priorCum = r.CumulativeCorrectionLines
+		}
+	}
+	if err := ensureCorrectionEmitted(store, chain, cum, priorCum); err != nil {
+		return finalizeData{}, PersistedReceipt{}, "", err
+	}
+	data.cumulativeCorrectionLines = cum
+	data.fixDeltaHash = FixDeltaHashForSnapshot(data.baseTree, data.candidateTree, data.manifestDigest, cum, nil)
+	receipt := buildReceipt(chain.LineageID, revisions[0], chain.HeadHash, data)
+	if err := receipt.Validate(); err != nil {
+		return finalizeData{}, PersistedReceipt{}, "", fmt.Errorf("finalize: receipt validation failed: %w", err)
+	}
+	path, err := writeReceiptLocked(store, receipt)
+	if err != nil {
+		return finalizeData{}, PersistedReceipt{}, "", fmt.Errorf("finalize: persist receipt: %w", err)
+	}
+	return data, receipt, path, nil
+}
+
+func ensureCorrectionEmitted(store *Store, chain *ValidatedChain, cum, priorCum int) error {
+	if cum <= priorCum {
+		return nil
+	}
+	if !shouldEmitCorrection(*chain, cum) {
+		return nil
+	}
+	payload, _ := json.Marshal(map[string]int{"lines_changed": cum - priorCum, "cumulative": cum})
+	newRev, err := store.appendLocked(chain.HeadHash, Record{
+		Operation: "correction",
+		Role:      string(model.RoleLead),
+		Actor:     string(model.RoleLead),
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Payload:   payload,
+	})
+	if err != nil {
+		return fmt.Errorf("finalize: emit correction event: %w", err)
+	}
+	chain.Records = append(chain.Records, Record{Operation: "correction", Payload: payload})
+	chain.HeadHash = newRev
+	chain.Count++
+	return nil
+}
+
+func shouldEmitCorrection(chain ValidatedChain, cum int) bool {
+	lastCompleteIdx := lastCompleteIndex(chain)
+	if lastCompleteIdx < 0 {
+		return false
+	}
+	for i := len(chain.Records) - 1; i > lastCompleteIdx; i-- {
+		if chain.Records[i].Operation != "correction" {
+			continue
+		}
+		var p struct {
+			Cumulative *int `json:"cumulative"`
+		}
+		if err := json.Unmarshal(chain.Records[i].Payload, &p); err == nil && p.Cumulative != nil && *p.Cumulative == cum {
+			return false
+		}
+		break
+	}
+	return true
+}
+
+func burnAndGateDelivery(store *Store, chainHead string, receipt PersistedReceipt, receiptPath string) (string, error) {
+	eventPayload, err := json.Marshal(completeEventPayload{
+		Schema: FinalizeEventSchema, ReceiptPath: receiptPath, ReceiptHash: receipt.ReceiptHash,
+	})
+	if err != nil {
+		return "", fmt.Errorf("finalize: marshal complete event: %w", err)
+	}
+	revision, err := store.appendLocked(chainHead, Record{
+		Operation: CompleteReviewOperation,
+		Role:      string(model.RoleLead),
+		Actor:     string(model.RoleLead),
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Payload:   eventPayload,
+	})
+	if err != nil {
+		return "", fmt.Errorf("finalize: append complete_review event: %w", err)
+	}
+	if BurnEnabled {
+		if err := burnReceiptLocked(store, receipt, receiptPath, revision); err != nil {
+			return "", fmt.Errorf("finalize: burn receipt: %w", err)
+		}
+	}
+	return revision, nil
+}
+
+func enqueueSyncIfNeeded(store *Store, chain ValidatedChain) error {
+	return nil
 }
 
 // burnEventPayload is the durable burn_review event payload.
@@ -959,6 +1039,51 @@ func finalizeIdempotent(store *Store, repo string, chain ValidatedChain, revisio
 // manifest, per-slot subject/hash re-verification, and the aggregate evidence
 // and resolved-finding sets.
 func deriveFinalizeData(repo string, chain ValidatedChain, plan StartEventPayload) (finalizeData, error) {
+	slots, capturedNames, err := deriveHeader(chain, plan)
+	if err != nil {
+		return finalizeData{}, err
+	}
+	return deriveBody(repo, chain, plan, slots, capturedNames)
+}
+
+func deriveHeader(chain ValidatedChain, plan StartEventPayload) ([]finalizeSlot, []string, error) {
+	slots, err := collectFinalizeSlots(chain)
+	if err != nil {
+		return nil, nil, err
+	}
+	capturedNames := sortedUniqueLensNames(slots)
+	if err := validateFinalizeSelection(plan, capturedNames, chain); err != nil {
+		return nil, nil, err
+	}
+	return slots, capturedNames, nil
+}
+
+func deriveBody(repo string, chain ValidatedChain, plan StartEventPayload, slots []finalizeSlot, capturedNames []string) (finalizeData, error) {
+	baseTree, candidateTree, manifestDigest, err := deriveFinalizeManifest(repo, plan)
+	if err != nil {
+		return finalizeData{}, err
+	}
+	if err := verifyFinalizeSlots(slots, chain, plan, baseTree, candidateTree, manifestDigest); err != nil {
+		return finalizeData{}, err
+	}
+	evidenceHash, resolved, standing, err := collectFinalizeEvidence(slots, chain)
+	if err != nil {
+		return finalizeData{}, err
+	}
+	riskTier := plan.RiskTier
+	if riskTier == "" {
+		riskTier = deriveRiskTier(len(capturedNames))
+	}
+	return finalizeData{
+		baseTree: baseTree, candidateTree: candidateTree, manifestDigest: manifestDigest,
+		slots: slots, evidenceHash: evidenceHash, resolvedIDs: resolved,
+		standingIDs: standing, riskTier: riskTier,
+		cumulativeCorrectionLines: 0,
+		fixDeltaHash:              EmptyFixDeltaHash,
+	}, nil
+}
+
+func collectFinalizeSlots(chain ValidatedChain) ([]finalizeSlot, error) {
 	slots := make([]finalizeSlot, 0)
 	for index := range chain.Records {
 		rec := &chain.Records[index]
@@ -967,15 +1092,11 @@ func deriveFinalizeData(repo string, chain ValidatedChain, plan StartEventPayloa
 		}
 		var payload lensResultEventPayload
 		if err := json.Unmarshal(rec.Payload, &payload); err != nil {
-			return finalizeData{}, fmt.Errorf("finalize: lens result event %d is malformed: %w", index, err)
+			return nil, fmt.Errorf("finalize: lens result event %d is malformed: %w", index, err)
 		}
 		if payload.AdmissionDecision != AdmissionCompleted {
-			return finalizeData{}, fmt.Errorf(
-				"finalize: lens slot %q order %d was not captured (admission %s); all selected lens slots must be captured before finalize",
-				payload.Lens, payload.SelectedOrder, payload.AdmissionDecision)
+			return nil, fmt.Errorf("finalize: lens slot %q order %d was not captured (admission %s); all selected lens slots must be captured before finalize", payload.Lens, payload.SelectedOrder, payload.AdmissionDecision)
 		}
-		// A capture superseded by a later dispose/reopen is discarded evidence:
-		// it must not count toward parity, evidence hashing, or the receipt.
 		if isSlotSuperseded(chain, index, payload.Lens, payload.SelectedOrder) {
 			continue
 		}
@@ -987,84 +1108,112 @@ func deriveFinalizeData(repo string, chain ValidatedChain, plan StartEventPayloa
 		}
 		return slots[i].payload.Lens < slots[j].payload.Lens
 	})
-	capturedNames := sortedUniqueLensNames(slots)
+	return slots, nil
+}
+
+func validateFinalizeSelection(plan StartEventPayload, capturedNames []string, chain ValidatedChain) error {
 	declared, err := canonicalStrings(plan.SelectedLenses, "selected lens")
 	if err != nil {
-		return finalizeData{}, fmt.Errorf("finalize: frozen lens selection is not canonical: %w", err)
+		return fmt.Errorf("finalize: frozen lens selection is not canonical: %w", err)
 	}
 	if len(declared) > 0 {
-		// A disposed slot in the frozen lens plan without a fresh capture
-		// blocks finalize: the disposition is a discard, never a silent pass.
 		disposed, err := disposedSlots(chain)
 		if err != nil {
-			return finalizeData{}, fmt.Errorf("finalize: slot disposition state: %w", err)
+			return fmt.Errorf("finalize: slot disposition state: %w", err)
 		}
 		for _, slot := range disposed {
 			if containsString(declared, slot.Lens) {
-				return finalizeData{}, fmt.Errorf(
-					"finalize: lens slot %q order %d is disposed and not re-captured; run 'biggz review capture-result' for that slot again before finalize",
-					slot.Lens, slot.Order)
+				return fmt.Errorf("finalize: lens slot %q order %d is disposed and not re-captured; run 'biggz review capture-result' for that slot again before finalize", slot.Lens, slot.Order)
 			}
 		}
-		if !equalStrings(declared, capturedNames) {
-			missing := stringDifference(declared, capturedNames)
-			if len(missing) > 0 {
-				return finalizeData{}, fmt.Errorf("finalize: missing captured lens slot(s): %s; capture every selected lens before finalize", strings.Join(missing, ", "))
-			}
-			return finalizeData{}, fmt.Errorf("finalize: captured lens slot(s) outside the frozen selection: %s", strings.Join(stringDifference(capturedNames, declared), ", "))
+		if equalStrings(declared, capturedNames) {
+			return nil
 		}
-	} else if len(capturedNames) == 0 {
-		return finalizeData{}, errors.New("finalize: no captured lens slots; nothing to finalize")
+		missing := stringDifference(declared, capturedNames)
+		if len(missing) > 0 {
+			return fmt.Errorf("finalize: missing captured lens slot(s): %s; capture every selected lens before finalize", strings.Join(missing, ", "))
+		}
+		return fmt.Errorf("finalize: captured lens slot(s) outside the frozen selection: %s", strings.Join(stringDifference(capturedNames, declared), ", "))
 	}
+	if len(capturedNames) == 0 {
+		return errors.New("finalize: no captured lens slots; nothing to finalize")
+	}
+	return nil
+}
+
+func deriveFinalizeManifest(repo string, plan StartEventPayload) (string, string, string, error) {
 	baseTree, candidateTree, entries, err := candidateManifest(repo, plan.CommitSHA)
 	if err != nil {
-		return finalizeData{}, fmt.Errorf("finalize: derive candidate manifest: %w", err)
+		return "", "", "", fmt.Errorf("finalize: derive candidate manifest: %w", err)
 	}
 	manifestDigest, err := ChangedPathManifestDigest(entries)
 	if err != nil {
-		return finalizeData{}, fmt.Errorf("finalize: manifest digest: %w", err)
+		return "", "", "", fmt.Errorf("finalize: manifest digest: %w", err)
 	}
+	return baseTree, candidateTree, manifestDigest, nil
+}
+
+func verifyFinalizeSlots(slots []finalizeSlot, chain ValidatedChain, plan StartEventPayload, baseTree, candidateTree, manifestDigest string) error {
 	for _, slot := range slots {
-		payload := slot.payload
-		want, err := NewArtifactSubject(chain.LineageID, payload.ExpectedRevision, plan.CommitSHA,
-			baseTree, candidateTree, manifestDigest, payload.Lens, payload.SelectedOrder)
-		if err != nil {
-			return finalizeData{}, fmt.Errorf("finalize: re-derive artifact subject for lens %q order %d: %w", payload.Lens, payload.SelectedOrder, err)
-		}
-		if want.SubjectHash != payload.SubjectHash {
-			return finalizeData{}, fmt.Errorf(
-				"finalize: lens %q order %d subject hash does not match the frozen candidate binding", payload.Lens, payload.SelectedOrder)
-		}
-		if payload.ManifestSHA256 != manifestDigest {
-			return finalizeData{}, fmt.Errorf(
-				"finalize: lens %q order %d manifest digest does not match the frozen candidate", payload.Lens, payload.SelectedOrder)
-		}
-		if payloadSHA256(payload.CanonicalPayload) != payload.CanonicalPayloadSHA256 {
-			return finalizeData{}, fmt.Errorf(
-				"finalize: lens %q order %d canonical payload hash mismatch", payload.Lens, payload.SelectedOrder)
-		}
-		if LensResultHash(payload.Result) != payload.ResultHash {
-			return finalizeData{}, fmt.Errorf(
-				"finalize: lens %q order %d result hash mismatch", payload.Lens, payload.SelectedOrder)
+		if err := verifySingleFinalizeSlot(slot, chain, plan, baseTree, candidateTree, manifestDigest); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+func verifySingleFinalizeSlot(slot finalizeSlot, chain ValidatedChain, plan StartEventPayload, baseTree, candidateTree, manifestDigest string) error {
+	payload := slot.payload
+	want, err := NewArtifactSubject(chain.LineageID, payload.ExpectedRevision, plan.CommitSHA,
+		baseTree, candidateTree, manifestDigest, payload.Lens, payload.SelectedOrder)
+	if err != nil {
+		return fmt.Errorf("finalize: re-derive artifact subject for lens %q order %d: %w", payload.Lens, payload.SelectedOrder, err)
+	}
+	if want.SubjectHash != payload.SubjectHash {
+		return fmt.Errorf("finalize: lens %q order %d subject hash does not match the frozen candidate binding", payload.Lens, payload.SelectedOrder)
+	}
+	if payload.ManifestSHA256 != manifestDigest {
+		return fmt.Errorf("finalize: lens %q order %d manifest digest does not match the frozen candidate", payload.Lens, payload.SelectedOrder)
+	}
+	if payloadSHA256(payload.CanonicalPayload) != payload.CanonicalPayloadSHA256 {
+		return fmt.Errorf("finalize: lens %q order %d canonical payload hash mismatch", payload.Lens, payload.SelectedOrder)
+	}
+	if LensResultHash(payload.Result) != payload.ResultHash {
+		return fmt.Errorf("finalize: lens %q order %d result hash mismatch", payload.Lens, payload.SelectedOrder)
+	}
+	return nil
+}
+
+func collectFinalizeEvidence(slots []finalizeSlot, chain ValidatedChain) (string, []string, []string, error) {
 	evidenceHash, err := reviewEvidenceHash(slots)
 	if err != nil {
-		return finalizeData{}, err
+		return "", nil, nil, err
 	}
-	// Machine-enforced refutation (Debt D2 parity with gentle-ai's
-	// ClassifyEvidence/ApplyRefuterOutcomes): severe candidate-causal findings
-	// with inferential evidence must carry a refuter verdict BEFORE finalize;
-	// deterministic findings are auto-blocking and never refutable; unknown or
-	// insufficient evidence escalates and refutation never papers over it.
 	refState, err := collectRefutationState(chain)
 	if err != nil {
-		return finalizeData{}, fmt.Errorf("finalize: refutation state: %w", err)
+		return "", nil, nil, fmt.Errorf("finalize: refutation state: %w", err)
 	}
 	if refState.batches > 1 {
-		return finalizeData{}, fmt.Errorf(
-			"finalize: lineage carries %d refutation batches; exactly one read-only refuter batch per review", refState.batches)
+		return "", nil, nil, fmt.Errorf("finalize: lineage carries %d refutation batches; exactly one read-only refuter batch per review", refState.batches)
 	}
+	if err := validateSevereFindings(slots); err != nil {
+		return "", nil, nil, err
+	}
+	if err := validateRefutationCoverage(refState, chain); err != nil {
+		return "", nil, nil, err
+	}
+	resolved, err := canonicalStrings(refState.refuted, "resolved finding id")
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("finalize: refuted finding IDs: %w", err)
+	}
+	standing, err := canonicalStrings(refState.stands, "standing finding id")
+	if err != nil {
+		return "", nil, nil, fmt.Errorf("finalize: standing finding IDs: %w", err)
+	}
+	return evidenceHash, resolved, standing, nil
+}
+
+func validateSevereFindings(slots []finalizeSlot) error {
 	for _, slot := range slots {
 		for _, finding := range slot.payload.Result.Findings {
 			if !isSevereSeverity(finding.Severity) {
@@ -1072,54 +1221,31 @@ func deriveFinalizeData(repo string, chain ValidatedChain, plan StartEventPayloa
 			}
 			switch finding.CausalDisposition {
 			case CausalPreExisting, CausalBaseOnly:
-				continue // follow-ups, never escalated or refuted
+				continue
 			case CausalUnknown:
-				return finalizeData{}, fmt.Errorf(
-					"finalize: finding [%s] has unknown causal disposition; the lineage must escalate — re-capture the lens before finalize (refutation cannot cover it)",
-					finding.ID)
+				return fmt.Errorf("finalize: finding [%s] has unknown causal disposition; the lineage must escalate — re-capture the lens before finalize (refutation cannot cover it)", finding.ID)
 			}
 			if finding.EvidenceClass == EvidenceInsufficient {
-				return finalizeData{}, fmt.Errorf(
-					"finalize: finding [%s] has insufficient evidence class; the lineage must escalate — re-capture the lens before finalize (refutation cannot cover it)",
-					finding.ID)
+				return fmt.Errorf("finalize: finding [%s] has insufficient evidence class; the lineage must escalate — re-capture the lens before finalize (refutation cannot cover it)", finding.ID)
 			}
 		}
 	}
-	if len(refState.requirements) > 0 {
-		covered := make(map[string]struct{}, len(refState.verdicts))
-		for _, verdict := range refState.verdicts {
-			covered[verdict.FindingID] = struct{}{}
-		}
-		pending := stringDifference(refState.requirements, sortedSetKeys(covered))
-		if len(pending) > 0 {
-			return finalizeData{}, fmt.Errorf(
-				"finalize: refutation pending for finding(s): %s; run 'biggz review refute %s --input -' to register the refuter batch before finalize",
-				strings.Join(pending, ", "), chain.LineageID)
-		}
+	return nil
+}
+
+func validateRefutationCoverage(refState refutationState, chain ValidatedChain) error {
+	if len(refState.requirements) == 0 {
+		return nil
 	}
-	resolved, err := canonicalStrings(refState.refuted, "resolved finding id")
-	if err != nil {
-		return finalizeData{}, fmt.Errorf("finalize: refuted finding IDs: %w", err)
+	covered := make(map[string]struct{}, len(refState.verdicts))
+	for _, verdict := range refState.verdicts {
+		covered[verdict.FindingID] = struct{}{}
 	}
-	standing, err := canonicalStrings(refState.stands, "standing finding id")
-	if err != nil {
-		return finalizeData{}, fmt.Errorf("finalize: standing finding IDs: %w", err)
+	pending := stringDifference(refState.requirements, sortedSetKeys(covered))
+	if len(pending) == 0 {
+		return nil
 	}
-	// The receipt records the tier the classifier froze at start. Legacy
-	// lineages started before the classifier carry no risk_tier and fall back
-	// to the lens-count proxy so their receipts keep replaying unchanged.
-	riskTier := plan.RiskTier
-	if riskTier == "" {
-		riskTier = deriveRiskTier(len(capturedNames))
-	}
-	// Cumulative ledger defaults to 0; caller may override via deriveCumulativeAndFixDelta when store is available.
-	return finalizeData{
-		baseTree: baseTree, candidateTree: candidateTree, manifestDigest: manifestDigest,
-		slots: slots, evidenceHash: evidenceHash, resolvedIDs: resolved,
-		standingIDs: standing, riskTier: riskTier,
-		cumulativeCorrectionLines: 0,
-		fixDeltaHash:              EmptyFixDeltaHash,
-	}, nil
+	return fmt.Errorf("finalize: refutation pending for finding(s): %s; run 'biggz review refute %s --input -' to register the refuter batch before finalize", strings.Join(pending, ", "), chain.LineageID)
 }
 
 // buildReceipt assembles the terminal receipt from the derived finalize data.
