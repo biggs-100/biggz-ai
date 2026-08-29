@@ -27,6 +27,31 @@ import (
 	"github.com/biggs-100/biggz-ai/model"
 )
 
+// RuntimeCandidateUnavailableError is the typed error for unavailable runtime candidate.
+type RuntimeCandidateUnavailableError struct {
+	Cause error
+}
+
+func (e *RuntimeCandidateUnavailableError) Error() string {
+	if e.Cause != nil {
+		return e.Cause.Error()
+	}
+	return "runtime candidate unavailable"
+}
+
+func (e *RuntimeCandidateUnavailableError) Unwrap() error { return e.Cause }
+
+func wrapRuntimeCandidateUnavailable(err error) error {
+	if err == nil {
+		return &RuntimeCandidateUnavailableError{Cause: errors.New("runtime candidate unavailable")}
+	}
+	var target *RuntimeCandidateUnavailableError
+	if errors.As(err, &target) {
+		return err
+	}
+	return &RuntimeCandidateUnavailableError{Cause: err}
+}
+
 // Event/artifact schema and layout constants.
 const (
 	LensResultOperation   = "lens_result"
@@ -501,7 +526,10 @@ func candidateManifest(repo, commitSHA string) (string, string, []ChangedPathMan
 	}
 	candidate, err := gitOutput(exec.Command("git", repoArgs("rev-parse", commitSHA+"^{tree}")...))
 	if err != nil {
-		return "", "", nil, fmt.Errorf("capture binding: resolve candidate tree for %s: %w", commitSHA, err)
+		return "", "", nil, wrapRuntimeCandidateUnavailable(fmt.Errorf("capture binding: resolve candidate tree for %s: %w", commitSHA, err))
+	}
+	if strings.TrimSpace(candidate) == "" {
+		return "", "", nil, wrapRuntimeCandidateUnavailable(fmt.Errorf("capture binding: candidate tree for %s is empty", commitSHA))
 	}
 	base, err := gitOutput(exec.Command("git", repoArgs("rev-parse", commitSHA+"^^{tree}")...))
 	if err != nil {
@@ -511,6 +539,9 @@ func candidateManifest(repo, commitSHA string) (string, string, []ChangedPathMan
 		"--no-ext-diff", "--no-textconv", "--ignore-submodules=none", base, candidate, "--")...))
 	if err != nil {
 		return "", "", nil, fmt.Errorf("capture binding: render candidate manifest: %w", err)
+	}
+	if strings.Contains(raw, "Binary files") {
+		return "", "", nil, wrapRuntimeCandidateUnavailable(fmt.Errorf("binary files differ: %q", raw))
 	}
 	entries, err := parseRawManifest([]byte(raw))
 	if err != nil {

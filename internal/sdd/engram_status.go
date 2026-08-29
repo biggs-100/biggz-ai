@@ -361,6 +361,9 @@ func collectBigMemChanges(workspaceRoot string) ([]ChangeStatus, error) {
 // reconstructing ChangeStatus via deriveBigMemChangeStatus. When the BigMem
 // DB is absent or has no sdd/ observations, it returns (nil,nil,nil).
 func collectBigMemChangesWithArchive(workspaceRoot string, includeInstructions bool) (active []ChangeStatus, archived []ChangeStatus, err error) {
+	if declaredArtifactStore(workspaceRoot) == "" {
+		return nil, nil, nil
+	}
 	db, err := openBigMemDB()
 	if err != nil || db == nil {
 		return nil, nil, nil

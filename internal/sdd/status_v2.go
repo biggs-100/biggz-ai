@@ -18,6 +18,7 @@ const (
 	ArtifactStoreOpenSpec ArtifactStore = "openspec"
 	ArtifactStoreEngram   ArtifactStore = "engram"
 	ArtifactStoreBigMem   ArtifactStore = "bigmem"
+	ArtifactStoreHybrid   ArtifactStore = "hybrid"
 	ArtifactStoreNone     ArtifactStore = "none"
 )
 
@@ -25,6 +26,8 @@ const (
 // Drift that renames one without the other must be detected by orchestrator.test.go.
 
 func IsEngramStore(s ArtifactStore) bool { return s == ArtifactStoreEngram || s == ArtifactStoreBigMem }
+
+func IsHybridStore(s ArtifactStore) bool { return s == ArtifactStoreHybrid }
 
 func NormalizeArtifactStore(s ArtifactStore) ArtifactStore {
 	if s == ArtifactStoreBigMem {
@@ -286,7 +289,7 @@ func artifactStateKeys(store ArtifactStore) []string {
 }
 
 func isValidArtifactStore(value ArtifactStore) bool {
-	return value == ArtifactStoreOpenSpec || value == ArtifactStoreEngram || value == ArtifactStoreBigMem || value == ArtifactStoreNone
+	return value == ArtifactStoreOpenSpec || value == ArtifactStoreEngram || value == ArtifactStoreBigMem || value == ArtifactStoreHybrid || value == ArtifactStoreNone
 }
 
 func isValidArtifactState(value ArtifactState) bool {

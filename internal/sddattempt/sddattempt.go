@@ -2072,11 +2072,10 @@ func Rescope(params RescopeParams) (*ResetResult, error) {
 		if newMaxLines == 0 {
 			newMaxLines = oldMaxLines
 		}
-		if newMaxAttempts > oldMaxAttempts || newMaxLines > oldMaxLines {
-			return fmt.Errorf("%w: rescope must narrow, got %d->%d attempts %d->%d lines", ErrRuntimeRescopeWidened, oldMaxAttempts, newMaxAttempts, oldMaxLines, newMaxLines)
-		}
-		if newMaxAttempts < oldMaxAttempts && newMaxAttempts < len(store.Attempts) {
-			return fmt.Errorf("%w: cumulative %d attempts already exceeds new ceiling %d", ErrRuntimeRescopeWidened, len(store.Attempts), newMaxAttempts)
+		cumAttempts := len(store.Attempts)
+		cumLines := store.CumulativeChangedLines
+		if !(newMaxAttempts > cumAttempts && newMaxLines > cumLines) {
+			return fmt.Errorf("%w: rescope wedge requires newMaxAttempts > cumAttempts (%d) && newMaxLines > cumLines (%d), got %d->%d attempts %d->%d lines", ErrRuntimeRescopeWidened, cumAttempts, cumLines, oldMaxAttempts, newMaxAttempts, oldMaxLines, newMaxLines)
 		}
 		// Cumulative never reset — preserve attempts slice
 		store.MaxAttempts = newMaxAttempts

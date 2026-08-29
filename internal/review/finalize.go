@@ -293,7 +293,10 @@ func DeriveOriginalChangedLines(repo, commitSHA, baseRef string) (base string, l
 	}
 	candidate, err := gitOutput(exec.Command("git", repoArgs("rev-parse", target+"^{tree}")...))
 	if err != nil {
-		return "", 0, fmt.Errorf("derive original changed lines: resolve candidate tree for %s: %w", commitSHA, err)
+		return "", 0, wrapRuntimeCandidateUnavailable(fmt.Errorf("derive original changed lines: resolve candidate tree for %s: %w", commitSHA, err))
+	}
+	if strings.TrimSpace(candidate) == "" {
+		return "", 0, wrapRuntimeCandidateUnavailable(fmt.Errorf("derive original changed lines: candidate tree for %s is empty", commitSHA))
 	}
 	if baseRef != "" {
 		base, err = gitOutput(exec.Command("git", repoArgs("rev-parse", baseRef+"^{tree}")...))
@@ -327,6 +330,9 @@ func countNumstatLines(raw string) (int, error) {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
+		}
+		if strings.Contains(line, "Binary files") {
+			return 0, wrapRuntimeCandidateUnavailable(fmt.Errorf("binary files differ: %q", line))
 		}
 		fields := strings.Split(line, "\t")
 		if len(fields) < 2 {
