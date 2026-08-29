@@ -8,6 +8,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -104,48 +105,93 @@ func overlaps(funcStart, funcEnd int, ranges []lineRange) bool {
 	return false
 }
 
+// parseHunkHeader parses a single hunk header line and extracts the new-file range.
+// Header example: "@@ -10,7 +10,7 @@ func Foo()".
+func parseHunkHeader(line string) (lineRange, bool) {
+	if !strings.HasPrefix(line, "@@") {
+		return lineRange{}, false
+	}
+	parts := strings.Fields(line)
+	for _, p := range parts {
+		if !strings.HasPrefix(p, "+") {
+			continue
+		}
+		s := strings.TrimPrefix(p, "+")
+		seg := strings.Split(s, ",")
+		startStr := seg[0]
+		start, err := strconv.Atoi(startStr)
+		if err != nil || start <= 0 {
+			return lineRange{}, false
+		}
+		count := 1
+		if len(seg) > 1 {
+			if c, err := strconv.Atoi(seg[1]); err == nil {
+				count = c
+			}
+		}
+		if count == 0 {
+			return lineRange{}, false
+		}
+		end := start + count - 1
+		if end < start {
+			end = start
+		}
+		return lineRange{start: start, end: end}, true
+	}
+	return lineRange{}, false
+}
+
 // parseHunkHeaders extracts changed line ranges (new file) from unified diff hunk headers.
 // Headers look like "@@ -oldStart,oldLen +newStart,newLen @@".
 func parseHunkHeaders(diff string) []lineRange {
 	var out []lineRange
-	lines := strings.Split(diff, "\n")
-	for _, l := range lines {
-		if !strings.HasPrefix(l, "@@") {
-			continue
-		}
-		// Example: @@ -10,7 +10,7 @@ func Foo() {
-		parts := strings.Fields(l)
-		for _, p := range parts {
-			if strings.HasPrefix(p, "+") {
-				s := strings.TrimPrefix(p, "+")
-				// s is "10,7" or "10"
-				seg := strings.Split(s, ",")
-				startStr := seg[0]
-				start, err := strconv.Atoi(startStr)
-				if err != nil || start <= 0 {
-					continue
-				}
-				count := 1
-				if len(seg) > 1 {
-					c, err := strconv.Atoi(seg[1])
-					if err == nil {
-						count = c
-					}
-				}
-				if count == 0 {
-					// Deletion-only hunk (no new lines) -> no overlap
-					continue
-				}
-				end := start + count - 1
-				if end < start {
-					end = start
-				}
-				out = append(out, lineRange{start: start, end: end})
-				break
-			}
+	for line := range strings.SplitSeq(diff, "\n") {
+		if r, ok := parseHunkHeader(line); ok {
+			out = append(out, r)
 		}
 	}
 	return out
+}
+
+// isThresholdOffender reports whether cyclomatic or cognitive exceeds thresholds.
+func isThresholdOffender(cyclo, cog int) bool {
+	return cyclo > CyclomaticThreshold || cog > CognitiveThreshold
+}
+
+// offendersInHunk scans a single file content and returns offenders whose
+// function ranges overlap the changed intervals.
+func offendersInHunk(path string, content []byte, changedRanges []lineRange) []Offender {
+	var offenders []Offender
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, content, parser.ParseComments)
+	if err != nil {
+		return offenders
+	}
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		start := fset.Position(fn.Pos()).Line
+		end := fset.Position(fn.End()).Line
+		if !overlaps(start, end, changedRanges) {
+			continue
+		}
+		cyclo := gocyclo.Complexity(fn)
+		cog := gocognit.Complexity(fn)
+		if !isThresholdOffender(cyclo, cog) {
+			continue
+		}
+		offenders = append(offenders, Offender{
+			Package:    packageForPath(path),
+			File:       path,
+			Function:   funcName(fn),
+			Line:       start,
+			Cyclomatic: cyclo,
+			Cognitive:  cog,
+		})
+	}
+	return offenders
 }
 
 // resolveRepoPath joins repo root with rel path and reports a warning when repo is relative.
@@ -182,6 +228,105 @@ func findFuncAtLine(path string, src []byte, targetLine int) (string, int, bool)
 	return "", 0, false
 }
 
+
+
+// resolveContentForPath resolves file content and changed ranges for a path.
+// Returns content, ranges, warnings, and whether the file should be skipped.
+func resolveContentForPath(path string, input lens.LensInput) ([]byte, []lineRange, []string, bool) {
+	hunkBytes, hasHunk := input.Hunks[path]
+	_, inSummary := input.DiffSummary[path]
+	inPaths := slices.Contains(input.Paths, path)
+	isDiff := hasHunk && bytes.Contains(hunkBytes, []byte("@@"))
+
+	if isDiff {
+		return resolveDiffContent(path, string(hunkBytes), input.Repo)
+	}
+	if hasHunk && len(hunkBytes) > 0 {
+		return resolveHunkBytesContent(path, hunkBytes, inSummary, inPaths, input.Repo)
+	}
+	return resolvePlainContent(path, inSummary, inPaths, input.Repo)
+}
+
+func resolveDiffContent(path, diffContent, repo string) ([]byte, []lineRange, []string, bool) {
+	var warnings []string
+	changedRanges := parseHunkHeaders(diffContent)
+	if len(changedRanges) == 0 {
+		warnings = append(warnings, fmt.Sprintf("warning: file %s has diff but no mappable hunk ranges (rename or ambiguous diff)", path)) //lint:ignore no-fmtSprintf
+		return nil, nil, warnings, true
+	}
+	if repo != "" {
+		repoPath, warn := resolveRepoPath(repo, path)
+		if warn != "" {
+			warnings = append(warnings, warn)
+		}
+		b, err := os.ReadFile(repoPath)
+		if err != nil {
+			b2, err2 := os.ReadFile(path)
+			if err2 != nil {
+				warnings = append(warnings, fmt.Sprintf("warning: cannot read %s for diff-based complexity: %v", path, err)) //lint:ignore no-fmtSprintf
+				return nil, nil, warnings, true
+			}
+			if filepath.IsAbs(repo) {
+				warnings = append(warnings, fmt.Sprintf("warning: fallback relative read for %s", path)) //lint:ignore no-fmtSprintf
+			}
+			return b2, changedRanges, warnings, false
+		}
+		return b, changedRanges, warnings, false
+	}
+	warnings = append(warnings, fmt.Sprintf("warning: no repo to resolve diff for %s", path)) //lint:ignore no-fmtSprintf
+	return nil, nil, warnings, true
+}
+
+func resolveHunkBytesContent(path string, hunkBytes []byte, inSummary, inPaths bool, repo string) ([]byte, []lineRange, []string, bool) {
+	var warnings []string
+	content := hunkBytes
+	var changedRanges []lineRange
+	if inSummary || inPaths {
+		changedRanges = []lineRange{{start: 1, end: 1000000}}
+	} else {
+		return nil, nil, warnings, true
+	}
+	fsetTmp := token.NewFileSet()
+	if _, err := parser.ParseFile(fsetTmp, path, content, parser.ParseComments); err != nil && repo != "" {
+		repoPath, warn := resolveRepoPath(repo, path)
+		if warn != "" {
+			warnings = append(warnings, warn)
+		}
+		if b, err2 := os.ReadFile(repoPath); err2 == nil {
+			content = b
+		}
+	}
+	return content, changedRanges, warnings, false
+}
+
+func resolvePlainContent(path string, inSummary, inPaths bool, repo string) ([]byte, []lineRange, []string, bool) {
+	var warnings []string
+	var content []byte
+	if repo != "" {
+		repoPath, warn := resolveRepoPath(repo, path)
+		if warn != "" {
+			warnings = append(warnings, warn)
+		}
+		b, err := os.ReadFile(repoPath)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("warning: cannot read %s: %v", path, err)) //lint:ignore no-fmtSprintf
+			return nil, nil, warnings, true
+		}
+		content = b
+	} else {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("warning: cannot read %s: %v", path, err)) //lint:ignore no-fmtSprintf
+			return nil, nil, warnings, true
+		}
+		content = b
+	}
+	if inSummary || inPaths {
+		return content, []lineRange{{start: 1, end: 1000000}}, warnings, false
+	}
+	return nil, nil, warnings, true
+}
+
 // offendersFromHunks derives complexity offenders that intersect the PR hunk set.
 // It reuses the single DeriveRiskInput derivation (Paths/DiffSummary/Hunks/Repo) and
 // does NOT run a second git diff. It is hunk-bounded: only functions whose
@@ -189,16 +334,7 @@ func findFuncAtLine(path string, src []byte, targetLine int) (string, int, bool)
 // and *_test.go filtering is applied; test files are collected but flagged for
 // informational treatment by the caller. Warnings include repo-path fallback and
 // rename/no-map cases.
-func offendersFromHunks(input lens.LensInput) ([]Offender, []string) {
-	var warnings []string
-	var offenders []Offender
-
-	// Git repo path selection: absolute preferred, relative fallback warns (threat matrix)
-	if input.Repo != "" && !filepath.IsAbs(input.Repo) {
-		warnings = append(warnings, fmt.Sprintf("warning: repo path %q is relative, using fallback", input.Repo)) //lint:ignore no-fmtSprintf
-	}
-
-	// Build set of candidate paths: Paths ∪ DiffSummary keys ∪ Hunks keys
+func collectCandidatePaths(input lens.LensInput) []string {
 	pathSet := make(map[string]struct{})
 	for _, p := range input.Paths {
 		pathSet[p] = struct{}{}
@@ -213,159 +349,11 @@ func offendersFromHunks(input lens.LensInput) ([]Offender, []string) {
 	for p := range pathSet {
 		paths = append(paths, p)
 	}
-	sort.Strings(paths)
+	slices.Sort(paths)
+	return paths
+}
 
-	for _, p := range paths {
-		if !isCriticalPackage(p) {
-			continue
-		}
-		if !strings.HasSuffix(strings.ToLower(p), ".go") {
-			continue
-		}
-		// Determine if file is considered changed (has diff entry or in Paths)
-		_, inSummary := input.DiffSummary[p]
-		inPaths := false
-		for _, cp := range input.Paths {
-			if cp == p {
-				inPaths = true
-				break
-			}
-		}
-		inHunks := false
-		hunkBytes, hasHunk := input.Hunks[p]
-		if hasHunk {
-			inHunks = true
-		}
-		// If file has no evidence of being changed, skip (grandfather: legacy not in hunk)
-		if !inSummary && !inPaths && !inHunks {
-			continue
-		}
-		// If rename or ambiguous diff (e.g., hunk indicates rename but no mappable func), spec says warn and not block.
-		// Detect rename: if diff summary missing but path appears only via Hunks with diff that has no parseable hunks?
-		// We emit warning when Hunks contains diff-like content but we cannot map to changed funcs.
-		var content []byte
-		var changedRanges []lineRange
-		isDiff := hasHunk && bytes.Contains(hunkBytes, []byte("@@"))
-		if isDiff {
-			changedRanges = parseHunkHeaders(string(hunkBytes))
-			if len(changedRanges) == 0 {
-				warnings = append(warnings, fmt.Sprintf("warning: file %s has diff but no mappable hunk ranges (rename or ambiguous diff)", p)) //lint:ignore no-fmtSprintf
-				continue
-			}
-			// Diff hunk != source; need repo file for parsing
-			if input.Repo != "" {
-				repoPath, warn := resolveRepoPath(input.Repo, p)
-				if warn != "" {
-					warnings = append(warnings, warn)
-				}
-				b, err := os.ReadFile(repoPath)
-				if err != nil {
-					// Fallback: try relative
-					b2, err2 := os.ReadFile(p)
-					if err2 != nil {
-						warnings = append(warnings, fmt.Sprintf("warning: cannot read %s for diff-based complexity: %v", p, err)) //lint:ignore no-fmtSprintf
-						continue
-					}
-					content = b2
-					if !filepath.IsAbs(input.Repo) {
-						// already warned
-					} else {
-						warnings = append(warnings, fmt.Sprintf("warning: fallback relative read for %s", p)) //lint:ignore no-fmtSprintf
-					}
-				} else {
-					content = b
-				}
-			} else {
-				// No repo, cannot map diff without source; warn fallback
-				warnings = append(warnings, fmt.Sprintf("warning: no repo to resolve diff for %s", p)) //lint:ignore no-fmtSprintf
-				continue
-			}
-		} else if hasHunk && len(hunkBytes) > 0 {
-			// Hunk is treated as file content (full file) or partial snippet
-			// Try to parse as file; if fails, try repo fallback
-			content = hunkBytes
-			// Consider whole file as changed interval if file is in changed set.
-			// For full-file hunks, we treat every line as changed (conservative) but still bounded at file level.
-			// To enable function-level hunk-bounded when Hunks is full file, we need more info; we treat as changed if file is in Paths/DiffSummary.
-			if inSummary || inPaths {
-				changedRanges = []lineRange{{start: 1, end: 1000000}}
-			} else {
-				continue
-			}
-			// Validate it parses as Go; if not, fallback to repo
-			fsetTmp := token.NewFileSet()
-			if _, err := parser.ParseFile(fsetTmp, p, content, parser.ParseComments); err != nil && input.Repo != "" {
-				repoPath, warn := resolveRepoPath(input.Repo, p)
-				if warn != "" {
-					warnings = append(warnings, warn)
-				}
-				if b, err2 := os.ReadFile(repoPath); err2 == nil {
-					content = b
-				}
-			}
-		} else {
-			// No hunk content, try reading from repo or working dir
-			if input.Repo != "" {
-				repoPath, warn := resolveRepoPath(input.Repo, p)
-				if warn != "" {
-					warnings = append(warnings, warn)
-				}
-				b, err := os.ReadFile(repoPath)
-				if err != nil {
-					warnings = append(warnings, fmt.Sprintf("warning: cannot read %s: %v", p, err)) //lint:ignore no-fmtSprintf
-					continue
-				}
-				content = b
-			} else {
-				b, err := os.ReadFile(p)
-				if err != nil {
-					warnings = append(warnings, fmt.Sprintf("warning: cannot read %s: %v", p, err)) //lint:ignore no-fmtSprintf
-					continue
-				}
-				content = b
-			}
-			if inSummary || inPaths {
-				changedRanges = []lineRange{{start: 1, end: 1000000}}
-			} else {
-				continue
-			}
-		}
-
-		if len(content) == 0 {
-			continue
-		}
-		fset := token.NewFileSet()
-		f, err := parser.ParseFile(fset, p, content, parser.ParseComments)
-		if err != nil {
-			// Parser failure is handled by lens separately; not complexity
-			continue
-		}
-		for _, decl := range f.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
-			}
-			start := fset.Position(fn.Pos()).Line
-			end := fset.Position(fn.End()).Line
-			if !overlaps(start, end, changedRanges) {
-				continue
-			}
-			cyclo := gocyclo.Complexity(fn)
-			cog := gocognit.Complexity(fn)
-			if cyclo > CyclomaticThreshold || cog > CognitiveThreshold {
-				// For test files, still collect but caller will treat as informational
-				offenders = append(offenders, Offender{
-					Package:    packageForPath(p),
-					File:       p,
-					Function:   funcName(fn),
-					Line:       start,
-					Cyclomatic: cyclo,
-					Cognitive:  cog,
-				})
-			}
-		}
-	}
-
+func sortOffenders(offenders []Offender) {
 	sort.Slice(offenders, func(i, j int) bool {
 		mi := offenders[i].Cyclomatic
 		if offenders[i].Cognitive > mi {
@@ -383,6 +371,33 @@ func offendersFromHunks(input lens.LensInput) ([]Offender, []string) {
 		}
 		return offenders[i].Line < offenders[j].Line
 	})
+}
 
+func offendersFromHunks(input lens.LensInput) ([]Offender, []string) {
+	var warnings []string
+	if input.Repo != "" && !filepath.IsAbs(input.Repo) {
+		warnings = append(warnings, fmt.Sprintf("warning: repo path %q is relative, using fallback", input.Repo)) //lint:ignore no-fmtSprintf
+	}
+	paths := collectCandidatePaths(input)
+	var offenders []Offender
+	for _, p := range paths {
+		if !isCriticalPackage(p) || !strings.HasSuffix(strings.ToLower(p), ".go") {
+			continue
+		}
+		_, inSummary := input.DiffSummary[p]
+		inPaths := slices.Contains(input.Paths, p)
+		_, inHunks := input.Hunks[p]
+		if !inSummary && !inPaths && !inHunks {
+			continue
+		}
+		content, changedRanges, warns, skip := resolveContentForPath(p, input)
+		warnings = append(warnings, warns...)
+		if skip || len(content) == 0 {
+			continue
+		}
+		offs := offendersInHunk(p, content, changedRanges)
+		offenders = append(offenders, offs...)
+	}
+	sortOffenders(offenders)
 	return offenders, warnings
 }
