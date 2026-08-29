@@ -266,28 +266,50 @@ func validateAndLock(name string, data []byte, eventFiles map[string]bool) *Inte
 	return nil
 }
 
+func isEventFileName(name string) bool { return len(name) == 64 }
+
+func collectEventsFromDir(path string, skip func(os.DirEntry) bool) ([]string, error) {
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, e := range entries {
+		if skip(e) {
+			continue
+		}
+		if isEventFileName(e.Name()) {
+			names = append(names, e.Name())
+		}
+	}
+	return names, nil
+}
+
+func skipEventsDirEntry(e os.DirEntry) bool { return e.IsDir() || strings.HasSuffix(e.Name(), ".tmp") }
+
+func skipLegacyDirEntry(e os.DirEntry) bool {
+	if e.IsDir() || strings.HasSuffix(e.Name(), ".tmp") {
+		return true
+	}
+	switch e.Name() {
+	case "HEAD", ".lock", "v1", BurnedMarkerFile:
+		return true
+	}
+	return false
+}
+
 func collectStoreEventFiles(eventsDir, dir string) (map[string]bool, *IntegrityVerdict) {
 	eventFiles := make(map[string]bool)
-	if entries, err := os.ReadDir(eventsDir); err == nil {
-		for _, e := range entries {
-			if e.IsDir() || strings.HasSuffix(e.Name(), ".tmp") {
-				continue
-			}
-			if len(e.Name()) == 64 {
-				eventFiles[e.Name()] = true
-			}
+	if names, err := collectEventsFromDir(eventsDir, skipEventsDirEntry); err == nil {
+		for _, n := range names {
+			eventFiles[n] = true
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, &IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read dir: %v", err)}
 	}
-	if entries, err := os.ReadDir(dir); err == nil {
-		for _, e := range entries {
-			if e.IsDir() || e.Name() == "HEAD" || e.Name() == ".lock" || strings.HasSuffix(e.Name(), ".tmp") || e.Name() == "v1" || e.Name() == BurnedMarkerFile {
-				continue
-			}
-			if len(e.Name()) == 64 {
-				eventFiles[e.Name()] = true
-			}
+	if names, err := collectEventsFromDir(dir, skipLegacyDirEntry); err == nil {
+		for _, n := range names {
+			eventFiles[n] = true
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, &IntegrityVerdict{Valid: false, Reason: fmt.Sprintf("read dir: %v", err)}

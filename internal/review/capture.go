@@ -88,24 +88,73 @@ func DecodeRepositoryContext(payload []byte) (RepositoryContext, error) {
 
 // Validate verifies every identity field in the context echoes the binding.
 func (c RepositoryContext) Validate(binding CaptureBinding) error {
+	if err := c.validateLineageField(binding); err != nil {
+		return err
+	}
+	if err := c.validateTargetField(binding); err != nil {
+		return err
+	}
+	if err := c.validateRevisionField(binding); err != nil {
+		return err
+	}
+	if err := c.validateLensField(binding); err != nil {
+		return err
+	}
+	if err := c.validateOrderField(binding); err != nil {
+		return err
+	}
+	if err := c.validateSubjectHashField(binding); err != nil {
+		return err
+	}
+	if err := c.validateProjectField(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c RepositoryContext) validateLineageField(binding CaptureBinding) error {
 	if c.LineageID != "" && c.LineageID != binding.LineageID {
 		return fmt.Errorf("repository context lineage_id %q does not match --lineage %q", c.LineageID, binding.LineageID)
 	}
+	return nil
+}
+
+func (c RepositoryContext) validateTargetField(binding CaptureBinding) error {
 	if c.TargetIdentity != "" && c.TargetIdentity != binding.TargetIdentity {
 		return fmt.Errorf("repository context target_identity %q does not match --target %q", c.TargetIdentity, binding.TargetIdentity)
 	}
+	return nil
+}
+
+func (c RepositoryContext) validateRevisionField(binding CaptureBinding) error {
 	if c.ExpectedRevision != "" && c.ExpectedRevision != binding.ExpectedRevision {
 		return fmt.Errorf("repository context expected_revision %q does not match --expected-revision %q", c.ExpectedRevision, binding.ExpectedRevision)
 	}
+	return nil
+}
+
+func (c RepositoryContext) validateLensField(binding CaptureBinding) error {
 	if c.Lens != "" && c.Lens != binding.Lens {
 		return fmt.Errorf("repository context lens %q does not match --lens %q", c.Lens, binding.Lens)
 	}
+	return nil
+}
+
+func (c RepositoryContext) validateOrderField(binding CaptureBinding) error {
 	if c.Order != nil && *c.Order != binding.Order {
 		return fmt.Errorf("repository context order %d does not match --order %d", *c.Order, binding.Order)
 	}
+	return nil
+}
+
+func (c RepositoryContext) validateSubjectHashField(binding CaptureBinding) error {
 	if c.SubjectHash != "" && c.SubjectHash != binding.SubjectHash {
 		return fmt.Errorf("repository context subject_hash %q does not match --subject-hash %q", c.SubjectHash, binding.SubjectHash)
 	}
+	return nil
+}
+
+func (c RepositoryContext) validateProjectField() error {
 	if c.Project != "" && c.Repo != "" && repositoryProjectOf(c.Repo) != c.Project {
 		return fmt.Errorf("repository context project %q does not match repository %q", c.Project, c.Repo)
 	}
@@ -233,6 +282,110 @@ func Preflight(binding CaptureBinding) (*PreflightResult, error) {
 	}, nil
 }
 
+// captureAdmission holds the admitted result ready for persistence.
+type captureAdmission struct {
+	canonical        ArtifactLensResult
+	admission        ArtifactAdmission
+	canonicalPayload json.RawMessage
+}
+
+func captureValidatePayload(rawPayload []byte) ([]byte, AdmissionDecision, error) {
+	if err := validateReviewerResultPayload(rawPayload); err != nil {
+		return nil, "", err
+	}
+	payload, decision, err := ExtractBoundedSingleJSONObject(rawPayload, ArtifactResultLimit)
+	if err != nil {
+		return nil, decision, fmt.Errorf("reviewer artifact admission %s: %w", decision, err)
+	}
+	return payload, decision, nil
+}
+
+func captureDecodeAndCheckLens(payload []byte, binding CaptureBinding) (ReviewerResult, error) {
+	decoded, err := decodeReviewerResult(payload)
+	if err != nil {
+		return ReviewerResult{}, fmt.Errorf("decode reviewer result: %w", err)
+	}
+	if decoded.Lens != "" && decoded.Lens != binding.Lens {
+		return ReviewerResult{}, fmt.Errorf("reviewer result lens %q does not match the selected lens %q", decoded.Lens, binding.Lens)
+	}
+	return decoded, nil
+}
+
+func captureRunAdmission(subject ArtifactSubject, entries []ChangedPathManifestEntry, binding CaptureBinding, payload []byte, decoded ReviewerResult) (captureAdmission, error) {
+	canonical, admission, canonicalPayload, err := Admit(AdmissionRequest{
+		ExpectedSubject:   subject,
+		EchoedSubjectHash: decoded.SubjectHash,
+		Inspection:        decoded.Inspection,
+		Result:            ArtifactLensResult{Lens: binding.Lens, Findings: decoded.Findings, Evidence: decoded.Evidence},
+		RawPayload:        payload,
+		ManifestPaths:     ManifestPaths(entries),
+	})
+	if err != nil {
+		return captureAdmission{}, err
+	}
+	return captureAdmission{canonical: canonical, admission: admission, canonicalPayload: canonicalPayload}, nil
+}
+
+func capturePrepareAdmission(binding CaptureBinding, subject ArtifactSubject, entries []ChangedPathManifestEntry, rawPayload []byte) (captureAdmission, error) {
+	payload, _, err := captureValidatePayload(rawPayload)
+	if err != nil {
+		return captureAdmission{}, err
+	}
+	decoded, err := captureDecodeAndCheckLens(payload, binding)
+	if err != nil {
+		return captureAdmission{}, err
+	}
+	return captureRunAdmission(subject, entries, binding, payload, decoded)
+}
+
+func captureHandleOccupiedSlot(occupant *Record, binding CaptureBinding, subject ArtifactSubject, adm captureAdmission, store *Store) (CapturedArtifact, bool, error) {
+	var existing lensResultEventPayload
+	if err := json.Unmarshal(occupant.Payload, &existing); err != nil {
+		return CapturedArtifact{}, false, fmt.Errorf("capture: existing lens result is malformed: %w", err)
+	}
+	if existing.Lens != binding.Lens || existing.SelectedOrder != binding.Order {
+		return CapturedArtifact{}, false, fmt.Errorf("capture: review slot for revision %s is occupied by lens %q order %d", binding.ExpectedRevision, existing.Lens, existing.SelectedOrder)
+	}
+	if existing.SubjectHash != subject.SubjectHash || !bytes.Equal(existing.CanonicalPayload, adm.canonicalPayload) {
+		return CapturedArtifact{}, false, fmt.Errorf("capture: captured reviewer result already exists with different canonical bytes; the slot for lens %q order %d at revision %s is immutable", binding.Lens, binding.Order, binding.ExpectedRevision)
+	}
+	artifact := buildCapturedArtifact(store, subject, adm.admission, occupantRevision(occupant), existing.ManifestPath)
+	return artifact, true, nil
+}
+
+func captureAppendNewResult(fresh ValidatedChain, binding CaptureBinding, subject ArtifactSubject, entries []ChangedPathManifestEntry, adm captureAdmission, store *Store) (CapturedArtifact, error) {
+	if fresh.HeadHash != binding.ExpectedRevision {
+		return CapturedArtifact{}, fmt.Errorf("capture: expected revision %s does not match the current head %s", binding.ExpectedRevision, fresh.HeadHash)
+	}
+	manifestPath, err := writeManifestLocked(store, subject, entries)
+	if err != nil {
+		return CapturedArtifact{}, fmt.Errorf("capture: persist manifest: %w", err)
+	}
+	eventPayload, err := json.Marshal(lensResultEventPayload{
+		Schema: LensResultEventSchema, LineageID: subject.LineageID, ExpectedRevision: binding.ExpectedRevision,
+		SubjectHash: subject.SubjectHash, Lens: subject.Lens, SelectedOrder: subject.SelectedOrder,
+		AdmissionDecision: adm.admission.Decision, Inspection: canonicalInspection(entries),
+		CanonicalPayload: adm.canonicalPayload, CanonicalPayloadSHA256: adm.admission.CanonicalSHA256,
+		ResultHash: adm.admission.ResultHash, CandidateCausalFindingIDs: adm.admission.CandidateCausalFindingIDs,
+		ManifestSHA256: subject.ChangedPathManifestSHA256, ManifestPath: manifestPath,
+		Result: adm.canonical,
+	})
+	if err != nil {
+		return CapturedArtifact{}, fmt.Errorf("capture: marshal lens result event: %w", err)
+	}
+	revision, err := store.appendLocked(fresh.HeadHash, Record{
+		Operation: LensResultOperation,
+		Role:      captureResultRole,
+		Actor:     captureResultRole,
+		Timestamp: time.Now().Format(time.RFC3339Nano),
+		Payload:   eventPayload,
+	})
+	if err != nil {
+		return CapturedArtifact{}, fmt.Errorf("capture: append lens result event: %w", err)
+	}
+	return buildCapturedArtifact(store, subject, adm.admission, revision, manifestPath), nil
+}
+
 // Capture runs admission over the raw reviewer payload and, on success,
 // persists the durable artifact slot (lens_result event) and manifest into
 // the lineage event store.
@@ -245,88 +398,31 @@ func Capture(binding CaptureBinding, rawPayload []byte) (CaptureOutcome, error) 
 	if err != nil {
 		return CaptureOutcome{}, fmt.Errorf("capture: open store: %w", err)
 	}
-	if err := validateReviewerResultPayload(rawPayload); err != nil {
-		return CaptureOutcome{}, err
-	}
-	payload, decision, err := ExtractBoundedSingleJSONObject(rawPayload, ArtifactResultLimit)
-	if err != nil {
-		return CaptureOutcome{}, fmt.Errorf("reviewer artifact admission %s: %w", decision, err)
-	}
-	decoded, err := decodeReviewerResult(payload)
-	if err != nil {
-		return CaptureOutcome{}, fmt.Errorf("decode reviewer result: %w", err)
-	}
-	if decoded.Lens != "" && decoded.Lens != binding.Lens {
-		return CaptureOutcome{}, fmt.Errorf("reviewer result lens %q does not match the selected lens %q", decoded.Lens, binding.Lens)
-	}
-	canonical, admission, canonicalPayload, err := Admit(AdmissionRequest{
-		ExpectedSubject:   subject,
-		EchoedSubjectHash: decoded.SubjectHash,
-		Inspection:        decoded.Inspection,
-		Result:            ArtifactLensResult{Lens: binding.Lens, Findings: decoded.Findings, Evidence: decoded.Evidence},
-		RawPayload:        payload,
-		ManifestPaths:     ManifestPaths(entries),
-	})
+	adm, err := capturePrepareAdmission(binding, subject, entries, rawPayload)
 	if err != nil {
 		return CaptureOutcome{}, err
 	}
-
 	var artifact CapturedArtifact
 	idempotent := false
 	err = WithFileLock(store.Dir, func() error {
-		// Re-load the chain under the lock so the slot check and the append
-		// observe one consistent head.
 		fresh, err := store.LoadChain()
 		if err != nil {
 			return fmt.Errorf("capture: load chain: %w", err)
 		}
 		if occupant := findLensResultEvent(fresh, binding.ExpectedRevision); occupant != nil {
-			var existing lensResultEventPayload
-			if err := json.Unmarshal(occupant.Payload, &existing); err != nil {
-				return fmt.Errorf("capture: existing lens result is malformed: %w", err)
+			a, done, err := captureHandleOccupiedSlot(occupant, binding, subject, adm, store)
+			if err != nil {
+				return err
 			}
-			if existing.Lens != binding.Lens || existing.SelectedOrder != binding.Order {
-				return fmt.Errorf("capture: review slot for revision %s is occupied by lens %q order %d",
-					binding.ExpectedRevision, existing.Lens, existing.SelectedOrder)
-			}
-			if existing.SubjectHash != subject.SubjectHash || !bytes.Equal(existing.CanonicalPayload, canonicalPayload) {
-				return fmt.Errorf("capture: captured reviewer result already exists with different canonical bytes; the slot for lens %q order %d at revision %s is immutable",
-					binding.Lens, binding.Order, binding.ExpectedRevision)
-			}
-			artifact = buildCapturedArtifact(store, subject, admission, occupantRevision(occupant), existing.ManifestPath)
-			idempotent = true
+			artifact = a
+			idempotent = done
 			return nil
 		}
-		if fresh.HeadHash != binding.ExpectedRevision {
-			return fmt.Errorf("capture: expected revision %s does not match the current head %s", binding.ExpectedRevision, fresh.HeadHash)
-		}
-		manifestPath, err := writeManifestLocked(store, subject, entries)
+		a, err := captureAppendNewResult(fresh, binding, subject, entries, adm, store)
 		if err != nil {
-			return fmt.Errorf("capture: persist manifest: %w", err)
+			return err
 		}
-		eventPayload, err := json.Marshal(lensResultEventPayload{
-			Schema: LensResultEventSchema, LineageID: subject.LineageID, ExpectedRevision: binding.ExpectedRevision,
-			SubjectHash: subject.SubjectHash, Lens: subject.Lens, SelectedOrder: subject.SelectedOrder,
-			AdmissionDecision: admission.Decision, Inspection: canonicalInspection(entries),
-			CanonicalPayload: canonicalPayload, CanonicalPayloadSHA256: admission.CanonicalSHA256,
-			ResultHash: admission.ResultHash, CandidateCausalFindingIDs: admission.CandidateCausalFindingIDs,
-			ManifestSHA256: subject.ChangedPathManifestSHA256, ManifestPath: manifestPath,
-			Result: canonical,
-		})
-		if err != nil {
-			return fmt.Errorf("capture: marshal lens result event: %w", err)
-		}
-		revision, err := store.appendLocked(fresh.HeadHash, Record{
-			Operation: LensResultOperation,
-			Role:      captureResultRole,
-			Actor:     captureResultRole,
-			Timestamp: time.Now().Format(time.RFC3339Nano),
-			Payload:   eventPayload,
-		})
-		if err != nil {
-			return fmt.Errorf("capture: append lens result event: %w", err)
-		}
-		artifact = buildCapturedArtifact(store, subject, admission, revision, manifestPath)
+		artifact = a
 		return nil
 	})
 	if err != nil {

@@ -794,41 +794,77 @@ func (err *FindingLocationError) Error() string {
 	return fmt.Sprintf("invalid reviewer finding location %q: %s", err.Location, err.Reason)
 }
 
-// parseFindingLocation splits "repository/path:<positive-line>" into its
-// canonical logical path and line, or returns a typed reason.
-func parseFindingLocation(location string) (string, int, error) {
+func splitFindingLocation(location string) (string, string, error) {
 	separator := strings.LastIndexByte(location, ':')
 	if separator <= 0 || separator == len(location)-1 {
-		return "", 0, &FindingLocationError{Location: location, Reason: FindingLocationExpectedPathAndLine}
+		return "", "", &FindingLocationError{Location: location, Reason: FindingLocationExpectedPathAndLine}
 	}
-	lineSuffix := location[separator+1:]
-	line, err := strconv.Atoi(lineSuffix)
+	return location[:separator], location[separator+1:], nil
+}
+
+func parseFindingLine(location, suffix string) (int, error) {
+	line, err := strconv.Atoi(suffix)
 	if err != nil {
-		return "", 0, &FindingLocationError{Location: location, Reason: FindingLocationLineNotInteger}
+		return 0, &FindingLocationError{Location: location, Reason: FindingLocationLineNotInteger}
 	}
-	for index := range lineSuffix {
-		if lineSuffix[index] < '0' || lineSuffix[index] > '9' {
+	if err := validateFindingLineDigits(location, suffix, line); err != nil {
+		return 0, err
+	}
+	if line <= 0 {
+		return 0, &FindingLocationError{Location: location, Reason: FindingLocationLineNotPositive}
+	}
+	return line, nil
+}
+
+func validateFindingLineDigits(location, suffix string, line int) error {
+	for index := range suffix {
+		if suffix[index] < '0' || suffix[index] > '9' {
 			reason := FindingLocationLineNotInteger
 			if line <= 0 {
 				reason = FindingLocationLineNotPositive
 			}
-			return "", 0, &FindingLocationError{Location: location, Reason: reason}
+			return &FindingLocationError{Location: location, Reason: reason}
 		}
 	}
-	if line <= 0 {
-		return "", 0, &FindingLocationError{Location: location, Reason: FindingLocationLineNotPositive}
-	}
-	logicalPath := location[:separator]
-	if len(logicalPath) >= 3 && logicalPath[1] == ':' && logicalPath[2] == '/' &&
-		((logicalPath[0] >= 'A' && logicalPath[0] <= 'Z') || (logicalPath[0] >= 'a' && logicalPath[0] <= 'z')) {
-		return "", 0, &FindingLocationError{Location: location, Reason: FindingLocationPathNotRelative}
+	return nil
+}
+
+func validateFindingPath(location, logicalPath string) (string, error) {
+	if isWindowsAbsolutePath(logicalPath) {
+		return "", &FindingLocationError{Location: location, Reason: FindingLocationPathNotRelative}
 	}
 	if _, pathErr := normalizeLogicalPath(strings.ReplaceAll(logicalPath, ":", "/")); pathErr != nil {
-		return "", 0, &FindingLocationError{Location: location, Reason: FindingLocationPathNotCanonical}
+		return "", &FindingLocationError{Location: location, Reason: FindingLocationPathNotCanonical}
 	}
 	canonical, pathErr := normalizeLogicalPath(logicalPath)
 	if pathErr != nil || canonical != logicalPath {
-		return "", 0, &FindingLocationError{Location: location, Reason: FindingLocationPathNotCanonical}
+		return "", &FindingLocationError{Location: location, Reason: FindingLocationPathNotCanonical}
+	}
+	return canonical, nil
+}
+
+func isWindowsAbsolutePath(path string) bool {
+	if len(path) < 3 || path[1] != ':' || path[2] != '/' {
+		return false
+	}
+	first := path[0]
+	return (first >= 'A' && first <= 'Z') || (first >= 'a' && first <= 'z')
+}
+
+// parseFindingLocation splits "repository/path:<positive-line>" into its
+// canonical logical path and line, or returns a typed reason.
+func parseFindingLocation(location string) (string, int, error) {
+	logicalPath, lineSuffix, err := splitFindingLocation(location)
+	if err != nil {
+		return "", 0, err
+	}
+	line, err := parseFindingLine(location, lineSuffix)
+	if err != nil {
+		return "", 0, err
+	}
+	canonical, err := validateFindingPath(location, logicalPath)
+	if err != nil {
+		return "", 0, err
 	}
 	return canonical, line, nil
 }

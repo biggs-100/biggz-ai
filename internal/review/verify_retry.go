@@ -42,74 +42,84 @@ type VerificationReport struct {
 // a lineage. When the receipt artifact is missing but the chain carries a
 // complete_review reference, the receipt is re-materialized from the canonical
 // payloads (hash-identical to the original content-addressed file).
+func retryValidateChain(store *Store, chain ValidatedChain, report *VerificationReport) bool {
+	if chain.Count == 0 {
+		report.Reasons = append(report.Reasons, "lineage has no events")
+		return false
+	}
+	verdict := store.Validate()
+	if !verdict.Valid {
+		report.Reasons = append(report.Reasons, "chain integrity: FAIL — "+verdict.Reason)
+		return false
+	}
+	report.ChainValid = true
+	return true
+}
+
+func retryLoadReceipt(store *Store, chain ValidatedChain, repo string, report *VerificationReport) (PersistedReceipt, *ReceiptArtifactRef, bool) {
+	ref := receiptArtifactOf(chain)
+	if ref == nil {
+		report.Reasons = append(report.Reasons, "receipt match: FAIL — the lineage carries no complete_review receipt reference; it is not finalized")
+		return PersistedReceipt{}, nil, false
+	}
+	evt := completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}
+	stored, err := readReceiptFile(store, evt)
+	if err == nil {
+		return stored, ref, true
+	}
+	if !os.IsNotExist(err) {
+		report.Reasons = append(report.Reasons, "receipt match: FAIL — persisted receipt artifact is invalid ("+err.Error()+"); it is not overwritten (tamper signal)")
+		return PersistedReceipt{}, nil, false
+	}
+	rebuilt, reErr := reMaterializeReceipt(store, repo, chain)
+	if reErr != nil {
+		report.Reasons = append(report.Reasons, "receipt match: FAIL — receipt artifact missing and re-materialization failed ("+reErr.Error()+")")
+		return PersistedReceipt{}, nil, false
+	}
+	report.ReceiptReMaterialized = true
+	report.Reasons = append(report.Reasons, "receipt re-materialized from canonical payloads")
+	return rebuilt, ref, true
+}
+
+func retryVerifyReceiptMatch(store *Store, repo string, chain ValidatedChain, stored PersistedReceipt, ref *ReceiptArtifactRef, report *VerificationReport) bool {
+	expected, err := deriveExpectedReceipt(store, repo, chain)
+	if err != nil {
+		report.Reasons = append(report.Reasons, "receipt match: FAIL — "+err.Error())
+		return false
+	}
+	if !reflect.DeepEqual(stored, expected) {
+		report.Reasons = append(report.Reasons, "receipt match: FAIL — persisted receipt does not match the current lineage state")
+		return false
+	}
+	report.ReceiptMatch = true
+	report.ReceiptPath = ref.Path
+	report.ReceiptHash = ref.Hash
+	return true
+}
+
+func retryLocked(store *Store, repo string, report *VerificationReport) error {
+	chain, err := store.LoadChain()
+	if err != nil {
+		return fmt.Errorf("retry-final-verification: load chain: %w", err)
+	}
+	if !retryValidateChain(store, chain, report) {
+		return nil
+	}
+	stored, ref, ok := retryLoadReceipt(store, chain, repo, report)
+	if !ok {
+		return nil
+	}
+	retryVerifyReceiptMatch(store, repo, chain, stored, ref, report)
+	return nil
+}
+
 func RetryFinalVerification(repo, lineageID string) (VerificationReport, error) {
 	store, err := Open(repo, lineageID)
 	if err != nil {
 		return VerificationReport{}, fmt.Errorf("retry-final-verification: open store: %w", err)
 	}
-	report := VerificationReport{
-		Schema: VerificationRetrySchema, LineageID: lineageID,
-		Reasons: make([]string, 0, 3),
-	}
-	err = WithFileLock(store.Dir, func() error {
-		chain, err := store.LoadChain()
-		if err != nil {
-			return fmt.Errorf("retry-final-verification: load chain: %w", err)
-		}
-		if chain.Count == 0 {
-			report.Reasons = append(report.Reasons, "lineage has no events")
-			return nil
-		}
-		verdict := store.Validate()
-		if !verdict.Valid {
-			report.Reasons = append(report.Reasons, "chain integrity: FAIL — "+verdict.Reason)
-			return nil
-		}
-		report.ChainValid = true
-
-		ref := receiptArtifactOf(chain)
-		if ref == nil {
-			report.Reasons = append(report.Reasons,
-				"receipt match: FAIL — the lineage carries no complete_review receipt reference; it is not finalized")
-			return nil
-		}
-		evt := completeEventPayload{Schema: FinalizeEventSchema, ReceiptPath: ref.Path, ReceiptHash: ref.Hash}
-		stored, err := readReceiptFile(store, evt)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				// The receipt exists but fails verification: tamper signal.
-				// It is never overwritten — re-materialization would mask it.
-				report.Reasons = append(report.Reasons,
-					"receipt match: FAIL — persisted receipt artifact is invalid ("+err.Error()+"); it is not overwritten (tamper signal)")
-				return nil
-			}
-			// Receipt missing: re-materialize from the canonical payloads.
-			rebuilt, reErr := reMaterializeReceipt(store, repo, chain)
-			if reErr != nil {
-				report.Reasons = append(report.Reasons,
-					"receipt match: FAIL — receipt artifact missing and re-materialization failed ("+reErr.Error()+")")
-				return nil
-			}
-			stored = rebuilt
-			report.ReceiptReMaterialized = true
-			report.Reasons = append(report.Reasons, "receipt re-materialized from canonical payloads")
-		}
-		expected, err := deriveExpectedReceipt(store, repo, chain)
-		if err != nil {
-			report.Reasons = append(report.Reasons, "receipt match: FAIL — "+err.Error())
-			return nil
-		}
-		if !reflect.DeepEqual(stored, expected) {
-			report.Reasons = append(report.Reasons,
-				"receipt match: FAIL — persisted receipt does not match the current lineage state")
-			return nil
-		}
-		report.ReceiptMatch = true
-		report.ReceiptPath = ref.Path
-		report.ReceiptHash = ref.Hash
-		return nil
-	})
-	if err != nil {
+	report := VerificationReport{Schema: VerificationRetrySchema, LineageID: lineageID, Reasons: make([]string, 0, 3)}
+	if err := WithFileLock(store.Dir, func() error { return retryLocked(store, repo, &report) }); err != nil {
 		return VerificationReport{}, err
 	}
 	report.Passed = report.ChainValid && report.ReceiptMatch
