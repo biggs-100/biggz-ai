@@ -55,7 +55,7 @@ func ensureSyncJournalTables(db *sql.DB) {
 	if !has {
 		_, _ = db.Exec(`DROP TABLE IF EXISTS sync_mutations`)
 	}
-	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS sync_mutations (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, project TEXT, entity TEXT, entity_key TEXT, op TEXT, payload TEXT, source TEXT, disposition TEXT DEFAULT 'pending', created_at TEXT)`)
+	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS sync_mutations (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT, project TEXT, entity TEXT, entity_key TEXT, op TEXT, payload TEXT, source TEXT, disposition TEXT DEFAULT 'pending', created_at TEXT, evidence TEXT)`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_mutations_project_seq ON sync_mutations(project, seq)`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_mutations_disposition ON sync_mutations(disposition)`)
 	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS sync_state (target_key TEXT NOT NULL, project TEXT NOT NULL, lifecycle TEXT NOT NULL DEFAULT 'idle', last_enqueued_seq INTEGER DEFAULT 0, last_acked_seq INTEGER DEFAULT 0, last_pulled_seq INTEGER DEFAULT 0, consecutive_failures INTEGER DEFAULT 0, backoff_until TEXT, lease_owner TEXT, lease_until TEXT, reason_code TEXT, PRIMARY KEY (target_key, project))`)
@@ -63,6 +63,42 @@ func ensureSyncJournalTables(db *sql.DB) {
 	_, _ = db.Exec(`CREATE TABLE IF NOT EXISTS sync_apply_deferred (seq INTEGER PRIMARY KEY, sync_id TEXT UNIQUE, project TEXT, entity TEXT, entity_key TEXT, payload TEXT, attempts INTEGER DEFAULT 1, next_attempt_at TEXT, created_at TEXT)`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_apply_deferred_project ON sync_apply_deferred(project)`)
 	_, _ = db.Exec(`CREATE INDEX IF NOT EXISTS idx_sync_apply_deferred_sync_id ON sync_apply_deferred(sync_id)`)
+	if rows, err := db.Query(`PRAGMA table_info(sync_mutations)`); err == nil {
+		defer rows.Close()
+		hasEv := false
+		for rows.Next() {
+			var cid int
+			var n, t string
+			var nn, pk int
+			var d sql.NullString
+			_ = rows.Scan(&cid, &n, &t, &nn, &d, &pk)
+			if n == "evidence" {
+				hasEv = true
+			}
+		}
+		if !hasEv {
+			_, _ = db.Exec(`ALTER TABLE sync_mutations ADD COLUMN evidence TEXT`)
+		}
+	}
+}
+func ValidateSyncMutation(m SyncMutation) error {
+	if strings.TrimSpace(m.Entity) == "" {
+		return errors.New("entity required")
+	}
+	if strings.TrimSpace(m.EntityKey) == "" {
+		return errors.New("entity_key required")
+	}
+	if len(m.Payload) > 0 && !json.Valid(m.Payload) {
+		return errors.New("payload_tamper: invalid JSON")
+	}
+	return nil
+}
+func IsIrreparablePayload(p []byte) (bool, string) {
+	if len(p) > 0 && !json.Valid(p) {
+		ev, _ := json.Marshal(map[string]string{"reason": "payload_tamper", "error": "invalid JSON"})
+		return true, string(ev)
+	}
+	return false, ""
 }
 
 func relationApplyFailureSyncID(project, entityKey string, payload []byte) string {
@@ -448,6 +484,184 @@ func (s *Store) AckSyncMutation(seq int64) error {
 	_, _ = s.db.Exec(`INSERT OR IGNORE INTO sync_enrolled_projects (project, enrolled_at) VALUES (?, ?)`, proj, now)
 	return nil
 }
+// QuarantineIrreparable deterministically quarantines an irreparable mutation.
+// Sets disposition='quarantined', stores evidence JSON, advances cursor (last_acked_seq),
+// and marks sync_state degraded+reason_code. Idempotent and deterministic.
+func (s *Store) QuarantineIrreparable(seq int64, evidence string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if evidence != "" && !json.Valid([]byte(evidence)) {
+		return fmt.Errorf("evidence must be valid JSON")
+	}
+	var project, disp string
+	if err := s.db.QueryRow(`SELECT project, disposition FROM sync_mutations WHERE seq=?`, seq).Scan(&project, &disp); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("seq %d not found", seq)
+		}
+		return err
+	}
+	if disp == "quarantined" {
+		return nil
+	}
+	if _, err := s.db.Exec(`UPDATE sync_mutations SET disposition='quarantined', evidence=? WHERE seq=?`, evidence, seq); err != nil {
+		if strings.Contains(err.Error(), "no such column") {
+			_, _ = s.db.Exec(`ALTER TABLE sync_mutations ADD COLUMN evidence TEXT`)
+			if _, err2 := s.db.Exec(`UPDATE sync_mutations SET disposition='quarantined', evidence=? WHERE seq=?`, evidence, seq); err2 != nil {
+				return err2
+			}
+		} else {
+			return err
+		}
+	}
+	tk := project
+	if tk == "" {
+		tk = "default"
+	}
+	reason := "quarantine"
+	if evidence != "" {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(evidence), &m); err == nil {
+			if v, ok := m["reason"].(string); ok && v != "" {
+				reason = v
+			} else if v, ok := m["reason_code"].(string); ok && v != "" {
+				reason = v
+			}
+		}
+	}
+	_, _ = s.db.Exec(`INSERT INTO sync_state (target_key, project, lifecycle, last_acked_seq, reason_code, consecutive_failures) VALUES (?, ?, 'degraded', ?, ?, 0) ON CONFLICT(target_key, project) DO UPDATE SET lifecycle='degraded', reason_code=excluded.reason_code, last_acked_seq=CASE WHEN excluded.last_acked_seq > sync_state.last_acked_seq THEN excluded.last_acked_seq ELSE sync_state.last_acked_seq END`, tk, project, seq, reason)
+	return nil
+}
+
+// AcquireSyncLease tries to acquire a lease for targetKey/owner with TTL.
+// Succeeds only if no active lease, lease expired, or same owner (renew). Other owner is denied.
+func (s *Store) AcquireSyncLease(targetKey, owner string, ttl time.Duration) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if strings.TrimSpace(owner) == "" {
+		return false, fmt.Errorf("owner required")
+	}
+	if ttl <= 0 {
+		ttl = time.Minute
+	}
+	tk := targetKey
+	project := targetKey
+	if tk == "" {
+		tk = "default"
+		project = "default"
+	}
+	now := time.Now().UTC()
+	until := now.Add(ttl)
+	untilStr := until.Format(time.RFC3339)
+	nowStr := now.Format(time.RFC3339)
+	res, err := s.db.Exec(`UPDATE sync_state SET lease_owner=?, lease_until=?, lifecycle='running' WHERE target_key=? AND project=? AND (lease_until IS NULL OR lease_until <= ? OR lease_owner = ?)`, owner, untilStr, tk, project, nowStr, owner)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return true, nil
+	}
+	var exOwner sql.NullString
+	var exUntil sql.NullString
+	err = s.db.QueryRow(`SELECT lease_owner, lease_until FROM sync_state WHERE target_key=? AND project=?`, tk, project).Scan(&exOwner, &exUntil)
+	if errors.Is(err, sql.ErrNoRows) {
+		_, err = s.db.Exec(`INSERT INTO sync_state (target_key, project, lifecycle, lease_owner, lease_until) VALUES (?,?, 'running', ?, ?)`, tk, project, owner, untilStr)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if exOwner.Valid && exOwner.String != owner && exUntil.Valid {
+		if t, perr := time.Parse(time.RFC3339, exUntil.String); perr == nil && t.After(now) {
+			return false, nil
+		}
+	}
+	res, err = s.db.Exec(`UPDATE sync_state SET lease_owner=?, lease_until=? WHERE target_key=? AND project=?`, owner, untilStr, tk, project)
+	if err != nil {
+		return false, err
+	}
+	if n, _ := res.RowsAffected(); n > 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
+// ReleaseSyncLease releases a lease only if owner matches.
+func (s *Store) ReleaseSyncLease(targetKey, owner string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tk := targetKey
+	project := targetKey
+	if tk == "" {
+		tk = "default"
+		project = "default"
+	}
+	res, err := s.db.Exec(`UPDATE sync_state SET lease_owner=NULL, lease_until=NULL WHERE target_key=? AND project=? AND lease_owner=?`, tk, project, owner)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var curOwner sql.NullString
+		_ = s.db.QueryRow(`SELECT lease_owner FROM sync_state WHERE target_key=? AND project=?`, tk, project).Scan(&curOwner)
+		if curOwner.Valid && curOwner.String != owner {
+			return fmt.Errorf("lease held by %s", curOwner.String)
+		}
+		return fmt.Errorf("no lease held by %s", owner)
+	}
+	return nil
+}
+
+// MarkSyncFailed increments consecutive_failures and sets exponential backoff.
+// backoff = 2^failures * base (base 2s, capped at 1h).
+func (s *Store) MarkSyncFailed(targetKey, project, reasonCode string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tk := targetKey
+	if tk == "" {
+		tk = project
+	}
+	if tk == "" {
+		tk = "default"
+	}
+	if project == "" {
+		project = tk
+	}
+	var cur int
+	_ = s.db.QueryRow(`SELECT consecutive_failures FROM sync_state WHERE target_key=? AND project=?`, tk, project).Scan(&cur)
+	newFail := cur + 1
+	base := 2 * time.Second
+	backoff := time.Duration(1<<uint(newFail)) * base
+	if backoff > time.Hour {
+		backoff = time.Hour
+	}
+	until := time.Now().UTC().Add(backoff).Format(time.RFC3339)
+	if reasonCode == "" {
+		reasonCode = "sync_failed"
+	}
+	_, err := s.db.Exec(`INSERT INTO sync_state (target_key, project, lifecycle, consecutive_failures, backoff_until, reason_code) VALUES (?,?,?,?,?,?) ON CONFLICT(target_key, project) DO UPDATE SET consecutive_failures=?, backoff_until=?, reason_code=?, lifecycle='degraded'`, tk, project, SyncLifecycleDegraded, newFail, until, reasonCode, newFail, until, reasonCode)
+	return err
+}
+
+// MarkSyncSucceeded resets failures and backoff, sets healthy.
+func (s *Store) MarkSyncSucceeded(targetKey, project string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	tk := targetKey
+	if tk == "" {
+		tk = project
+	}
+	if tk == "" {
+		tk = "default"
+	}
+	if project == "" {
+		project = tk
+	}
+	_, err := s.db.Exec(`INSERT INTO sync_state (target_key, project, lifecycle, consecutive_failures, backoff_until, reason_code) VALUES (?,?, 'healthy', 0, NULL, NULL) ON CONFLICT(target_key, project) DO UPDATE SET consecutive_failures=0, backoff_until=NULL, reason_code=NULL, lifecycle='healthy'`, tk, project)
+	return err
+}
+
 func (s *Store) GetSyncState(project string) (*SyncState, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
