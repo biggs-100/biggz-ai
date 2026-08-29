@@ -281,69 +281,150 @@ func PrePushGate(chain ValidatedChain, findings []Finding, receipt *Receipt, sna
 // The caller MUST provide a chain loaded from the event store. The gate
 // checks chain content integrity (Validate), receipt validity, blocking
 // findings, and (for pre-push) scope changes.
-func evaluateGate(kind GateKind, chain ValidatedChain, findings []Finding, receipt *Receipt, snapshotTree string, dryRun bool) GateResult {
-	result := GateResult{
-		Gate:   kind,
-		DryRun: dryRun,
-	}
-
-	// 0. Check chain integrity: recompute SHA-256(content) == file name for
-	// each event file. This catches tampered content even if the chain
-	// structure (genesis → head links) appears consistent.
+func gateChainReason(chain ValidatedChain) string {
 	if !chain.Valid {
-		result.Reasons = append(result.Reasons, "review chain is invalid (integrity check failed)")
+		return "review chain is invalid (integrity check failed)"
 	}
+	return ""
+}
 
-	// 1. Validate receipt against chain.
+func gateReceiptReasons(chain ValidatedChain, receipt *Receipt) []string {
 	if receipt != nil {
 		if err := receipt.Verify(chain); err != nil {
-			result.Reasons = append(result.Reasons,
-				fmt.Sprintf("receipt verification failed: %v", err))
+			return []string{fmt.Sprintf("receipt verification failed: %v", err)}
 		}
-	} else if chain.Count > 0 {
-		// Auto-create receipt from chain and verify.
-		r := NewReceipt(chain)
-		if err := r.Verify(chain); err != nil {
-			result.Reasons = append(result.Reasons,
-				fmt.Sprintf("auto-receipt verification failed: %v", err))
-		}
+		return nil
 	}
-
-	// 2. Check for unaddressed blocking findings.
-	for _, f := range findings {
-		if f.Severity == SeverityCritical || f.Severity == SeverityWarning {
-			msg := fmt.Sprintf("unresolved finding [%s]: %s", f.Severity, f.Message)
-			if f.File != "" {
-				msg = fmt.Sprintf("%s (file: %s, line: %d)", msg, f.File, f.Line)
-			}
-			result.Reasons = append(result.Reasons, msg)
-		}
-	}
-
-	// 3. Check chain has events.
 	if chain.Count == 0 {
-		result.Reasons = append(result.Reasons, "review chain is empty (no events)")
+		return nil
 	}
+	r := NewReceipt(chain)
+	if err := r.Verify(chain); err != nil {
+		return []string{fmt.Sprintf("auto-receipt verification failed: %v", err)}
+	}
+	return nil
+}
 
-	// 4. (Pre-push only) Scope change detection.
-	if kind == GatePrePush && snapshotTree != "" {
-		changed, err := ScopeDiff(snapshotTree)
-		if err != nil {
-			result.Reasons = append(result.Reasons,
-				fmt.Sprintf("scope detection error: %v", err))
-		} else if len(changed) > 0 {
-			result.Reasons = append(result.Reasons,
-				fmt.Sprintf("unacknowledged scope change detected (%d file(s))", len(changed)))
-			for _, f := range changed {
-				result.Reasons = append(result.Reasons, fmt.Sprintf("  changed: %s", f))
-			}
+func gateFindingReasons(findings []Finding) []string {
+	var out []string
+	for _, f := range findings {
+		if f.Severity != SeverityCritical && f.Severity != SeverityWarning {
+			continue
 		}
+		msg := fmt.Sprintf("unresolved finding [%s]: %s", f.Severity, f.Message)
+		if f.File != "" {
+			msg = fmt.Sprintf("%s (file: %s, line: %d)", msg, f.File, f.Line)
+		}
+		out = append(out, msg)
 	}
+	return out
+}
 
-	// Passed: no blocking reasons, or dry-run mode (reports but does not fail).
+func gateEmptyReason(chain ValidatedChain) string {
+	if chain.Count == 0 {
+		return "review chain is empty (no events)"
+	}
+	return ""
+}
+
+func gateScopeReasons(kind GateKind, snapshotTree string) []string {
+	if kind != GatePrePush || snapshotTree == "" {
+		return nil
+	}
+	changed, err := ScopeDiff(snapshotTree)
+	if err != nil {
+		return []string{fmt.Sprintf("scope detection error: %v", err)}
+	}
+	if len(changed) == 0 {
+		return nil
+	}
+	out := []string{fmt.Sprintf("unacknowledged scope change detected (%d file(s))", len(changed))}
+	for _, f := range changed {
+		out = append(out, fmt.Sprintf("  changed: %s", f))
+	}
+	return out
+}
+
+func evaluateGate(kind GateKind, chain ValidatedChain, findings []Finding, receipt *Receipt, snapshotTree string, dryRun bool) GateResult {
+	result := GateResult{Gate: kind, DryRun: dryRun}
+	if reason := gateChainReason(chain); reason != "" {
+		result.Reasons = append(result.Reasons, reason)
+	}
+	result.Reasons = append(result.Reasons, gateReceiptReasons(chain, receipt)...)
+	result.Reasons = append(result.Reasons, gateFindingReasons(findings)...)
+	if reason := gateEmptyReason(chain); reason != "" {
+		result.Reasons = append(result.Reasons, reason)
+	}
+	result.Reasons = append(result.Reasons, gateScopeReasons(kind, snapshotTree)...)
 	result.Passed = len(result.Reasons) == 0 || dryRun
-
 	return result
+}
+
+func enhancedChainCheck(chain ValidatedChain, result *EnhancedGateResult) {
+	if chain.Valid {
+		return
+	}
+	reason := "review chain is invalid (integrity check failed)"
+	result.Reasons = append(result.Reasons, reason)
+	result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{Stage: "chain_integrity", Code: "chain_corrupt", Message: reason})
+}
+
+func enhancedReceiptCheck(chain ValidatedChain, receipt *Receipt, result *EnhancedGateResult) {
+	if receipt != nil {
+		if err := receipt.Verify(chain); err != nil {
+			msg := fmt.Sprintf("receipt verification failed: %v", err)
+			result.Reasons = append(result.Reasons, msg)
+			result.Diagnostics.ReceiptValid = false
+			result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{Stage: "receipt_validation", Code: "receipt_mismatch", Message: msg})
+		}
+		return
+	}
+	if chain.Count == 0 {
+		return
+	}
+	r := NewReceipt(chain)
+	if err := r.Verify(chain); err != nil {
+		msg := fmt.Sprintf("auto-receipt verification failed: %v", err)
+		result.Reasons = append(result.Reasons, msg)
+		result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{Stage: "receipt_validation", Code: "receipt_mismatch", Message: msg})
+	}
+}
+
+func enhancedFindingsCheck(findings []Finding, result *EnhancedGateResult) {
+	for _, f := range findings {
+		if f.Severity != SeverityCritical && f.Severity != SeverityWarning {
+			continue
+		}
+		result.Diagnostics.HasBlockingFindings = true
+		msg := fmt.Sprintf("unresolved finding [%s]: %s", f.Severity, f.Message)
+		if f.File != "" {
+			msg = fmt.Sprintf("%s (file: %s, line: %d)", msg, f.File, f.Line)
+		}
+		result.Reasons = append(result.Reasons, msg)
+	}
+}
+
+func enhancedEmptyCheck(chain ValidatedChain, result *EnhancedGateResult) {
+	if chain.Count != 0 {
+		return
+	}
+	msg := "review chain is empty (no events)"
+	result.Reasons = append(result.Reasons, msg)
+	result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{Stage: "chain_empty", Code: "no_events", Message: msg})
+}
+
+func enhancedScopeCheck(kind GateKind, snapshotTree string, result *EnhancedGateResult) {
+	if kind != GatePrePush || snapshotTree == "" {
+		return
+	}
+	scopeChange, err := detectScopeChange(snapshotTree, "HEAD")
+	if err != nil || scopeChange == nil {
+		return
+	}
+	result.Diagnostics.ScopeChange = scopeChange
+	msg := fmt.Sprintf("unacknowledged scope change detected (%d file(s))", len(scopeChange.ChangedFiles))
+	result.Reasons = append(result.Reasons, msg)
+	result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{Stage: "scope_change", Code: "files_changed", Message: msg})
 }
 
 // EvaluateEnhancedGate runs gate evaluation and returns structured diagnostics.
@@ -352,86 +433,17 @@ func evaluateGate(kind GateKind, chain ValidatedChain, findings []Finding, recei
 func EvaluateEnhancedGate(kind GateKind, chain ValidatedChain, findings []Finding, receipt *Receipt, snapshotTree string, dryRun bool, gitDir string) EnhancedGateResult {
 	disp := ResolveDeliveryDisposition(gitDir)
 	if disp == DispositionDisabledUnmanaged {
-		return EnhancedGateResult{
-			Gate: kind, Passed: true, DryRun: dryRun,
-			Disposition: disp,
-		}
+		return EnhancedGateResult{Gate: kind, Passed: true, DryRun: dryRun, Disposition: disp}
 	}
-
 	result := EnhancedGateResult{
-		Gate:        kind,
-		DryRun:      dryRun,
-		Disposition: disp,
-		Diagnostics: &GateDiagnostics{
-			ChainValid:   chain.Valid,
-			ReceiptValid: receipt == nil || receipt.Verify(chain) == nil,
-		},
+		Gate: kind, DryRun: dryRun, Disposition: disp,
+		Diagnostics: &GateDiagnostics{ChainValid: chain.Valid, ReceiptValid: receipt == nil || receipt.Verify(chain) == nil},
 	}
-
-	// Check chain integrity
-	if !chain.Valid {
-		reason := "review chain is invalid (integrity check failed)"
-		result.Reasons = append(result.Reasons, reason)
-		result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{
-			Stage: "chain_integrity", Code: "chain_corrupt", Message: reason,
-		})
-	}
-
-	// Validate receipt
-	if receipt != nil {
-		if err := receipt.Verify(chain); err != nil {
-			msg := fmt.Sprintf("receipt verification failed: %v", err)
-			result.Reasons = append(result.Reasons, msg)
-			result.Diagnostics.ReceiptValid = false
-			result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{
-				Stage: "receipt_validation", Code: "receipt_mismatch", Message: msg,
-			})
-		}
-	} else if chain.Count > 0 {
-		r := NewReceipt(chain)
-		if err := r.Verify(chain); err != nil {
-			msg := fmt.Sprintf("auto-receipt verification failed: %v", err)
-			result.Reasons = append(result.Reasons, msg)
-			result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{
-				Stage: "receipt_validation", Code: "receipt_mismatch", Message: msg,
-			})
-		}
-	}
-
-	// Check for blocking findings
-	for _, f := range findings {
-		if f.Severity == SeverityCritical || f.Severity == SeverityWarning {
-			result.Diagnostics.HasBlockingFindings = true
-			msg := fmt.Sprintf("unresolved finding [%s]: %s", f.Severity, f.Message)
-			if f.File != "" {
-				msg = fmt.Sprintf("%s (file: %s, line: %d)", msg, f.File, f.Line)
-			}
-			result.Reasons = append(result.Reasons, msg)
-		}
-	}
-
-	// Check chain has events
-	if chain.Count == 0 {
-		msg := "review chain is empty (no events)"
-		result.Reasons = append(result.Reasons, msg)
-		result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{
-			Stage: "chain_empty", Code: "no_events", Message: msg,
-		})
-	}
-
-	// Scope change detection
-	if kind == GatePrePush && snapshotTree != "" {
-		scopeChange, err := detectScopeChange(snapshotTree, "HEAD")
-		if err == nil && scopeChange != nil {
-			result.Diagnostics.ScopeChange = scopeChange
-			msg := fmt.Sprintf("unacknowledged scope change detected (%d file(s))", len(scopeChange.ChangedFiles))
-			result.Reasons = append(result.Reasons, msg)
-			result.Diagnostics.DenialReasons = append(result.Diagnostics.DenialReasons, GateDenialReason{
-				Stage: "scope_change", Code: "files_changed", Message: msg,
-			})
-		}
-	}
-
+	enhancedChainCheck(chain, &result)
+	enhancedReceiptCheck(chain, receipt, &result)
+	enhancedFindingsCheck(findings, &result)
+	enhancedEmptyCheck(chain, &result)
+	enhancedScopeCheck(kind, snapshotTree, &result)
 	result.Passed = len(result.Reasons) == 0 || dryRun
 	return result
 }

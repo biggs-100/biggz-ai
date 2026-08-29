@@ -118,32 +118,23 @@ type captureResult struct {
 // It preserves the hash prefix LensResultDomain ("biggz-ai.lens-result/v1")
 // via lens.LensResultHash when the payload hash is absent or mismatched,
 // and returns an error on missing payload with zero findings.
-func (a *ExternalLensAdapter) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult, error) {
-	if _, err := renderExternalPrompt(input, string(a.Payload)); err != nil {
-		_ = err
-	}
-	if len(a.Payload) == 0 || len(strings.TrimSpace(string(a.Payload))) == 0 {
-		return lens.LensResult{LensID: a.ID(), Truncated: input.Truncated}, errors.New("external adapter: missing capture-result payload")
-	}
-
-	var env captureEnvelope
-	if err := json.Unmarshal(a.Payload, &env); err != nil {
-		return lens.LensResult{LensID: a.ID(), Truncated: input.Truncated}, fmt.Errorf("external adapter: invalid capture-result JSON: %w", err)
-	}
-
-	// Resolve lens id: prefer payload lens, fallback to adapter id.
-	resolvedLensID := a.ID()
+func (a *ExternalLensAdapter) resolveLensID(env captureEnvelope) string {
 	if env.LensID != "" {
-		resolvedLensID = env.LensID
-	} else if env.Lens != "" {
-		resolvedLensID = env.Lens
-	} else if env.Result != nil && env.Result.LensID != "" {
-		resolvedLensID = env.Result.LensID
-	} else if env.Result != nil && env.Result.Lens != "" {
-		resolvedLensID = env.Result.Lens
+		return env.LensID
 	}
+	if env.Lens != "" {
+		return env.Lens
+	}
+	if env.Result != nil && env.Result.LensID != "" {
+		return env.Result.LensID
+	}
+	if env.Result != nil && env.Result.Lens != "" {
+		return env.Result.Lens
+	}
+	return a.ID()
+}
 
-	// Resolve findings/evidence/hash from envelope or nested result.
+func resolveAdapterFindings(env captureEnvelope) ([]lens.LensFinding, []string, string) {
 	findings := env.Findings
 	evidence := env.Evidence
 	hash := env.ResultHash
@@ -167,39 +158,42 @@ func (a *ExternalLensAdapter) Analyze(_ context.Context, input lens.LensInput) (
 	if evidence == nil {
 		evidence = []string{}
 	}
+	return findings, evidence, hash
+}
 
-	result := lens.LensResult{
-		LensID:    resolvedLensID,
-		Findings:  findings,
-		Evidence:  evidence,
-		Truncated: input.Truncated,
-	}
-
-	// Preserve hash prefix biggz-ai.lens-result/v1; recompute if missing or
-	// does not have sha256: prefix.
+func ensureAdapterHash(result *lens.LensResult, hash string) {
 	if hash == "" || !strings.HasPrefix(hash, "sha256:") {
-		result.ResultHash = lens.LensResultHash(result)
-	} else {
-		result.ResultHash = hash
-		// Ensure the hash is actually the domain hash; if payload hash was
-		// computed under a different domain (e.g., gentle-ai.lens-result/v1),
-		// recompute under biggz-ai domain to keep invariant but preserve prefix.
-		// We preserve the original if it already starts with sha256: and looks
-		// like the lens domain hash; otherwise recompute.
-		// For determinism, recompute and compare: if mismatch but prefix ok,
-		// keep original to preserve bridging contract per spec (preserves hash prefix).
-		// Spec says preserves biggz-ai.lens-result/v1 hash prefix — so ensure prefix
-		// is sha256: and domain is biggz-ai.lens-result/v1 is used for new hashes.
-		// Original hash with prefix is preserved as-is.
+		result.ResultHash = lens.LensResultHash(*result)
+		return
 	}
+	result.ResultHash = hash
+}
 
-	if len(result.Evidence) == 0 && len(result.Findings) == 0 {
-		result.Evidence = []string{fmt.Sprintf("external lens %s: no findings", resolvedLensID)} //lint:ignore no-fmtSprintf non-prompt fmt.Sprintf allowed
-		// Recompute hash if we added default evidence and hash was derived.
-		if hash == "" || !strings.HasPrefix(hash, "sha256:") {
-			result.ResultHash = lens.LensResultHash(result)
-		}
+func ensureAdapterEvidence(result *lens.LensResult, resolvedLensID, hash string) {
+	if len(result.Evidence) != 0 || len(result.Findings) != 0 {
+		return
 	}
+	result.Evidence = []string{fmt.Sprintf("external lens %s: no findings", resolvedLensID)} //lint:ignore no-fmtSprintf non-prompt fmt.Sprintf allowed
+	if hash == "" || !strings.HasPrefix(hash, "sha256:") {
+		result.ResultHash = lens.LensResultHash(*result)
+	}
+}
 
+func (a *ExternalLensAdapter) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult, error) {
+	if _, err := renderExternalPrompt(input, string(a.Payload)); err != nil {
+		_ = err
+	}
+	if len(a.Payload) == 0 || len(strings.TrimSpace(string(a.Payload))) == 0 {
+		return lens.LensResult{LensID: a.ID(), Truncated: input.Truncated}, errors.New("external adapter: missing capture-result payload")
+	}
+	var env captureEnvelope
+	if err := json.Unmarshal(a.Payload, &env); err != nil {
+		return lens.LensResult{LensID: a.ID(), Truncated: input.Truncated}, fmt.Errorf("external adapter: invalid capture-result JSON: %w", err)
+	}
+	resolvedLensID := a.resolveLensID(env)
+	findings, evidence, hash := resolveAdapterFindings(env)
+	result := lens.LensResult{LensID: resolvedLensID, Findings: findings, Evidence: evidence, Truncated: input.Truncated}
+	ensureAdapterHash(&result, hash)
+	ensureAdapterEvidence(&result, resolvedLensID, hash)
 	return result, nil
 }
