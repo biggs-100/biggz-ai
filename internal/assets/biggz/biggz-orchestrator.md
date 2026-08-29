@@ -19,11 +19,11 @@ Required markdown (copy-paste, fill all fields):
 **Artifacts/Paths:** {list from artifacts — BigMem topic_key or filesystem path}
 **Risks / Open Questions:** {from risks or "None"}
 **Next Recommended:** {from next_recommended}
-**Preview:** {optional, omit if empty — short preview of key artifact}
-**Diff:** {optional, omit if empty — summary of changed lines}
+**Preview:** {required — first 300 chars of key artifact (truncate with …), or "None" if no artifact}
+**Diff:** {required when >0 files changed — e.g. "8 files 293 insertions(+), 54 deletions(-)", or "None"}
 **Decisions:** {optional, omit if empty — key decisions}
 **Commands:** {optional, omit if empty — commands run}
-**Validation:** {optional, omit if empty — validation output}
+**Validation:** {required when commands run — e.g. "go test PASS, go vet PASS, biggz sdd-status verify", or "None"}
 **Failure:** {optional, omit if empty — humanized failure summary}
 ```
 The checkpoint ask_user_question / question call MUST follow this block with proceed / adjust / stop (SDD) or continue / correct (non-SDD). The markdown is NOT the tool param — it is separate chat markdown emitted FIRST, adjacent, same turn, BEFORE the tool call. A checkpoint ask (`proceed`/`adjust`/`stop` or `continue`/`correct` after a delegated sub-agent) without immediately preceding `## Sub-agent Result` markdown is INVALID and will be blocked. General clarification questions that are NOT a checkpoint do NOT require synthesis and MUST NOT be blocked — e.g. "¿por dónde empezamos?", preflight, or other orchestration clarifications not presenting a delegated result use ask_user_question/question directly without synthesis.
@@ -174,11 +174,11 @@ Required markdown (copy-paste, fill all fields):
 **Artifacts/Paths:** {list from artifacts — BigMem topic_key or filesystem path}
 **Risks / Open Questions:** {from risks or "None"}
 **Next Recommended:** {from next_recommended}
-**Preview:** {optional, omit if empty — short preview of key artifact}
-**Diff:** {optional, omit if empty — summary of changed lines}
+**Preview:** {required — first 300 chars of key artifact (truncate with …), or "None" if no artifact}
+**Diff:** {required when >0 files changed — e.g. "8 files 293 insertions(+), 54 deletions(-)", or "None"}
 **Decisions:** {optional, omit if empty — key decisions}
 **Commands:** {optional, omit if empty — commands run}
-**Validation:** {optional, omit if empty — validation output}
+**Validation:** {required when commands run — e.g. "go test PASS, go vet PASS, biggz sdd-status verify", or "None"}
 **Failure:** {optional, omit if empty — humanized failure summary}
 ```
 The checkpoint ask_user_question / question call MUST follow this block with proceed / adjust / stop (SDD) or continue / correct (non-SDD). The markdown is NOT the tool param — it is separate chat markdown emitted FIRST, adjacent, same turn, BEFORE the tool call. A checkpoint ask (`proceed`/`adjust`/`stop` or `continue`/`correct` after a delegated sub-agent) without immediately preceding `## Sub-agent Result` markdown is INVALID and will be blocked. General clarification questions that are NOT a checkpoint do NOT require synthesis and MUST NOT be blocked — e.g. "¿por dónde empezamos?", preflight, or other orchestration clarifications not presenting a delegated result use ask_user_question/question directly without synthesis.
@@ -602,6 +602,7 @@ Every phase returns to the orchestrator:
 - `next_recommended`: the next SDD phase to run, or "none"
 - `risks`: risks discovered, or "None"
 - `skill_resolution`: how skills were loaded
+- `detailed_report` (required — first 300 chars inline, full artifact persisted)
 
 ### Hard Rules
 

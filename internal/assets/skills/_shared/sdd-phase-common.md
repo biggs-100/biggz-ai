@@ -83,7 +83,7 @@ Every phase MUST return a structured envelope to the orchestrator:
 
 - `status`: `success`, `partial`, `blocked`, or `failed`
 - `executive_summary`: 1-3 sentence summary of what was done
-- `detailed_report`: (optional) full phase output, or omit if already inline
+- `detailed_report`: (required — MUST include Preview first 300 chars + Diff summary inline even when artifact persisted)
 - `artifacts`: list of artifact keys/paths written
 - `next_recommended`: the next SDD phase to run, or "none"
 - `risks`: risks discovered, or "None"

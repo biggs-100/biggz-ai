@@ -43,7 +43,7 @@ var syncDirFn = func(dir string) error {
 	return fd.Sync()
 }
 
-const maxAtomicFileSize = 16 << 20
+const maxAtomicFileSize = 64 << 20
 
 // WriteResult reports what happened to the destination path.
 type WriteResult struct {

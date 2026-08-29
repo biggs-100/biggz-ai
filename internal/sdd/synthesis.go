@@ -49,21 +49,27 @@ func RenderSynthesis(r SubAgentResult) string {
 	b.WriteString("**Artifacts/Paths:** " + arts + "\n")
 	b.WriteString("**Risks / Open Questions:** " + risks + "\n")
 	b.WriteString("**Next Recommended:** " + next + "\n")
-	if v := strings.TrimSpace(r.Preview); v != "" {
-		b.WriteString("**Preview:** " + v + "\n")
+	preview := strings.TrimSpace(r.Preview)
+	if preview == "" {
+		preview = "None"
 	}
-	if v := strings.TrimSpace(r.Diff); v != "" {
-		b.WriteString("**Diff:** " + v + "\n")
+	b.WriteString("**Preview:** " + preview + "\n")
+	diff := strings.TrimSpace(r.Diff)
+	if diff == "" {
+		diff = "None"
 	}
+	b.WriteString("**Diff:** " + diff + "\n")
 	if v := strings.TrimSpace(r.Decisions); v != "" {
 		b.WriteString("**Decisions:** " + v + "\n")
 	}
 	if v := strings.TrimSpace(r.Commands); v != "" {
 		b.WriteString("**Commands:** " + v + "\n")
 	}
-	if v := strings.TrimSpace(r.Validation); v != "" {
-		b.WriteString("**Validation:** " + v + "\n")
+	validation := strings.TrimSpace(r.Validation)
+	if validation == "" {
+		validation = "None"
 	}
+	b.WriteString("**Validation:** " + validation + "\n")
 	if v := strings.TrimSpace(r.Failure); v != "" {
 		human := humanizeFailure(v)
 		if human == "" {
