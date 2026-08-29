@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
+	"gopkg.in/yaml.v3"
 )
 
 // StatusSchemaName identifies the SDD status document emitted by biggz-ai.
@@ -247,12 +248,32 @@ func StatusWithOptions(openspecRoot string, opts StatusOptions) (active []Change
 		}
 	}
 
+	store := declaredArtifactStore(workspaceRoot)
+	if store == "" {
+		for i := range active {
+			active[i].ArtifactPaths = ArtifactPaths{}
+			active[i].ContextFiles = ArtifactPaths{}
+			active[i].ArtifactStore = ArtifactStore("")
+		}
+		for i := range archived {
+			archived[i].ArtifactPaths = ArtifactPaths{}
+			archived[i].ContextFiles = ArtifactPaths{}
+			archived[i].ArtifactStore = ArtifactStore("")
+		}
+		return active, archived, nil
+	}
+	if IsEngramStore(store) {
+		if memActive, memArchived, err := collectBigMemChangesWithArchive(workspaceRoot, opts.IncludeInstructions); err == nil {
+			return memActive, memArchived, nil
+		}
+		return nil, nil, nil
+	}
 	// Hybrid BigMem merge: the dispatcher is now authoritative for both
 	// openspec and BigMem (filesystem wins on conflict). This ports
 	// gentle-ai's resolveEngramStatus hybrid without breaking
 	// filesystem-only users: when the BigMem DB is absent or has no sdd/
 	// observations, collection returns nil and the filesystem result is
-	// returned unchanged.
+	// returned unchanged. For declared store openspec or hybrid, filesystem-wins.
 	if memActive, memArchived, err := collectBigMemChangesWithArchive(workspaceRoot, opts.IncludeInstructions); err == nil && len(memActive)+len(memArchived) > 0 {
 		active, archived = mergeFilesystemAndBigMem(active, archived, memActive, memArchived)
 	}
@@ -358,8 +379,8 @@ func readChange(dir, name string, isArchived bool, workspaceRoot string, include
 	return cs, nil
 }
 
-func collectArtifactDerivation(changeDir string) (ArtifactPaths, map[string]ArtifactState, TaskProgress, string, SpecCounts, verifyResultEvaluation, error) {
-	artifactPaths := resolveArtifactPaths(changeDir)
+func collectArtifactDerivation(changeDir string, store ArtifactStore) (ArtifactPaths, map[string]ArtifactState, TaskProgress, string, SpecCounts, verifyResultEvaluation, error) {
+	artifactPaths := resolveArtifactPaths(changeDir, store)
 	artifacts := map[string]ArtifactState{
 		"proposal":      singleArtifactState(artifactPaths.Proposal),
 		"specs":         multiArtifactState(artifactPaths.Specs, filepath.Join(changeDir, "specs")),
@@ -432,7 +453,8 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 		cs.NextRecommended = "done"
 		return nil
 	}
-	artifactPaths, artifacts, taskProgress, tasksContent, _, verifyResult, err := collectArtifactDerivation(changeDir)
+	store := declaredArtifactStore(workspaceRoot)
+	artifactPaths, artifacts, taskProgress, tasksContent, _, verifyResult, err := collectArtifactDerivation(changeDir, store)
 	if err != nil {
 		return err
 	}
@@ -464,7 +486,7 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 	cs.SchemaVersion = StatusSchemaVersion
 	cs.ChangeRoot = changeDir
 	cs.PlanningHome = PlanningHome{Mode: "repo-local", Path: filepath.Join(workspaceRoot, "openspec")}
-	cs.ArtifactStore = ArtifactStoreOpenSpec
+	cs.ArtifactStore = store
 	cs.ArtifactPaths = artifactPaths
 	cs.ContextFiles = artifactPaths
 	cs.Artifacts = artifacts
@@ -484,9 +506,63 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 	return nil
 }
 
-// resolveArtifactPaths maps every SDD artifact to its existing on-disk
-// location; specs/ is walked for files named spec.md (sorted).
-func resolveArtifactPaths(changeRoot string) ArtifactPaths {
+// declaredArtifactStore resolves the declared artifact store by reading
+// openspec/config.yaml key sdd.artifact_store (preferred) or artifact_store,
+// normalized via NormalizeArtifactStore. Missing or unreadable file defaults
+// to openspec; none disables planning I/O and returns empty string.
+func declaredArtifactStore(ws string) ArtifactStore {
+	configPath := filepath.Join(ws, "openspec", "config.yaml")
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return ArtifactStoreOpenSpec
+	}
+	var cfg struct {
+		SDD struct {
+			ArtifactStore string `yaml:"artifact_store"`
+		} `yaml:"sdd"`
+		ArtifactStore string `yaml:"artifact_store"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return ArtifactStoreOpenSpec
+	}
+	raw := strings.TrimSpace(cfg.SDD.ArtifactStore)
+	if raw == "" {
+		raw = strings.TrimSpace(cfg.ArtifactStore)
+	}
+	if raw == "" {
+		return ArtifactStoreOpenSpec
+	}
+	store := ArtifactStore(strings.ToLower(raw))
+	store = NormalizeArtifactStore(store)
+	if store == ArtifactStoreNone || strings.EqualFold(raw, "none") {
+		return ArtifactStore("")
+	}
+	if !isValidArtifactStore(store) {
+		return ArtifactStoreOpenSpec
+	}
+	return store
+}
+
+// resolveArtifactPaths maps every SDD artifact to its location branched by store:
+// openspec returns filesystem openspec/changes/{change}/… paths;
+// engram/bigmem returns bigmem:sdd/{change}/… paths;
+// hybrid merges (filesystem-wins, so returns filesystem paths here, merge done at Status level);
+// none returns empty paths.
+func resolveArtifactPaths(changeRoot string, store ArtifactStore) ArtifactPaths {
+	if store == "" || store == ArtifactStoreNone {
+		return ArtifactPaths{}
+	}
+	if IsEngramStore(store) {
+		name := filepath.Base(changeRoot)
+		return ArtifactPaths{
+			Proposal:      []string{fmt.Sprintf("bigmem:sdd/%s/proposal", name)},
+			Specs:         []string{fmt.Sprintf("bigmem:sdd/%s/spec", name)},
+			Design:        []string{fmt.Sprintf("bigmem:sdd/%s/design", name)},
+			Tasks:         []string{fmt.Sprintf("bigmem:sdd/%s/tasks", name)},
+			ApplyProgress: []string{fmt.Sprintf("bigmem:sdd/%s/apply-progress", name)},
+			VerifyReport:  []string{fmt.Sprintf("bigmem:sdd/%s/verify-report", name)},
+		}
+	}
 	paths := ArtifactPaths{
 		Proposal:      existingPath(filepath.Join(changeRoot, "proposal.md")),
 		Design:        existingPath(filepath.Join(changeRoot, "design.md")),
