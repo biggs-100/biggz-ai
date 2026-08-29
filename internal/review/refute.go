@@ -239,95 +239,107 @@ func RefutationSummaryOf(chain ValidatedChain) (*RefutationSummary, error) {
 	return summary, nil
 }
 
-// Refute registers the one read-only refuter batch for a lineage: the input
-// verdicts must cover EXACTLY the required set — every severe
-// candidate-causal finding with inferential evidence — in one shot, mirroring
-// gentle-ai's "exactly one read-only refuter batch". Re-running the identical
-// batch is idempotent; a second, different batch is rejected.
-func Refute(repo, lineageID string, payload []byte) (RefuteOutcome, error) {
+func decodeAndValidateRefutationInput(payload []byte, lineageID string) (RefutationInput, error) {
 	input, err := DecodeRefutationInput(payload)
 	if err != nil {
-		return RefuteOutcome{}, err
+		return RefutationInput{}, err
 	}
 	if input.Schema != RefutationSchema {
-		return RefuteOutcome{}, fmt.Errorf("refutation input schema %q is unsupported (want %q)", input.Schema, RefutationSchema)
+		return RefutationInput{}, fmt.Errorf("refutation input schema %q is unsupported (want %q)", input.Schema, RefutationSchema)
 	}
 	if strings.TrimSpace(input.Lineage) != lineageID {
-		return RefuteOutcome{}, fmt.Errorf("refutation input lineage %q does not match the CLI lineage %q", input.Lineage, lineageID)
+		return RefutationInput{}, fmt.Errorf("refutation input lineage %q does not match the CLI lineage %q", input.Lineage, lineageID)
 	}
+	return input, nil
+}
 
+func loadRefutationChain(repo, lineageID string) (*Store, ValidatedChain, error) {
 	store, err := Open(repo, lineageID)
 	if err != nil {
-		return RefuteOutcome{}, fmt.Errorf("refute: open store: %w", err)
+		return nil, ValidatedChain{}, fmt.Errorf("refute: open store: %w", err)
 	}
 	chain, err := store.LoadChain()
 	if err != nil {
-		return RefuteOutcome{}, fmt.Errorf("refute: load chain: %w", err)
+		return nil, ValidatedChain{}, fmt.Errorf("refute: load chain: %w", err)
 	}
 	if chain.Count == 0 {
-		return RefuteOutcome{}, errors.New("refute: lineage has no events")
+		return nil, ValidatedChain{}, errors.New("refute: lineage has no events")
 	}
 	verdict := store.Validate()
 	if !verdict.Valid {
-		return RefuteOutcome{}, fmt.Errorf("refute: chain integrity failed: %s", verdict.Reason)
+		return nil, ValidatedChain{}, fmt.Errorf("refute: chain integrity failed: %s", verdict.Reason)
 	}
 	if chain.Records[0].Operation != "start_review" {
-		return RefuteOutcome{}, errors.New("refute: lineage genesis is not a review start")
+		return nil, ValidatedChain{}, errors.New("refute: lineage genesis is not a review start")
 	}
 	if hasCompleteReview(chain) {
-		return RefuteOutcome{}, errors.New("refute: the lineage is already finalized; register the refuter batch before finalize")
+		return nil, ValidatedChain{}, errors.New("refute: the lineage is already finalized; register the refuter batch before finalize")
 	}
-	state, err := collectRefutationState(chain)
-	if err != nil {
-		return RefuteOutcome{}, fmt.Errorf("refute: %w", err)
-	}
-	eventPayload, err := marshalRefutationEvent(lineageID, input.Verdicts)
-	if err != nil {
-		return RefuteOutcome{}, fmt.Errorf("refute: marshal refutation event: %w", err)
-	}
-	if state.batches > 0 {
-		last := chain.Records[chain.Count-1]
-		if state.batches == 1 && last.Operation == RefutationOperation && bytes.Equal(last.Payload, eventPayload) {
-			return RefuteOutcome{
-				LineageID: lineageID, Revision: chain.HeadHash, Idempotent: true,
-				Refuted: state.refuted, Stands: state.stands,
-			}, nil
-		}
-		return RefuteOutcome{}, errors.New("refute: the lineage already carries a refutation batch; exactly one read-only refuter batch per review")
-	}
+	return store, chain, nil
+}
 
-	refutedIDs := make([]string, 0, len(input.Verdicts))
-	standsIDs := make([]string, 0, len(input.Verdicts))
-	covered := make(map[string]struct{}, len(input.Verdicts))
-	seen := make(map[string]struct{}, len(input.Verdicts))
-	for _, raw := range input.Verdicts {
-		verdict, err := canonicalRefutationVerdict(raw)
-		if err != nil {
-			return RefuteOutcome{}, fmt.Errorf("refute: %w", err)
-		}
-		if _, duplicate := seen[verdict.FindingID]; duplicate {
-			return RefuteOutcome{}, fmt.Errorf("refute: duplicate verdict for finding %q", verdict.FindingID)
+func checkExistingRefutation(state refutationState, chain ValidatedChain, lineageID string, eventPayload []byte) (*RefuteOutcome, error) {
+	if state.batches == 0 {
+		return nil, nil
+	}
+	last := chain.Records[chain.Count-1]
+	if state.batches == 1 && last.Operation == RefutationOperation && bytes.Equal(last.Payload, eventPayload) {
+		return &RefuteOutcome{
+			LineageID: lineageID, Revision: chain.HeadHash, Idempotent: true,
+			Refuted: state.refuted, Stands: state.stands,
+		}, nil
+	}
+	return nil, errors.New("refute: the lineage already carries a refutation batch; exactly one read-only refuter batch per review")
+}
+
+func validateFindingRefutable(finding ArtifactFinding, verdict RefutationVerdict) error {
+	if !isSevereSeverity(finding.Severity) {
+		return fmt.Errorf("refute: finding %q is not a severe finding; only BLOCKER/CRITICAL findings are refutable", verdict.FindingID)
+	}
+	if finding.EvidenceClass == EvidenceDeterministic {
+		return fmt.Errorf("refute: deterministic finding %q is auto-blocking and cannot be refuted; resolve it with a correction", verdict.FindingID)
+	}
+	if finding.EvidenceClass == EvidenceInsufficient {
+		return fmt.Errorf("refute: finding %q has insufficient evidence; it must escalate, not be refuted", verdict.FindingID)
+	}
+	if finding.CausalDisposition == CausalUnknown {
+		return fmt.Errorf("refute: finding %q has unknown causal disposition; it must escalate, not be refuted", verdict.FindingID)
+	}
+	if finding.CausalDisposition == CausalPreExisting || finding.CausalDisposition == CausalBaseOnly {
+		return fmt.Errorf("refute: finding %q is not candidate-causal; only introduced/behavior-activated/worsened findings are refutable", verdict.FindingID)
+	}
+	return nil
+}
+
+func shouldRefute(verdict RefutationVerdict, seen map[string]struct{}, findings map[string]ArtifactFinding) (RefutationVerdict, error) {
+	canonical, err := canonicalRefutationVerdict(verdict)
+	if err != nil {
+		return RefutationVerdict{}, fmt.Errorf("refute: %w", err)
+	}
+	if _, duplicate := seen[canonical.FindingID]; duplicate {
+		return RefutationVerdict{}, fmt.Errorf("refute: duplicate verdict for finding %q", canonical.FindingID)
+	}
+	finding, ok := findings[canonical.FindingID]
+	if !ok {
+		return RefutationVerdict{}, fmt.Errorf("refute: unknown finding id %q: it is not a captured finding of this lineage", canonical.FindingID)
+	}
+	if err := validateFindingRefutable(finding, canonical); err != nil {
+		return RefutationVerdict{}, err
+	}
+	return canonical, nil
+}
+
+func refuteWithEvidence(verdicts []RefutationVerdict, state refutationState) (refutedIDs, standsIDs []string, covered map[string]struct{}, err error) {
+	refutedIDs = make([]string, 0, len(verdicts))
+	standsIDs = make([]string, 0, len(verdicts))
+	covered = make(map[string]struct{}, len(verdicts))
+	seen := make(map[string]struct{}, len(verdicts))
+	for _, raw := range verdicts {
+		verdict, vErr := shouldRefute(raw, seen, state.findings)
+		if vErr != nil {
+			return nil, nil, nil, vErr
 		}
 		seen[verdict.FindingID] = struct{}{}
-		finding, ok := state.findings[verdict.FindingID]
-		if !ok {
-			return RefuteOutcome{}, fmt.Errorf("refute: unknown finding id %q: it is not a captured finding of this lineage", verdict.FindingID)
-		}
-		if !isSevereSeverity(finding.Severity) {
-			return RefuteOutcome{}, fmt.Errorf("refute: finding %q is not a severe finding; only BLOCKER/CRITICAL findings are refutable", verdict.FindingID)
-		}
-		switch finding.EvidenceClass {
-		case EvidenceDeterministic:
-			return RefuteOutcome{}, fmt.Errorf("refute: deterministic finding %q is auto-blocking and cannot be refuted; resolve it with a correction", verdict.FindingID)
-		case EvidenceInsufficient:
-			return RefuteOutcome{}, fmt.Errorf("refute: finding %q has insufficient evidence; it must escalate, not be refuted", verdict.FindingID)
-		}
-		switch finding.CausalDisposition {
-		case CausalUnknown:
-			return RefuteOutcome{}, fmt.Errorf("refute: finding %q has unknown causal disposition; it must escalate, not be refuted", verdict.FindingID)
-		case CausalPreExisting, CausalBaseOnly:
-			return RefuteOutcome{}, fmt.Errorf("refute: finding %q is not candidate-causal; only introduced/behavior-activated/worsened findings are refutable", verdict.FindingID)
-		}
 		if verdict.Verdict == RefutationVerdictRefuted {
 			refutedIDs = append(refutedIDs, verdict.FindingID)
 		} else {
@@ -335,18 +347,23 @@ func Refute(repo, lineageID string, payload []byte) (RefuteOutcome, error) {
 		}
 		covered[verdict.FindingID] = struct{}{}
 	}
-	missing := stringDifference(state.requirements, sortedSetKeys(covered))
-	if len(missing) > 0 {
-		return RefuteOutcome{}, fmt.Errorf(
-			"refute: the batch must cover every inferential candidate-causal finding in one shot; missing verdicts for: %s",
-			strings.Join(missing, ", "))
-	}
-	if len(input.Verdicts) == 0 {
-		return RefuteOutcome{}, errors.New("refute: no inferential candidate-causal findings require refutation")
-	}
+	return refutedIDs, standsIDs, covered, nil
+}
 
+func ensureVerdictCoverage(requirements []string, covered map[string]struct{}, verdicts []RefutationVerdict) error {
+	missing := stringDifference(requirements, sortedSetKeys(covered))
+	if len(missing) > 0 {
+		return fmt.Errorf("refute: the batch must cover every inferential candidate-causal finding in one shot; missing verdicts for: %s", strings.Join(missing, ", "))
+	}
+	if len(verdicts) == 0 {
+		return errors.New("refute: no inferential candidate-causal findings require refutation")
+	}
+	return nil
+}
+
+func appendRefutationBatch(store *Store, chain ValidatedChain, eventPayload []byte, refutedIDs, standsIDs []string, lineageID string) (RefuteOutcome, error) {
 	var outcome RefuteOutcome
-	err = WithFileLock(store.Dir, func() error {
+	err := WithFileLock(store.Dir, func() error {
 		fresh, err := store.LoadChain()
 		if err != nil {
 			return fmt.Errorf("refute: load chain: %w", err)
@@ -371,13 +388,47 @@ func Refute(repo, lineageID string, payload []byte) (RefuteOutcome, error) {
 		if err != nil {
 			return fmt.Errorf("refute: append refutation event: %w", err)
 		}
-		outcome = RefuteOutcome{
-			LineageID: lineageID, Revision: revision,
-			Refuted: refutedIDs, Stands: standsIDs,
-		}
+		outcome = RefuteOutcome{LineageID: lineageID, Revision: revision, Refuted: refutedIDs, Stands: standsIDs}
 		return nil
 	})
 	return outcome, err
+}
+
+// Refute registers the one read-only refuter batch for a lineage: the input
+// verdicts must cover EXACTLY the required set — every severe
+// candidate-causal finding with inferential evidence — in one shot, mirroring
+// gentle-ai's "exactly one read-only refuter batch". Re-running the identical
+// batch is idempotent; a second, different batch is rejected.
+func Refute(repo, lineageID string, payload []byte) (RefuteOutcome, error) {
+	input, err := decodeAndValidateRefutationInput(payload, lineageID)
+	if err != nil {
+		return RefuteOutcome{}, err
+	}
+	store, chain, err := loadRefutationChain(repo, lineageID)
+	if err != nil {
+		return RefuteOutcome{}, err
+	}
+	state, err := collectRefutationState(chain)
+	if err != nil {
+		return RefuteOutcome{}, fmt.Errorf("refute: %w", err)
+	}
+	eventPayload, err := marshalRefutationEvent(lineageID, input.Verdicts)
+	if err != nil {
+		return RefuteOutcome{}, fmt.Errorf("refute: marshal refutation event: %w", err)
+	}
+	if existing, err := checkExistingRefutation(state, chain, lineageID, eventPayload); err != nil {
+		return RefuteOutcome{}, err
+	} else if existing != nil {
+		return *existing, nil
+	}
+	refutedIDs, standsIDs, covered, err := refuteWithEvidence(input.Verdicts, state)
+	if err != nil {
+		return RefuteOutcome{}, err
+	}
+	if err := ensureVerdictCoverage(state.requirements, covered, input.Verdicts); err != nil {
+		return RefuteOutcome{}, err
+	}
+	return appendRefutationBatch(store, chain, eventPayload, refutedIDs, standsIDs, lineageID)
 }
 
 // marshalRefutationEvent renders the durable refutation event payload for the

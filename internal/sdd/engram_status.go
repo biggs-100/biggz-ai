@@ -199,16 +199,7 @@ func bigmemArtifactPaths(changeName string, m map[string]string) ArtifactPaths {
 	return paths
 }
 
-// deriveBigMemChangeStatus reconstructs a ChangeStatus from BigMem artifact
-// content (not filesystem). It reuses the same derivation authority as
-// deriveChangeStatus: taskProgress, spec counts, verify evaluation,
-// applyState, edit-authority, remediation, dependencies, nextRecommended
-// and blockedReasons. BigMem changes have no change-instance marker and no
-// granted roots, so the runtime read is instance-less and the apply authority
-// check uses only workspaceRoot.
-func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspaceRoot string, includeInstructions bool, isArchived bool) ChangeStatus {
-	cs := ChangeStatus{Name: name, IsArchived: isArchived}
-	// Legacy Has* based on presence (even partial counts as Has)
+func bigmemHasFlags(bySuffix map[string]string, cs *ChangeStatus) {
 	_, hasProposal := bySuffix["proposal"]
 	_, hasSpec := bySuffix["spec"]
 	if !hasSpec {
@@ -224,49 +215,9 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 	cs.HasTasks = hasTasks
 	cs.HasApply = hasApply
 	cs.HasVerify = hasVerify
+}
 
-	if isArchived {
-		// Archived changes are done; still compute minimal derived fields for
-		// audit display but keep routing terminal. We derive artifact states
-		// for display, but NextRecommended is done regardless.
-		artifacts := map[string]ArtifactState{
-			"proposal":      bigmemArtifactState(bySuffix, "proposal"),
-			"specs":         bigmemArtifactState(bySuffix, "spec"),
-			"design":        bigmemArtifactState(bySuffix, "design"),
-			"tasks":         bigmemArtifactState(bySuffix, "tasks"),
-			"applyProgress": bigmemArtifactState(bySuffix, "apply-progress"),
-			"verifyReport":  bigmemArtifactState(bySuffix, "verify-report"),
-		}
-		taskProgress := countTaskProgressText(bySuffix["tasks"])
-		cs.TasksTotal = taskProgress.Total
-		cs.TasksDone = taskProgress.Completed
-		cs.SchemaName = StatusSchemaName
-		cs.SchemaVersion = StatusSchemaVersion
-		cs.ChangeRoot = fmt.Sprintf("bigmem:sdd/%s", name)
-		cs.PlanningHome = PlanningHome{Mode: "repo-local", Path: "bigmem:sdd"}
-		cs.ArtifactStore = ArtifactStoreEngram
-		cs.ArtifactPaths = bigmemArtifactPaths(name, bySuffix)
-		cs.ContextFiles = cs.ArtifactPaths
-		cs.Artifacts = artifacts
-		cs.TaskProgress = taskProgress
-		cs.Dependencies = Dependencies{
-			Proposal: DependencyAllDone, Specs: DependencyAllDone, Design: DependencyAllDone,
-			Tasks: DependencyAllDone, Apply: DependencyAllDone, Verify: DependencyAllDone, Archive: DependencyAllDone,
-		}
-		cs.ApplyState = ApplyAllDone
-		cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: []string{workspaceRoot}}
-		cs.Relationships = Relationships{}
-		cs.RemediationState = RemediationState{}
-		cs.ReviewOffer = nil
-		cs.NextRecommended = "done"
-		cs.BlockedReasons = []string{}
-		if includeInstructions {
-			instructions := renderPhaseInstructions(cs)
-			cs.PhaseInstructions = &instructions
-		}
-		return cs
-	}
-
+func bigmemArchivedStatus(name string, bySuffix map[string]string, workspaceRoot string, includeInstructions bool, cs ChangeStatus) ChangeStatus {
 	artifacts := map[string]ArtifactState{
 		"proposal":      bigmemArtifactState(bySuffix, "proposal"),
 		"specs":         bigmemArtifactState(bySuffix, "spec"),
@@ -278,8 +229,44 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 	taskProgress := countTaskProgressText(bySuffix["tasks"])
 	cs.TasksTotal = taskProgress.Total
 	cs.TasksDone = taskProgress.Completed
+	cs.SchemaName = StatusSchemaName
+	cs.SchemaVersion = StatusSchemaVersion
+	cs.ChangeRoot = fmt.Sprintf("bigmem:sdd/%s", name)
+	cs.PlanningHome = PlanningHome{Mode: "repo-local", Path: "bigmem:sdd"}
+	cs.ArtifactStore = ArtifactStoreEngram
+	cs.ArtifactPaths = bigmemArtifactPaths(name, bySuffix)
+	cs.ContextFiles = cs.ArtifactPaths
+	cs.Artifacts = artifacts
+	cs.TaskProgress = taskProgress
+	cs.Dependencies = Dependencies{Proposal: DependencyAllDone, Specs: DependencyAllDone, Design: DependencyAllDone, Tasks: DependencyAllDone, Apply: DependencyAllDone, Verify: DependencyAllDone, Archive: DependencyAllDone}
+	cs.ApplyState = ApplyAllDone
+	cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: []string{workspaceRoot}}
+	cs.Relationships = Relationships{}
+	cs.RemediationState = RemediationState{}
+	cs.ReviewOffer = nil
+	cs.NextRecommended = "done"
+	cs.BlockedReasons = []string{}
+	if includeInstructions {
+		instructions := renderPhaseInstructions(cs)
+		cs.PhaseInstructions = &instructions
+	}
+	return cs
+}
 
-	// Spec counts from in-memory spec content
+func collectBigMemArtifactState(bySuffix map[string]string) (map[string]ArtifactState, TaskProgress) {
+	artifacts := map[string]ArtifactState{
+		"proposal":      bigmemArtifactState(bySuffix, "proposal"),
+		"specs":         bigmemArtifactState(bySuffix, "spec"),
+		"design":        bigmemArtifactState(bySuffix, "design"),
+		"tasks":         bigmemArtifactState(bySuffix, "tasks"),
+		"applyProgress": bigmemArtifactState(bySuffix, "apply-progress"),
+		"verifyReport":  bigmemArtifactState(bySuffix, "verify-report"),
+	}
+	taskProgress := countTaskProgressText(bySuffix["tasks"])
+	return artifacts, taskProgress
+}
+
+func bigmemVerifyAndCore(bySuffix map[string]string, artifacts map[string]ArtifactState, taskProgress TaskProgress) (verifyResultEvaluation, bool, ApplyState, blockerReasons) {
 	var specContents []string
 	if c, ok := bySuffix["spec"]; ok {
 		specContents = append(specContents, c)
@@ -288,56 +275,54 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 	}
 	specCounts := countSpecRequirementsAndScenarios(specContents)
 	verifyResult := parseVerifyResult(bySuffix["verify-report"], specCounts)
-
-	coreReady := artifacts["proposal"] == ArtifactDone && artifacts["specs"] == ArtifactDone &&
-		artifacts["design"] == ArtifactDone && artifacts["tasks"] == ArtifactDone && taskProgress.Total > 0
+	coreReady := artifacts["proposal"] == ArtifactDone && artifacts["specs"] == ArtifactDone && artifacts["design"] == ArtifactDone && artifacts["tasks"] == ArtifactDone && taskProgress.Total > 0
 	applyState := resolveApplyState(coreReady, taskProgress)
 	blockedReasons := artifactBlockedReasons(artifacts, taskProgress)
+	return verifyResult, coreReady, applyState, blockedReasons
+}
 
-	allowedEditRoots := []string{workspaceRoot}
-	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, bySuffix["tasks"], workspaceRoot, allowedEditRoots)
-
+func buildBigMemRemediation(name, workspaceRoot string, artifacts map[string]ArtifactState, applyState ApplyState, verifyResult verifyResultEvaluation, blockedReasons *blockerReasons) (RemediationState, bool, bool) {
 	verifyReportCurrent := artifacts["verifyReport"] == ArtifactDone
-	// BigMem changes have no change-instance marker file; use empty instance
-	// like gentle-ai's Engram path.
 	instance := ""
 	remediationComplete := sddattempt.RemediationComplete(name, workspaceRoot, instance, verifyResult.EvidenceRevision)
 	staleDecision := isStaleDecisionRequired(name, workspaceRoot, instance)
 	remediationState := RemediationState{}
 	if verifyReportCurrent && !verifyResult.Passing && applyState == ApplyAllDone && !remediationComplete && !staleDecision {
-		reason := fmt.Sprintf(
-			"verify evidence requires unmanaged remediation for %s: %s; receipt-driven review is disabled, so this correction is bounded by the native runtime attempt budget alone",
-			verifyResult.EvidenceRevision, verifyResult.Reason,
-		)
-		if store, err := sddattempt.LoadStore(name, workspaceRoot); err == nil && len(store.Attempts) > 0 {
-			last := store.Attempts[len(store.Attempts)-1]
-			if last.RemediatesEvidenceRevision == verifyResult.EvidenceRevision {
-				switch last.Outcome {
-				case "interrupted":
-					reason += " (last correction interrupted — original failure still bindable)"
-				case "failed":
-					if last.EvidenceRevision != "" && last.EvidenceRevision != verifyResult.EvidenceRevision {
-						reason += fmt.Sprintf(" (last correction failed — new failure %s now bindable)", last.EvidenceRevision)
-					} else {
-						reason += " (last correction failed — new failure now bindable)"
-					}
-				}
-			}
-		}
-		remediationState = RemediationState{
-			Required:               true,
-			FailedEvidenceRevision: verifyResult.EvidenceRevision,
-			Reason:                 reason,
-		}
+		baseReason := fmt.Sprintf("verify evidence requires unmanaged remediation for %s: %s; receipt-driven review is disabled, so this correction is bounded by the native runtime attempt budget alone", verifyResult.EvidenceRevision, verifyResult.Reason)
+		reason := polishRemediationReason(baseReason, name, workspaceRoot, instance, verifyResult.EvidenceRevision)
+		remediationState = RemediationState{Required: true, FailedEvidenceRevision: verifyResult.EvidenceRevision, Reason: reason}
 	}
 	if remediationState.Reason != "" {
 		blockedReasons.genuine = append(blockedReasons.genuine, remediationState.Reason)
 	}
+	return remediationState, staleDecision, remediationComplete
+}
+
+// deriveBigMemChangeStatus reconstructs a ChangeStatus from BigMem artifact
+// content (not filesystem). It reuses the same derivation authority as
+// deriveChangeStatus: taskProgress, spec counts, verify evaluation,
+// applyState, edit-authority, remediation, dependencies, nextRecommended
+// and blockedReasons. BigMem changes have no change-instance marker and no
+// granted roots, so the runtime read is instance-less and the apply authority
+// check uses only workspaceRoot.
+func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspaceRoot string, includeInstructions bool, isArchived bool) ChangeStatus {
+	cs := ChangeStatus{Name: name, IsArchived: isArchived}
+	bigmemHasFlags(bySuffix, &cs)
+	if isArchived {
+		return bigmemArchivedStatus(name, bySuffix, workspaceRoot, includeInstructions, cs)
+	}
+	artifacts, taskProgress := collectBigMemArtifactState(bySuffix)
+	cs.TasksTotal = taskProgress.Total
+	cs.TasksDone = taskProgress.Completed
+	verifyResult, coreReady, applyState, blockedReasons := bigmemVerifyAndCore(bySuffix, artifacts, taskProgress)
+	allowedEditRoots := []string{workspaceRoot}
+	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, bySuffix["tasks"], workspaceRoot, allowedEditRoots)
+	verifyReportCurrent := artifacts["verifyReport"] == ArtifactDone
+	remediationState, staleDecision, remediationComplete := buildBigMemRemediation(name, workspaceRoot, artifacts, applyState, verifyResult, &blockedReasons)
 	effectiveRemediationComplete := remediationComplete || staleDecision
 	dependencies := resolveDependencies(artifacts, taskProgress, applyState, coreReady, verifyReportCurrent, verifyResult.Passing, effectiveRemediationComplete)
 	dependencies = applyStaleDecisionRouting(dependencies, staleDecision)
 	nextRecommended := resolveNextRecommended(dependencies, applyState, verifyReportCurrent, remediationState)
-
 	cs.SchemaName = StatusSchemaName
 	cs.SchemaVersion = StatusSchemaVersion
 	cs.ChangeRoot = fmt.Sprintf("bigmem:sdd/%s", name)
