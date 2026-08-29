@@ -312,45 +312,13 @@ func CanonicalLensResult(result ArtifactLensResult) (ArtifactLensResult, error) 
 	if result.Findings == nil || result.Evidence == nil || len(result.Evidence) == 0 {
 		return ArtifactLensResult{}, errors.New("lens result requires explicit findings and concrete evidence")
 	}
-	idPrefix := lensIDPrefix(result.Lens)
-	findings := make([]ArtifactFinding, len(result.Findings))
-	for index, finding := range result.Findings {
-		finding.ID = strings.TrimSpace(finding.ID)
-		if finding.ID == "" {
-			finding.ID = fmt.Sprintf("%s-%03d", idPrefix, index+1)
-		}
-		finding.Lens = strings.TrimSpace(finding.Lens)
-		if finding.Lens == "" {
-			finding.Lens = result.Lens
-		}
-		finding.Location = strings.TrimSpace(finding.Location)
-		finding.Severity = strings.ToUpper(strings.TrimSpace(finding.Severity))
-		finding.Claim = strings.TrimSpace(finding.Claim)
-		if finding.EvidenceClass != "" && !isSupportedEvidenceClass(finding.EvidenceClass) {
-			return ArtifactLensResult{}, fmt.Errorf("lens result finding[%d] has unsupported evidence class %q", index, finding.EvidenceClass)
-		}
-		if finding.CausalDisposition != "" && !isSupportedCausalDisposition(finding.CausalDisposition) {
-			return ArtifactLensResult{}, fmt.Errorf("lens result finding[%d] has unsupported causal disposition %q", index, finding.CausalDisposition)
-		}
-		finding.ProofRefs = append([]string(nil), finding.ProofRefs...)
-		for proofIndex := range finding.ProofRefs {
-			finding.ProofRefs[proofIndex] = strings.TrimSpace(finding.ProofRefs[proofIndex])
-		}
-		if err := validateLensFinding(finding); err != nil {
-			return ArtifactLensResult{}, fmt.Errorf("lens result finding[%d]: %w", index, err)
-		}
-		if finding.Lens != result.Lens {
-			return ArtifactLensResult{}, fmt.Errorf("lens result finding[%d] is not bound to %q", index, result.Lens)
-		}
-		findings[index] = finding
+	findings, err := canonicalizeFindings(result.Lens, result.Findings)
+	if err != nil {
+		return ArtifactLensResult{}, err
 	}
-	evidence := make([]string, len(result.Evidence))
-	for index, item := range result.Evidence {
-		item = strings.TrimSpace(item)
-		if !isConcreteEvidence(item) {
-			return ArtifactLensResult{}, fmt.Errorf("lens result evidence[%d] must be concrete", index)
-		}
-		evidence[index] = item
+	evidence, err := canonicalizeEvidenceItems(result.Evidence)
+	if err != nil {
+		return ArtifactLensResult{}, err
 	}
 	result.Findings = findings
 	result.Evidence = evidence
@@ -360,6 +328,62 @@ func CanonicalLensResult(result ArtifactLensResult) (ArtifactLensResult, error) 
 	}
 	result.ResultHash = derived
 	return result, nil
+}
+
+func canonicalizeFindings(lens string, findings []ArtifactFinding) ([]ArtifactFinding, error) {
+	idPrefix := lensIDPrefix(lens)
+	out := make([]ArtifactFinding, len(findings))
+	for index, finding := range findings {
+		canonical, err := canonicalizeSingleFinding(finding, lens, idPrefix, index)
+		if err != nil {
+			return nil, err
+		}
+		out[index] = canonical
+	}
+	return out, nil
+}
+
+func canonicalizeSingleFinding(finding ArtifactFinding, lens, idPrefix string, index int) (ArtifactFinding, error) {
+	finding.ID = strings.TrimSpace(finding.ID)
+	if finding.ID == "" {
+		finding.ID = fmt.Sprintf("%s-%03d", idPrefix, index+1)
+	}
+	finding.Lens = strings.TrimSpace(finding.Lens)
+	if finding.Lens == "" {
+		finding.Lens = lens
+	}
+	finding.Location = strings.TrimSpace(finding.Location)
+	finding.Severity = strings.ToUpper(strings.TrimSpace(finding.Severity))
+	finding.Claim = strings.TrimSpace(finding.Claim)
+	if finding.EvidenceClass != "" && !isSupportedEvidenceClass(finding.EvidenceClass) {
+		return ArtifactFinding{}, fmt.Errorf("lens result finding[%d] has unsupported evidence class %q", index, finding.EvidenceClass)
+	}
+	if finding.CausalDisposition != "" && !isSupportedCausalDisposition(finding.CausalDisposition) {
+		return ArtifactFinding{}, fmt.Errorf("lens result finding[%d] has unsupported causal disposition %q", index, finding.CausalDisposition)
+	}
+	finding.ProofRefs = append([]string(nil), finding.ProofRefs...)
+	for proofIndex := range finding.ProofRefs {
+		finding.ProofRefs[proofIndex] = strings.TrimSpace(finding.ProofRefs[proofIndex])
+	}
+	if err := validateLensFinding(finding); err != nil {
+		return ArtifactFinding{}, fmt.Errorf("lens result finding[%d]: %w", index, err)
+	}
+	if finding.Lens != lens {
+		return ArtifactFinding{}, fmt.Errorf("lens result finding[%d] is not bound to %q", index, lens)
+	}
+	return finding, nil
+}
+
+func canonicalizeEvidenceItems(evidence []string) ([]string, error) {
+	out := make([]string, len(evidence))
+	for index, item := range evidence {
+		item = strings.TrimSpace(item)
+		if !isConcreteEvidence(item) {
+			return nil, fmt.Errorf("lens result evidence[%d] must be concrete", index)
+		}
+		out[index] = item
+	}
+	return out, nil
 }
 
 func validateLensFinding(finding ArtifactFinding) error {
@@ -442,81 +466,28 @@ func Admit(request AdmissionRequest) (ArtifactLensResult, ArtifactAdmission, []b
 		admission.Decision, admission.Diagnostic = decision, diagnostic
 		return ArtifactLensResult{}, admission, nil, &ArtifactAdmissionError{Admission: admission}
 	}
-	if err := ValidateArtifactSubject(request.ExpectedSubject); err != nil {
-		return fail(AdmissionBindingMismatch, err.Error())
+	if err := admitValidateSubject(request); err != nil {
+		decision, diag := admitSubjectError(err)
+		return fail(decision, diag)
 	}
-	if len(request.RawPayload) == 0 {
-		return fail(AdmissionIncomplete, "raw reviewer payload is required")
-	}
-	if request.EchoedSubjectHash == "" {
-		return fail(AdmissionIncomplete,
-			"reviewer result omitted the provider-owned artifact subject hash; re-run the lens and invoke biggz review capture-result again on the same lineage with a result that echoes the binding's subject_hash")
-	}
-	if request.EchoedSubjectHash != request.ExpectedSubject.SubjectHash {
-		return fail(AdmissionBindingMismatch,
-			"reviewer result echoed a different artifact subject; re-run the lens and invoke biggz review capture-result again with a result that echoes subject_hash "+request.ExpectedSubject.SubjectHash)
-	}
-	if request.Inspection.Status != ArtifactInspectionCompleted {
-		return fail(AdmissionIncomplete, "reviewer did not report completed candidate inspection")
-	}
-	inspectionPaths, err := canonicalPaths(request.Inspection.Paths)
-	if err != nil || !equalStrings(inspectionPaths, request.Inspection.Paths) {
-		return fail(AdmissionOutOfScope, "reviewer inspection paths are not canonical candidate paths")
-	}
-	allowed := make(map[string]struct{}, len(request.ManifestPaths))
-	for _, logicalPath := range request.ManifestPaths {
-		allowed[logicalPath] = struct{}{}
-	}
-	for _, logicalPath := range inspectionPaths {
-		if _, ok := allowed[logicalPath]; !ok {
-			return fail(AdmissionOutOfScope, "reviewer inspection includes a path outside the frozen candidate")
-		}
-	}
-	if !equalStrings(inspectionPaths, request.ManifestPaths) {
-		return fail(AdmissionIncomplete, "reviewer inspection did not cover the complete frozen path manifest")
+	inspectionPaths, allowed, err := admitValidateInspection(request)
+	if err != nil {
+		decision, diag := admitInspectionError(err)
+		return fail(decision, diag)
 	}
 	canonical, err := CanonicalLensResult(request.Result)
 	if err != nil {
 		return fail(AdmissionIncomplete, err.Error())
 	}
-	for _, evidence := range canonical.Evidence {
-		if evidenceReportsUnavailableInspection(evidence) {
-			return fail(AdmissionIncomplete, "reviewer evidence reports that candidate inspection was unavailable")
-		}
+	if err := admitCheckUnavailableEvidence(canonical); err != nil {
+		return fail(AdmissionIncomplete, err.Error())
 	}
-	wantPrefix := lensIDPrefix(canonical.Lens) + "-"
-	seenFindingIDs := make(map[string]struct{}, len(canonical.Findings))
-	wantCandidateCausalIDs := make([]string, 0)
-	for _, finding := range canonical.Findings {
-		if !artifactFindingID.MatchString(finding.ID) {
-			return fail(AdmissionBindingMismatch, "reviewer finding ID does not match the native ASCII schema")
-		}
-		if !strings.HasPrefix(finding.ID, wantPrefix) {
-			return fail(AdmissionBindingMismatch, "reviewer finding ID is not bound to the selected lens")
-		}
-		if _, duplicate := seenFindingIDs[finding.ID]; duplicate {
-			return fail(AdmissionAmbiguous, "reviewer result repeats a finding ID")
-		}
-		seenFindingIDs[finding.ID] = struct{}{}
-		logicalPath, _, locationErr := parseFindingLocation(finding.Location)
-		if locationErr != nil {
-			return fail(AdmissionOutOfScope, "reviewer finding location is invalid: "+locationErr.Error())
-		}
-		if _, ok := allowed[logicalPath]; !ok {
-			return fail(AdmissionOutOfScope, "reviewer finding location is outside the frozen candidate")
-		}
-		if !isSevereSeverity(finding.Severity) {
-			continue
-		}
-		if !isSupportedEvidenceClass(finding.EvidenceClass) || !isSupportedCausalDisposition(finding.CausalDisposition) {
-			return fail(AdmissionIncomplete, "severe reviewer finding requires supported evidence_class and causal_disposition")
-		}
-		switch finding.CausalDisposition {
-		case CausalIntroduced, CausalBehaviorActivated, CausalWorsened:
-			wantCandidateCausalIDs = append(wantCandidateCausalIDs, finding.ID)
-		}
+	candidateIDs, err := admitCollectCandidateCausalIDs(canonical, allowed)
+	if err != nil {
+		decision, diag := admitFindingsError(err)
+		return fail(decision, diag)
 	}
-	verifiedIDs, err := canonicalStrings(wantCandidateCausalIDs, "candidate-causal finding id")
+	verifiedIDs, err := canonicalStrings(candidateIDs, "candidate-causal finding id")
 	if err != nil {
 		return fail(AdmissionIncomplete, err.Error())
 	}
@@ -530,6 +501,126 @@ func Admit(request AdmissionRequest) (ArtifactLensResult, ArtifactAdmission, []b
 	admission.CanonicalSHA256 = payloadSHA256(canonicalPayload)
 	admission.CandidateCausalFindingIDs = verifiedIDs
 	return canonical, admission, canonicalPayload, nil
+}
+
+func admitValidateSubject(request AdmissionRequest) error {
+	if err := ValidateArtifactSubject(request.ExpectedSubject); err != nil {
+		return &admitError{decision: AdmissionBindingMismatch, msg: err.Error()}
+	}
+	if len(request.RawPayload) == 0 {
+		return &admitError{decision: AdmissionIncomplete, msg: "raw reviewer payload is required"}
+	}
+	if request.EchoedSubjectHash == "" {
+		return &admitError{decision: AdmissionIncomplete, msg: "reviewer result omitted the provider-owned artifact subject hash; re-run the lens and invoke biggz review capture-result again on the same lineage with a result that echoes the binding's subject_hash"}
+	}
+	if request.EchoedSubjectHash != request.ExpectedSubject.SubjectHash {
+		return &admitError{decision: AdmissionBindingMismatch, msg: "reviewer result echoed a different artifact subject; re-run the lens and invoke biggz review capture-result again with a result that echoes subject_hash " + request.ExpectedSubject.SubjectHash}
+	}
+	if request.Inspection.Status != ArtifactInspectionCompleted {
+		return &admitError{decision: AdmissionIncomplete, msg: "reviewer did not report completed candidate inspection"}
+	}
+	return nil
+}
+
+func admitValidateInspection(request AdmissionRequest) ([]string, map[string]struct{}, error) {
+	inspectionPaths, err := canonicalPaths(request.Inspection.Paths)
+	if err != nil || !equalStrings(inspectionPaths, request.Inspection.Paths) {
+		return nil, nil, &admitError{decision: AdmissionOutOfScope, msg: "reviewer inspection paths are not canonical candidate paths"}
+	}
+	allowed := make(map[string]struct{}, len(request.ManifestPaths))
+	for _, p := range request.ManifestPaths {
+		allowed[p] = struct{}{}
+	}
+	for _, p := range inspectionPaths {
+		if _, ok := allowed[p]; !ok {
+			return nil, nil, &admitError{decision: AdmissionOutOfScope, msg: "reviewer inspection includes a path outside the frozen candidate"}
+		}
+	}
+	if !equalStrings(inspectionPaths, request.ManifestPaths) {
+		return nil, nil, &admitError{decision: AdmissionIncomplete, msg: "reviewer inspection did not cover the complete frozen path manifest"}
+	}
+	return inspectionPaths, allowed, nil
+}
+
+func admitCheckUnavailableEvidence(canonical ArtifactLensResult) error {
+	for _, evidence := range canonical.Evidence {
+		if evidenceReportsUnavailableInspection(evidence) {
+			return errors.New("reviewer evidence reports that candidate inspection was unavailable")
+		}
+	}
+	return nil
+}
+
+func admitCollectCandidateCausalIDs(canonical ArtifactLensResult, allowed map[string]struct{}) ([]string, error) {
+	wantPrefix := lensIDPrefix(canonical.Lens) + "-"
+	seen := make(map[string]struct{}, len(canonical.Findings))
+	var ids []string
+	for _, finding := range canonical.Findings {
+		if err := admitValidateSingleFinding(finding, allowed, wantPrefix, seen); err != nil {
+			return nil, err
+		}
+		if isSevereSeverity(finding.Severity) {
+			switch finding.CausalDisposition {
+			case CausalIntroduced, CausalBehaviorActivated, CausalWorsened:
+				ids = append(ids, finding.ID)
+			}
+		}
+	}
+	return ids, nil
+}
+
+func admitValidateSingleFinding(finding ArtifactFinding, allowed map[string]struct{}, wantPrefix string, seen map[string]struct{}) error {
+	if !artifactFindingID.MatchString(finding.ID) {
+		return &admitError{decision: AdmissionBindingMismatch, msg: "reviewer finding ID does not match the native ASCII schema"}
+	}
+	if !strings.HasPrefix(finding.ID, wantPrefix) {
+		return &admitError{decision: AdmissionBindingMismatch, msg: "reviewer finding ID is not bound to the selected lens"}
+	}
+	if _, dup := seen[finding.ID]; dup {
+		return &admitError{decision: AdmissionAmbiguous, msg: "reviewer result repeats a finding ID"}
+	}
+	seen[finding.ID] = struct{}{}
+	logicalPath, _, locErr := parseFindingLocation(finding.Location)
+	if locErr != nil {
+		return &admitError{decision: AdmissionOutOfScope, msg: "reviewer finding location is invalid: " + locErr.Error()}
+	}
+	if _, ok := allowed[logicalPath]; !ok {
+		return &admitError{decision: AdmissionOutOfScope, msg: "reviewer finding location is outside the frozen candidate"}
+	}
+	if isSevereSeverity(finding.Severity) {
+		if !isSupportedEvidenceClass(finding.EvidenceClass) || !isSupportedCausalDisposition(finding.CausalDisposition) {
+			return &admitError{decision: AdmissionIncomplete, msg: "severe reviewer finding requires supported evidence_class and causal_disposition"}
+		}
+	}
+	return nil
+}
+
+type admitError struct {
+	decision AdmissionDecision
+	msg      string
+}
+
+func (e *admitError) Error() string { return e.msg }
+
+func admitSubjectError(err error) (AdmissionDecision, string) {
+	if ae, ok := err.(*admitError); ok {
+		return ae.decision, ae.msg
+	}
+	return AdmissionIncomplete, err.Error()
+}
+
+func admitInspectionError(err error) (AdmissionDecision, string) {
+	if ae, ok := err.(*admitError); ok {
+		return ae.decision, ae.msg
+	}
+	return AdmissionIncomplete, err.Error()
+}
+
+func admitFindingsError(err error) (AdmissionDecision, string) {
+	if ae, ok := err.(*admitError); ok {
+		return ae.decision, ae.msg
+	}
+	return AdmissionIncomplete, err.Error()
 }
 
 // marshalCanonicalEnvelope renders the deterministic canonical payload: stable
@@ -593,47 +684,7 @@ func ExtractBoundedSingleJSONObject(payload []byte, limit int) ([]byte, Admissio
 	if limit <= 0 || len(payload) == 0 || len(payload) > limit {
 		return nil, AdmissionIncomplete, errors.New("reviewer payload is empty or exceeds the native bound")
 	}
-	type candidate struct{ start, end int }
-	candidates := []candidate{}
-	start, depth := -1, 0
-	inString, escaped := false, false
-	for index, value := range payload {
-		if depth == 0 {
-			if value == '{' {
-				start, depth, inString, escaped = index, 1, false, false
-			}
-			continue
-		}
-		if inString {
-			if escaped {
-				escaped = false
-				continue
-			}
-			switch value {
-			case '\\':
-				escaped = true
-			case '"':
-				inString = false
-			}
-			continue
-		}
-		switch value {
-		case '"':
-			inString = true
-		case '{':
-			depth++
-		case '}':
-			depth--
-			if depth == 0 {
-				var object map[string]json.RawMessage
-				fragment := bytes.TrimSpace(payload[start : index+1])
-				if json.Unmarshal(fragment, &object) == nil && object != nil {
-					candidates = append(candidates, candidate{start: start, end: index + 1})
-				}
-				start = -1
-			}
-		}
-	}
+	candidates, depth := collectJSONCandidates(payload)
 	if depth != 0 || len(candidates) == 0 {
 		return nil, AdmissionIncomplete, errors.New("reviewer payload contains no complete JSON object")
 	}
@@ -642,6 +693,64 @@ func ExtractBoundedSingleJSONObject(payload []byte, limit int) ([]byte, Admissio
 	}
 	match := candidates[0]
 	return append([]byte(nil), bytes.TrimSpace(payload[match.start:match.end])...), AdmissionCompleted, nil
+}
+
+type jsonCandidate struct{ start, end int }
+
+func collectJSONCandidates(payload []byte) ([]jsonCandidate, int) {
+	candidates := []jsonCandidate{}
+	start, depth := -1, 0
+	inString, escaped := false, false
+	for index, value := range payload {
+		handled := handleJSONByte(value, &start, &depth, &inString, &escaped, index, payload, &candidates)
+		if handled {
+			continue
+		}
+	}
+	return candidates, depth
+}
+
+func handleJSONByte(value byte, start, depth *int, inString, escaped *bool, index int, payload []byte, candidates *[]jsonCandidate) bool {
+	if *depth == 0 {
+		if value == '{' {
+			*start, *depth, *inString, *escaped = index, 1, false, false
+		}
+		return true
+	}
+	if *inString {
+		handleJSONStringByte(value, escaped, inString)
+		return true
+	}
+	switch value {
+	case '"':
+		*inString = true
+	case '{':
+		*depth++
+	case '}':
+		*depth--
+		if *depth == 0 {
+			var object map[string]json.RawMessage
+			fragment := bytes.TrimSpace(payload[*start : index+1])
+			if json.Unmarshal(fragment, &object) == nil && object != nil {
+				*candidates = append(*candidates, jsonCandidate{start: *start, end: index + 1})
+			}
+			*start = -1
+		}
+	}
+	return true
+}
+
+func handleJSONStringByte(value byte, escaped, inString *bool) {
+	if *escaped {
+		*escaped = false
+		return
+	}
+	switch value {
+	case '\\':
+		*escaped = true
+	case '"':
+		*inString = false
+	}
 }
 
 // decodeReviewerResult strictly decodes a single JSON value with unknown
