@@ -60,6 +60,7 @@ type RuntimeStore struct {
 	ObjectiveID string `json:"objective_id,omitempty"`
 	MaxAttempts int    `json:"max_attempts,omitempty"`
 	MaxLines    int    `json:"max_changed_lines,omitempty"`
+	CumulativeChangedLines int `json:"cumulative_changed_lines,omitempty"`
 
 	// Evidence tracking
 	WorkUnit     string `json:"work_unit,omitempty"`
@@ -126,6 +127,8 @@ type RuntimeAttempt struct {
 
 	// Remediation binding
 	RemediatesEvidenceRevision string `json:"remediates_evidence_revision,omitempty"`
+
+	ChangedLines int `json:"changed_lines,omitempty"`
 }
 
 // RuntimeReset records ledger reset provenance.
@@ -190,6 +193,47 @@ func (e *RuntimeRecordRejectedError) Error() string {
 
 func (e *RuntimeRecordRejectedError) Unwrap() error { return e.Cause }
 
+// runtimeChangedLineBudgetExceeded owns the line-budget check.
+func runtimeChangedLineBudgetExceeded(s *RuntimeStore, delta int) bool {
+	if s == nil {
+		return false
+	}
+	if s.MaxLines == 0 {
+		return false
+	}
+	return s.CumulativeChangedLines+delta > s.MaxLines
+}
+
+func runtimeAttemptDeliveredIncrement(attempt RuntimeAttempt) int {
+	if attempt.Outcome == "interrupted" && attempt.ChangedLines == 0 {
+		return 0
+	}
+	return 1
+}
+
+func runtimeAttemptDeliveredIncrementSlice(attempts []RuntimeAttempt) int {
+	n := 0
+	for _, a := range attempts {
+		n += runtimeAttemptDeliveredIncrement(a)
+	}
+	return n
+}
+
+func runtimeRefundedAttempts(store *RuntimeStore) int {
+	if store == nil {
+		return 0
+	}
+	delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
+	refunded := len(store.Attempts) - delivered
+	if refunded < 0 {
+		refunded = 0
+	}
+	if refunded > store.MaxAttempts {
+		refunded = store.MaxAttempts
+	}
+	return refunded
+}
+
 // requestDigest hashes the canonical JSON of a request under a schema domain,
 // mirroring gentle-ai's runtimeValueHash.
 func requestDigest(domain string, params any) string {
@@ -238,6 +282,7 @@ type RuntimeStatus struct {
 	Complete         bool   `json:"complete"`
 	NextAction       string `json:"next_action"`
 	AttemptCount     int    `json:"attempt_count"`
+	CumulativeChangedLines int `json:"cumulative_changed_lines,omitempty"`
 
 	// Migrated is true when this access imported the legacy home-dir
 	// ledger into the clone-scoped store (reported once).
@@ -503,6 +548,7 @@ type BeginParams struct {
 	EvidenceGoal string
 	MaxAttempts  int
 	MaxLines     int
+	ChangedLines int `json:"changed_lines,omitempty"`
 	RequestID    string // idempotency key: if the same request_id is already recorded, return it
 }
 
@@ -548,6 +594,9 @@ func Begin(params BeginParams) (*BeginResult, error) {
 		// First access: create a fresh store with attempt 1 already active
 		// (the record's content address is its revision).
 		if loaded == nil {
+			if runtimeChangedLineBudgetExceeded(&RuntimeStore{MaxLines: params.MaxLines, CumulativeChangedLines: 0}, params.ChangedLines) {
+				return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: fmt.Sprintf("changed lines %d would exceed budget %d (cumulative %d)", params.ChangedLines, params.MaxLines, 0), SettleObligation: nil}
+			}
 			store := &RuntimeStore{
 				ChangeName:    params.ChangeName,
 				ObjectiveID:   params.ObjectiveID,
@@ -615,6 +664,28 @@ func Begin(params BeginParams) (*BeginResult, error) {
 			}
 		}
 
+		if runtimeChangedLineBudgetExceeded(store, params.ChangedLines) {
+			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: fmt.Sprintf("changed lines %d would exceed budget %d (cumulative %d)", params.ChangedLines, store.MaxLines, store.CumulativeChangedLines), SettleObligation: deriveSettleObligation(store)}
+		}
+		delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
+		refunded := runtimeRefundedAttempts(store)
+		if store.MaxAttempts > 0 {
+			if delivered >= store.MaxAttempts {
+				if refunded >= store.MaxAttempts || len(store.Attempts) >= 2*store.MaxAttempts {
+					return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "attempt budget exhausted (2x cap with refunds)", SettleObligation: deriveSettleObligation(store)}
+				}
+				store.DecisionRequired = true
+				store.NextAction = "decision-required"
+				store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+				if err := s.commit(store); err != nil {
+					return fmt.Errorf("save store: %w", err)
+				}
+				return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "max attempts reached, decision required", SettleObligation: deriveSettleObligation(store)}
+			}
+			if len(store.Attempts) >= 2*store.MaxAttempts {
+				return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "attempt budget exhausted (2x cap)", SettleObligation: deriveSettleObligation(store)}
+			}
+		}
 		// Start new attempt: derive ordinal from history when no active attempt (cumulative never reset).
 		nextOrdinal := store.ActiveAttempt + 1
 		if store.ActiveAttempt == 0 {
@@ -622,15 +693,6 @@ func Begin(params BeginParams) (*BeginResult, error) {
 			if nextOrdinal == 1 && len(store.Attempts) > 0 {
 				nextOrdinal = store.Attempts[len(store.Attempts)-1].Ordinal + 1
 			}
-		}
-		if nextOrdinal > store.MaxAttempts && store.MaxAttempts > 0 {
-			store.DecisionRequired = true
-			store.NextAction = "decision-required"
-			store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-			if err := s.commit(store); err != nil {
-				return fmt.Errorf("save store: %w", err)
-			}
-			return errors.New("max attempts reached, decision required")
 		}
 
 		store.ActiveAttempt = nextOrdinal
@@ -685,6 +747,7 @@ type FinishParams struct {
 	ExpectedBindingRevision    string
 	SuccessorLineageID         string
 	RemediatesEvidenceRevision string
+	ChangedLines               int `json:"changed_lines,omitempty"`
 }
 
 // FinishResult describes the result of finishing an attempt.
@@ -749,6 +812,9 @@ func Finish(params FinishParams) (*FinishResult, error) {
 			return fmt.Errorf("CAS conflict: expected revision %s, got %s", params.ExpectedRev, store.Revision)
 		}
 
+		if runtimeChangedLineBudgetExceeded(store, params.ChangedLines) {
+			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: fmt.Sprintf("changed lines %d would exceed budget %d (cumulative %d)", params.ChangedLines, store.MaxLines, store.CumulativeChangedLines), SettleObligation: deriveSettleObligation(store)}
+		}
 		// Find active attempt
 		var found bool
 		for i := len(store.Attempts) - 1; i >= 0; i-- {
@@ -761,6 +827,7 @@ func Finish(params FinishParams) (*FinishResult, error) {
 				store.Attempts[i].CleanupEvidence = params.CleanupEvidence
 				store.Attempts[i].ProcessEvidence = params.ProcessEvidence
 				store.Attempts[i].RemediatesEvidenceRevision = params.RemediatesEvidenceRevision
+				store.Attempts[i].ChangedLines = params.ChangedLines
 
 				// Update binding for remediation
 				if params.ExpectedBindingRevision != "" {
@@ -780,6 +847,7 @@ func Finish(params FinishParams) (*FinishResult, error) {
 		if !found {
 			return fmt.Errorf("no active attempt %d found", store.ActiveAttempt)
 		}
+		store.CumulativeChangedLines += params.ChangedLines
 
 		// Update state based on outcome
 		store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
@@ -789,9 +857,10 @@ func Finish(params FinishParams) (*FinishResult, error) {
 			store.NextAction = "complete"
 			store.ActiveAttempt = 0
 		} else {
-			// Failed or interrupted — check if more attempts allowed
+			// Failed or interrupted — check if more attempts allowed (refund-aware)
 			store.ActiveAttempt = 0
-			if len(store.Attempts) >= store.MaxAttempts && store.MaxAttempts > 0 {
+			delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
+			if store.MaxAttempts > 0 && (delivered >= store.MaxAttempts || len(store.Attempts) >= 2*store.MaxAttempts) {
 				store.DecisionRequired = true
 				store.NextAction = "decision-required"
 			} else {
@@ -799,7 +868,8 @@ func Finish(params FinishParams) (*FinishResult, error) {
 			}
 		}
 
-		remaining := store.MaxAttempts - len(store.Attempts)
+		delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
+		remaining := store.MaxAttempts - delivered
 		if remaining < 0 {
 			remaining = 0
 		}
@@ -1001,6 +1071,7 @@ type AcquireParams struct {
 	EvidenceGoal string
 	MaxAttempts  int
 	MaxLines     int
+	ChangedLines int    `json:"changed_lines,omitempty"`
 	Token        string // optional ownership proof: continue the active attempt that owns this token
 	// RemediatesEvidenceRevision declares the failed evidence this acquire
 	// intends to correct, so an unsatisfiable remediation can be refused
@@ -1034,6 +1105,7 @@ type SettleParams struct {
 	CleanupEvidence            string
 	ProcessEvidence            string
 	RemediatesEvidenceRevision string
+	ChangedLines               int `json:"changed_lines,omitempty"`
 }
 
 // SettleResult describes the result of settling an attempt.
@@ -1137,6 +1209,9 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 
 		// Fresh ledger: create store with first attempt and mint token.
 		if loaded == nil {
+			if runtimeChangedLineBudgetExceeded(&RuntimeStore{MaxLines: params.MaxLines, CumulativeChangedLines: 0}, params.ChangedLines) {
+				return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: fmt.Sprintf("changed lines %d would exceed budget %d (cumulative %d)", params.ChangedLines, params.MaxLines, 0), SettleObligation: nil}
+			}
 			ordinal := 1
 			token := mintAcquireToken(params.ChangeName, params.RequestID, ordinal)
 			if params.RequestID == "" {
@@ -1157,9 +1232,10 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 				ActiveAttempt: ordinal,
 				NextAction:    "continue",
 				Attempts: []RuntimeAttempt{{
-					Ordinal:  ordinal,
-					WorkUnit: params.WorkUnit,
-					BeganAt:  time.Now().UTC().Format(time.RFC3339),
+					Ordinal:      ordinal,
+					WorkUnit:     params.WorkUnit,
+					BeganAt:      time.Now().UTC().Format(time.RFC3339),
+					ChangedLines: params.ChangedLines,
 				}},
 				Tokens: map[string]int{token: ordinal},
 			}
@@ -1258,6 +1334,24 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 			}
 		}
 
+		if runtimeChangedLineBudgetExceeded(store, params.ChangedLines) {
+			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: fmt.Sprintf("changed lines %d would exceed budget %d (cumulative %d)", params.ChangedLines, store.MaxLines, store.CumulativeChangedLines), SettleObligation: deriveSettleObligation(store)}
+		}
+		if store.MaxAttempts > 0 && len(store.Attempts) >= 2*store.MaxAttempts {
+			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "attempt budget exhausted (2x cap)", SettleObligation: deriveSettleObligation(store)}
+		}
+		deliveredEarly := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
+		if store.MaxAttempts > 0 && deliveredEarly >= store.MaxAttempts {
+			// Check if refund cap already allows: if refunded < Max, we could still allow one more? But delivered at limit means budget exhausted regardless
+			// For refund case, delivered would be < Max because refunded not counted, so this branch not taken
+			store.DecisionRequired = true
+			store.NextAction = "decision-required"
+			store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+			if err := s.commit(store); err != nil {
+				return fmt.Errorf("save store: %w", err)
+			}
+			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "max attempts reached, decision required", SettleObligation: deriveSettleObligation(store)}
+		}
 		// Budget check already covered by deriveAdmissionBlocked, but also
 		// enforce maxAttempts guard for the new attempt ordinal.
 		nextOrdinal := store.ActiveAttempt + 1
@@ -1275,20 +1369,6 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 		}
 		if store.MaxLines == 0 {
 			store.MaxLines = params.MaxLines
-		}
-		if nextOrdinal > store.MaxAttempts && store.MaxAttempts > 0 {
-			store.DecisionRequired = true
-			store.NextAction = "decision-required"
-			store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-			// Persist the decision-required transition so the probe sees it.
-			if err := s.commit(store); err != nil {
-				return fmt.Errorf("save store: %w", err)
-			}
-			return &BlockedError{
-				Reason:           BlockedReasonBudgetExhausted,
-				Exit:             "max attempts reached, decision required",
-				SettleObligation: deriveSettleObligation(store),
-			}
 		}
 
 		// Mint token and start new attempt.
@@ -1338,9 +1418,10 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 			store.EvidenceGoal = params.EvidenceGoal
 		}
 		store.Attempts = append(store.Attempts, RuntimeAttempt{
-			Ordinal:  ordinal,
-			WorkUnit: params.WorkUnit,
-			BeganAt:  time.Now().UTC().Format(time.RFC3339),
+			Ordinal:      ordinal,
+			WorkUnit:     params.WorkUnit,
+			BeganAt:      time.Now().UTC().Format(time.RFC3339),
+			ChangedLines: params.ChangedLines,
 		})
 		outcome := &AcquireResult{Token: token, SettleObligation: deriveSettleObligation(store), Scope: s.Scope}
 		recordRequest(store, params.RequestID, opAcquire, digest, outcome)
@@ -1512,6 +1593,9 @@ func Settle(params SettleParams) (*SettleResult, error) {
 			}
 		}
 
+		if runtimeChangedLineBudgetExceeded(store, params.ChangedLines) {
+			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: fmt.Sprintf("changed lines %d would exceed budget %d (cumulative %d)", params.ChangedLines, store.MaxLines, store.CumulativeChangedLines), SettleObligation: deriveSettleObligation(store)}
+		}
 		// Apply settlement.
 		store.Attempts[idx].Outcome = params.Outcome
 		store.Attempts[idx].EndedAt = time.Now().UTC().Format(time.RFC3339)
@@ -1521,6 +1605,8 @@ func Settle(params SettleParams) (*SettleResult, error) {
 		store.Attempts[idx].CleanupEvidence = params.CleanupEvidence
 		store.Attempts[idx].ProcessEvidence = params.ProcessEvidence
 		store.Attempts[idx].RemediatesEvidenceRevision = params.RemediatesEvidenceRevision
+		store.Attempts[idx].ChangedLines = params.ChangedLines
+		store.CumulativeChangedLines += params.ChangedLines
 
 		if params.RemediatesEvidenceRevision != "" {
 			store.EvidenceRevision = params.RemediatesEvidenceRevision
@@ -1535,7 +1621,8 @@ func Settle(params SettleParams) (*SettleResult, error) {
 			store.NextAction = "complete"
 			store.ActiveAttempt = 0
 		} else {
-			if len(store.Attempts) >= store.MaxAttempts && store.MaxAttempts > 0 {
+			delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
+			if store.MaxAttempts > 0 && (delivered >= store.MaxAttempts || len(store.Attempts) >= 2*store.MaxAttempts) {
 				store.DecisionRequired = true
 				store.NextAction = "decision-required"
 			} else {
@@ -1544,7 +1631,8 @@ func Settle(params SettleParams) (*SettleResult, error) {
 			}
 		}
 
-		remaining := store.MaxAttempts - len(store.Attempts)
+		delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
+		remaining := store.MaxAttempts - delivered
 		if remaining < 0 {
 			remaining = 0
 		}
