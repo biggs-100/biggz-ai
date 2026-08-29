@@ -48,97 +48,98 @@ func Repair(repo, lineageID string) (RepairReport, error) {
 	}
 	var report RepairReport
 	err = WithFileLock(store.Dir, func() error {
-		verified, corrupt, err := verifyEventFiles(store.Dir)
-		if err != nil {
-			return err
-		}
-		head, err := readHEAD(store.Dir)
-		if err != nil {
-			return fmt.Errorf("repair: read HEAD: %w", err)
-		}
-		if head == "" && len(verified) == 0 {
-			report = RepairReport{
-				LineageID: lineageID, Action: "none",
-				Detail: "chain intact (no events)",
-			}
-			return nil
-		}
-
-		// Find the deepest verified chain: each verified record contributes
-		// depth 1 + depth(prev) when the prev is also verified. The record at
-		// the head of the longest chain is the last valid event. A valid
-		// chain FROM the recorded HEAD always wins (an orphan chain may only
-		// tie it in depth, never beat a chain that HEAD already names).
-		depths := make(map[string]int, len(verified))
-		for name := range verified {
-			chainDepth(verified, depths, name)
-		}
-		lastValid, lastDepth := "", 0
-		if head != "" {
-			if _, ok := verified[head]; ok {
-				broken, err := chainBrokenAt(verified, head)
-				if err != nil {
-					return err
-				}
-				if broken != "" {
-					// Mid-chain corruption: HEAD names a verified record
-					// whose predecessor link is broken before genesis.
-					// Truncating here would silently drop reviewed history.
-					return fmt.Errorf(
-						"repair: chain corruption is mid-chain at %s (the event after it is unreadable or does not match its content address); truncation would silently drop reviewed history — recover with 'biggz review export %s' and re-import into a fresh lineage",
-						broken, lineageID)
-				}
-				lastValid, lastDepth = head, chainDepth(verified, depths, head)
-			}
-		}
-		if lastValid == "" {
-			// HEAD missing, unreadable, or naming a corrupt event: fall back
-			// to the deepest verified chain.
-			for name, depth := range depths {
-				if depth > lastDepth {
-					lastValid, lastDepth = name, depth
-				}
-			}
-		}
-
-		if head == lastValid {
-			report = RepairReport{
-				LineageID: lineageID, HeadHash: head, EventCount: lastDepth,
-				Action: "none", Detail: "chain intact",
-			}
-			if len(corrupt) > 0 {
-				report.Detail = fmt.Sprintf("chain intact (%d unreadable record file(s) not on the chain)", len(corrupt))
-			}
-			return nil
-		}
-
-		// Tail damage: HEAD is missing, unreadable, or points at something
-		// that is not the last valid event. Truncate to the last valid event
-		// and re-derive HEAD. The corrupt record file(s) are removed: an
-		// unreadable tail can never rejoin the chain, and keeping it would
-		// make the store fail every future integrity check.
-		if lastValid == "" {
-			return fmt.Errorf(
-				"repair: no valid event remains in the store (HEAD %s is unreadable and every record file fails verification); recover the lineage bytes with 'biggz review export %s' before it degrades further",
-				head, lineageID)
-		}
-		truncated := len(verified) - lastDepth
-		for _, name := range corrupt {
-			truncated++
-			_ = os.Remove(filepath.Join(store.Dir, "v1", "events", name))
-			_ = os.Remove(filepath.Join(store.Dir, name))
-		}
-		if err := writeHEADFile(store.Dir, lastValid); err != nil {
-			return fmt.Errorf("repair: re-derive HEAD: %w", err)
-		}
-		report = RepairReport{
-			LineageID: lineageID, Repaired: true, Action: "truncated_tail",
-			HeadHash: lastValid, EventCount: lastDepth, Truncated: truncated,
-			Detail: fmt.Sprintf("HEAD re-derived to the last valid event %s; %d record file(s) truncated off the chain and removed (unreadable tail cannot rejoin)", lastValid, truncated),
-		}
-		return nil
+		return repairLocked(store.Dir, lineageID, &report)
 	})
 	return report, err
+}
+
+func repairLocked(dir, lineageID string, report *RepairReport) error {
+	verified, corrupt, err := verifyEventFiles(dir)
+	if err != nil {
+		return err
+	}
+	head, err := readHEAD(dir)
+	if err != nil {
+		return fmt.Errorf("repair: read HEAD: %w", err)
+	}
+	if head == "" && len(verified) == 0 {
+		*report = RepairReport{LineageID: lineageID, Action: "none", Detail: "chain intact (no events)"}
+		return nil
+	}
+	depths := computeAllDepths(verified)
+	lastValid, lastDepth, err := resolveLastValid(verified, depths, head, lineageID)
+	if err != nil {
+		return err
+	}
+	if lastValid == "" {
+		for name, depth := range depths {
+			if depth > lastDepth {
+				lastValid, lastDepth = name, depth
+			}
+		}
+	}
+	if head == lastValid {
+		return reportIntact(report, lineageID, head, lastDepth, corrupt)
+	}
+	return repairTailDamage(dir, lineageID, head, lastValid, lastDepth, verified, corrupt, report)
+}
+
+func computeAllDepths(verified map[string]Record) map[string]int {
+	depths := make(map[string]int, len(verified))
+	for name := range verified {
+		chainDepth(verified, depths, name)
+	}
+	return depths
+}
+
+func resolveLastValid(verified map[string]Record, depths map[string]int, head, lineageID string) (string, int, error) {
+	if head == "" {
+		return "", 0, nil
+	}
+	if _, ok := verified[head]; !ok {
+		return "", 0, nil
+	}
+	broken, err := chainBrokenAt(verified, head)
+	if err != nil {
+		return "", 0, err
+	}
+	if broken != "" {
+		return "", 0, fmt.Errorf(
+			"repair: chain corruption is mid-chain at %s (the event after it is unreadable or does not match its content address); truncation would silently drop reviewed history — recover with 'biggz review export %s' and re-import into a fresh lineage",
+			broken, lineageID)
+	}
+	return head, chainDepth(verified, depths, head), nil
+}
+
+func reportIntact(report *RepairReport, lineageID, head string, depth int, corrupt []string) error {
+	*report = RepairReport{LineageID: lineageID, HeadHash: head, EventCount: depth, Action: "none", Detail: "chain intact"}
+	if len(corrupt) > 0 {
+		report.Detail = fmt.Sprintf("chain intact (%d unreadable record file(s) not on the chain)", len(corrupt))
+	}
+	return nil
+}
+
+func repairTailDamage(dir, lineageID, head, lastValid string, lastDepth int, verified map[string]Record, corrupt []string, report *RepairReport) error {
+	if lastValid == "" {
+		return fmt.Errorf(
+			"repair: no valid event remains in the store (HEAD %s is unreadable and every record file fails verification); recover the lineage bytes with 'biggz review export %s' before it degrades further",
+			head, lineageID)
+	}
+	truncated := len(verified) - lastDepth
+	for _, name := range corrupt {
+		truncated++
+		_ = os.Remove(filepath.Join(dir, "v1", "events", name))
+		_ = os.Remove(filepath.Join(dir, name))
+	}
+	if err := writeHEADFile(dir, lastValid); err != nil {
+		return fmt.Errorf("repair: re-derive HEAD: %w", err)
+	}
+	*report = RepairReport{
+		LineageID: lineageID, Repaired: true, Action: "truncated_tail",
+		HeadHash: lastValid, EventCount: lastDepth, Truncated: truncated,
+		Detail: fmt.Sprintf("HEAD re-derived to the last valid event %s; %d record file(s) truncated off the chain and removed (unreadable tail cannot rejoin)", lastValid, truncated),
+	}
+	return nil
 }
 
 // verifyEventFiles verifies every event-named file (64-char hex, excluding
@@ -154,61 +155,77 @@ func verifyEventFiles(dir string) (map[string]Record, []string, error) {
 	verified := make(map[string]Record)
 	var corrupt []string
 	seen := make(map[string]struct{})
-	// Helper to scan one directory, respecting dir semantics.
-	scanDir := func(scanPath string, isEventsDir bool) error {
-		entries, err := os.ReadDir(scanPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return fmt.Errorf("repair: read store dir: %w", err)
-		}
-		for _, e := range entries {
-			name := e.Name()
-			if e.IsDir() {
-				if !isEventsDir && name == "v1" {
-					continue
-				}
-				continue
-			}
-			if name == "HEAD" || name == "LOCK" || name == ".lock" ||
-				strings.HasSuffix(name, ".tmp") || len(name) != 64 {
-				continue
-			}
-			if _, ok := seen[name]; ok {
-				continue
-			}
-			seen[name] = struct{}{}
-			// Prefer canonical v1/events path; fallback to legacy flat.
-			var data []byte
-			var readErr error
-			if d, err := os.ReadFile(filepath.Join(dir, "v1", "events", name)); err == nil {
-				data = d
-			} else if d, err := os.ReadFile(filepath.Join(dir, name)); err == nil {
-				data = d
-			} else {
-				readErr = err
-			}
-			if readErr != nil || sha256Hex(data) != name {
-				corrupt = append(corrupt, name)
-				continue
-			}
-			var rec Record
-			if err := json.Unmarshal(data, &rec); err != nil {
-				corrupt = append(corrupt, name)
-				continue
-			}
-			verified[name] = rec
-		}
-		return nil
-	}
-	if err := scanDir(filepath.Join(dir, "v1", "events"), true); err != nil {
+	if err := scanEventDir(filepath.Join(dir, "v1", "events"), true, dir, seen, verified, &corrupt); err != nil {
 		return nil, nil, err
 	}
-	if err := scanDir(dir, false); err != nil {
+	if err := scanEventDir(dir, false, dir, seen, verified, &corrupt); err != nil {
 		return nil, nil, err
 	}
 	return verified, corrupt, nil
+}
+
+func scanEventDir(scanPath string, isEventsDir bool, storeDir string, seen map[string]struct{}, verified map[string]Record, corrupt *[]string) error {
+	entries, err := os.ReadDir(scanPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("repair: read store dir: %w", err)
+	}
+	for _, e := range entries {
+		if shouldSkipEventEntry(e, isEventsDir) {
+			continue
+		}
+		name := e.Name()
+		if len(name) != 64 || isSkippableName(name) {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		if err := verifySingleEventFile(storeDir, name, verified, corrupt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func shouldSkipEventEntry(entry os.DirEntry, isEventsDir bool) bool {
+	if entry.IsDir() && !isEventsDir && entry.Name() == "v1" {
+		return true
+	}
+	if entry.IsDir() {
+		return true
+	}
+	return false
+}
+
+func isSkippableName(name string) bool {
+	return name == "HEAD" || name == "LOCK" || name == ".lock" || strings.HasSuffix(name, ".tmp")
+}
+
+func verifySingleEventFile(storeDir, name string, verified map[string]Record, corrupt *[]string) error {
+	var data []byte
+	var readErr error
+	if d, err := os.ReadFile(filepath.Join(storeDir, "v1", "events", name)); err == nil {
+		data = d
+	} else if d, err := os.ReadFile(filepath.Join(storeDir, name)); err == nil {
+		data = d
+	} else {
+		readErr = err
+	}
+	if readErr != nil || sha256Hex(data) != name {
+		*corrupt = append(*corrupt, name)
+		return nil
+	}
+	var rec Record
+	if err := json.Unmarshal(data, &rec); err != nil {
+		*corrupt = append(*corrupt, name)
+		return nil
+	}
+	verified[name] = rec
+	return nil
 }
 
 // chainDepth computes the verified depth of hash (1 + depth of its verified

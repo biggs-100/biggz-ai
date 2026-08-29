@@ -79,22 +79,52 @@ func humanizeFailure(raw string) string {
 	if s == "" {
 		return ""
 	}
-	if i := strings.Index(s, "{"); i > 0 && strings.Contains(strings.TrimSpace(s[:i]), "FAILURE") {
-		s = strings.TrimSpace(s[i:])
-	}
+	s = stripFailurePrefix(s)
 	if !strings.HasPrefix(s, "{") {
-		s = strings.ReplaceAll(s, "\n", " ")
-		return strings.Join(strings.Fields(s), " ")
+		return normalizeSpaces(s)
 	}
+	m, errMsg := parseFailureMap(s)
+	if errMsg != "" {
+		return errMsg
+	}
+	get := failureFieldGetter(m)
+	sum := extractSummary(get)
+	code, phase, status := get("code"), get("phase"), get("status")
+	if sum != "" {
+		return formatWithSummary(sum, code, phase, status)
+	}
+	if formatted := formatWithoutSummary(code, phase, status, get); formatted != "" {
+		return formatted
+	}
+	return "failure"
+}
+
+func stripFailurePrefix(s string) string {
+	if i := strings.Index(s, "{"); i > 0 && strings.Contains(strings.TrimSpace(s[:i]), "FAILURE") {
+		return strings.TrimSpace(s[i:])
+	}
+	return s
+}
+
+func normalizeSpaces(s string) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	return strings.Join(strings.Fields(s), " ")
+}
+
+func parseFailureMap(s string) (map[string]any, string) {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(s), &m); err != nil {
-		s = strings.ReplaceAll(s, "\n", " ")
-		if len(s) > 200 {
-			s = s[:200] + "…"
+		cleaned := normalizeSpaces(s)
+		if len(cleaned) > 200 {
+			cleaned = cleaned[:200] + "…"
 		}
-		return "malformed failure payload: " + strings.Join(strings.Fields(s), " ")
+		return nil, "malformed failure payload: " + cleaned
 	}
-	get := func(k string) string {
+	return m, ""
+}
+
+func failureFieldGetter(m map[string]any) func(string) string {
+	return func(k string) string {
 		if v, ok := m[k]; ok {
 			if s, ok := v.(string); ok {
 				return strings.TrimSpace(s)
@@ -102,26 +132,34 @@ func humanizeFailure(raw string) string {
 		}
 		return ""
 	}
-	sum := get("summary")
-	if sum == "" { sum = get("message") }
-	if sum == "" { sum = get("error") }
-	if sum == "" { sum = get("diagnosis") }
-	code, phase, status := get("code"), get("phase"), get("status")
-	if sum != "" {
-		if phase != "" && code != "" {
-			if status != "" {
-				return fmt.Sprintf("%s %s (%s): %s", phase, status, code, sum)
-			}
-			return fmt.Sprintf("%s (%s): %s", phase, code, sum)
+}
+
+func extractSummary(get func(string) string) string {
+	for _, k := range []string{"summary", "message", "error", "diagnosis"} {
+		if v := get(k); v != "" {
+			return v
 		}
-		if phase != "" {
-			return fmt.Sprintf("%s: %s", phase, sum)
-		}
-		if code != "" {
-			return fmt.Sprintf("%s: %s", code, sum)
-		}
-		return sum
 	}
+	return ""
+}
+
+func formatWithSummary(sum, code, phase, status string) string {
+	if phase != "" && code != "" {
+		if status != "" {
+			return fmt.Sprintf("%s %s (%s): %s", phase, status, code, sum)
+		}
+		return fmt.Sprintf("%s (%s): %s", phase, code, sum)
+	}
+	if phase != "" {
+		return fmt.Sprintf("%s: %s", phase, sum)
+	}
+	if code != "" {
+		return fmt.Sprintf("%s: %s", code, sum)
+	}
+	return sum
+}
+
+func formatWithoutSummary(code, phase, status string, get func(string) string) string {
 	if code != "" && phase != "" {
 		if status != "" {
 			return fmt.Sprintf("%s %s (%s)", phase, status, code)
@@ -139,7 +177,7 @@ func humanizeFailure(raw string) string {
 			return v
 		}
 	}
-	return "failure"
+	return ""
 }
 
 func ReadLoop(path string, capBytes int) (string, error) {

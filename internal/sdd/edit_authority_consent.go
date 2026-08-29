@@ -161,13 +161,46 @@ type EditAuthorityConsentResult struct {
 // choice is answerable and runnable, the off path is documented, and the
 // granted invocation carries every missing root it asks to authorize.
 func (result EditAuthorityConsentResult) Validate() error {
+	if err := validateConsentIdentity(result); err != nil {
+		return err
+	}
+	if err := validateConsentChange(result); err != nil {
+		return err
+	}
+	if err := validateConsentMissingRoots(result); err != nil {
+		return err
+	}
+	if err := validateConsentContent(result); err != nil {
+		return err
+	}
+	if err := validateConsentChoices(result); err != nil {
+		return err
+	}
+	if err := validateConsentEvidence(result); err != nil {
+		return err
+	}
+	if err := validateConsentInvocations(result); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateConsentIdentity(result EditAuthorityConsentResult) error {
 	if result.Schema != EditAuthorityConsentSchema || result.Contract != EditAuthorityContractV1 ||
 		result.Operation != sddConsentOperation || result.Action != sddConsentActionRequired || !result.Blocking {
 		return errors.New("invalid SDD consent question identity")
 	}
+	return nil
+}
+
+func validateConsentChange(result EditAuthorityConsentResult) error {
 	if strings.TrimSpace(result.Change) == "" {
 		return errors.New("SDD consent question requires the blocked change name")
 	}
+	return nil
+}
+
+func validateConsentMissingRoots(result EditAuthorityConsentResult) error {
 	if len(result.MissingRoots) == 0 {
 		return errors.New("SDD consent question requires the missing repository roots")
 	}
@@ -176,9 +209,20 @@ func (result EditAuthorityConsentResult) Validate() error {
 			return errors.New("SDD consent question names a blank missing root")
 		}
 	}
+	return nil
+}
+
+func validateConsentContent(result EditAuthorityConsentResult) error {
 	if result.Headline == "" || result.Reason == "" || result.Value == "" || result.Evidence == nil {
 		return errors.New("consent question must state why input is required")
 	}
+	if result.OffPathNote == "" || result.OffPathCommand == "" {
+		return errors.New("consent question must document the deliberate off path")
+	}
+	return nil
+}
+
+func validateConsentChoices(result EditAuthorityConsentResult) error {
 	if len(result.Choices) != 2 ||
 		result.Choices[0].ID != sddConsentAnswerGranted ||
 		result.Choices[1].ID != sddConsentAnswerDeclined {
@@ -192,16 +236,19 @@ func (result EditAuthorityConsentResult) Validate() error {
 			return fmt.Errorf("consent choice %q does not name a runnable invocation", choice.ID)
 		}
 	}
-	if result.OffPathNote == "" || result.OffPathCommand == "" {
-		return errors.New("consent question must document the deliberate off path")
-	}
-	// The missing roots ARE the evidence: every root the human is asked to
-	// authorize must appear in the evidence the envelope shows them.
+	return nil
+}
+
+func validateConsentEvidence(result EditAuthorityConsentResult) error {
 	for _, root := range result.MissingRoots {
 		if !sddConsentEvidenceNames(result.Evidence, root) {
 			return fmt.Errorf("SDD consent evidence does not name missing root %q", root)
 		}
 	}
+	return nil
+}
+
+func validateConsentInvocations(result EditAuthorityConsentResult) error {
 	granted := result.Choices[0]
 	if !strings.HasPrefix(granted.Invocation, sddConsentGrantInvocationPrefix+result.Change+" ") ||
 		!strings.Contains(granted.Invocation, " --root ") ||
