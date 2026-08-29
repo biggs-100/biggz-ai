@@ -10,7 +10,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"text/template"
 
@@ -68,11 +69,7 @@ func flattenHunks(hunks map[string][]byte) []byte {
 	if len(hunks) == 0 {
 		return nil
 	}
-	keys := make([]string, 0, len(hunks))
-	for k := range hunks {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
+	keys := slices.Sorted(maps.Keys(hunks))
 	var out []byte
 	for _, k := range keys {
 		out = append(out, hunks[k]...)
@@ -94,126 +91,113 @@ func (l *Lens) Analyze(_ context.Context, input lens.LensInput) (lens.LensResult
 	}
 	result := lens.LensResult{
 		LensID:    l.ID(),
-		Findings:  nil,
-		Evidence:  nil,
 		Truncated: input.Truncated,
 	}
-
 	if input.Hunks == nil {
 		input.Hunks = map[string][]byte{}
 	}
-
-	// Compute total hunk size and enforce 8MiB cap.
-	total := 0
-	for _, b := range input.Hunks {
-		total += len(b)
-	}
+	total := totalHunkBytes(input.Hunks)
+	capped := input.Hunks
 	if total > capBytes {
 		result.Truncated = true
+		capped = buildCappedHunks(input.Hunks)
 	}
-	// Build capped view: sorted keys, accumulate until 8MiB.
-	capped := make(map[string][]byte, len(input.Hunks))
-	if total > capBytes {
-		keys := make([]string, 0, len(input.Hunks))
-		for k := range input.Hunks {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		remaining := capBytes
-		for _, k := range keys {
-			b := input.Hunks[k]
-			if len(b) <= remaining {
-				capped[k] = b
-				remaining -= len(b)
-			} else {
-				// Truncate this hunk to remaining bytes.
-				if remaining > 0 {
-					capped[k] = b[:remaining]
-				}
-				remaining = 0
-				break
-			}
-		}
-	} else {
-		for k, v := range input.Hunks {
-			capped[k] = v
-		}
-	}
-
-	// Stable order for deterministic findings.
-	keys := make([]string, 0, len(capped))
-	for k := range capped {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-
-	for _, p := range keys {
-		if !strings.HasSuffix(strings.ToLower(p), ".go") {
-			// Only Go hunks are inspected for resilience patterns; other files
-			// are ignored to keep findings candidate-causal and precise.
+	for _, p := range slices.Sorted(maps.Keys(capped)) {
+		if !isGoFile(p) {
 			continue
 		}
-		content := string(capped[p])
-		if strings.TrimSpace(content) == "" {
-			continue
-		}
-		lines := strings.Split(content, "\n")
-		for lineIdx, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" {
-				continue
-			}
-			// Strip diff prefix for scan but keep raw line for token search.
-			scanLine := trimmed
-			if len(scanLine) > 0 && (scanLine[0] == '+' || scanLine[0] == '-' || scanLine[0] == ' ') {
-				scanLine = strings.TrimSpace(scanLine[1:])
-			}
-			combined := scanLine + " " + line
-
-			// Timeout: http.Client without Timeout, or http.Get/Post without context.
-			if isTimeoutHit(scanLine, combined) {
-				f := makeFinding(l.ID(), p, lineIdx+1, "timeout", fmt.Sprintf("resilience: %s may lack timeout configuration — verify http.Client Timeout or context timeout", p)) //lint:ignore no-fmtSprintf
-				result.Findings = append(result.Findings, f)
-				result.Evidence = append(result.Evidence, fmt.Sprintf("timeout pattern at %s:%d", p, lineIdx+1)) //lint:ignore no-fmtSprintf
-				continue
-			}
-			// Context: missing context propagation (context.Background/TODO without cancel, or missing context param)
-			if isContextHit(scanLine, combined) {
-				f := makeFinding(l.ID(), p, lineIdx+1, "context", fmt.Sprintf("resilience: %s may miss context cancellation propagation — verify context.Context usage", p)) //lint:ignore no-fmtSprintf
-				result.Findings = append(result.Findings, f)
-				result.Evidence = append(result.Evidence, fmt.Sprintf("context pattern at %s:%d", p, lineIdx+1)) //lint:ignore no-fmtSprintf
-				continue
-			}
-			// Concurrency: goroutine without synchronization.
-			if isConcurrencyHit(scanLine, combined) {
-				f := makeFinding(l.ID(), p, lineIdx+1, "concurrency", fmt.Sprintf("resilience: %s uses concurrency without clear wait/cleanup — verify sync.WaitGroup or errgroup", p)) //lint:ignore no-fmtSprintf
-				result.Findings = append(result.Findings, f)
-				result.Evidence = append(result.Evidence, fmt.Sprintf("concurrency pattern at %s:%d", p, lineIdx+1)) //lint:ignore no-fmtSprintf
-				continue
-			}
-			// Cleanup: resource acquisition without defer Close.
-			if isCleanupHit(scanLine, combined) {
-				f := makeFinding(l.ID(), p, lineIdx+1, "cleanup", fmt.Sprintf("resilience: %s acquires resource without visible defer cleanup — verify defer Close", p)) //lint:ignore no-fmtSprintf
-				result.Findings = append(result.Findings, f)
-				result.Evidence = append(result.Evidence, fmt.Sprintf("cleanup pattern at %s:%d", p, lineIdx+1)) //lint:ignore no-fmtSprintf
-				continue
-			}
-		}
+		findings, evidence := analyzeFileResilience(p, string(capped[p]), l.ID())
+		result.Findings = append(result.Findings, findings...)
+		result.Evidence = append(result.Evidence, evidence...)
 	}
-
 	if len(result.Findings) == 0 && len(result.Evidence) == 0 {
 		result.Evidence = []string{"resilience: no issues detected"}
 	}
-
 	return result, nil
 }
 
+// totalHunkBytes returns the sum of all hunk byte lengths.
+func totalHunkBytes(hunks map[string][]byte) int {
+	total := 0
+	for _, b := range hunks {
+		total += len(b)
+	}
+	return total
+}
+
+// buildCappedHunks returns a copy of hunks truncated to capBytes in sorted key order.
+func buildCappedHunks(hunks map[string][]byte) map[string][]byte {
+	capped := make(map[string][]byte, len(hunks))
+	keys := slices.Sorted(maps.Keys(hunks))
+	remaining := capBytes
+	for _, k := range keys {
+		b := hunks[k]
+		if len(b) <= remaining {
+			capped[k] = b
+			remaining -= len(b)
+			continue
+		}
+		if remaining > 0 {
+			capped[k] = b[:remaining]
+		}
+		break
+	}
+	return capped
+}
+
+// isGoFile reports whether path is a Go source file.
+func isGoFile(p string) bool {
+	return strings.HasSuffix(strings.ToLower(p), ".go")
+}
+
+// analyzeFileResilience scans a single Go hunk for resilience patterns.
+func analyzeFileResilience(path, content, lensID string) ([]lens.LensFinding, []string) {
+	if strings.TrimSpace(content) == "" {
+		return nil, nil
+	}
+	var findings []lens.LensFinding
+	var evidence []string
+	lines := strings.Split(content, "\n")
+	for idx, raw := range lines {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			continue
+		}
+		scanLine := trimmed
+		if len(scanLine) > 0 && (scanLine[0] == '+' || scanLine[0] == '-' || scanLine[0] == ' ') {
+			scanLine = strings.TrimSpace(scanLine[1:])
+		}
+		combined := scanLine + " " + raw
+		if f, ev, ok := resilienceFindingForLine(path, idx+1, scanLine, combined, lensID); ok {
+			findings = append(findings, f)
+			evidence = append(evidence, ev)
+		}
+	}
+	return findings, evidence
+}
+
+// resilienceFindingForLine checks a single line for the four resilience patterns.
+func resilienceFindingForLine(path string, lineNum int, scanLine, combined, lensID string) (lens.LensFinding, string, bool) {
+	if checkTimeout(scanLine, combined) {
+		f := makeFinding(lensID, path, lineNum, "timeout", fmt.Sprintf("resilience: %s may lack timeout configuration — verify http.Client Timeout or context timeout", path)) //lint:ignore no-fmtSprintf
+		return f, fmt.Sprintf("timeout pattern at %s:%d", path, lineNum), true                                           //lint:ignore no-fmtSprintf
+	}
+	if checkContext(scanLine, combined) {
+		f := makeFinding(lensID, path, lineNum, "context", fmt.Sprintf("resilience: %s may miss context cancellation propagation — verify context.Context usage", path)) //lint:ignore no-fmtSprintf
+		return f, fmt.Sprintf("context pattern at %s:%d", path, lineNum), true                                            //lint:ignore no-fmtSprintf
+	}
+	if isConcurrencyHit(scanLine, combined) {
+		f := makeFinding(lensID, path, lineNum, "concurrency", fmt.Sprintf("resilience: %s uses concurrency without clear wait/cleanup — verify sync.WaitGroup or errgroup", path)) //lint:ignore no-fmtSprintf
+		return f, fmt.Sprintf("concurrency pattern at %s:%d", path, lineNum), true                                              //lint:ignore no-fmtSprintf
+	}
+	if isCleanupHit(scanLine, combined) {
+		f := makeFinding(lensID, path, lineNum, "cleanup", fmt.Sprintf("resilience: %s acquires resource without visible defer cleanup — verify defer Close", path)) //lint:ignore no-fmtSprintf
+		return f, fmt.Sprintf("cleanup pattern at %s:%d", path, lineNum), true                                           //lint:ignore no-fmtSprintf
+	}
+	return lens.LensFinding{}, "", false
+}
+
 func makeFinding(lensID, file string, line int, kind, msg string) lens.LensFinding {
-	// ID uses R4 prefix with kind for traceability; unique per finding order
-	// is handled by caller via sequential invocation, but we embed kind.
-	// Generate deterministic ID via count placeholder; caller will uniquify.
-	// For simplicity, use file+kind+line as suffix.
-	// We keep a global counter via line to ensure uniqueness within file.
 	id := fmt.Sprintf("R4-%s-%s-%03d", kind, sanitizeFileForID(file), line) //lint:ignore no-fmtSprintf
 	proof := fmt.Sprintf("%s:%d", file, line)                               //lint:ignore no-fmtSprintf
 	return lens.LensFinding{
@@ -238,43 +222,43 @@ func sanitizeFileForID(p string) string {
 	return s
 }
 
-func isTimeoutHit(scanLine, combined string) bool {
+// checkTimeout reports whether scanLine indicates a missing timeout configuration.
+func checkTimeout(scanLine, _ string) bool {
 	lower := strings.ToLower(scanLine)
-	clower := strings.ToLower(combined)
-	// http.Client literal without Timeout field in same line.
 	if strings.Contains(lower, "http.client{") || strings.Contains(lower, "&http.client{") {
 		if !strings.Contains(lower, "timeout") {
 			return true
 		}
 	}
-	// Direct http.Get/Post without context — suggest missing timeout.
 	if strings.Contains(lower, "http.get(") || strings.Contains(lower, "http.post(") {
 		return true
 	}
-	// net/http client without timeout elsewhere but this is hunk-bound heuristic:
-	// any http.Client construction is flagged if not accompanied by Timeout.
-	_ = clower
 	return false
 }
 
-func isContextHit(scanLine, combined string) bool {
+func isTimeoutHit(scanLine, combined string) bool {
+	return checkTimeout(scanLine, combined)
+}
+
+// checkContext reports whether scanLine indicates missing context cancellation propagation.
+func checkContext(scanLine, _ string) bool {
 	lower := strings.ToLower(scanLine)
-	// context.Background or context.TODO without WithCancel/WithTimeout nearby
 	if strings.Contains(lower, "context.background(") || strings.Contains(lower, "context.todo(") {
 		if !strings.Contains(lower, "withcancel") && !strings.Contains(lower, "withtimeout") && !strings.Contains(lower, "withdeadline") {
 			return true
 		}
 	}
-	_ = combined
 	return false
+}
+
+func isContextHit(scanLine, combined string) bool {
+	return checkContext(scanLine, combined)
 }
 
 func isConcurrencyHit(scanLine, combined string) bool {
 	lower := strings.ToLower(scanLine)
-	// go keyword launching goroutine
 	trimmed := strings.TrimSpace(scanLine)
 	if strings.HasPrefix(trimmed, "go ") || strings.Contains(lower, "\tgo ") || strings.Contains(lower, " go func") {
-		// If line does not mention WaitGroup/errgroup/context, flag it.
 		if !strings.Contains(lower, "waitgroup") && !strings.Contains(lower, "errgroup") && !strings.Contains(lower, "context") {
 			return true
 		}
@@ -285,7 +269,6 @@ func isConcurrencyHit(scanLine, combined string) bool {
 
 func isCleanupHit(scanLine, combined string) bool {
 	lower := strings.ToLower(scanLine)
-	// Resource acquisition patterns without defer in same line
 	if strings.Contains(lower, "os.open(") || strings.Contains(lower, "os.create(") || strings.Contains(lower, "os.openfile(") {
 		if !strings.Contains(lower, "defer") && !strings.Contains(lower, "close(") {
 			return true
@@ -296,7 +279,6 @@ func isCleanupHit(scanLine, combined string) bool {
 			return true
 		}
 	}
-	// Generic Closeable without defer
 	if strings.Contains(lower, ".open(") && strings.Contains(lower, "file") {
 		if !strings.Contains(lower, "defer") {
 			return true
@@ -305,3 +287,5 @@ func isCleanupHit(scanLine, combined string) bool {
 	_ = combined
 	return false
 }
+
+
