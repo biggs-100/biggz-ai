@@ -49,54 +49,81 @@ func Reclaim(repo, lineageID string) (ReclaimReport, error) {
 		if err != nil {
 			return fmt.Errorf("reclaim: %w", err)
 		}
-		orphans := make([]string, 0)
-		for _, dirName := range []string{ManifestsDirName, ReceiptsDirName} {
-			dir := filepath.Join(store.Dir, dirName)
-			entries, err := os.ReadDir(dir)
-			if err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
-				return fmt.Errorf("reclaim: read %s: %w", dirName, err)
-			}
-			for _, entry := range entries {
-				if entry.IsDir() || strings.HasSuffix(entry.Name(), ".tmp") {
-					continue
-				}
-				rel := dirName + "/" + entry.Name()
-				if _, ok := referenced[rel]; ok {
-					continue
-				}
-				orphans = append(orphans, rel)
-			}
+		orphans, err := collectOrphanPaths(store.Dir, referenced)
+		if err != nil {
+			return err
 		}
 		if len(orphans) == 0 {
 			report.Detail = "no orphaned artifacts"
 			return nil
 		}
-		trashDir := filepath.Join(store.Dir, "trash", time.Now().UTC().Format("20060102T150405.000000000Z"))
-		if err := os.MkdirAll(trashDir, 0755); err != nil {
-			return fmt.Errorf("reclaim: create trash dir: %w", err)
+		trashDir, moved, err := moveOrphansToTrash(store.Dir, orphans)
+		if err != nil {
+			return err
 		}
-		moved := make([]string, 0, len(orphans))
-		for _, rel := range orphans {
-			src := filepath.Join(store.Dir, filepath.FromSlash(rel))
-			dst := filepath.Join(trashDir, filepath.FromSlash(rel))
-			if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
-				return fmt.Errorf("reclaim: create trash subdir: %w", err)
-			}
-			if err := os.Rename(src, dst); err != nil {
-				return fmt.Errorf("reclaim: move %s to trash: %w", rel, err)
-			}
-			moved = append(moved, rel)
-		}
-		report.TrashDir = filepath.ToSlash(filepath.Base(filepath.Dir(trashDir)) + "/" + filepath.Base(trashDir))
+		report.TrashDir = trashDir
 		report.Reclaimed = len(moved)
 		report.Paths = moved
 		report.Detail = fmt.Sprintf("%d artifact(s) moved to trash (referenced artifacts and chain events untouched)", len(moved))
 		return nil
 	})
 	return report, err
+}
+
+func collectOrphanPaths(storeDir string, referenced map[string]struct{}) ([]string, error) {
+	orphans := make([]string, 0)
+	for _, dirName := range []string{ManifestsDirName, ReceiptsDirName} {
+		relPaths, err := listOrphansInDir(storeDir, dirName, referenced)
+		if err != nil {
+			return nil, err
+		}
+		orphans = append(orphans, relPaths...)
+	}
+	return orphans, nil
+}
+
+func listOrphansInDir(storeDir, dirName string, referenced map[string]struct{}) ([]string, error) {
+	dir := filepath.Join(storeDir, dirName)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("reclaim: read %s: %w", dirName, err)
+	}
+	var orphans []string
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".tmp") {
+			continue
+		}
+		rel := dirName + "/" + entry.Name()
+		if _, ok := referenced[rel]; ok {
+			continue
+		}
+		orphans = append(orphans, rel)
+	}
+	return orphans, nil
+}
+
+func moveOrphansToTrash(storeDir string, orphans []string) (string, []string, error) {
+	trashDir := filepath.Join(storeDir, "trash", time.Now().UTC().Format("20060102T150405.000000000Z"))
+	if err := os.MkdirAll(trashDir, 0755); err != nil {
+		return "", nil, fmt.Errorf("reclaim: create trash dir: %w", err)
+	}
+	moved := make([]string, 0, len(orphans))
+	for _, rel := range orphans {
+		src := filepath.Join(storeDir, filepath.FromSlash(rel))
+		dst := filepath.Join(trashDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return "", nil, fmt.Errorf("reclaim: create trash subdir: %w", err)
+		}
+		if err := os.Rename(src, dst); err != nil {
+			return "", nil, fmt.Errorf("reclaim: move %s to trash: %w", rel, err)
+		}
+		moved = append(moved, rel)
+	}
+	trashRel := filepath.ToSlash(filepath.Base(filepath.Dir(trashDir)) + "/" + filepath.Base(trashDir))
+	return trashRel, moved, nil
 }
 
 // referencedArtifacts collects every artifacts/ and receipts/ relative path

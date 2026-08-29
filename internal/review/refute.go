@@ -156,59 +156,74 @@ func collectRefutationState(chain ValidatedChain) (refutationState, error) {
 		rec := &chain.Records[index]
 		switch rec.Operation {
 		case LensResultOperation:
-			var payload lensResultEventPayload
-			if err := json.Unmarshal(rec.Payload, &payload); err != nil || payload.AdmissionDecision != AdmissionCompleted {
-				continue
-			}
-			// A capture superseded by a later dispose/reopen is discarded
-			// evidence: its findings never demand refutation verdicts.
-			if isSlotSuperseded(chain, index, payload.Lens, payload.SelectedOrder) {
-				continue
-			}
-			for _, finding := range payload.Result.Findings {
-				state.findings[finding.ID] = finding
-				if !isSevereSeverity(finding.Severity) || !isCandidateCausalDisposition(finding.CausalDisposition) {
-					continue
-				}
-				if finding.EvidenceClass == EvidenceInferential {
-					requirementSet[finding.ID] = struct{}{}
-				}
-			}
+			handleLensResultRecord(chain, index, rec, &state, requirementSet)
 		case RefutationOperation:
-			state.batches++
-			var payload refutationEventPayload
-			if err := json.Unmarshal(rec.Payload, &payload); err != nil {
-				return refutationState{}, fmt.Errorf("chain refutation event %d is malformed: %w", index, err)
-			}
-			if payload.Schema != RefutationEventSchema {
-				return refutationState{}, fmt.Errorf("chain refutation event %d has an unsupported schema", index)
-			}
-			for _, verdict := range payload.Verdicts {
-				canonical, err := canonicalRefutationVerdict(verdict)
-				if err != nil {
-					return refutationState{}, fmt.Errorf("chain refutation event %d: %w", index, err)
-				}
-				state.verdicts[canonical.FindingID] = canonical
-				switch canonical.Verdict {
-				case RefutationVerdictRefuted:
-					refutedSet[canonical.FindingID] = struct{}{}
-				case RefutationVerdictStands:
-					standsSet[canonical.FindingID] = struct{}{}
-				}
+			if err := handleRefutationRecord(index, rec, &state, refutedSet, standsSet); err != nil {
+				return refutationState{}, err
 			}
 		}
 	}
-	var err error
-	if state.requirements, err = canonicalStrings(sortedSetKeys(requirementSet), "refutation requirement id"); err != nil {
-		return refutationState{}, fmt.Errorf("refutation requirements: %w", err)
-	}
-	if state.refuted, err = canonicalStrings(sortedSetKeys(refutedSet), "refuted finding id"); err != nil {
-		return refutationState{}, fmt.Errorf("refutation verdicts: %w", err)
-	}
-	if state.stands, err = canonicalStrings(sortedSetKeys(standsSet), "standing finding id"); err != nil {
-		return refutationState{}, fmt.Errorf("refutation verdicts: %w", err)
+	if err := finalizeRefutationState(&state, requirementSet, refutedSet, standsSet); err != nil {
+		return refutationState{}, err
 	}
 	return state, nil
+}
+
+func handleLensResultRecord(chain ValidatedChain, index int, rec *Record, state *refutationState, requirementSet map[string]struct{}) {
+	var payload lensResultEventPayload
+	if err := json.Unmarshal(rec.Payload, &payload); err != nil || payload.AdmissionDecision != AdmissionCompleted {
+		return
+	}
+	if isSlotSuperseded(chain, index, payload.Lens, payload.SelectedOrder) {
+		return
+	}
+	for _, finding := range payload.Result.Findings {
+		state.findings[finding.ID] = finding
+		if !isSevereSeverity(finding.Severity) || !isCandidateCausalDisposition(finding.CausalDisposition) {
+			continue
+		}
+		if finding.EvidenceClass == EvidenceInferential {
+			requirementSet[finding.ID] = struct{}{}
+		}
+	}
+}
+
+func handleRefutationRecord(index int, rec *Record, state *refutationState, refutedSet, standsSet map[string]struct{}) error {
+	state.batches++
+	var payload refutationEventPayload
+	if err := json.Unmarshal(rec.Payload, &payload); err != nil {
+		return fmt.Errorf("chain refutation event %d is malformed: %w", index, err)
+	}
+	if payload.Schema != RefutationEventSchema {
+		return fmt.Errorf("chain refutation event %d has an unsupported schema", index)
+	}
+	for _, verdict := range payload.Verdicts {
+		canonical, err := canonicalRefutationVerdict(verdict)
+		if err != nil {
+			return fmt.Errorf("chain refutation event %d: %w", index, err)
+		}
+		state.verdicts[canonical.FindingID] = canonical
+		if canonical.Verdict == RefutationVerdictRefuted {
+			refutedSet[canonical.FindingID] = struct{}{}
+		} else {
+			standsSet[canonical.FindingID] = struct{}{}
+		}
+	}
+	return nil
+}
+
+func finalizeRefutationState(state *refutationState, requirementSet, refutedSet, standsSet map[string]struct{}) error {
+	var err error
+	if state.requirements, err = canonicalStrings(sortedSetKeys(requirementSet), "refutation requirement id"); err != nil {
+		return fmt.Errorf("refutation requirements: %w", err)
+	}
+	if state.refuted, err = canonicalStrings(sortedSetKeys(refutedSet), "refuted finding id"); err != nil {
+		return fmt.Errorf("refutation verdicts: %w", err)
+	}
+	if state.stands, err = canonicalStrings(sortedSetKeys(standsSet), "standing finding id"); err != nil {
+		return fmt.Errorf("refutation verdicts: %w", err)
+	}
+	return nil
 }
 
 func sortedSetKeys(values map[string]struct{}) []string {

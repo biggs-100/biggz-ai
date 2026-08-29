@@ -48,76 +48,77 @@ func Recover(repo, lineageID string) (RecoverReport, error) {
 		if err != nil {
 			return fmt.Errorf("recover: read HEAD: %w", err)
 		}
-
-		// A present HEAD is authoritative: validate the chain it names and
-		// report; recovery never rewrites or truncates an existing HEAD.
 		if head != "" {
-			if _, ok := verified[head]; !ok {
-				// The event HEAD names is unreadable or fails verification:
-				// a corrupt TAIL, which is exactly what repair truncates.
-				return fmt.Errorf(
-					"recover: HEAD names event %s which fails verification — that is a corrupt tail, not a lost head; run 'biggz review repair %s' to truncate it (recover only restores a missing HEAD)",
-					head, lineageID)
-			}
-			broken, err := chainBrokenAt(verified, head)
-			if err != nil {
-				return err
-			}
-			if broken != "" {
-				// Mid-chain corruption: recovery never guesses by dropping
-				// reviewed history. Same rule as repair.
-				return fmt.Errorf(
-					"recover: chain corruption is mid-chain at %s (the event after it is unreadable or does not match its content address); recovery never guesses — recover with 'biggz review export %s' and re-import into a fresh lineage",
-					broken, lineageID)
-			}
-			depths := make(map[string]int, len(verified))
-			depth := chainDepth(verified, depths, head)
-			report = RecoverReport{
-				LineageID: lineageID, HeadHash: head, EventCount: depth,
-				Action: "none", Detail: "authority intact",
-			}
-			if len(corrupt) > 0 {
-				report.Detail = fmt.Sprintf("authority intact (%d unreadable record file(s) not on the chain)", len(corrupt))
-			}
-			return nil
+			return handleExistingHead(verified, corrupt, head, lineageID, &report)
 		}
-
-		// HEAD is missing: restore it from the deepest fully-verified chain.
-		// The chain is re-derived from the verified record files alone; the
-		// deepest chain wins exactly like repair's fallback, and corrupt
-		// files are reported but never removed (recover truncates nothing).
-		if len(verified) == 0 {
-			report = RecoverReport{
-				LineageID: lineageID, Action: "none",
-				Detail: "no events to recover (empty lineage)",
-			}
-			return nil
-		}
-		depths := make(map[string]int, len(verified))
-		lastValid, lastDepth := "", 0
-		for name := range verified {
-			depth := chainDepth(verified, depths, name)
-			if depth > lastDepth {
-				lastValid, lastDepth = name, depth
-			}
-		}
-		if lastValid == "" {
-			return fmt.Errorf(
-				"recover: no valid event remains in the store; recover the lineage bytes with 'biggz review export %s' before it degrades further",
-				lineageID)
-		}
-		if err := writeHEADFile(store.Dir, lastValid); err != nil {
-			return fmt.Errorf("recover: restore HEAD: %w", err)
-		}
-		report = RecoverReport{
-			LineageID: lineageID, Recovered: true, Action: "head_restored",
-			HeadHash: lastValid, EventCount: lastDepth,
-			Detail: fmt.Sprintf("HEAD restored to the deepest fully-verified chain head %s; %d event(s) kept", lastValid, lastDepth),
-		}
-		if len(corrupt) > 0 {
-			report.Detail += fmt.Sprintf("; %d unreadable record file(s) left in place (recover never removes; 'biggz review repair %s' can truncate a corrupt tail)", len(corrupt), lineageID)
-		}
-		return nil
+		return handleMissingHead(verified, corrupt, store.Dir, lineageID, &report)
 	})
 	return report, err
+}
+
+func handleExistingHead(verified map[string]Record, corrupt []string, head, lineageID string, report *RecoverReport) error {
+	if _, ok := verified[head]; !ok {
+		return fmt.Errorf(
+			"recover: HEAD names event %s which fails verification — that is a corrupt tail, not a lost head; run 'biggz review repair %s' to truncate it (recover only restores a missing HEAD)",
+			head, lineageID)
+	}
+	broken, err := chainBrokenAt(verified, head)
+	if err != nil {
+		return err
+	}
+	if broken != "" {
+		return fmt.Errorf(
+			"recover: chain corruption is mid-chain at %s (the event after it is unreadable or does not match its content address); recovery never guesses — recover with 'biggz review export %s' and re-import into a fresh lineage",
+			broken, lineageID)
+	}
+	depths := make(map[string]int, len(verified))
+	depth := chainDepth(verified, depths, head)
+	*report = RecoverReport{
+		LineageID: lineageID, HeadHash: head, EventCount: depth,
+		Action: "none", Detail: "authority intact",
+	}
+	if len(corrupt) > 0 {
+		report.Detail = fmt.Sprintf("authority intact (%d unreadable record file(s) not on the chain)", len(corrupt))
+	}
+	return nil
+}
+
+func handleMissingHead(verified map[string]Record, corrupt []string, storeDir, lineageID string, report *RecoverReport) error {
+	if len(verified) == 0 {
+		*report = RecoverReport{
+			LineageID: lineageID, Action: "none",
+			Detail: "no events to recover (empty lineage)",
+		}
+		return nil
+	}
+	lastValid, lastDepth := deepestVerifiedChain(verified)
+	if lastValid == "" {
+		return fmt.Errorf(
+			"recover: no valid event remains in the store; recover the lineage bytes with 'biggz review export %s' before it degrades further",
+			lineageID)
+	}
+	if err := writeHEADFile(storeDir, lastValid); err != nil {
+		return fmt.Errorf("recover: restore HEAD: %w", err)
+	}
+	*report = RecoverReport{
+		LineageID: lineageID, Recovered: true, Action: "head_restored",
+		HeadHash: lastValid, EventCount: lastDepth,
+		Detail: fmt.Sprintf("HEAD restored to the deepest fully-verified chain head %s; %d event(s) kept", lastValid, lastDepth),
+	}
+	if len(corrupt) > 0 {
+		report.Detail += fmt.Sprintf("; %d unreadable record file(s) left in place (recover never removes; 'biggz review repair %s' can truncate a corrupt tail)", len(corrupt), lineageID)
+	}
+	return nil
+}
+
+func deepestVerifiedChain(verified map[string]Record) (string, int) {
+	depths := make(map[string]int, len(verified))
+	lastValid, lastDepth := "", 0
+	for name := range verified {
+		depth := chainDepth(verified, depths, name)
+		if depth > lastDepth {
+			lastValid, lastDepth = name, depth
+		}
+	}
+	return lastValid, lastDepth
 }
