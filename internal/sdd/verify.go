@@ -148,75 +148,113 @@ func readVerifyResult(path string, counts SpecCounts) verifyResultEvaluation {
 // and scenario totals, blockers, critical findings, requirement and scenario
 // completion, and finally the verdict. The evidence_revision is extracted
 // when it is a canonical sha256: identity.
-func parseVerifyResult(text string, expected SpecCounts) verifyResultEvaluation {
+func extractVerifyReport(text string) (*VerifyReport, verifyResultEvaluation, bool) {
 	yamlRe := regexp.MustCompile("(?s)```yaml\\s+(.*?)```")
 	matches := yamlRe.FindStringSubmatch(text)
 	if len(matches) < 2 {
-		return verifyResultEvaluation{Reason: "verify result: missing YAML envelope (```yaml ... ```)"}
+		return nil, verifyResultEvaluation{Reason: "verify result: missing YAML envelope (```yaml ... ```)"}, false
 	}
 	report, err := parseYAMLEnvelope(matches[1])
 	if err != nil {
-		return verifyResultEvaluation{Reason: "verify result: parse envelope: " + err.Error()}
+		return nil, verifyResultEvaluation{Reason: "verify result: parse envelope: " + err.Error()}, false
 	}
 	if report.Schema != VerifyResultSchema && report.Schema != BiggzVerifyResultSchema {
-		return verifyResultEvaluation{Reason: fmt.Sprintf("verify result: unknown schema %q", report.Schema)}
+		return nil, verifyResultEvaluation{Reason: fmt.Sprintf("verify result: unknown schema %q", report.Schema)}, false
 	}
+	return report, verifyResultEvaluation{}, true
+}
+
+func validateVerifyHeader(report *VerifyReport) (verifyResultEvaluation, verifyCompletion, verifyCompletion, bool) {
 	evaluation := verifyResultEvaluation{}
 	if report.EvidenceRevision != "" {
 		if !sha256IdentityPattern.MatchString(report.EvidenceRevision) {
-			return verifyResultEvaluation{Reason: "invalid evidence_revision in verify result envelope"}
+			return verifyResultEvaluation{Reason: "invalid evidence_revision in verify result envelope"}, verifyCompletion{}, verifyCompletion{}, false
 		}
 		evaluation.EvidenceRevision = report.EvidenceRevision
 	}
 	requirements, ok := parseVerifyCompletion(report.Requirements)
 	if !ok {
-		return verifyResultEvaluation{Reason: "invalid requirements in verify result envelope"}
+		return verifyResultEvaluation{Reason: "invalid requirements in verify result envelope"}, verifyCompletion{}, verifyCompletion{}, false
 	}
 	scenarios, ok := parseVerifyCompletion(report.Scenarios)
 	if !ok {
-		return verifyResultEvaluation{Reason: "invalid scenarios in verify result envelope"}
+		return verifyResultEvaluation{Reason: "invalid scenarios in verify result envelope"}, verifyCompletion{}, verifyCompletion{}, false
 	}
+	return evaluation, requirements, scenarios, true
+}
+
+func checkVerifyExitAndTotals(report *VerifyReport, evaluation verifyResultEvaluation, requirements, scenarios verifyCompletion, expected SpecCounts) (verifyResultEvaluation, bool) {
 	if report.TestExitCode != 0 {
 		evaluation.Reason = "test_exit_code must be zero for archive readiness"
-		return evaluation
+		return evaluation, false
 	}
 	if report.BuildExitCode != 0 {
 		evaluation.Reason = "build_exit_code must be zero for archive readiness"
-		return evaluation
+		return evaluation, false
 	}
 	if requirements.Total != expected.Requirements {
 		evaluation.Reason = fmt.Sprintf("verify result total %d does not match actual requirement count %d", requirements.Total, expected.Requirements)
-		return evaluation
+		return evaluation, false
 	}
 	if scenarios.Total != expected.Scenarios {
 		evaluation.Reason = fmt.Sprintf("verify result total %d does not match actual scenario count %d", scenarios.Total, expected.Scenarios)
-		return evaluation
+		return evaluation, false
 	}
+	return evaluation, true
+}
+
+func checkVerifyBlockersAndCompletion(report *VerifyReport, evaluation verifyResultEvaluation, requirements, scenarios verifyCompletion) (verifyResultEvaluation, bool) {
 	if report.Blockers != 0 {
 		evaluation.Reason = "blockers must be zero for archive readiness"
-		return evaluation
+		return evaluation, false
 	}
 	if report.CriticalFindings != 0 {
 		evaluation.Reason = "critical_findings must be zero for archive readiness"
-		return evaluation
+		return evaluation, false
 	}
 	if requirements.Completed != requirements.Total {
 		evaluation.Reason = "requirements are incomplete"
-		return evaluation
+		return evaluation, false
 	}
 	if scenarios.Completed != scenarios.Total {
 		evaluation.Reason = "scenarios are incomplete"
-		return evaluation
+		return evaluation, false
 	}
+	return evaluation, true
+}
+
+func checkVerifyVerdict(report *VerifyReport, evaluation verifyResultEvaluation) (verifyResultEvaluation, bool) {
 	switch report.Verdict {
 	case "pass", "pass_with_warnings":
+		evaluation.Passing = true
+		return evaluation, true
 	case "fail":
 		evaluation.Reason = "verdict requires remediation"
-		return evaluation
+		return evaluation, false
 	default:
-		return verifyResultEvaluation{Reason: fmt.Sprintf("verify result: unknown verdict %q", report.Verdict)}
+		return verifyResultEvaluation{Reason: fmt.Sprintf("verify result: unknown verdict %q", report.Verdict)}, false
 	}
-	evaluation.Passing = true
+}
+
+func parseVerifyResult(text string, expected SpecCounts) verifyResultEvaluation {
+	report, eval, ok := extractVerifyReport(text)
+	if !ok {
+		return eval
+	}
+	evaluation, requirements, scenarios, ok := validateVerifyHeader(report)
+	if !ok {
+		return evaluation
+	}
+	if evaluation, ok = checkVerifyExitAndTotals(report, evaluation, requirements, scenarios, expected); !ok {
+		return evaluation
+	}
+	if evaluation, ok = checkVerifyBlockersAndCompletion(report, evaluation, requirements, scenarios); !ok {
+		return evaluation
+	}
+	evaluation, ok = checkVerifyVerdict(report, evaluation)
+	if !ok {
+		return evaluation
+	}
 	return evaluation
 }
 
@@ -325,6 +363,52 @@ func ValidateRemediationResult(path string) (*RemediationResult, error) {
 	return result, nil
 }
 
+func validateVerifyReportEnvelope(content string) (*VerifyReport, error) {
+	yamlRe := regexp.MustCompile("(?s)```yaml\\s+(.*?)```")
+	matches := yamlRe.FindStringSubmatch(content)
+	if len(matches) < 2 {
+		return nil, fmt.Errorf("verify report: missing YAML envelope (```yaml ... ```)")
+	}
+	report, err := parseYAMLEnvelope(matches[1])
+	if err != nil {
+		return nil, fmt.Errorf("verify report: parse envelope: %w", err)
+	}
+	if report.Schema != VerifyResultSchema && report.Schema != BiggzVerifyResultSchema {
+		return nil, fmt.Errorf("verify report: unknown schema %q", report.Schema)
+	}
+	return report, nil
+}
+
+func validateVerifyReportCounts(report *VerifyReport, reqRequirements, reqScenarios int) error {
+	if report.Requirements != "" {
+		var n int
+		if _, err := fmt.Sscanf(report.Requirements, "%d/", &n); err == nil && reqRequirements >= 0 && n != reqRequirements {
+			return fmt.Errorf("verify report: requirements count %d does not match authoritative %d", n, reqRequirements)
+		}
+	}
+	if report.Scenarios != "" {
+		var n int
+		if _, err := fmt.Sscanf(report.Scenarios, "%d/", &n); err == nil && reqScenarios >= 0 && n != reqScenarios {
+			return fmt.Errorf("verify report: scenarios count %d does not match authoritative %d", n, reqScenarios)
+		}
+	}
+	return nil
+}
+
+func validateVerifyReportVerdict(report *VerifyReport, content string) error {
+	switch report.Verdict {
+	case "pass", "pass_with_warnings":
+	case "fail":
+		return fmt.Errorf("verify report: verdict is FAIL (%d blockers, %d critical)", report.Blockers, report.CriticalFindings)
+	default:
+		return fmt.Errorf("verify report: unknown verdict %q", report.Verdict)
+	}
+	if strings.Contains(content, "**CRITICAL**:") && !strings.Contains(content, "**CRITICAL**: None") {
+		return fmt.Errorf("verify report: contains unaddressed CRITICAL issues")
+	}
+	return nil
+}
+
 // ValidateVerifyReport reads a verify report, checks its format,
 // and validates requirement/scenario counts against authoritative values.
 func ValidateVerifyReport(path string, reqRequirements, reqScenarios int) error {
@@ -332,63 +416,16 @@ func ValidateVerifyReport(path string, reqRequirements, reqScenarios int) error 
 	if err != nil {
 		return fmt.Errorf("read verify report: %w", err)
 	}
-
 	content := string(data)
-
-	// Extract YAML envelope (between ```yaml and ```)
-	yamlRe := regexp.MustCompile("(?s)```yaml\\s+(.*?)```")
-	matches := yamlRe.FindStringSubmatch(content)
-	if len(matches) < 2 {
-		return fmt.Errorf("verify report: missing YAML envelope (```yaml ... ```)")
-	}
-
-	report, err := parseYAMLEnvelope(matches[1])
+	report, err := validateVerifyReportEnvelope(content)
 	if err != nil {
-		return fmt.Errorf("verify report: parse envelope: %w", err)
+		return err
 	}
-
-	// Validate schema: accept the native biggz schema and the legacy
-	// gentle-ai schema (read-compatibility with historical reports).
-	if report.Schema != VerifyResultSchema && report.Schema != BiggzVerifyResultSchema {
-		return fmt.Errorf("verify report: unknown schema %q", report.Schema)
+	if err := validateVerifyReportCounts(report, reqRequirements, reqScenarios); err != nil {
+		return err
 	}
+	return validateVerifyReportVerdict(report, content)
 
-	// Validate requirements count
-	if report.Requirements != "" {
-		var n int
-		if _, err := fmt.Sscanf(report.Requirements, "%d/", &n); err == nil {
-			if reqRequirements >= 0 && n != reqRequirements {
-				return fmt.Errorf("verify report: requirements count %d does not match authoritative %d", n, reqRequirements)
-			}
-		}
-	}
-
-	// Validate scenarios count
-	if report.Scenarios != "" {
-		var n int
-		if _, err := fmt.Sscanf(report.Scenarios, "%d/", &n); err == nil {
-			if reqScenarios >= 0 && n != reqScenarios {
-				return fmt.Errorf("verify report: scenarios count %d does not match authoritative %d", n, reqScenarios)
-			}
-		}
-	}
-
-	// Check verdict
-	switch report.Verdict {
-	case "pass", "pass_with_warnings":
-		// OK
-	case "fail":
-		return fmt.Errorf("verify report: verdict is FAIL (%d blockers, %d critical)", report.Blockers, report.CriticalFindings)
-	default:
-		return fmt.Errorf("verify report: unknown verdict %q", report.Verdict)
-	}
-
-	// Check for unaddressed CRITICAL issues
-	if strings.Contains(content, "**CRITICAL**:") && !strings.Contains(content, "**CRITICAL**: None") {
-		return fmt.Errorf("verify report: contains unaddressed CRITICAL issues")
-	}
-
-	return nil
 }
 
 // ─── Verify admission (Phase C1 rigor) ───────────────────────────────────────
@@ -431,73 +468,94 @@ type VerifyAdmission struct {
 // issues) but counts are not compared. When either declared count is
 // nonnegative both must be, and they are authoritative: a report whose
 // counts differ is denied with a named reason.
-func ValidateVerifyReportAdmission(content []byte, declaredRequirements, declaredScenarios int) VerifyAdmission {
+func initVerifyAdmission(declaredRequirements, declaredScenarios int) (VerifyAdmission, bool) {
 	admission := VerifyAdmission{Schema: VerifyAdmissionSchema, Decision: "denied"}
-	if declaredRequirements >= 0 || declaredScenarios >= 0 {
-		if declaredRequirements < 0 || declaredScenarios < 0 {
-			admission.Reason = "declared requirement and scenario counts must be provided together"
-			return admission
-		}
+	if declaredRequirements < 0 && declaredScenarios < 0 {
+		return admission, true
+	}
+	if declaredRequirements >= 0 && declaredScenarios >= 0 {
 		admission.Requirements.Declared = &declaredRequirements
 		admission.Scenarios.Declared = &declaredScenarios
+		return admission, true
 	}
+	admission.Reason = "declared requirement and scenario counts must be provided together"
+	return admission, false
+}
 
-	text := string(content)
+func admissionExtractReport(text string) (*VerifyReport, string, bool) {
 	yamlRe := regexp.MustCompile("(?s)```yaml\\s+(.*?)```")
 	matches := yamlRe.FindStringSubmatch(text)
 	if len(matches) < 2 {
-		admission.Reason = "verify report: missing YAML envelope (```yaml ... ```)"
-		return admission
+		return nil, "verify report: missing YAML envelope (```yaml ... ```)", false
 	}
-
 	report, err := parseYAMLEnvelope(matches[1])
 	if err != nil {
-		admission.Reason = "verify report: parse envelope: " + err.Error()
-		return admission
+		return nil, "verify report: parse envelope: " + err.Error(), false
 	}
-
 	if report.Schema != VerifyResultSchema && report.Schema != BiggzVerifyResultSchema {
-		admission.Reason = fmt.Sprintf("verify report: unknown schema %q", report.Schema)
-		return admission
+		return nil, fmt.Sprintf("verify report: unknown schema %q", report.Schema), false
 	}
+	return report, "", true
+}
 
+func admissionCheckCounts(report *VerifyReport, admission *VerifyAdmission) bool {
 	counted, ok := parseCount(report.Requirements)
 	if !ok {
 		admission.Reason = fmt.Sprintf("verify report: invalid requirements count %q", report.Requirements)
-		return admission
+		return false
 	}
 	admission.Requirements.Counted = counted
 	if admission.Requirements.Declared != nil && counted != *admission.Requirements.Declared {
 		admission.Reason = fmt.Sprintf("verify report: requirements count %d does not match authoritative %d", counted, *admission.Requirements.Declared)
-		return admission
+		return false
 	}
-
 	counted, ok = parseCount(report.Scenarios)
 	if !ok {
 		admission.Reason = fmt.Sprintf("verify report: invalid scenarios count %q", report.Scenarios)
-		return admission
+		return false
 	}
 	admission.Scenarios.Counted = counted
 	if admission.Scenarios.Declared != nil && counted != *admission.Scenarios.Declared {
 		admission.Reason = fmt.Sprintf("verify report: scenarios count %d does not match authoritative %d", counted, *admission.Scenarios.Declared)
-		return admission
+		return false
 	}
+	return true
+}
 
+func admissionCheckVerdict(report *VerifyReport, text string, admission *VerifyAdmission) bool {
 	switch report.Verdict {
 	case "pass", "pass_with_warnings":
 	case "fail":
 		admission.Reason = fmt.Sprintf("verify report: verdict is FAIL (%d blockers, %d critical)", report.Blockers, report.CriticalFindings)
-		return admission
+		return false
 	default:
 		admission.Reason = fmt.Sprintf("verify report: unknown verdict %q", report.Verdict)
-		return admission
+		return false
 	}
-
 	if strings.Contains(text, "**CRITICAL**:") && !strings.Contains(text, "**CRITICAL**: None") {
 		admission.Reason = "verify report: contains unaddressed CRITICAL issues"
+		return false
+	}
+	return true
+}
+
+func ValidateVerifyReportAdmission(content []byte, declaredRequirements, declaredScenarios int) VerifyAdmission {
+	admission, ok := initVerifyAdmission(declaredRequirements, declaredScenarios)
+	if !ok {
 		return admission
 	}
-
+	text := string(content)
+	report, reason, ok := admissionExtractReport(text)
+	if !ok {
+		admission.Reason = reason
+		return admission
+	}
+	if !admissionCheckCounts(report, &admission) {
+		return admission
+	}
+	if !admissionCheckVerdict(report, text, &admission) {
+		return admission
+	}
 	admission.Decision = "admitted"
 	return admission
 }
@@ -710,6 +768,62 @@ func debtFuncName(fn *ast.FuncDecl) string {
 	return fn.Name.Name
 }
 
+func debtHasViolations(reports map[string]*DebtPackageReport, roots []string) bool {
+	for _, root := range roots {
+		r := reports[root]
+		if r.CyclomaticViolations > 0 || r.CognitiveViolations > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func writeDebtZeroSummary(sb *strings.Builder, reports map[string]*DebtPackageReport, roots []string) {
+	totalFuncs, totalCyclo, totalCog := 0, 0, 0
+	for _, root := range roots {
+		r := reports[root]
+		totalFuncs += r.TotalFuncs
+		totalCyclo += r.CyclomaticViolations
+		totalCog += r.CognitiveViolations
+	}
+	sb.WriteString(fmt.Sprintf("0 violations across %d functions scanned (cyclomatic >%d: %d, cognitive >%d: %d)\n\n", totalFuncs, debtCyclomaticThreshold, totalCyclo, debtCognitiveThreshold, totalCog))
+	for _, root := range roots {
+		r := reports[root]
+		sb.WriteString(fmt.Sprintf("- %s: %d functions scanned, %d cyclomatic violations, %d cognitive violations, 0 top offenders\n", r.Package, r.TotalFuncs, r.CyclomaticViolations, r.CognitiveViolations))
+	}
+}
+
+func writeDebtOffenders(sb *strings.Builder, offenders []DebtOffender) {
+	if len(offenders) == 0 {
+		sb.WriteString("- Top offenders: none\n")
+		return
+	}
+	sb.WriteString("- Top 10 offenders (sorted by max complexity descending):\n")
+	for _, o := range offenders {
+		sb.WriteString(fmt.Sprintf("  - %s:%d %s cyclomatic=%d cognitive=%d\n", o.File, o.Line, o.Function, o.Cyclomatic, o.Cognitive))
+	}
+}
+
+func writeDebtTestOffenders(sb *strings.Builder, offenders []DebtOffender) {
+	if len(offenders) == 0 {
+		return
+	}
+	sb.WriteString(fmt.Sprintf("- Informational test file violations: %d (never block)\n", len(offenders)))
+	for _, o := range offenders {
+		sb.WriteString(fmt.Sprintf("  - %s:%d %s cyclomatic=%d cognitive=%d (test)\n", o.File, o.Line, o.Function, o.Cyclomatic, o.Cognitive))
+	}
+}
+
+func writeDebtPackageSection(sb *strings.Builder, r *DebtPackageReport) {
+	sb.WriteString(fmt.Sprintf("### %s\n", r.Package))
+	sb.WriteString(fmt.Sprintf("- Total functions scanned: %d\n", r.TotalFuncs))
+	sb.WriteString(fmt.Sprintf("- Cyclomatic violations (>%d): %d\n", debtCyclomaticThreshold, r.CyclomaticViolations))
+	sb.WriteString(fmt.Sprintf("- Cognitive violations (>%d): %d\n", debtCognitiveThreshold, r.CognitiveViolations))
+	writeDebtOffenders(sb, r.TopOffenders)
+	writeDebtTestOffenders(sb, r.TestOffenders)
+	sb.WriteString("\n")
+}
+
 // ComplexityDebtMarkdownForRoots renders debt markdown for arbitrary roots (testing).
 func ComplexityDebtMarkdownForRoots(roots []string) (string, error) {
 	reports, err := CollectComplexityDebtForRoots(roots)
@@ -718,52 +832,12 @@ func ComplexityDebtMarkdownForRoots(roots []string) (string, error) {
 	}
 	var sb strings.Builder
 	sb.WriteString("## Complexity Debt\n\n")
-	hasViolations := false
-	for _, root := range roots {
-		r := reports[root]
-		if r.CyclomaticViolations > 0 || r.CognitiveViolations > 0 {
-			hasViolations = true
-			break
-		}
-	}
-	if !hasViolations {
-		totalFuncs := 0
-		totalCyclo := 0
-		totalCog := 0
-		for _, root := range roots {
-			r := reports[root]
-			totalFuncs += r.TotalFuncs
-			totalCyclo += r.CyclomaticViolations
-			totalCog += r.CognitiveViolations
-		}
-		sb.WriteString(fmt.Sprintf("0 violations across %d functions scanned (cyclomatic >%d: %d, cognitive >%d: %d)\n\n", totalFuncs, debtCyclomaticThreshold, totalCyclo, debtCognitiveThreshold, totalCog))
-		for _, root := range roots {
-			r := reports[root]
-			sb.WriteString(fmt.Sprintf("- %s: %d functions scanned, %d cyclomatic violations, %d cognitive violations, 0 top offenders\n", r.Package, r.TotalFuncs, r.CyclomaticViolations, r.CognitiveViolations))
-		}
+	if !debtHasViolations(reports, roots) {
+		writeDebtZeroSummary(&sb, reports, roots)
 		return sb.String(), nil
 	}
 	for _, root := range roots {
-		r := reports[root]
-		sb.WriteString(fmt.Sprintf("### %s\n", r.Package))
-		sb.WriteString(fmt.Sprintf("- Total functions scanned: %d\n", r.TotalFuncs))
-		sb.WriteString(fmt.Sprintf("- Cyclomatic violations (>%d): %d\n", debtCyclomaticThreshold, r.CyclomaticViolations))
-		sb.WriteString(fmt.Sprintf("- Cognitive violations (>%d): %d\n", debtCognitiveThreshold, r.CognitiveViolations))
-		if len(r.TopOffenders) == 0 {
-			sb.WriteString("- Top offenders: none\n")
-		} else {
-			sb.WriteString("- Top 10 offenders (sorted by max complexity descending):\n")
-			for _, o := range r.TopOffenders {
-				sb.WriteString(fmt.Sprintf("  - %s:%d %s cyclomatic=%d cognitive=%d\n", o.File, o.Line, o.Function, o.Cyclomatic, o.Cognitive))
-			}
-		}
-		if len(r.TestOffenders) > 0 {
-			sb.WriteString(fmt.Sprintf("- Informational test file violations: %d (never block)\n", len(r.TestOffenders)))
-			for _, o := range r.TestOffenders {
-				sb.WriteString(fmt.Sprintf("  - %s:%d %s cyclomatic=%d cognitive=%d (test)\n", o.File, o.Line, o.Function, o.Cyclomatic, o.Cognitive))
-			}
-		}
-		sb.WriteString("\n")
+		writeDebtPackageSection(&sb, reports[root])
 	}
 	return sb.String(), nil
 }
@@ -778,52 +852,12 @@ func ComplexityDebtMarkdown() (string, error) {
 	}
 	var sb strings.Builder
 	sb.WriteString("## Complexity Debt\n\n")
-	hasViolations := false
-	for _, root := range debtCriticalRoots {
-		r := reports[root]
-		if r.CyclomaticViolations > 0 || r.CognitiveViolations > 0 {
-			hasViolations = true
-			break
-		}
-	}
-	if !hasViolations {
-		totalFuncs := 0
-		totalCyclo := 0
-		totalCog := 0
-		for _, root := range debtCriticalRoots {
-			r := reports[root]
-			totalFuncs += r.TotalFuncs
-			totalCyclo += r.CyclomaticViolations
-			totalCog += r.CognitiveViolations
-		}
-		sb.WriteString(fmt.Sprintf("0 violations across %d functions scanned (cyclomatic >%d: %d, cognitive >%d: %d)\n\n", totalFuncs, debtCyclomaticThreshold, totalCyclo, debtCognitiveThreshold, totalCog))
-		for _, root := range debtCriticalRoots {
-			r := reports[root]
-			sb.WriteString(fmt.Sprintf("- %s: %d functions scanned, %d cyclomatic violations, %d cognitive violations, 0 top offenders\n", r.Package, r.TotalFuncs, r.CyclomaticViolations, r.CognitiveViolations))
-		}
+	if !debtHasViolations(reports, debtCriticalRoots) {
+		writeDebtZeroSummary(&sb, reports, debtCriticalRoots)
 		return sb.String(), nil
 	}
 	for _, root := range debtCriticalRoots {
-		r := reports[root]
-		sb.WriteString(fmt.Sprintf("### %s\n", r.Package))
-		sb.WriteString(fmt.Sprintf("- Total functions scanned: %d\n", r.TotalFuncs))
-		sb.WriteString(fmt.Sprintf("- Cyclomatic violations (>%d): %d\n", debtCyclomaticThreshold, r.CyclomaticViolations))
-		sb.WriteString(fmt.Sprintf("- Cognitive violations (>%d): %d\n", debtCognitiveThreshold, r.CognitiveViolations))
-		if len(r.TopOffenders) == 0 {
-			sb.WriteString("- Top offenders: none\n")
-		} else {
-			sb.WriteString("- Top 10 offenders (sorted by max complexity descending):\n")
-			for _, o := range r.TopOffenders {
-				sb.WriteString(fmt.Sprintf("  - %s:%d %s cyclomatic=%d cognitive=%d\n", o.File, o.Line, o.Function, o.Cyclomatic, o.Cognitive))
-			}
-		}
-		if len(r.TestOffenders) > 0 {
-			sb.WriteString(fmt.Sprintf("- Informational test file violations: %d (never block)\n", len(r.TestOffenders)))
-			for _, o := range r.TestOffenders {
-				sb.WriteString(fmt.Sprintf("  - %s:%d %s cyclomatic=%d cognitive=%d (test)\n", o.File, o.Line, o.Function, o.Cyclomatic, o.Cognitive))
-			}
-		}
-		sb.WriteString("\n")
+		writeDebtPackageSection(&sb, reports[root])
 	}
 	return sb.String(), nil
 }
