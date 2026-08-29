@@ -172,31 +172,31 @@ func validateStatusContract(contract string) error {
 // ProjectStatusV2 projects a ChangeStatus to the authority-free V2 document.
 // It rejects unsupported identities, stores, states, and artifact values
 // rather than silently broadening the public document.
-func ProjectStatusV2(status ChangeStatus) (StatusV2Projection, error) {
+func validateProjectStatusIdentity(status ChangeStatus) error {
 	if status.SchemaName != StatusSchemaName || status.SchemaVersion != StatusSchemaVersion {
-		return StatusV2Projection{}, fmt.Errorf("unsupported SDD status identity %q@%d", status.SchemaName, status.SchemaVersion)
-	}
-	// Artifact store is derived from PlanningHome for backward compat:
-	// repo-local => openspec; if status already carries explicit store, validate it.
-	store := ArtifactStoreOpenSpec
-	if status.ArtifactStore != "" {
-		if !isValidArtifactStore(status.ArtifactStore) {
-			return StatusV2Projection{}, fmt.Errorf("unsupported SDD v2 artifact store %q", status.ArtifactStore)
-		}
-		store = status.ArtifactStore
+		return fmt.Errorf("unsupported SDD status identity %q@%d", status.SchemaName, status.SchemaVersion)
 	}
 	if !isValidApplyState(status.ApplyState) {
-		return StatusV2Projection{}, fmt.Errorf("unsupported SDD v2 apply state %q", status.ApplyState)
+		return fmt.Errorf("unsupported SDD v2 apply state %q", status.ApplyState)
 	}
 	if !isValidNextRecommended(status.NextRecommended) {
-		return StatusV2Projection{}, fmt.Errorf("unsupported SDD v2 next action %q", status.NextRecommended)
+		return fmt.Errorf("unsupported SDD v2 next action %q", status.NextRecommended)
 	}
-	artifacts, err := projectArtifactsV2(store, status.Artifacts)
-	if err != nil {
-		return StatusV2Projection{}, err
+	return nil
+}
+
+func resolveProjectStore(status ChangeStatus) (ArtifactStore, error) {
+	store := ArtifactStoreOpenSpec
+	if status.ArtifactStore == "" {
+		return store, nil
 	}
-	// Determine artifactStore for projection
-	artifactStore := store
+	if !isValidArtifactStore(status.ArtifactStore) {
+		return "", fmt.Errorf("unsupported SDD v2 artifact store %q", status.ArtifactStore)
+	}
+	return status.ArtifactStore, nil
+}
+
+func resolveProjectNames(status ChangeStatus) (*string, *string) {
 	var changeName *string
 	if status.Name != "" {
 		n := status.Name
@@ -207,51 +207,59 @@ func ProjectStatusV2(status ChangeStatus) (StatusV2Projection, error) {
 		r := status.ChangeRoot
 		changeRoot = &r
 	}
-	// Authority-free: strip edit-authority blocked reasons and never report
-	// resolve-blockers solely due to authority. sdd-status never blocks on
-	// edit authority; sdd-apply warns via EditAuthorityBlocked/Consent.
-	filteredReasons := make([]string, 0, len(status.BlockedReasons))
-	for _, r := range status.BlockedReasons {
+	return changeName, changeRoot
+}
+
+func filterEditAuthorityReasons(reasons []string) []string {
+	filtered := make([]string, 0, len(reasons))
+	for _, r := range reasons {
 		if strings.Contains(r, "edit_authority_missing") || strings.Contains(r, "blocked(edit_authority_missing)") {
 			continue
 		}
-		filteredReasons = append(filteredReasons, r)
+		filtered = append(filtered, r)
 	}
-	nextRecommended := status.NextRecommended
-	if nextRecommended == "resolve-blockers" && len(filteredReasons) == 0 {
-		// Authority was the sole blocker; V2 never forces resolve-blockers for authority.
-		// Map to apply when ApplyState is ready, otherwise preserve non-blocked next.
-		if status.ApplyState == ApplyReady {
-			nextRecommended = "apply"
-		} else if status.ApplyState == ApplyAllDone {
-			nextRecommended = "verify"
-		} else {
-			nextRecommended = "apply"
-		}
+	if filtered == nil {
+		filtered = []string{}
 	}
-	if filteredReasons == nil {
-		filteredReasons = []string{}
+	return filtered
+}
+
+func resolveProjectNextRecommended(status ChangeStatus, filteredReasons []string) string {
+	next := status.NextRecommended
+	if next != "resolve-blockers" || len(filteredReasons) != 0 {
+		return next
 	}
+	if status.ApplyState == ApplyReady {
+		return "apply"
+	}
+	if status.ApplyState == ApplyAllDone {
+		return "verify"
+	}
+	return "apply"
+}
+
+func ProjectStatusV2(status ChangeStatus) (StatusV2Projection, error) {
+	if err := validateProjectStatusIdentity(status); err != nil {
+		return StatusV2Projection{}, err
+	}
+	store, err := resolveProjectStore(status)
+	if err != nil {
+		return StatusV2Projection{}, err
+	}
+	artifacts, err := projectArtifactsV2(store, status.Artifacts)
+	if err != nil {
+		return StatusV2Projection{}, err
+	}
+	changeName, changeRoot := resolveProjectNames(status)
+	filteredReasons := filterEditAuthorityReasons(status.BlockedReasons)
+	nextRecommended := resolveProjectNextRecommended(status, filteredReasons)
 	projected := StatusV2Projection{
-		SchemaName:       status.SchemaName,
-		SchemaVersion:    status.SchemaVersion,
-		ChangeName:       changeName,
-		ArtifactStore:    artifactStore,
-		PlanningHome:     status.PlanningHome,
-		ChangeRoot:       changeRoot,
-		ArtifactPaths:    status.ArtifactPaths,
-		ContextFiles:     status.ContextFiles,
-		Artifacts:        artifacts,
-		TaskProgress:     status.TaskProgress,
-		Dependencies:     status.Dependencies,
-		ApplyState:       status.ApplyState,
-		ActionContext:    status.ActionContext,
-		Relationships:    status.Relationships,
-		RemediationState: status.RemediationState,
-		ReviewOffer:      status.ReviewOffer,
-		Consent:          status.Consent,
-		NextRecommended:  nextRecommended,
-		BlockedReasons:   filteredReasons,
+		SchemaName: status.SchemaName, SchemaVersion: status.SchemaVersion,
+		ChangeName: changeName, ArtifactStore: store, PlanningHome: status.PlanningHome, ChangeRoot: changeRoot,
+		ArtifactPaths: status.ArtifactPaths, ContextFiles: status.ContextFiles, Artifacts: artifacts,
+		TaskProgress: status.TaskProgress, Dependencies: status.Dependencies, ApplyState: status.ApplyState,
+		ActionContext: status.ActionContext, Relationships: status.Relationships, RemediationState: status.RemediationState,
+		ReviewOffer: status.ReviewOffer, Consent: status.Consent, NextRecommended: nextRecommended, BlockedReasons: filteredReasons,
 	}
 	if status.PhaseInstructions != nil {
 		projected.PhaseInstructions = status.PhaseInstructions

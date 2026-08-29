@@ -37,8 +37,7 @@ var conditionalPhrases = []string{"if possible", "maybe", "consider", "when read
 // planning repository's own Git root nor inside allowedEditRoots.
 // allowedEditRoots is a parameter so persisted per-change grants can extend
 // it without touching detection.
-func detectUnauthorizedEditRoots(tasksText string, workspaceRoot string, allowedEditRoots []string) []string {
-	planningGitRoot := gitRootOf(resolveExistingPath(workspaceRoot))
+func normalizeAllowedRoots(allowedEditRoots []string) []string {
 	allowed := make([]string, 0, len(allowedEditRoots))
 	for _, root := range allowedEditRoots {
 		root = filepath.Clean(root)
@@ -47,33 +46,47 @@ func detectUnauthorizedEditRoots(tasksText string, workspaceRoot string, allowed
 		}
 		allowed = append(allowed, root)
 	}
+	return allowed
+}
 
-	unauthorized := map[string]bool{}
-	for _, line := range strings.Split(tasksText, "\n") {
-		if len(taskCheckbox.FindStringSubmatch(line)) == 0 {
-			continue
+func isUnauthorizedPath(resolved, planningGitRoot string, allowed []string) (string, bool) {
+	target := gitRootOf(resolved)
+	if target == "" {
+		return "", false
+	}
+	missing := target
+	if target == planningGitRoot {
+		missing = sameRepositoryEditRoot(resolved)
+	}
+	if withinAnyRoot(missing, allowed) {
+		return "", false
+	}
+	return missing, true
+}
+
+func collectUnauthorizedFromLine(line, workspaceRoot, planningGitRoot string, allowed []string, out map[string]bool) {
+	if len(taskCheckbox.FindStringSubmatch(line)) == 0 {
+		return
+	}
+	for _, token := range pathLikeTokens(line) {
+		resolved := token
+		if !filepath.IsAbs(resolved) {
+			resolved = filepath.Join(workspaceRoot, resolved)
 		}
-		for _, token := range pathLikeTokens(line) {
-			resolved := token
-			if !filepath.IsAbs(resolved) {
-				resolved = filepath.Join(workspaceRoot, resolved)
-			}
-			resolved = resolveExistingPath(filepath.Clean(resolved))
-			target := gitRootOf(resolved)
-			if target == "" {
-				continue
-			}
-			missing := target
-			if target == planningGitRoot {
-				missing = sameRepositoryEditRoot(resolved)
-			}
-			if withinAnyRoot(missing, allowed) {
-				continue
-			}
-			unauthorized[missing] = true
+		resolved = resolveExistingPath(filepath.Clean(resolved))
+		if missing, ok := isUnauthorizedPath(resolved, planningGitRoot, allowed); ok {
+			out[missing] = true
 		}
 	}
+}
 
+func detectUnauthorizedEditRoots(tasksText string, workspaceRoot string, allowedEditRoots []string) []string {
+	planningGitRoot := gitRootOf(resolveExistingPath(workspaceRoot))
+	allowed := normalizeAllowedRoots(allowedEditRoots)
+	unauthorized := map[string]bool{}
+	for _, line := range strings.Split(tasksText, "\n") {
+		collectUnauthorizedFromLine(line, workspaceRoot, planningGitRoot, allowed, unauthorized)
+	}
 	roots := make([]string, 0, len(unauthorized))
 	for root := range unauthorized {
 		roots = append(roots, root)
