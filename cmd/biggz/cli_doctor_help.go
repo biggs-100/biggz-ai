@@ -71,6 +71,7 @@ func doctorRun() int {
 	}
 
 	// Build runner with all checks — platform gate first.
+	// Drift checks are RO (warn, no --fix), panic-isolated via Runner.
 	runner := &doctor.Runner{
 		Checks: []doctor.Check{
 			doctor.NewPlatformCheck(),
@@ -87,6 +88,8 @@ func doctorRun() int {
 			doctor.NewPiLastModelCheck(),
 			doctor.NewPiWebSearchCheck(),
 			doctor.NewComplexityCheck(),
+			doctor.NewGlobalDriftCheck(),
+			doctor.NewLocalOverrideCheck(),
 		},
 	}
 

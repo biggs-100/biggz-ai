@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -326,4 +327,286 @@ func ConfigurableAgentPhases() []string {
 	phases = append(phases, JDPhases()...)
 	phases = append(phases, ReviewPhases()...)
 	return phases
+}
+
+// --- Model Routing v1 (gentle-pi parity) ---
+
+const ModelExportKind = "gentle-pi.agent_model_routing"
+const ModelExportVersion = 1
+
+type ThinkingLevel string
+
+const (
+	ThinkingOff     ThinkingLevel = "off"
+	ThinkingLow     ThinkingLevel = "low"
+	ThinkingMedium  ThinkingLevel = "medium"
+	ThinkingHigh    ThinkingLevel = "high"
+	ThinkingInherit ThinkingLevel = "inherit"
+)
+
+func IsValidThinkingLevel(v ThinkingLevel) bool {
+	switch v {
+	case ThinkingOff, ThinkingLow, ThinkingMedium, ThinkingHigh, ThinkingInherit:
+		return true
+	default:
+		return false
+	}
+}
+
+type AgentRoutingEntry struct {
+	Model    string        `json:"model,omitempty"`
+	Thinking ThinkingLevel `json:"thinking,omitempty"`
+}
+type AgentModelConfig map[string]AgentRoutingEntry
+type ModelRoutingEnvelope struct {
+	Kind    string           `json:"kind"`
+	Version int              `json:"version"`
+	Agents  AgentModelConfig `json:"agents"`
+}
+
+var safeModelRe = regexp.MustCompile(`^[A-Za-z0-9._~:@/+%-]+$`)
+var safeAgentRe = regexp.MustCompile(`^[A-Za-z0-9._:@/+%-]+$`)
+
+func normalizeModelID(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || !safeModelRe.MatchString(s) {
+		return ""
+	}
+	return s
+}
+func isValidAgentName(s string) bool { return safeAgentRe.MatchString(s) }
+func normalizeThinking(v string) ThinkingLevel {
+	t := ThinkingLevel(strings.TrimSpace(v))
+	if IsValidThinkingLevel(t) {
+		return t
+	}
+	return ""
+}
+func NormalizeRoutingEntry(raw any) (*AgentRoutingEntry, bool) {
+	if raw == nil {
+		return nil, false
+	}
+	if s, ok := raw.(string); ok {
+		m := normalizeModelID(s)
+		if m == "" {
+			return nil, false
+		}
+		return &AgentRoutingEntry{Model: m}, true
+	}
+	m, ok := raw.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	var e AgentRoutingEntry
+	has := false
+	if ms, ok := m["model"].(string); ok {
+		if mm := normalizeModelID(ms); mm != "" {
+			e.Model = mm
+			has = true
+		}
+	}
+	if ts, ok := m["thinking"].(string); ok {
+		if tt := normalizeThinking(ts); tt != "" {
+			e.Thinking = tt
+			has = true
+		}
+	}
+	if !has {
+		if len(m) == 0 {
+			return &AgentRoutingEntry{}, true
+		}
+		return nil, false
+	}
+	return &e, true
+}
+func NormalizeModelConfig(raw map[string]any) AgentModelConfig {
+	out := make(AgentModelConfig)
+	for k, v := range raw {
+		if !isValidAgentName(k) {
+			continue
+		}
+		if e, ok := NormalizeRoutingEntry(v); ok && e != nil {
+			out[k] = *e
+		}
+	}
+	return out
+}
+func DefaultModelConfigPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".biggz", "models.json")
+}
+func ReadModelConfig(path string) (AgentModelConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return make(AgentModelConfig), nil
+		}
+		return nil, err
+	}
+	if len(strings.TrimSpace(string(data))) == 0 {
+		return make(AgentModelConfig), nil
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse models.json: %w", err)
+	}
+	return NormalizeModelConfig(raw), nil
+}
+func WriteModelConfig(path string, cfg AgentModelConfig) error {
+	clean := make(AgentModelConfig)
+	for k, e := range cfg {
+		if !isValidAgentName(k) {
+			continue
+		}
+		me := normalizeModelID(e.Model)
+		te := normalizeThinking(string(e.Thinking))
+		if me == "" && te == "" {
+			continue
+		}
+		clean[k] = AgentRoutingEntry{Model: me, Thinking: te}
+	}
+	data, err := json.MarshalIndent(clean, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+func MergeModelConfigs(layers ...AgentModelConfig) AgentModelConfig {
+	out := make(AgentModelConfig)
+	keys := map[string]bool{}
+	for _, l := range layers {
+		for k := range l {
+			keys[k] = true
+		}
+	}
+	for k := range keys {
+		for _, l := range layers {
+			if e, ok := l[k]; ok && (e.Model != "" || e.Thinking != "") {
+				out[k] = e
+				break
+			}
+		}
+	}
+	return out
+}
+func EffectiveThinking(entry, global ThinkingLevel) ThinkingLevel {
+	if entry == ThinkingInherit || entry == "" {
+		if global == "" {
+			return ThinkingInherit
+		}
+		return global
+	}
+	return entry
+}
+func SetThinking(cfg AgentModelConfig, agent string, level ThinkingLevel) {
+	e := cfg[agent]
+	if level == "" {
+		e.Thinking = ""
+	} else {
+		e.Thinking = level
+	}
+	if e.Model == "" && e.Thinking == "" {
+		delete(cfg, agent)
+	} else {
+		cfg[agent] = e
+	}
+}
+func MarshalModelEnvelope(cfg AgentModelConfig) ([]byte, error) {
+	env := ModelRoutingEnvelope{Kind: ModelExportKind, Version: ModelExportVersion, Agents: cfg}
+	return json.MarshalIndent(env, "", "  ")
+}
+func ParseModelEnvelope(data []byte) (AgentModelConfig, error) {
+	var env ModelRoutingEnvelope
+	if err := json.Unmarshal(data, &env); err != nil {
+		return nil, err
+	}
+	if env.Kind != ModelExportKind || env.Version != ModelExportVersion {
+		return nil, fmt.Errorf("invalid envelope kind/version")
+	}
+	if env.Agents == nil {
+		return make(AgentModelConfig), nil
+	}
+	clean := make(AgentModelConfig)
+	for k, e := range env.Agents {
+		if !isValidAgentName(k) {
+			continue
+		}
+		me := normalizeModelID(e.Model)
+		te := normalizeThinking(string(e.Thinking))
+		if me == "" && te == "" && (e.Model != "" || e.Thinking != "") {
+			continue
+		}
+		clean[k] = AgentRoutingEntry{Model: me, Thinking: te}
+	}
+	return clean, nil
+}
+func UpdateFrontmatterRouting(content string, entry *AgentRoutingEntry) string {
+	if !strings.HasPrefix(content, "---\n") {
+		return content
+	}
+	end := strings.Index(content[4:], "\n---")
+	if end == -1 {
+		return content
+	}
+	end += 4
+	front := content[4:end]
+	body := content[end:]
+	lines := strings.Split(front, "\n")
+	filtered := make([]string, 0, len(lines))
+	for _, l := range lines {
+		if strings.HasPrefix(l, "model:") || strings.HasPrefix(l, "thinking:") {
+			continue
+		}
+		filtered = append(filtered, l)
+	}
+	if entry != nil && (entry.Model != "" || entry.Thinking != "") {
+		toInsert := []string{}
+		if entry.Model != "" {
+			toInsert = append(toInsert, "model: "+entry.Model)
+		}
+		if entry.Thinking != "" {
+			toInsert = append(toInsert, "thinking: "+string(entry.Thinking))
+		}
+		idx := -1
+		for i, l := range filtered {
+			if strings.HasPrefix(l, "description:") {
+				idx = i
+				break
+			}
+		}
+		ins := 0
+		if idx >= 0 {
+			ins = idx + 1
+		} else if len(filtered) > 0 {
+			ins = 1
+			if ins > len(filtered) {
+				ins = len(filtered)
+			}
+		}
+		n := make([]string, 0, len(filtered)+len(toInsert))
+		n = append(n, filtered[:ins]...)
+		n = append(n, toInsert...)
+		n = append(n, filtered[ins:]...)
+		filtered = n
+	}
+	return "---\n" + strings.Join(filtered, "\n") + body
+}
+func PickerAgentFiles() []string {
+	base := ConfigurableAgentPhases()
+	if len(base) >= 30 {
+		return base[:30]
+	}
+	out := make([]string, 0, 30)
+	out = append(out, base...)
+	for i := len(base); len(out) < 30; i++ {
+		out = append(out, fmt.Sprintf("agent-%02d", i+1))
+	}
+	return out
 }
