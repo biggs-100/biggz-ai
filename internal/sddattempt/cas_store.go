@@ -373,6 +373,21 @@ func (s Store) replay() (*RuntimeStore, bool, error) {
 // advances HEAD. store.Revision is overwritten with the computed revision.
 // The caller must hold the store lock.
 func (s Store) commit(store *RuntimeStore) error {
+	expected := store.Revision
+	head, err := readLedgerHead(s.Dir)
+	if err != nil {
+		return err
+	}
+	if expected != "" {
+		if head != expected {
+			return &RuntimeRecordRejectedError{Cause: fmt.Errorf("CAS conflict: expected revision %s, got %s", expected, head)}
+		}
+		if _, err := s.loadRecord(expected); err != nil {
+			return &RuntimeRecordRejectedError{Cause: fmt.Errorf("CAS conflict: %w", err)}
+		}
+	} else if head != "" {
+		return &RuntimeRecordRejectedError{Cause: fmt.Errorf("CAS conflict: expected no revision, got %s", head)}
+	}
 	canonical := canonicalRecordPayload(store)
 	revision := sha256Hex(canonical)
 	payload := marshalSnapshot(store)
@@ -387,7 +402,7 @@ func (s Store) commit(store *RuntimeStore) error {
 		// canonical state under the same revision is a hash collision.
 		existingCanonical := canonicalRecordPayload(parsedRecord(existing, s.Change))
 		if !bytes.Equal(existingCanonical, canonical) {
-			return fmt.Errorf("hash collision: %s exists with different content", path)
+			return &RuntimeRecordRejectedError{Cause: fmt.Errorf("hash collision: %s exists with different content", path)}
 		}
 	case os.IsNotExist(err):
 		tmp := path + ".tmp"
@@ -460,13 +475,13 @@ func (s Store) loadRecord(revision string) (*RuntimeStore, error) {
 	}
 	var store RuntimeStore
 	if err := json.Unmarshal(data, &store); err != nil {
-		return nil, fmt.Errorf("parse ledger record %s: %w", path, err)
+		return nil, &RuntimeRecordRejectedError{Cause: fmt.Errorf("parse ledger record %s: %w", path, err)}
 	}
 	if store.ChangeName != s.Change {
-		return nil, fmt.Errorf("ledger record %s belongs to change %q, not %q", path, store.ChangeName, s.Change)
+		return nil, &RuntimeRecordRejectedError{Cause: fmt.Errorf("ledger record %s belongs to change %q, not %q", path, store.ChangeName, s.Change)}
 	}
 	if sha256Hex(canonicalRecordPayload(&store)) != revision {
-		return nil, fmt.Errorf("ledger record %s does not match its content address", path)
+		return nil, &RuntimeRecordRejectedError{Cause: fmt.Errorf("ledger record %s does not match its content address", path)}
 	}
 	store.Revision = revision
 	return &store, nil

@@ -3,6 +3,7 @@ package sddattempt
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -366,3 +367,6 @@ func TestStore_OutsideGitRepoFallsBackToMachineScope(t *testing.T) {
 		t.Fatalf("machine-scoped record missing: %v", err)
 	}
 }
+
+func TestCASRefusesStale(t *testing.T) { setStoreRoot(t); first, err := Begin(BeginParams{ChangeName: "ch-stale", RepoRoot: "r", WorkUnit: "w"}); if err != nil { t.Fatalf("Begin: %v", err) }; s, _ := resolveStore("ch-stale", "r"); stale := &RuntimeStore{ChangeName: "ch-stale", CreatedAt: "2026-01-01T00:00:00Z", UpdatedAt: "2026-01-01T00:00:00Z"}; if err := s.commit(stale); err == nil || !strings.Contains(err.Error(), "CAS conflict") { t.Fatalf("stale R0 must fail CAS got %v", err) }; head, _ := readLedgerHead(s.Dir); if head != first.Revision { t.Fatalf("HEAD changed got %q want %q", head, first.Revision) } }
+func TestWorktreeCommonDir(t *testing.T) { if _, err := exec.LookPath("git"); err != nil { t.Skip("git not available") }; main := t.TempDir(); if out, err := exec.Command("git", "init", "-q", main).CombinedOutput(); err != nil { t.Fatalf("init %v %s", err, out) }; wt := filepath.Join(t.TempDir(), "wt"); if out, err := exec.Command("git", "-C", main, "worktree", "add", "-q", wt).CombinedOutput(); err != nil { t.Skipf("worktree %v %s", err, out) }; a, _ := resolveStore("ch-wt", main); b, _ := resolveStore("ch-wt", wt); if a.Dir != b.Dir { t.Fatalf("worktree Dir mismatch %q vs %q", a.Dir, b.Dir) }; if !strings.Contains(b.Dir, filepath.Join("biggz", RuntimeDir, RuntimeVersion)) { t.Fatalf("Dir not under biggz/sdd-runtime/v1 %q", b.Dir) }; if isNotGitRepoError(&exec.ExitError{Stderr: []byte("fatal: cannot chdir: Permission denied")}) { t.Fatal("permission must not be isNotGit") }; if !isNotGitRepoError(&exec.ExitError{Stderr: []byte("fatal: not a git repository")}) { t.Fatal("not-a-git-repo must be true") } }

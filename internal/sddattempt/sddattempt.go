@@ -176,6 +176,20 @@ const (
 	BlockedReasonInvalidContinuation = "invalid_continuation"
 )
 
+// RuntimeRecordRejectedError is the single typed error for all record rejections.
+type RuntimeRecordRejectedError struct {
+	Cause error
+}
+
+func (e *RuntimeRecordRejectedError) Error() string {
+	if e.Cause != nil {
+		return e.Cause.Error()
+	}
+	return "runtime record rejected"
+}
+
+func (e *RuntimeRecordRejectedError) Unwrap() error { return e.Cause }
+
 // requestDigest hashes the canonical JSON of a request under a schema domain,
 // mirroring gentle-ai's runtimeValueHash.
 func requestDigest(domain string, params any) string {
