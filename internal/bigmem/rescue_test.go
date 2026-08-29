@@ -134,6 +134,8 @@ func TestForeign_BlocksAmbiguous(t *testing.T) {
 
 func TestAdopt_SyncProbe(t *testing.T) {
 	s := openTestStore(t)
+	// Ensure clean: drop journal if auto-created
+	s.db.Exec(`DROP TABLE IF EXISTS sync_mutations`)
 	insertOrphanSession(t, s, "sess-sync")
 	// Without sync_mutations table, adopt should succeed no-op
 	tx, _ := s.db.Begin()
@@ -147,6 +149,7 @@ func TestAdopt_SyncProbe(t *testing.T) {
 	}
 	// With sync_mutations table, adopt should also enqueue
 	s2 := openTestStore(t)
+	s2.db.Exec(`DROP TABLE IF EXISTS sync_mutations`)
 	insertOrphanSession(t, s2, "sess-sync2")
 	// Create sync_mutations with expected columns
 	_, err := s2.db.Exec(`CREATE TABLE sync_mutations (id TEXT PRIMARY KEY, entity TEXT, entity_key TEXT, op TEXT, project TEXT, created_at TEXT)`)
@@ -169,6 +172,7 @@ func TestAdopt_SyncProbe(t *testing.T) {
 	}
 	// Without columns, probe tolerates absence
 	s3 := openTestStore(t)
+	s3.db.Exec(`DROP TABLE IF EXISTS sync_mutations`)
 	insertOrphanSession(t, s3, "sess-sync3")
 	_, _ = s3.db.Exec(`CREATE TABLE sync_mutations (id TEXT PRIMARY KEY, nonsense TEXT)`)
 	tx3, _ := s3.db.Begin()

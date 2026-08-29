@@ -749,6 +749,23 @@ func bigmemRun() int {
 			fmt.Printf("  Dir:      %s\n", st.ExportDir)
 			fmt.Printf("  Chunks:   %d\n", st.ChunkCount)
 			fmt.Printf("  Entries:  %d\n", st.ObsCount)
+			jp := project
+			if jp == "" && !doAll {
+				jp = filepath.Base(projectRoot)
+			}
+			pend := 0
+			if list, err := store.ListPendingMutations(jp, 0); err == nil {
+				pend = len(list)
+			}
+			js, _ := store.GetSyncState(jp)
+			lc := "idle"
+			if js != nil && js.Lifecycle != "" {
+				lc = js.Lifecycle
+			}
+			fmt.Printf("  Lifecycle: %s\n", lc)
+			fmt.Printf("  lifecycle: %s\n", lc)
+			fmt.Printf("  Pending: %d\n", pend)
+			fmt.Printf("  pending: %d\n", pend)
 
 		case doImport && fromEngram:
 			resolvedDir, rerr := bigmem.ResolveEngramDir(engramDir)

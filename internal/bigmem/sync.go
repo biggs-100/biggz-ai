@@ -64,10 +64,15 @@ type ChunkData struct {
 
 // SyncMutation tracks a single entity change for incremental sync.
 type SyncMutation struct {
-	Entity    string `json:"entity"`     // "session" | "observation" | "prompt"
-	EntityKey string `json:"entity_key"` // the entity's ID
-	Op        string `json:"op"`         // "upsert" | "delete"
-	Project   string `json:"project,omitempty"`
+	Seq         int64  `json:"seq,omitempty"`
+	Entity      string `json:"entity"`     // "session" | "observation" | "prompt"
+	EntityKey   string `json:"entity_key"` // the entity's ID
+	Op          string `json:"op"`         // "upsert" | "delete"
+	Project     string `json:"project,omitempty"`
+	Payload     []byte `json:"payload,omitempty"`
+	Source      string `json:"source,omitempty"`
+	Disposition string `json:"disposition,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
 }
 
 // ─── Transport interface ─────────────────────────────────────────────────────

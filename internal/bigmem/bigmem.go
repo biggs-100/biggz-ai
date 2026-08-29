@@ -808,6 +808,7 @@ func Open(rootDir string) (*Store, error) {
 			PRIMARY KEY (target_key, chunk_id)
 		);
 	`)
+	ensureSyncJournalTables(db)
 	db.Exec("DROP TABLE IF EXISTS prompts_fts")
 	db.Exec(`
 		CREATE VIRTUAL TABLE IF NOT EXISTS prompts_fts USING fts5(
@@ -1485,6 +1486,10 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 			if err != nil {
 				return err
 			}
+			if errQ := tryEnqueueObservationTx(tx, obs); errQ != nil {
+				err = errQ
+				return err
+			}
 			if err = tx.Commit(); err != nil {
 				return err
 			}
@@ -1519,6 +1524,10 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 			if err != nil {
 				return err
 			}
+			if errQ := tryEnqueueObservationTx(tx, obs); errQ != nil {
+				err = errQ
+				return err
+			}
 			if err = tx.Commit(); err != nil {
 				return err
 			}
@@ -1551,6 +1560,10 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 		nowStr, reviewAfterStr, boolToInt(obs.Pinned),
 		obs.CreatedAt.Format(time.RFC3339), nowStr)
 	if err != nil {
+		return err
+	}
+	if errQ := tryEnqueueObservationTx(tx, obs); errQ != nil {
+		err = errQ
 		return err
 	}
 	if err = tx.Commit(); err != nil {
