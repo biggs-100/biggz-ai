@@ -108,7 +108,7 @@ are wired).
 | Verify-report anchor canonicalization | ✅ `canonicalVerifyReportPaths` + `platformAnchorCaseSemantics` via `filepath.Rel("a","A")` + `samePathWord` (EqualFold on Windows) — fixes `RUNNER~1` 8.3 short-name bug (aa3f416, 91919996+765e46c1) |
 | Terminal streams for TUI | ✅ `isattyFn` dual check `stdin+stdout`, `nonInteractiveTUIError` — TUI requires both terminals, CI `| tee` fails fast with help (afc8552, 55216cfc) |
 | TUI reduced-motion | ✅ `BIGGZ_NO_ANIMATION=1` (compat `GENTLE_AI_NO_ANIMATION`) — `tickCmd()` returns nil, static frames (9becc12, b3dfc1ef) |
-| `internal/opencode` Go model picker | Ported (2026-08-10) — reads the model-variants cache, JSONC-safe assignment read/write |
+| `internal/opencode` Go model picker | Ported (2026-08-10→2026-08-30 gentle-model-bg-verify) — THINKING_LEVELS biggz-ai.agent_model_routing v1, LoadVariantsOrEmpty sorted atomic, EnrichWithVariants exact→fallback deterministic, envelope/frontmatter 30 files, BubbleTea tui/models.go |
 | Release policy attestation (`releasepolicy` run-marker) | ✅ Minimal `Validate` + `directoryContains` + `validateSnapshotFile` (full YAML/artifact pin omitted) |
 | Legacy v1 authority compatibility (`review-*` commands) | Deliberate — no legacy debt |
 | Path identity packages (`pathidentity`/`pathquote`) | ✅ `pathidentity.Contains` + `pathquote.Quote` (3× `quotePath` deduped, `ShellWord` omitted) |
