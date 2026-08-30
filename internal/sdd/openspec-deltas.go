@@ -47,8 +47,8 @@ var (
 // It detects ## RENAMED presence and legacy-flat (no requirement headings).
 func ParseDeltaSpec(delta string) (ParseResult, error) {
 	var res ParseResult
-	// Detect RENAMED (case-sensitive as in spec, but also handle lower).
-	if strings.Contains(delta, "## RENAMED") {
+	// Detect RENAMED heading only (anchored), not mentions inside scenario text.
+	if regexp.MustCompile(`(?m)^##\s+RENAMED\b`).MatchString(delta) {
 		res.HasRenamed = true
 	}
 	// Detect legacy flat: has content but no Requirement heading and no delta sections
