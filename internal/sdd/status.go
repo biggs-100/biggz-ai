@@ -12,9 +12,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
+	"github.com/charmbracelet/x/ansi"
 	"gopkg.in/yaml.v3"
 )
 
@@ -949,19 +951,23 @@ func deriveSyncState(change, workspaceRoot, changeDir string, store ArtifactStor
 
 // FormatStatus returns a human-readable summary of SDD status.
 // If opts.ReviewDisabled is true, the output includes an RDD status header.
+// Scannable rendering: 4 blocks Status Overview / Artifact Progress / Next Action / Risks/Blockers
+// each in Outcome + Quick path + Details shape with sanitized truncation and chunking <7.
 func FormatStatus(active, archived []ChangeStatus, opts StatusOptions) string {
 	var b strings.Builder
 
 	if opts.ReviewDisabled {
 		b.WriteString("RDD status: disabled (unmanaged)\n\n")
 	}
+	width := getTerminalWidth()
 
 	if len(active) == 0 {
 		b.WriteString("No active changes.\n")
 	} else {
 		b.WriteString("Active changes:\n")
 		for _, cs := range active {
-			b.WriteString(formatOne(cs, false))
+			b.WriteString(formatBanner(cs, width))
+			b.WriteString(formatStatusBlocks(cs, width))
 		}
 	}
 
@@ -972,6 +978,299 @@ func FormatStatus(active, archived []ChangeStatus, opts StatusOptions) string {
 		}
 	}
 
+	return b.String()
+}
+
+func getTerminalWidth() int {
+	if wStr := os.Getenv("COLUMNS"); wStr != "" {
+		if w, err := strconv.Atoi(wStr); err == nil && w > 0 {
+			return w
+		}
+	}
+	if wStr := os.Getenv("TERM_WIDTH"); wStr != "" {
+		if w, err := strconv.Atoi(wStr); err == nil && w > 0 {
+			return w
+		}
+	}
+	return 80
+}
+
+func formatBanner(cs ChangeStatus, width int) string {
+	if width <= 0 {
+		width = 80
+	}
+	name := sanitizePlain(cs.Name)
+	// also strip ANSI from name if any
+	name = ansi.Strip(name)
+	label := sanitizePlain(phaseLabel(cs))
+	raw := fmt.Sprintf("◆ %s · %s", name, label)
+	// sanitize before width measure
+	sanitized := strings.ReplaceAll(raw, "	", "    ")
+	sanitized = stripOsc(sanitized)
+	sanitized = ansi.Strip(sanitized)
+	sanitized = stripControls(sanitized)
+	sanitized = strings.Join(strings.Fields(sanitized), " ")
+	if visibleWidth(sanitized) > width {
+		sanitized = truncateToWidth(sanitized, width)
+	}
+	return sanitized + "\n"
+}
+
+func formatStatusBlocks(cs ChangeStatus, width int) string {
+	var b strings.Builder
+	// Status Overview
+	b.WriteString("## Status Overview\n")
+	b.WriteString("**Outcome:** " + outcomeForStatusOverview(cs) + "\n")
+	b.WriteString("**Quick path:**\n")
+	for i, step := range quickPathForStatusOverview(cs) {
+		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, sanitizeForWidth(step, width)))
+	}
+	b.WriteString("**Details:**\n")
+	b.WriteString(renderStatusTable(detailsForStatusOverview(cs), width))
+	// Artifact Progress
+	b.WriteString("## Artifact Progress\n")
+	b.WriteString("**Outcome:** " + outcomeForArtifactProgress(cs) + "\n")
+	b.WriteString("**Quick path:**\n")
+	for i, step := range quickPathForArtifactProgress(cs) {
+		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, sanitizeForWidth(step, width)))
+	}
+	b.WriteString("**Details:**\n")
+	b.WriteString(renderStatusTable(detailsForArtifactProgress(cs), width))
+	// Next Action
+	b.WriteString("## Next Action\n")
+	b.WriteString("**Outcome:** " + outcomeForNextAction(cs) + "\n")
+	b.WriteString("**Quick path:**\n")
+	for i, step := range quickPathForNextAction(cs) {
+		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, sanitizeForWidth(step, width)))
+	}
+	b.WriteString("**Details:**\n")
+	b.WriteString(renderStatusTable(detailsForNextAction(cs), width))
+	// Risks/Blockers
+	risksOutcome, risksRows := detailsForRisksBlock(cs)
+	if len(risksRows) == 0 && risksOutcome == "" {
+		b.WriteString("## Risks/Blockers\n")
+		b.WriteString("**Outcome:** None\n")
+		b.WriteString("**Quick path:**\n")
+		b.WriteString("1. None\n")
+		b.WriteString("**Details:**\n")
+		b.WriteString("None\n")
+	} else {
+		if risksOutcome == "" {
+			risksOutcome = "blocked"
+		}
+		b.WriteString("## Risks/Blockers\n")
+		b.WriteString("**Outcome:** " + sanitizeForWidth(risksOutcome, width) + "\n")
+		b.WriteString("**Quick path:**\n")
+		steps := quickPathForRisks(cs)
+		if len(steps) == 0 {
+			steps = []string{"None"}
+		}
+		for i, step := range steps {
+			b.WriteString(fmt.Sprintf("%d. %s\n", i+1, sanitizeForWidth(step, width)))
+		}
+		b.WriteString("**Details:**\n")
+		if len(risksRows) == 0 {
+			b.WriteString("None\n")
+		} else {
+			b.WriteString(renderStatusTable(risksRows, width))
+		}
+	}
+	return b.String()
+}
+
+func outcomeForStatusOverview(cs ChangeStatus) string {
+	label := phaseLabel(cs)
+	if cs.IsArchived {
+		label = "archived"
+	}
+	return sanitizeForWidth(label, 80)
+}
+
+func quickPathForStatusOverview(cs ChangeStatus) []string {
+	if cs.NextRecommended != "" && cs.NextRecommended != "done" && cs.NextRecommended != "resolve-blockers" {
+		return []string{fmt.Sprintf("biggz sdd-%s %s", cs.NextRecommended, cs.Name)}
+	}
+	return []string{"biggz sdd-status"}
+}
+
+func detailsForStatusOverview(cs ChangeStatus) [][]string {
+	rows := [][]string{
+		{"Change", sanitizePlain(cs.Name)},
+		{"State", sanitizePlain(phaseLabel(cs))},
+		{"Tasks", fmt.Sprintf("%d/%d", cs.TasksDone, cs.TasksTotal)},
+		{"Artifacts", fmt.Sprintf("proposal:%s specs:%s design:%s tasks:%s", cs.Artifacts["proposal"], cs.Artifacts["specs"], cs.Artifacts["design"], cs.Artifacts["tasks"])},
+	}
+	// sanitize and truncate per cell will be done in renderStatusTable
+	return rows
+}
+
+func outcomeForArtifactProgress(cs ChangeStatus) string {
+	if cs.Artifacts == nil {
+		return "unknown"
+	}
+	done := 0
+	total := 0
+	for _, k := range []string{"proposal", "specs", "design", "tasks", "applyProgress", "verifyReport"} {
+		total++
+		if cs.Artifacts[k] == ArtifactDone {
+			done++
+		}
+	}
+	if done == total {
+		return "all artifacts done"
+	}
+	return fmt.Sprintf("%d/%d artifacts done", done, total)
+}
+
+func quickPathForArtifactProgress(cs ChangeStatus) []string {
+	var steps []string
+	if cs.Artifacts["proposal"] != ArtifactDone {
+		steps = append(steps, "create proposal.md")
+	}
+	if cs.Artifacts["specs"] != ArtifactDone {
+		steps = append(steps, "add specs/**/spec.md")
+	}
+	if cs.Artifacts["design"] != ArtifactDone {
+		steps = append(steps, "write design.md")
+	}
+	if cs.Artifacts["tasks"] != ArtifactDone {
+		steps = append(steps, "define tasks.md")
+	}
+	if len(steps) == 0 {
+		steps = []string{"review artifacts"}
+	}
+	return steps
+}
+
+func detailsForArtifactProgress(cs ChangeStatus) [][]string {
+	keys := []string{"proposal", "specs", "design", "tasks", "applyProgress", "verifyReport"}
+	var rows [][]string
+	for _, k := range keys {
+		state := "missing"
+		if cs.Artifacts != nil {
+			if v, ok := cs.Artifacts[k]; ok {
+				state = string(v)
+			}
+		}
+		rows = append(rows, []string{k, state})
+	}
+	return rows
+}
+
+func outcomeForNextAction(cs ChangeStatus) string {
+	if cs.NextRecommended == "" {
+		return "none"
+	}
+	return sanitizePlain(cs.NextRecommended)
+}
+
+func quickPathForNextAction(cs ChangeStatus) []string {
+	next := cs.NextRecommended
+	if next == "" {
+		return []string{"biggz sdd-status"}
+	}
+	if next == "sync" {
+		return []string{fmt.Sprintf("biggz sdd-sync %s", cs.Name), "verify"}
+	}
+	if next == "resolve-blockers" {
+		return []string{"resolve blocked reasons"}
+	}
+	return []string{fmt.Sprintf("biggz sdd-%s %s", next, cs.Name)}
+}
+
+func detailsForNextAction(cs ChangeStatus) [][]string {
+	var rows [][]string
+	rows = append(rows, []string{"next", sanitizePlain(cs.NextRecommended)})
+	// explicit dependencies order
+	deps := []struct {
+		name string
+		state DependencyState
+	}{
+		{"proposal", cs.Dependencies.Proposal},
+		{"specs", cs.Dependencies.Specs},
+		{"design", cs.Dependencies.Design},
+		{"tasks", cs.Dependencies.Tasks},
+		{"apply", cs.Dependencies.Apply},
+		{"verify", cs.Dependencies.Verify},
+		{"archive", cs.Dependencies.Archive},
+	}
+	for _, d := range deps {
+		if d.state != "" {
+			rows = append(rows, []string{d.name, string(d.state)})
+		}
+	}
+	return rows
+}
+
+func detailsForRisksBlock(cs ChangeStatus) (string, [][]string) {
+	if len(cs.BlockedReasons) == 0 {
+		return "", nil
+	}
+	outcome := cs.BlockedReasons[0]
+	if len(cs.BlockedReasons) > 1 {
+		outcome = fmt.Sprintf("%d blockers", len(cs.BlockedReasons))
+	}
+	var rows [][]string
+	for _, r := range cs.BlockedReasons {
+		s := sanitizePlain(r)
+		// split into topic/decision on colon if possible for table
+		topic, decision := splitTopicDecision(s)
+		if decision == "" {
+			topic = s
+			decision = "blocked"
+		}
+		rows = append(rows, []string{topic, decision})
+	}
+	return outcome, rows
+}
+
+func quickPathForRisks(cs ChangeStatus) []string {
+	if len(cs.BlockedReasons) == 0 {
+		return nil
+	}
+	return []string{"resolve blockers", fmt.Sprintf("biggz sdd-status %s --json", cs.Name)}
+}
+
+func renderStatusTable(rows [][]string, width int) string {
+	if len(rows) == 0 {
+		return "None\n"
+	}
+	if width <= 0 {
+		width = 80
+	}
+	// sanitize and truncate per cell to budget
+	budget := (width - 6) / 2
+	if budget < 5 {
+		budget = 5
+	}
+	// conservative: ensure narrow 40 still passes, cap budget at 17 if width>40 but we already compute; for width 80 budget 37, but narrow test will use width 40 => 17, we handle via caller width.
+	// For ensure per-cell VisibleWidth <= budget on narrow, we truncate to budget.
+	var sanitized [][]string
+	for _, r := range rows {
+		topic := sanitizePlain(r[0])
+		decision := ""
+		if len(r) > 1 {
+			decision = sanitizePlain(r[1])
+		}
+		topic = truncateToWidth(topic, budget)
+		decision = truncateToWidth(decision, budget)
+		sanitized = append(sanitized, []string{topic, decision})
+	}
+	chunks := chunkTable(sanitized, 7)
+	var b strings.Builder
+	for idx, chunk := range chunks {
+		b.WriteString("| Topic | Decision |\n")
+		b.WriteString("|-------|----------|\n")
+		for _, r := range chunk {
+			b.WriteString("| " + r[0] + " | " + r[1] + " |\n")
+		}
+		if idx < len(chunks)-1 {
+			remaining := len(sanitized) - (idx+1)*7
+			if remaining > 0 {
+				b.WriteString(fmt.Sprintf("… +%d more\n", remaining))
+			}
+		}
+	}
 	return b.String()
 }
 

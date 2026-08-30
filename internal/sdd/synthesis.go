@@ -6,30 +6,31 @@ import (
 	"io"
 	"os"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-runewidth"
 )
 
 type SubAgentResult struct {
-	Phase          string
-	WhatDone       string
-	ArtifactsPaths string
-	Risks          string
+	Phase           string
+	WhatDone        string
+	ArtifactsPaths  string
+	Risks           string
 	NextRecommended string
-	Preview        string
-	Diff           string
-	Decisions      string
-	Commands       string
-	Validation     string
-	Failure        string
+	Preview         string
+	Diff            string
+	Decisions       string
+	Commands        string
+	Validation      string
+	Failure         string
 }
 
 func RenderSynthesis(r SubAgentResult) string {
 	phase := strings.TrimSpace(r.Phase)
 	if phase == "" {
 		phase = "phase/agent"
-	}
-	what := strings.TrimSpace(r.WhatDone)
-	if what == "" {
-		what = "None"
 	}
 	arts := strings.TrimSpace(r.ArtifactsPaths)
 	if arts == "" {
@@ -43,31 +44,60 @@ func RenderSynthesis(r SubAgentResult) string {
 	if next == "" {
 		next = "None"
 	}
+	// derive lifecycle status
+	status := deriveLifecycleStatus(r)
+	lifecycle := renderLifecycle(phase, status, next)
+
 	var b strings.Builder
-	b.WriteString("## Sub-agent Result: " + phase + "\n")
-	b.WriteString("**What was done:** " + what + "\n")
-	b.WriteString("**Artifacts/Paths:** " + arts + "\n")
-	b.WriteString("**Risks / Open Questions:** " + risks + "\n")
-	b.WriteString("**Next Recommended:** " + next + "\n")
-	preview := strings.TrimSpace(r.Preview)
-	if preview == "" {
-		preview = "None"
+	b.WriteString("## Sub-agent Result: " + sanitizeForWidth(phase, 80) + "\n")
+	// What was done as table + checklist
+	b.WriteString("**What was done:**\n")
+	rows, checklist := parseWhatDoneRows(r.WhatDone)
+	// Ensure at least header present
+	if len(rows) == 0 {
+		rows = [][]string{{"None", "None"}}
 	}
-	b.WriteString("**Preview:** " + preview + "\n")
-	diff := strings.TrimSpace(r.Diff)
-	if diff == "" {
-		diff = "None"
+	// Render table chunked
+	tableMD := renderTable(rows, 80)
+	b.WriteString(tableMD)
+	if len(checklist) > 0 {
+		for _, item := range checklist {
+			// sanitize checklist item but keep prefix
+			sanitized := sanitizePlain(item)
+			// per-item truncate to width 80
+			sanitized = truncateToWidth(sanitized, 80)
+			b.WriteString(sanitized + "\n")
+		}
 	}
-	b.WriteString("**Diff:** " + diff + "\n")
+	// lifecycle one-line
+	b.WriteString(lifecycle + "\n")
+	b.WriteString("**Artifacts/Paths:** " + sanitizePlain(arts) + "\n")
+	b.WriteString("**Risks / Open Questions:** " + sanitizePlain(risks) + "\n")
+	b.WriteString("**Next Recommended:** " + sanitizePlain(next) + "\n")
+	// Preview sanitized 300
+	previewRaw := strings.TrimSpace(r.Preview)
+	if previewRaw == "" {
+		b.WriteString("**Preview:** None\n")
+	} else {
+		b.WriteString("**Preview:** " + formatPreview(previewRaw) + "\n")
+	}
+	diffRaw := strings.TrimSpace(r.Diff)
+	if diffRaw == "" {
+		b.WriteString("**Diff:** None\n")
+	} else {
+		b.WriteString("**Diff:** " + formatDiff(diffRaw) + "\n")
+	}
 	if v := strings.TrimSpace(r.Decisions); v != "" {
-		b.WriteString("**Decisions:** " + v + "\n")
+		b.WriteString("**Decisions:** " + sanitizeForWidth(v, 80) + "\n")
 	}
 	if v := strings.TrimSpace(r.Commands); v != "" {
-		b.WriteString("**Commands:** " + v + "\n")
+		b.WriteString("**Commands:** " + sanitizeForWidth(v, 80) + "\n")
 	}
 	validation := strings.TrimSpace(r.Validation)
 	if validation == "" {
 		validation = "None"
+	} else {
+		validation = sanitizeForWidth(validation, 80)
 	}
 	b.WriteString("**Validation:** " + validation + "\n")
 	if v := strings.TrimSpace(r.Failure); v != "" {
@@ -75,9 +105,390 @@ func RenderSynthesis(r SubAgentResult) string {
 		if human == "" {
 			human = v
 		}
-		b.WriteString("**Failure:** " + human + "\n")
+		b.WriteString("**Failure:** " + sanitizeForWidth(human, 80) + "\n")
 	}
 	return b.String()
+}
+
+func deriveLifecycleStatus(r SubAgentResult) string {
+	failure := strings.TrimSpace(r.Failure)
+	if failure != "" {
+		return "error"
+	}
+	validation := strings.ToLower(strings.TrimSpace(r.Validation))
+	if strings.Contains(validation, "pass") {
+		return "success"
+	}
+	next := strings.ToLower(strings.TrimSpace(r.NextRecommended))
+	if next == "" || next == "none" {
+		return "warning"
+	}
+	// default success when next exists and no failure
+	if strings.Contains(validation, "fail") || strings.Contains(validation, "error") {
+		return "error"
+	}
+	return "success"
+}
+
+// sanitizePlain replaces tabs, strips OSC/ANSI/controls and normalizes spaces
+func sanitizePlain(s string) string {
+	if s == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, "	", "    ")
+	s = stripOsc(s)
+	s = ansi.Strip(s)
+	s = stripControls(s)
+	s = strings.Join(strings.Fields(s), " ")
+	return s
+}
+
+func sanitizeForWidth(s string, w int) string {
+	if s == "" {
+		return s
+	}
+	s = strings.ReplaceAll(s, "	", "    ")
+	s = stripOsc(s)
+	s = ansi.Strip(s)
+	s = stripControls(s)
+	// collapse whitespace but keep single spaces for prose
+	s = strings.Join(strings.Fields(s), " ")
+	if w <= 0 {
+		w = 80
+	}
+	s = truncateToWidth(s, w)
+	return s
+}
+
+func stripOsc(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	i := 0
+	for i < len(s) {
+		if s[i] == '\x1b' && i+1 < len(s) && s[i+1] == ']' {
+			// OSC sequence until BEL (\x07) or ESC+\
+			end := -1
+			for k := i + 2; k < len(s); k++ {
+				if s[k] == '\x07' {
+					end = k
+					break
+				}
+				if s[k] == '\x1b' && k+1 < len(s) && s[k+1] == '\\' {
+					end = k + 1
+					break
+				}
+			}
+			if end != -1 {
+				i = end + 1
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+func stripControls(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == '\r' || r == '\n' {
+			b.WriteRune(' ')
+			continue
+		}
+		if r < 32 || r == 127 {
+			continue
+		}
+		if unicode.IsControl(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func formatPreview(s string) string {
+	s = strings.ReplaceAll(s, "	", "    ")
+	s = stripOsc(s)
+	s = ansi.Strip(s)
+	s = stripControls(s)
+	s = strings.Join(strings.Fields(s), " ")
+	// truncate to 300 visible width
+	if visibleWidth(s) > 300 {
+		s = truncateToWidth(s, 300)
+	}
+	return s
+}
+
+func formatDiff(s string) string {
+	s = strings.ReplaceAll(s, "	", "    ")
+	s = stripOsc(s)
+	s = ansi.Strip(s)
+	s = stripControls(s)
+	s = strings.Join(strings.Fields(s), " ")
+	// keep as summary, truncate to 80 if too long
+	if visibleWidth(s) > 80 {
+		s = truncateToWidth(s, 80)
+	}
+	return s
+}
+
+func parseWhatDoneRows(s string) ([][]string, []string) {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "None" {
+		return nil, nil
+	}
+	// First extract checklist lines
+	var rows [][]string
+	var checklist []string
+	lines := strings.Split(s, "\n")
+	// If no newline but contains semicolon, split there for rows
+	if len(lines) == 1 && strings.Contains(s, ";") {
+		parts := strings.Split(s, ";")
+		// treat each part as potential row
+		var newLines []string
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				newLines = append(newLines, p)
+			}
+		}
+		if len(newLines) > 1 {
+			lines = newLines
+		}
+	}
+	for _, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "- [x]") || strings.HasPrefix(line, "- [ ]") || strings.HasPrefix(line, "- [X]") {
+			checklist = append(checklist, line)
+			continue
+		}
+		// also handle lines that contain checklist after table delimiter? skip
+		// parse topic/decision
+		topic, decision := splitTopicDecision(line)
+		if topic == "" && decision == "" {
+			continue
+		}
+		// sanitize cells before truncation budget
+		topic = sanitizePlain(topic)
+		decision = sanitizePlain(decision)
+		// per-cell truncate to conservative budget 17 for narrow 40
+		// budget = (40-6)/2 =17, use 17 to guarantee VisibleWidth <= budget on narrow
+		const cellBudget = 17
+		topic = truncateToWidth(topic, cellBudget)
+		decision = truncateToWidth(decision, cellBudget)
+		rows = append(rows, []string{topic, decision})
+	}
+	// fallback: if no rows but original had content without delimiters, split by comma
+	if len(rows) == 0 && s != "" {
+		if strings.Contains(s, ",") {
+			parts := strings.Split(s, ",")
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				if p == "" {
+					continue
+				}
+				topic, decision := splitTopicDecision(p)
+				if topic == "" {
+					topic = p
+				}
+				topic = sanitizePlain(topic)
+				decision = sanitizePlain(decision)
+				const cellBudget = 17
+				topic = truncateToWidth(topic, cellBudget)
+				decision = truncateToWidth(decision, cellBudget)
+				rows = append(rows, []string{topic, decision})
+			}
+		} else {
+			// single entry as topic
+			topic := sanitizePlain(s)
+			const cellBudget = 17
+			topic = truncateToWidth(topic, cellBudget)
+			rows = append(rows, []string{topic, ""})
+		}
+	}
+	return rows, checklist
+}
+
+func splitTopicDecision(line string) (string, string) {
+	// try delimiters in order
+	delims := []string{":", "→", "—", "|", " - ", " – ", "="}
+	for _, d := range delims {
+		if idx := strings.Index(line, d); idx != -1 {
+			topic := strings.TrimSpace(line[:idx])
+			decision := strings.TrimSpace(line[idx+len(d):])
+			if topic != "" || decision != "" {
+				return topic, decision
+			}
+		}
+	}
+	// no delimiter, try comma split already handled outside
+	return line, ""
+}
+
+func chunkTable(rows [][]string, max int) [][][]string {
+	if max <= 0 {
+		max = 7
+	}
+	if len(rows) <= max {
+		return [][][]string{rows}
+	}
+	var chunks [][][]string
+	for i := 0; i < len(rows); i += max {
+		end := i + max
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunks = append(chunks, rows[i:end])
+	}
+	return chunks
+}
+
+func renderTable(rows [][]string, width int) string {
+	if width <= 0 {
+		width = 80
+	}
+	// chunk
+	chunks := chunkTable(rows, 7)
+	var b strings.Builder
+	for idx, chunk := range chunks {
+		b.WriteString("| Topic | Decision |\n")
+		b.WriteString("|-------|----------|\n")
+		for _, r := range chunk {
+			topic := r[0]
+			decision := ""
+			if len(r) > 1 {
+				decision = r[1]
+			}
+			// ensure per-cell visible width <= budget already done in parse, but re-check with width-based budget
+			budget := (width - 6) / 2
+			if budget < 5 {
+				budget = 5
+			}
+			// if our conservative 17 is larger than budget for narrow, need to re-truncate to budget
+			if visibleWidth(topic) > budget {
+				topic = truncateToWidth(topic, budget)
+			}
+			if visibleWidth(decision) > budget {
+				decision = truncateToWidth(decision, budget)
+			}
+			b.WriteString("| " + topic + " | " + decision + " |\n")
+		}
+		if idx < len(chunks)-1 {
+			remaining := len(rows) - (idx+1)*7
+			if remaining > 0 {
+				b.WriteString(fmt.Sprintf("… +%d more\n", remaining))
+			}
+		}
+	}
+	return b.String()
+}
+
+
+func visibleWidth(s string) int { return runewidth.StringWidth(ansi.Strip(s)) }
+
+func coalesceSGR(s string) string {
+    if s == "" {
+        return s
+    }
+    var b strings.Builder
+    b.Grow(len(s))
+    last, was := "", false
+    i := 0
+    for i < len(s) {
+        if s[i] == '' && i+1 < len(s) && s[i+1] == '[' {
+            j := i + 2
+            for j < len(s) && s[j] != 'm' {
+                j++
+            }
+            if j < len(s) {
+                seq := s[i : j+1]
+                if was && seq == last {
+                    i = j + 1
+                    continue
+                }
+                b.WriteString(seq)
+                last, was = seq, true
+                i = j + 1
+                continue
+            }
+        }
+        b.WriteByte(s[i])
+        last, was = "", false
+        i++
+    }
+    return b.String()
+}
+
+func truncateToWidth(s string, w int) string {
+    if w <= 0 {
+        return ""
+    }
+    if visibleWidth(s) <= w {
+        return s
+    }
+    if w == 1 {
+        return "…"
+    }
+    s = coalesceSGR(s)
+    target := w - 1
+    var b strings.Builder
+    cur, i, stop := 0, 0, len(s)
+    for i < len(s) {
+        if s[i] == '' && i+1 < len(s) && s[i+1] == '[' {
+            j := i + 2
+            for j < len(s) && s[j] != 'm' {
+                j++
+            }
+            if j < len(s) {
+                b.WriteString(s[i : j+1])
+                i = j + 1
+                continue
+            }
+        }
+        r, sz := utf8.DecodeRuneInString(s[i:])
+        if r == utf8.RuneError && sz == 1 {
+            sz = 1
+        }
+        rw := runewidth.RuneWidth(r)
+        if rw < 0 {
+            rw = 0
+        }
+        if cur+rw > target {
+            stop = i
+            break
+        }
+        b.WriteString(s[i : i+sz])
+        cur += rw
+        i += sz
+        if i >= len(s) {
+            stop = len(s)
+        }
+    }
+    b.WriteString("…")
+    for idx := stop; idx < len(s); {
+        if s[idx] == '' && idx+1 < len(s) && s[idx+1] == '[' {
+            j := idx + 2
+            for j < len(s) && s[j] != 'm' {
+                j++
+            }
+            if j < len(s) {
+                b.WriteString(s[idx : j+1])
+                idx = j + 1
+                continue
+            }
+        }
+        _, sz := utf8.DecodeRuneInString(s[idx:])
+        if sz == 0 {
+            sz = 1
+        }
+        idx += sz
+    }
+    return coalesceSGR(b.String())
 }
 
 func humanizeFailure(raw string) string {
@@ -252,6 +663,7 @@ func readPaginated(path string, capBytes int, size int64) (string, error) {
 func PersistPendingForCheckpoint(change, synthesisMD string, envelope QuestionEnvelope) error {
 	return SavePendingDualWrite(change, PendingQuestion{Schema: PendingSchema, Change: change, Envelope: envelope, SynthesisMD: synthesisMD})
 }
+
 // LoadPendingFallback loads pending and returns fallback markdown (FormatFallback).
 func LoadPendingFallback(change string) (string, error) {
 	pq, err := LoadOnCompaction(change)

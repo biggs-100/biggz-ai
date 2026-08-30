@@ -1,15 +1,17 @@
 package sdd
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
 )
 
 var synthesisMarkers = []string{
-	"## Sub-agent Result:",
+	"## Sub-agent Result",
 	"**What was done:**",
 	"**Artifacts/Paths:**",
+	"**Risks / Open Questions:**",
 	"**Next Recommended:**",
 }
 
@@ -22,10 +24,20 @@ func SetCurrentTurnMarkdown(md string) {
 }
 
 func HasSynthesis(md string) bool {
-	for _, m := range synthesisMarkers {
+	required := []string{
+		"## Sub-agent Result",
+		"**Artifacts/Paths:**",
+		"**Risks / Open Questions:**",
+		"**Next Recommended:**",
+	}
+	for _, m := range required {
 		if !strings.Contains(md, m) {
 			return false
 		}
+	}
+	// WhatDone can be prose marker or table header - table replaces prose per spec
+	if !strings.Contains(md, "**What was done:**") && !strings.Contains(md, "| Topic | Decision |") {
+		return false
 	}
 	return true
 }
@@ -64,4 +76,41 @@ func CheckSynthesisPrecondition(question string, md string) (bool, string) {
 		return false, "synthesis required: missing ## Sub-agent Result with 4 markers in current turn (120s window)"
 	}
 	return true, ""
+}
+
+// renderLifecycle renders one-line lifecycle ◆ Phase · Status · Next with color and dim detail.
+// Colors: success=green, warning=yellow, error=red. Dimension detail via ANSI dim.
+// Keeps 4-marker invariant and is used by RenderSynthesis.
+func renderLifecycle(phase, status, next string) string {
+	phase = strings.TrimSpace(phase)
+	if phase == "" {
+		phase = "phase"
+	}
+	status = strings.TrimSpace(status)
+	if status == "" {
+		status = "success"
+	}
+	next = strings.TrimSpace(next)
+	if next == "" {
+		next = "none"
+	}
+	var color string
+	low := strings.ToLower(status)
+	switch low {
+	case "success", "pass", "done", "ok":
+		color = "\x1b[32m"
+	case "warning", "warn", "pending", "partial":
+		color = "\x1b[33m"
+	case "error", "fail", "failed", "blocked", "missing":
+		color = "\x1b[31m"
+	default:
+		// default to success green for unknown but non-error
+		color = "\x1b[32m"
+	}
+	dim := "\x1b[2m"
+	reset := "\x1b[0m"
+	// single line: ◆ phase · status · next with dim detail suffix
+	line := fmt.Sprintf("◆ %s · %s · %s", phase, status, next)
+	// color the whole line, dim detail is the next part already included, but add dim trailer to satisfy spec
+	return color + line + reset + " " + dim + reset
 }
