@@ -38,22 +38,22 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Core — Backup + Routing
 
-- [ ] 3.1 Promote `screens/backup.go` to `table.Model`+preview: `listBackups() tea.Cmd` wraps `backup.List`→`backupListMsg`, `SetRows` ID/size/date
-- [ ] 3.2 Create flow: `c`→`backupCreating`+`tea.Cmd` `backup.Create`; err→`backupError`+`ErrorBox`, ok→refresh+preview sync
-- [ ] 3.3 Restore modal: `enter`→`backupRestoring` `y/N` preview; `y`→`Create` snapshot then `Restore`, `n`/`ESC` cancel no mutation; narrow `VisibleWidth≤width`
+- [x] 3.1 Promote `screens/backup.go` to `table.Model`+preview: `listBackups() tea.Cmd` wraps `backup.List`→`backupListMsg`, `SetRows` ID/size/date
+- [x] 3.2 Create flow: `c`→`backupCreating`+`tea.Cmd` `backup.Create`; err→`backupError`+`ErrorBox`, ok→refresh+preview sync
+- [x] 3.3 Restore modal: `enter`→`backupRestoring` `y/N` preview; `y`→`Create` snapshot then `Restore`, `n`/`ESC` cancel no mutation; narrow `VisibleWidth≤width`
 - [x] 3.4 Dashboard: add `Help`/`Backup & Restore` to `dashboardActions` with `▸`, `enter`→`NavigateMsg`
-- [ ] 3.5 CLI `cmd/biggz/cli_misc.go` parse `--tui` (precedence over `--json`/subverbs→`RunWithScreen`); `main.go` wire `help` verb + `checkTUIInteractive` guard
+- [x] 3.5 CLI `cmd/biggz/cli_misc.go` parse `--tui` (precedence over `--json`/subverbs→`RunWithScreen`); `main.go` wire `help` verb + `checkTUIInteractive` guard
 
 ## Phase 4: Testing
 
-- [ ] 4.1 Unit: `filterHelp` empty/case-insensitive/no-match + `TruncateToWidth` w=40 + `tuiAnimationsDisabled`/`tickCmd=nil`/`syncOutput` matrix
-- [ ] 4.2 Integration temp `T.TempDir()`: `List→Rows`, preview cursor sync, `Create` err→`ErrorBox`, `y`/`n` modal side-effect check
-- [ ] 4.3 teatest goldens `TERM=dumb`: Help filter `backup`, `ESC` clear, scroll; Backup nav/create/confirm `y` vs `n`, no home-dir leaks
-- [ ] 4.4 CLI verify: `help --tui`/`backup --tui` precedence, `backup create` without `--tui` prints `Backup created:`, `--help` lists `--tui`
+- [x] 4.1 Unit: `filterHelp` empty/case-insensitive/no-match + `TruncateToWidth` w=40 + `tuiAnimationsDisabled`/`tickCmd=nil`/`syncOutput` matrix
+- [x] 4.2 Integration temp `T.TempDir()`: `List→Rows`, preview cursor sync, `Create` err→`ErrorBox`, `y`/`n` modal side-effect check
+- [x] 4.3 teatest goldens `TERM=dumb`: Help filter `backup`, `ESC` clear, scroll; Backup nav/create/confirm `y` vs `n`, no home-dir leaks
+- [x] 4.4 CLI verify: `help --tui`/`backup --tui` precedence, `backup create` without `--tui` prints `Backup created:`, `--help` lists `--tui`
 
 ## Phase 5: Cleanup
 
-- [ ] 5.1 `go vet`+`gofmt -l` clean, zero `tar`/`gzip` in `screens/backup.go`, `go test ./... -count=1 -timeout 180s` pass
+- [x] 5.1 `go vet`+`gofmt -l` clean, zero `tar`/`gzip` in `screens/backup.go`, `go test ./... -count=1 -timeout 180s` pass
 
 ## Dependencies
 
