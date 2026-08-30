@@ -818,6 +818,30 @@ func Open(rootDir string) (*Store, error) {
 		);
 	`)
 
+	// Auto-heal on Open: detect FTS desync / WAL ghost / missing branching columns and fix once per hour.
+	s := &Store{db: db, rootDir: rootDir}
+	if r, err := s.Doctor(); err == nil && r != nil && (r.Corrupt || r.BranchColumnsMissing || r.NeedsMigration) {
+		throttlePath := filepath.Join(rootDir, ".last_auto_fix")
+		throttled := false
+		if st, statErr := os.Stat(throttlePath); statErr == nil {
+			if time.Since(st.ModTime()) < time.Hour {
+				fmt.Fprintf(os.Stderr, "[bigmem] auto-fix throttled, last fix <1h ago\n")
+				throttled = true
+			}
+		}
+		if !throttled {
+			fmt.Fprintf(os.Stderr, "[bigmem] auto-fix: corruption detected (corrupt=%v branchMissing=%v), running DoctorFix...\n", r.Corrupt, r.BranchColumnsMissing)
+			if fixErr := s.DoctorFix(); fixErr != nil {
+				fmt.Fprintf(os.Stderr, "[bigmem] auto-fix failed: %v\n", fixErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "[bigmem] auto-fix OK\n")
+				now := time.Now()
+				_ = os.WriteFile(throttlePath, []byte(now.Format(time.RFC3339)), 0644)
+				_ = os.Chtimes(throttlePath, now, now)
+			}
+		}
+	}
+
 	return &Store{db: db, rootDir: rootDir}, nil
 }
 
