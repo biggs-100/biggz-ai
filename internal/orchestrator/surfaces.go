@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"log"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -12,7 +13,9 @@ const WRITER_EDIT_SURFACE_REJECTION = "Parent must derive or map narrow reposito
 var (
 	boundedWriterAgents          = map[string]bool{"gentle-ai-worker": true, "worker": true}
 	allowedEditSurfacesHeadingRe = regexp.MustCompile(`(?mi)^## Allowed edit surfaces[ \t]*$`)
-	headingRe                    = regexp.MustCompile(`(?m)^#{1,2}\s+`)
+	headingRe                    = regexp.MustCompile(`(?m)^#{1,6}\s+`)
+	markdownListMarkerRe         = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+`)
+	whitespaceRe                 = regexp.MustCompile(`\s`)
 )
 
 func isTaskScopedRepositoryRelativePath(value string) bool {
@@ -27,7 +30,7 @@ func isTaskScopedRepositoryRelativePath(value string) bool {
 	if len(w) == 0 || w == "." || strings.HasPrefix(w, "/") {
 		return false
 	}
-	if strings.Contains(w, " ") || strings.Contains(w, "\t") || strings.Contains(w, "\n") {
+	if whitespaceRe.MatchString(w) {
 		return false
 	}
 	for _, s := range strings.Split(w, "/") {
@@ -41,6 +44,81 @@ func isTaskScopedRepositoryRelativePath(value string) bool {
 
 func IsTaskScopedRepositoryRelativePath(v string) bool { return isTaskScopedRepositoryRelativePath(v) }
 
+func readSurfaceEntry(line string) string {
+	entry := markdownListMarkerRe.ReplaceAllString(line, "")
+	if len(entry) >= 2 && strings.HasPrefix(entry, "`") && strings.HasSuffix(entry, "`") {
+		return entry[1 : len(entry)-1]
+	}
+	return entry
+}
+
+func looksLikeSurfaceEntry(line string) bool {
+	if len(line) == 0 {
+		return false
+	}
+	if headingRe.MatchString(line) {
+		return false
+	}
+	return !whitespaceRe.MatchString(readSurfaceEntry(line))
+}
+
+func readAllowedEditSurfaceEntries(following string) []string {
+	linesRaw := strings.Split(following, "\n")
+	lines := make([]string, len(linesRaw))
+	for i, l := range linesRaw {
+		// trim \r for \r\n
+		l = strings.TrimSuffix(l, "\r")
+		lines[i] = strings.TrimSpace(l)
+	}
+	headingIdx := -1
+	for i, l := range lines {
+		if headingRe.MatchString(l) {
+			headingIdx = i
+			break
+		}
+	}
+	section := lines
+	if headingIdx != -1 {
+		section = lines[:headingIdx]
+	}
+	entries := []string{}
+	for idx, line := range section {
+		if len(line) == 0 {
+			continue
+		}
+		entry := readSurfaceEntry(line)
+		if whitespaceRe.MatchString(entry) {
+			// prose closes list only when genuinely trailing; otherwise validate all
+			hasLaterEntry := false
+			for _, cand := range section[idx+1:] {
+				if looksLikeSurfaceEntry(cand) {
+					hasLaterEntry = true
+					break
+				}
+			}
+			if hasLaterEntry {
+				// ambiguous: return all non-empty read entries for validation (will fail)
+				var all []string
+				for _, cand := range section {
+					if len(cand) == 0 {
+						continue
+					}
+					all = append(all, readSurfaceEntry(cand))
+				}
+				return all
+			}
+			break
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+// ReadAllowedEditSurfaceEntries is exported for parity harness and tests.
+func ReadAllowedEditSurfaceEntries(section string) []string {
+	return readAllowedEditSurfaceEntries(section)
+}
+
 func hasTaskScopedAllowedEditSurfaces(values ...string) bool {
 	var exp []string
 	has := false
@@ -48,10 +126,7 @@ func hasTaskScopedAllowedEditSurfaces(values ...string) bool {
 		matches := allowedEditSurfacesHeadingRe.FindAllStringIndex(v, -1)
 		for _, loc := range matches {
 			following := v[loc[1]:]
-			if idx := headingRe.FindStringIndex(following); idx != nil {
-				following = following[:idx[0]]
-			}
-			entries := parseAllowedEntries(following)
+			entries := readAllowedEditSurfaceEntries(following)
 			if len(entries) == 0 {
 				return false
 			}
@@ -73,27 +148,6 @@ func hasTaskScopedAllowedEditSurfaces(values ...string) bool {
 
 func HasTaskScopedAllowedEditSurfaces(v ...string) bool {
 	return hasTaskScopedAllowedEditSurfaces(v...)
-}
-
-func parseAllowedEntries(section string) []string {
-	var out []string
-	re := regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+`)
-	for _, line := range strings.Split(section, "\n") {
-		s := strings.TrimSpace(line)
-		if s == "" {
-			continue
-		}
-		s = re.ReplaceAllString(s, "")
-		s = strings.TrimSpace(s)
-		if strings.HasPrefix(s, "`") && strings.HasSuffix(s, "`") && len(s) >= 2 {
-			s = s[1 : len(s)-1]
-		}
-		s = strings.TrimSpace(s)
-		if s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
 }
 
 func dedupSort(in []string) []string {
@@ -139,6 +193,7 @@ func rejectUnscopedBoundedWriterDispatch(input map[string]any) *Rejection {
 	if hasTaskScopedAllowedEditSurfaces(task, ctx) {
 		return nil
 	}
+	log.Printf("[orchestrator] scout_fallback agent=%s reason=%s Block=true", agent, WRITER_EDIT_SURFACE_REJECTION)
 	return &Rejection{Block: true, Reason: WRITER_EDIT_SURFACE_REJECTION}
 }
 

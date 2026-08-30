@@ -7,8 +7,10 @@ package sdd
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -930,6 +932,8 @@ type ScopedSurfaceRejection struct {
 // ValidateBoundedWriterSurfaces checks writer dispatch surfaces when fileCount >=4.
 // Returns nil when no enforcement needed; otherwise returns a rejection when
 // task/context lack scoped surfaces. Keeps the 4-file strict boundary.
+// Full validation: heading case-insensitive, any-level terminator, bullet/` strip,
+// ≥1 entry per heading, each via IsTaskScopedRepositoryRelativePath, dedup/sort, all headings agree.
 func ValidateBoundedWriterSurfaces(input map[string]any, fileCount int) *ScopedSurfaceRejection {
 	if !ShouldEnforceScopedSurfaces(fileCount) {
 		return nil
@@ -940,10 +944,175 @@ func ValidateBoundedWriterSurfaces(input map[string]any, fileCount int) *ScopedS
 	}
 	task, _ := input["task"].(string)
 	ctx, _ := input["context"].(string)
-	// Use shared heading detection without importing orchestrator: check for heading.
-	hasHeading := strings.Contains(strings.ToLower(task), "## allowed edit surfaces") || strings.Contains(strings.ToLower(ctx), "## allowed edit surfaces")
-	if !hasHeading {
+	if !sddHasTaskScopedAllowedEditSurfaces(task, ctx) {
+		// log offending surface if any
+		offending := sddFindOffendingSurface(task, ctx)
+		if offending != "" {
+			log.Printf("[sdd] ValidateBoundedWriterSurfaces Block=true agent=%s fileCount=%d offending=%s", agent, fileCount, offending)
+		} else {
+			log.Printf("[sdd] ValidateBoundedWriterSurfaces Block=true agent=%s fileCount=%d reason=missing_surfaces", agent, fileCount)
+		}
 		return &ScopedSurfaceRejection{Block: true, Reason: "Parent must derive or map narrow repository-relative allowed edit surfaces from the delegated task and relaunch the writer. Do not ask the human to author paths or globs."}
 	}
 	return nil
+}
+
+var sddAllowedHeadingRe = regexp.MustCompile(`(?mi)^## Allowed edit surfaces[ \t]*$`)
+var sddHeadingRe = regexp.MustCompile(`(?m)^#{1,6}\s+`)
+var sddListMarkerRe = regexp.MustCompile(`^(?:[-*+]|\d+[.)])\s+`)
+var sddWhitespaceRe = regexp.MustCompile(`\s`)
+
+func sddIsTaskScopedRepositoryRelativePath(v string) bool {
+	n := strings.ReplaceAll(v, "\\", "/")
+	if len(n) == 0 || filepath.IsAbs(v) || filepath.IsAbs(n) {
+		return false
+	}
+	if ok, _ := regexp.MatchString(`^(?:[A-Za-z]:|/|~)`, n); ok {
+		return false
+	}
+	w := regexp.MustCompile(`^(?:\./)+`).ReplaceAllString(n, "")
+	if len(w) == 0 || w == "." || strings.HasPrefix(w, "/") {
+		return false
+	}
+	if sddWhitespaceRe.MatchString(w) {
+		return false
+	}
+	for _, s := range strings.Split(w, "/") {
+		if s == ".." {
+			return false
+		}
+	}
+	first := strings.Split(w, "/")[0]
+	return !strings.ContainsAny(first, "?*[]{}")
+}
+func sddReadSurfaceEntry(line string) string {
+	e := sddListMarkerRe.ReplaceAllString(line, "")
+	if len(e) >= 2 && strings.HasPrefix(e, "`") && strings.HasSuffix(e, "`") {
+		return e[1 : len(e)-1]
+	}
+	return e
+}
+func sddLooksLikeSurfaceEntry(line string) bool {
+	if len(line) == 0 {
+		return false
+	}
+	if sddHeadingRe.MatchString(line) {
+		return false
+	}
+	return !sddWhitespaceRe.MatchString(sddReadSurfaceEntry(line))
+}
+func sddReadAllowedEntries(following string) []string {
+	linesRaw := strings.Split(following, "\n")
+	lines := make([]string, len(linesRaw))
+	for i, l := range linesRaw {
+		l = strings.TrimSuffix(l, "\r")
+		lines[i] = strings.TrimSpace(l)
+	}
+	hi := -1
+	for i, l := range lines {
+		if sddHeadingRe.MatchString(l) {
+			hi = i
+			break
+		}
+	}
+	section := lines
+	if hi != -1 {
+		section = lines[:hi]
+	}
+	var entries []string
+	for idx, line := range section {
+		if len(line) == 0 {
+			continue
+		}
+		e := sddReadSurfaceEntry(line)
+		if sddWhitespaceRe.MatchString(e) {
+			hasLater := false
+			for _, c := range section[idx+1:] {
+				if sddLooksLikeSurfaceEntry(c) {
+					hasLater = true
+					break
+				}
+			}
+			if hasLater {
+				var all []string
+				for _, c := range section {
+					if len(c) == 0 {
+						continue
+					}
+					all = append(all, sddReadSurfaceEntry(c))
+				}
+				return all
+			}
+			break
+		}
+		entries = append(entries, e)
+	}
+	return entries
+}
+func sddHasTaskScopedAllowedEditSurfaces(values ...string) bool {
+	var exp []string
+	has := false
+	for _, v := range values {
+		matches := sddAllowedHeadingRe.FindAllStringIndex(v, -1)
+		for _, loc := range matches {
+			following := v[loc[1]:]
+			entries := sddReadAllowedEntries(following)
+			if len(entries) == 0 {
+				return false
+			}
+			for _, e := range entries {
+				if !sddIsTaskScopedRepositoryRelativePath(e) {
+					return false
+				}
+			}
+			uniq := sddDedupSort(entries)
+			if exp != nil && (len(exp) != len(uniq) || !sddEqualSorted(exp, uniq)) {
+				return false
+			}
+			exp = uniq
+			has = true
+		}
+	}
+	return has
+}
+func sddDedupSort(in []string) []string {
+	m := map[string]struct{}{}
+	for _, v := range in {
+		m[v] = struct{}{}
+	}
+	o := make([]string, 0, len(m))
+	for k := range m {
+		o = append(o, k)
+	}
+	sort.Strings(o)
+	return o
+}
+func sddEqualSorted(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+func sddFindOffendingSurface(values ...string) string {
+	for _, v := range values {
+		matches := sddAllowedHeadingRe.FindAllStringIndex(v, -1)
+		for _, loc := range matches {
+			following := v[loc[1]:]
+			entries := sddReadAllowedEntries(following)
+			for _, e := range entries {
+				if !sddIsTaskScopedRepositoryRelativePath(e) {
+					return e
+				}
+			}
+		}
+		if strings.Contains(v, "..") || strings.Contains(v, "~") {
+			return v
+		}
+	}
+	return ""
 }
