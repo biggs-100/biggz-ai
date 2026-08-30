@@ -238,7 +238,7 @@ func bigmemArchivedStatus(name string, bySuffix map[string]string, workspaceRoot
 	cs.ContextFiles = cs.ArtifactPaths
 	cs.Artifacts = artifacts
 	cs.TaskProgress = taskProgress
-	cs.Dependencies = Dependencies{Proposal: DependencyAllDone, Specs: DependencyAllDone, Design: DependencyAllDone, Tasks: DependencyAllDone, Apply: DependencyAllDone, Verify: DependencyAllDone, Archive: DependencyAllDone}
+	cs.Dependencies = Dependencies{Proposal: DependencyAllDone, Specs: DependencyAllDone, Design: DependencyAllDone, Tasks: DependencyAllDone, Apply: DependencyAllDone, Verify: DependencyAllDone, Sync: DependencyAllDone, Archive: DependencyAllDone}
 	cs.ApplyState = ApplyAllDone
 	cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: []string{workspaceRoot}}
 	cs.Relationships = Relationships{}
@@ -321,6 +321,8 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 	remediationState, staleDecision, remediationComplete := buildBigMemRemediation(name, workspaceRoot, artifacts, applyState, verifyResult, &blockedReasons)
 	effectiveRemediationComplete := remediationComplete || staleDecision
 	dependencies := resolveDependencies(artifacts, taskProgress, applyState, coreReady, verifyReportCurrent, verifyResult.Passing, effectiveRemediationComplete)
+	// Mirror sync routing with store gate: Engram/BigMem never routes to sync (filesystem wins elsewhere)
+	dependencies.Sync = DependencyAllDone
 	dependencies = applyStaleDecisionRouting(dependencies, staleDecision)
 	nextRecommended := resolveNextRecommended(dependencies, applyState, verifyReportCurrent, remediationState)
 	cs.SchemaName = StatusSchemaName

@@ -302,7 +302,7 @@ func isValidApplyState(value ApplyState) bool {
 
 func isValidNextRecommended(value string) bool {
 	switch value {
-	case "apply", "verify", "remediate", "archive", "resolve-blockers", "sdd-new", "select-change", "propose", "spec", "design", "tasks", "done":
+	case "apply", "verify", "remediate", "sync", "archive", "resolve-blockers", "sdd-new", "select-change", "propose", "spec", "design", "tasks", "done":
 		return true
 	default:
 		return false

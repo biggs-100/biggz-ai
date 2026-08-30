@@ -74,6 +74,7 @@ type Dependencies struct {
 	Tasks    DependencyState `json:"tasks"`
 	Apply    DependencyState `json:"apply"`
 	Verify   DependencyState `json:"verify"`
+	Sync     DependencyState `json:"sync"`
 	Archive  DependencyState `json:"archive"`
 }
 
@@ -479,6 +480,12 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 	// blocked, even though the ledger still reports DecisionRequired.
 	effectiveRemediationComplete := remediationComplete || staleDecision
 	dependencies := resolveDependencies(artifacts, taskProgress, applyState, coreReady, verifyReportCurrent, verifyResult.Passing, effectiveRemediationComplete)
+	// Sync routing between verify and archive
+	syncState, syncReasons := deriveSyncState(cs.Name, workspaceRoot, changeDir, store, verifyResult, tasksContent, artifacts, applyState)
+	dependencies.Sync = syncState
+	for _, r := range syncReasons {
+		blockedReasons.genuine = append(blockedReasons.genuine, r)
+	}
 	// Apply the stale-decision native routing to dependencies: free
 	// verify/archive when the probe says the decision block is stale.
 	dependencies = applyStaleDecisionRouting(dependencies, staleDecision)
@@ -772,8 +779,16 @@ func resolveNextRecommended(dependencies Dependencies, applyState ApplyState, ve
 		// biggz divergence: no review authority — skip resolve-review and
 		// fall through to the archive/planning/blocker rules below.
 	}
+	if dependencies.Sync == DependencyReady {
+		return "sync"
+	}
 	if dependencies.Verify == DependencyAllDone && applyState == ApplyAllDone {
-		return "archive"
+		if dependencies.Sync == DependencyAllDone || dependencies.Sync == "" {
+			return "archive"
+		}
+		if dependencies.Sync == DependencyBlocked {
+			// verify done but sync blocked (e.g. no verify PASS) - fall through to resolve-blockers via blockedReasons
+		}
 	}
 
 	// Route toward the next missing planning artifact in dependency order.
@@ -835,6 +850,101 @@ func applyStaleDecisionRouting(deps Dependencies, staleDecision bool) Dependenci
 		deps.Archive = DependencyReady
 	}
 	return deps
+}
+
+// deriveSyncState determines sync dependency and guardrail blockedReasons.
+// It mirrors the executor guardrails but operates at status derivation time
+// without a prompt (so destructive/collision indicate need for approval).
+func deriveSyncState(change, workspaceRoot, changeDir string, store ArtifactStore, verifyResult verifyResultEvaluation, tasksContent string, artifacts map[string]ArtifactState, applyState ApplyState) (DependencyState, []string) {
+	// Store gate: file-backed only
+	if IsEngramStore(store) || store == "" || store == ArtifactStoreNone {
+		return DependencyAllDone, nil
+	}
+	// Verify must be PASS and tasks allDone
+	if artifacts["verifyReport"] != ArtifactDone || !verifyResult.Passing || applyState != ApplyAllDone {
+		// Not ready for sync; treat as blocked (not ready) - status will not route to sync
+		if applyState != ApplyAllDone {
+			return DependencyBlocked, nil
+		}
+		if artifacts["verifyReport"] != ArtifactDone || !verifyResult.Passing {
+			// Verify not PASS -> sync blocked, but don't add generic blockedReason here; verify remediation or other will handle
+			return DependencyBlocked, nil
+		}
+		return DependencyBlocked, nil
+	}
+	// Check hasSyncDeltas
+	if !hasSyncDeltas(changeDir) {
+		return DependencyAllDone, nil
+	}
+	// Check if already synced
+	if !isSyncNeeded(change, workspaceRoot) {
+		return DependencyAllDone, nil
+	}
+	// Carve-out: resolve-via-engram skips strict guards
+	hasResolve := strings.Contains(strings.ToLower(tasksContent), "resolve-via-engram")
+	if hasResolve {
+		return DependencyReady, nil
+	}
+	// Guardrail checks for status (without prompt, so destructive/collision are considered blocks needing approval)
+	var reasons []string
+	files := findSpecFiles(filepath.Join(changeDir, "specs"))
+	for _, f := range files {
+		contentBytes, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		content := string(contentBytes)
+		pr, err := ParseDeltaSpec(content)
+		if err != nil {
+			continue
+		}
+		domain := filepath.Base(filepath.Dir(f))
+		if pr.HasRenamed {
+			reasons = append(reasons, fmt.Sprintf("sync blocked: delta for domain %q contains ## RENAMED; rewrite as ADDED+REMOVED", domain))
+		}
+		// Main spec legacy flat
+		mainPath := filepath.Join(workspaceRoot, "openspec", "specs", domain, "spec.md")
+		if data, err := os.ReadFile(mainPath); err == nil {
+			if isLegacyFlat(string(data)) {
+				reasons = append(reasons, fmt.Sprintf("sync blocked: main spec for domain %q is legacy flat; convert to use ### Requirement: headings", domain))
+			}
+		}
+		// Destructive: REMOVED or large MODIFIED
+		hasDestructive := false
+		var mainContent string
+		if data, err := os.ReadFile(mainPath); err == nil {
+			mainContent = string(data)
+		}
+		for _, d := range pr.Deltas {
+			if d.Kind == DeltaRemoved {
+				hasDestructive = true
+				break
+			}
+			if d.Kind == DeltaModified {
+				_, _, blocks := parseMainSpec(mainContent)
+				if oldBody, ok := blocks[d.Name]; ok {
+					if isLargeModification(oldBody, d.Body) {
+						hasDestructive = true
+						break
+					}
+				} else if len(strings.Split(strings.TrimSpace(d.Body), "\n")) > largeMutationThreshold {
+					hasDestructive = true
+					break
+				}
+			}
+		}
+		if hasDestructive {
+			reasons = append(reasons, fmt.Sprintf("sync blocked: destructive change (REMOVED or large MODIFIED) for domain %q without explicit approval; add allow-destructive to prompt", domain))
+		}
+		// Collision
+		if collides, other := detectCollision(change, workspaceRoot, domain); collides {
+			reasons = append(reasons, fmt.Sprintf("sync blocked: collision without order for domain %q collides with %q", domain, other))
+		}
+	}
+	if len(reasons) > 0 {
+		return DependencyReady, reasons
+	}
+	return DependencyReady, nil
 }
 
 // FormatStatus returns a human-readable summary of SDD status.
