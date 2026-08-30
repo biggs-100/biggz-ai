@@ -29,6 +29,7 @@ archives:
       - README.md
       - LICENSE
       - minisign.pub
+      - integrity.json
 
 checksum:
   name_template: 'checksums.txt'
