@@ -76,6 +76,8 @@ func main() {
 			os.Exit(bigmemRun())
 		case "backup":
 			os.Exit(backupRun())
+		case "help":
+			os.Exit(helpRun())
 		case "codegraph":
 			os.Exit(codegraphRun())
 		case "release":
