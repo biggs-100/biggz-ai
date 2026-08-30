@@ -32,9 +32,9 @@ Chain strategy: stacked-to-main
 
 ## Phase 2: Core — Help
 
-- [ ] 2.1 Create `HelpModel` in `screens/help.go`: `textinput`+`viewport`, `filterHelp(q)` case-insensitive `Title`/`Keys`/`Paragraph` over `helpData`
-- [ ] 2.2 `Update`: `/` focus, live narrow, `ESC` clear→back, `?`/`q` suppressed when focused
-- [ ] 2.3 `View`: `viewport.SetContent`+`lipgloss`+`TruncateToWidth`+`syncOutput` guard (`BIGGZ_NO_ANIMATION`/`TERM=dumb` no `ESC[?2026h`)
+- [x] 2.1 Create `HelpModel` in `screens/help.go`: `textinput`+`viewport`, `filterHelp(q)` case-insensitive `Title`/`Keys`/`Paragraph` over `helpData`
+- [x] 2.2 `Update`: `/` focus, live narrow, `ESC` clear→back, `?`/`q` suppressed when focused
+- [x] 2.3 `View`: `viewport.SetContent`+`lipgloss`+`TruncateToWidth`+`syncOutput` guard (`BIGGZ_NO_ANIMATION`/`TERM=dumb` no `ESC[?2026h`)
 
 ## Phase 3: Core — Backup + Routing
 
