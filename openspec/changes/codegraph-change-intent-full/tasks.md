@@ -38,18 +38,18 @@ Chain strategy: stacked-to-main
 
 ## Phase 3: Integration / Wiring
 
-- [ ] 3.1 Modify `cmd/biggz/cli_codegraph.go` add `report` case to router, flags `--cwd/--json/--md`, `reportRun` → `Generate`+`Emit`, help lists `report`, `resolveReportRoot` via `Abs`+`EvalSymlinks`
-- [ ] 3.2 Modify `internal/agentbuilder/sdd.go` pre-spec advisory `LoadHint` surface `files` with reasons, no auto-mutate/block when absent
+- [x] 3.1 Modify `cmd/biggz/cli_codegraph.go` add `report` case to router, flags `--cwd/--json/--md`, `reportRun` → `Generate`+`Emit`, help lists `report`, `resolveReportRoot` via `Abs`+`EvalSymlinks`
+- [x] 3.2 Modify `internal/agentbuilder/sdd.go` pre-spec advisory `LoadHint` surface `files` with reasons, no auto-mutate/block when absent
 
 ## Phase 4: Testing
 
 - [x] 4.1 Unit `internal/codegraph` temp fixtures: proposal-only extraction, `proposal required` fail, symbol>keyword weight, closure `A->B->C⇒A->C`, flat-list guard, `LoadHint` nil
 - [x] 4.2 Integration `internal/codegraph` `t.TempDir` repos: `go/packages`+fallback import/call edges, 30s timeout no-partial, `MkdirAll` for nested custom paths
-- [ ] 4.3 CLI `cmd/biggz/cli_codegraph_test.go` help documents `report`, missing `<change>`/`proposal required` non-zero, custom paths exact, defaults `codegraph.json`+`codegraph.md`, `init`/`guidance` preserved
-- [ ] 4.4 Orchestrator hint tests: report present surfaces files, absent continues, advisory does not auto-apply; manual `biggz codegraph report` dual emit verify
-- [ ] 4.5 Run `go test ./... -count=1 -timeout 180s` + `go vet ./...` pass, no `init` regression
+- [x] 4.3 CLI `cmd/biggz/cli_codegraph_test.go` help documents `report`, missing `<change>`/`proposal required` non-zero, custom paths exact, defaults `codegraph.json`+`codegraph.md`, `init`/`guidance` preserved
+- [x] 4.4 Orchestrator hint tests: report present surfaces files, absent continues, advisory does not auto-apply; manual `biggz codegraph report` dual emit verify
+- [x] 4.5 Run `go test ./... -count=1 -timeout 180s` + `go vet ./...` pass, no `init` regression
 
 ## Phase 5: Cleanup
 
-- [ ] 5.1 Verify `codegraph.md` deletable safe, JSON stdout+file dual output, no partial on timeout
-- [ ] 5.2 Remove temp fixtures, confirm `openspec/changes/{change}/codegraph.md` git-ignored-safe
+- [x] 5.1 Verify `codegraph.md` deletable safe, JSON stdout+file dual output, no partial on timeout
+- [x] 5.2 Remove temp fixtures, confirm `openspec/changes/{change}/codegraph.md` git-ignored-safe

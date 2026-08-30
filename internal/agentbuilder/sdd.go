@@ -3,7 +3,9 @@ package agentbuilder
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/codegraph"
 	"github.com/biggs-100/biggz-ai/internal/install"
 )
 
@@ -42,6 +44,56 @@ func InjectSDDReference(agent *GeneratedAgent, systemPromptPath string) error {
 	}
 
 	return nil
+}
+
+// AdvisoryHint loads the CodeGraph report for the change (if present) and returns an advisory hint string.
+// It is advisory only: nil report returns empty string without error or blocking.
+// The hint surfaces files with reasons and MUST NOT auto-mutate tasks or block SDD when absent.
+func AdvisoryHint(change, cwd string) string {
+	report, err := codegraph.LoadHint(change, cwd)
+	if err != nil || report == nil || len(report.Files) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("CodeGraph advisory hint for change ")
+	b.WriteString(change)
+	b.WriteString(":\n")
+	for _, f := range report.Files {
+		b.WriteString("- ")
+		b.WriteString(f.Path)
+		b.WriteString(" (")
+		for i, r := range f.Reasons {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(string(r))
+		}
+		b.WriteString(")\n")
+	}
+	if len(report.Graph.Nodes) > 0 || len(report.Graph.Edges) > 0 {
+		b.WriteString(fmt.Sprintf("Graph: %d nodes, %d edges\n", len(report.Graph.Nodes), len(report.Graph.Edges)))
+	}
+	return b.String()
+}
+
+// FormatAdvisoryHint formats a report into an advisory string (nil-safe).
+func FormatAdvisoryHint(r *codegraph.Report) string {
+	if r == nil || len(r.Files) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, f := range r.Files {
+		b.WriteString(f.Path)
+		b.WriteString(":")
+		for i, rs := range f.Reasons {
+			if i > 0 {
+				b.WriteString(",")
+			}
+			b.WriteString(string(rs))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // buildSDDBlock returns the marker-body for the agent (the markers themselves
