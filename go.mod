@@ -9,6 +9,7 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.6
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/fzipp/gocyclo v0.6.0
 	github.com/go-shiori/dom v0.0.0-20230515143342-73569d674e1c
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0

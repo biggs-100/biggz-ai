@@ -82,6 +82,31 @@ func providerDir(provider, projectRoot, home string) string {
 	}
 }
 
+// uniqueExistingDirs resolves ProviderPriority directories for projectRoot,
+// dedupes by cleaned path, filters to existing directories, and skips missing.
+func uniqueExistingDirs(projectRoot string) []string {
+	home, _ := os.UserHomeDir()
+	seen := make(map[string]struct{})
+	var out []string
+	for _, p := range ProviderPriority {
+		dir := providerDir(p, projectRoot, home)
+		if dir == "" {
+			continue
+		}
+		clean := filepath.Clean(dir)
+		if _, ok := seen[clean]; ok {
+			continue
+		}
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			continue
+		}
+		seen[clean] = struct{}{}
+		out = append(out, dir)
+	}
+	return out
+}
+
 func Fingerprint(projectRoot string) string {
 	home, _ := os.UserHomeDir()
 	var lines []string

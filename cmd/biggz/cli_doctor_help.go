@@ -90,6 +90,7 @@ func doctorRun() int {
 			doctor.NewComplexityCheck(),
 			doctor.NewGlobalDriftCheck(),
 			doctor.NewLocalOverrideCheck(),
+			doctor.NewSkillRegistryCheck(),
 		},
 	}
 
