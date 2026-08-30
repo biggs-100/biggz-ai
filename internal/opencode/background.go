@@ -1,17 +1,15 @@
 package opencode
 
-import "github.com/biggs-100/biggz-ai/internal/agents/pi"
+import "github.com/biggs-100/biggz-ai/internal/sdd"
 
-// BackgroundPolicy delegates to the pi adapter's 4-source resolver so
-// opencode and pi share a single resolution order (project > global >
-// env > default off, malformed → off). Capability remains pi-scoped.
+// BackgroundPolicy delegates to the sdd canonical 4-source resolver.
 func BackgroundPolicy(cwd string) string {
-	return pi.ResolveBackgroundSubagentsPolicy(cwd, pi.LoadBackgroundSubagentsOptions{}).Policy.String()
+	return sdd.ResolveBackgroundSubagentsPolicy(cwd, sdd.LoadBackgroundSubagentsOptions{}).Policy.String()
 }
 
-// BackgroundResolution delegates to pi's resolver for report rendering.
-func BackgroundResolution(cwd string) pi.BackgroundSubagentsResolution {
-	return pi.ResolveBackgroundSubagentsPolicy(cwd, pi.LoadBackgroundSubagentsOptions{})
+// BackgroundResolution delegates to sdd's resolver for report rendering.
+func BackgroundResolution(cwd string) sdd.BackgroundSubagentsResolution {
+	return sdd.ResolveBackgroundSubagentsPolicy(cwd, sdd.LoadBackgroundSubagentsOptions{})
 }
 
 // Grouped isolation in OpenCode applies to scheduling only, not a security

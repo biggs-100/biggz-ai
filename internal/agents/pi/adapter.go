@@ -529,6 +529,9 @@ func ParseBackgroundSubagentsPolicyFile(raw string) (BackgroundSubagentsPolicy, 
 }
 
 func gentleAiConfigHome() string {
+	if v := strings.TrimSpace(os.Getenv("BIGGZ_CONFIG_HOME")); v != "" {
+		return v
+	}
 	if v := strings.TrimSpace(os.Getenv("GENTLE_PI_CONFIG_HOME")); v != "" {
 		return v
 	}
@@ -536,7 +539,7 @@ func gentleAiConfigHome() string {
 		return v
 	}
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".pi", "gentle-ai")
+	return filepath.Join(home, ".biggz")
 }
 
 func GentleAiConfigHome() string { return gentleAiConfigHome() }
@@ -546,7 +549,13 @@ func resolveBackgroundSubagentsPolicy(cwd string, opts LoadBackgroundSubagentsOp
 	if configHome == "" {
 		configHome = gentleAiConfigHome()
 	}
-	projectFile := filepath.Join(cwd, ".pi", "gentle-ai", BackgroundSubagentsFile)
+	projectFile := filepath.Join(cwd, ".biggz", BackgroundSubagentsFile)
+	legacyProjectFile := filepath.Join(cwd, ".pi", "gentle-ai", BackgroundSubagentsFile)
+	if _, err := os.Stat(projectFile); os.IsNotExist(err) {
+		if _, err2 := os.Stat(legacyProjectFile); err2 == nil {
+			projectFile = legacyProjectFile
+		}
+	}
 	globalFile := filepath.Join(configHome, BackgroundSubagentsFile)
 	projectExists := false
 	globalExists := false
@@ -621,18 +630,18 @@ func (p BackgroundSubagentsPolicy) String() string { return string(p) }
 
 func lookupBackgroundEnv(env map[string]string) (string, bool) {
 	if env != nil {
-		if v, ok := env["GENTLE_PI_BACKGROUND_SUBAGENTS"]; ok {
+		if v, ok := env["BIGGZ_BACKGROUND_SUBAGENTS"]; ok {
 			return v, true
 		}
-		if v, ok := env["BIGGZ_BACKGROUND_SUBAGENTS"]; ok {
+		if v, ok := env["GENTLE_PI_BACKGROUND_SUBAGENTS"]; ok {
 			return v, true
 		}
 		return "", false
 	}
-	if v, ok := os.LookupEnv("GENTLE_PI_BACKGROUND_SUBAGENTS"); ok {
+	if v, ok := os.LookupEnv("BIGGZ_BACKGROUND_SUBAGENTS"); ok {
 		return v, true
 	}
-	if v, ok := os.LookupEnv("BIGGZ_BACKGROUND_SUBAGENTS"); ok {
+	if v, ok := os.LookupEnv("GENTLE_PI_BACKGROUND_SUBAGENTS"); ok {
 		return v, true
 	}
 	return "", false
@@ -645,7 +654,7 @@ func describeBackgroundSubagentsSource(r BackgroundSubagentsResolution) string {
 	case BackgroundSourceGlobal:
 		return fmt.Sprintf("global file %s", r.GlobalFile)
 	case BackgroundSourceEnvironment:
-		return "GENTLE_PI_BACKGROUND_SUBAGENTS"
+		return "BIGGZ_BACKGROUND_SUBAGENTS"
 	default:
 		return "built-in default"
 	}
@@ -672,12 +681,12 @@ func renderBackgroundSubagentsReport(r BackgroundSubagentsResolution, capability
 	if r.EnvValue != nil && r.Source != BackgroundSourceEnvironment {
 		ev := *r.EnvValue
 		if ev == backgroundPolicyOn || ev == backgroundPolicyOff {
-			lines = append(lines, fmt.Sprintf("GENTLE_PI_BACKGROUND_SUBAGENTS=%s is set, but both files outrank it and it outranks the built-in default; it decides only when neither file exists.", ev))
+			lines = append(lines, fmt.Sprintf("BIGGZ_BACKGROUND_SUBAGENTS=%s is set, but both files outrank it and it outranks the built-in default; it decides only when neither file exists.", ev))
 		} else {
-			lines = append(lines, fmt.Sprintf("GENTLE_PI_BACKGROUND_SUBAGENTS=\"%s\" is not a recognized value (\"on\" or \"off\"), so it is ignored.", ev))
+			lines = append(lines, fmt.Sprintf("BIGGZ_BACKGROUND_SUBAGENTS=\"%s\" is not a recognized value (\"on\" or \"off\"), so it is ignored.", ev))
 		}
 	}
-	lines = append(lines, "Resolution order (first hit wins): project file, global file, GENTLE_PI_BACKGROUND_SUBAGENTS, built-in default off.")
+	lines = append(lines, "Resolution order (first hit wins): project file, global file, BIGGZ_BACKGROUND_SUBAGENTS, built-in default off.")
 	tp := "info"
 	if r.Malformed || outranks {
 		tp = "warning"
