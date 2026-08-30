@@ -179,6 +179,7 @@ func LoadModelsOrEmpty(cachePath string) (map[string]Provider, error) {
 }
 
 // LoadVariants reads the plugin-generated model-variants.json file.
+// The file stores sorted Record<provider,Record<model,string[]>> written via tmp→rename atomic.
 func LoadVariants(variantsPath string) (map[string]map[string][]string, error) {
 	data, err := os.ReadFile(variantsPath)
 	if err != nil {
@@ -188,7 +189,34 @@ func LoadVariants(variantsPath string) (map[string]map[string][]string, error) {
 	if err := json.Unmarshal(data, &variants); err != nil {
 		return nil, err
 	}
+	// ensure variants are sorted per model for determinism
+	for prov, models := range variants {
+		for model, levels := range models {
+			sorted := append([]string(nil), levels...)
+			sort.Strings(sorted)
+			variants[prov][model] = sorted
+		}
+	}
 	return variants, nil
+}
+
+// LoadVariantsOrEmpty returns empty map when file is absent or invalid, never error.
+func LoadVariantsOrEmpty(variantsPath string) map[string]map[string][]string {
+	v, err := LoadVariants(variantsPath)
+	if err != nil {
+		return map[string]map[string][]string{}
+	}
+	return v
+}
+
+// LoadVariantsSortedKeys returns sorted provider keys for deterministic iteration.
+func LoadVariantsSortedKeys(variants map[string]map[string][]string) []string {
+	keys := make([]string, 0, len(variants))
+	for k := range variants {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // EnrichWithVariants merges variant data from the plugin cache file into
@@ -331,8 +359,11 @@ func ConfigurableAgentPhases() []string {
 
 // --- Model Routing v1 (gentle-pi parity) ---
 
-const ModelExportKind = "gentle-pi.agent_model_routing"
+const ModelExportKind = "biggz-ai.agent_model_routing"
 const ModelExportVersion = 1
+
+// THINKING_LEVELS is the canonical ordered set for picker validation.
+var THINKING_LEVELS = []ThinkingLevel{ThinkingOff, ThinkingLow, ThinkingMedium, ThinkingHigh, ThinkingInherit}
 
 type ThinkingLevel string
 
@@ -468,6 +499,8 @@ func WriteModelConfig(path string, cfg AgentModelConfig) error {
 		}
 		clean[k] = AgentRoutingEntry{Model: me, Thinking: te}
 	}
+	// sorted MarshalIndent via ordered keys: encode via json.MarshalIndent is already sorted by key for maps
+	// but ensure deterministic output by marshaling cleaned sorted representation
 	data, err := json.MarshalIndent(clean, "", "  ")
 	if err != nil {
 		return err
@@ -476,7 +509,12 @@ func WriteModelConfig(path string, cfg AgentModelConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	// atomic tmp→rename
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 func MergeModelConfigs(layers ...AgentModelConfig) AgentModelConfig {
 	out := make(AgentModelConfig)
