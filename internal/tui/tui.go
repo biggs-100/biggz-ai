@@ -318,10 +318,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		// Help toggle — works on any screen
+		// Help toggle — works on any screen, suppressed when help filter focused
 		if msg.String() == "?" {
-			m.showHelp = !m.showHelp
-			return m, nil
+			if m.currentScreen == screenHelp && m.help.IsFocused() {
+				// Let HelpModel handle '?' as filter input
+			} else {
+				m.showHelp = !m.showHelp
+				return m, nil
+			}
 		}
 
 		// When help is shown, only ESC or ? close it
