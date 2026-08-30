@@ -46,7 +46,7 @@ func bigmemRun() int {
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Commands:")
 		fmt.Fprintln(os.Stderr, "  save <title> <msg> [--type T] [--project P] [--scope S]")
-		fmt.Fprintln(os.Stderr, "  search <query> [--type T] [--project P] [--scope S] [--limit N]")
+		fmt.Fprintln(os.Stderr, "  search [<query>|--query Q] [--type T] [--project P] [--scope S] [--limit N] [--all]")
 		fmt.Fprintln(os.Stderr, "  get <id>                        Get an observation by ID")
 		fmt.Fprintln(os.Stderr, "  delete <id>                     Delete an observation")
 		fmt.Fprintln(os.Stderr, "  update <id> [flags]             Update an observation")
@@ -105,28 +105,88 @@ func bigmemRun() int {
 		fmt.Printf("Saved: %s\n", obs.ID)
 
 	case "search":
-		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem search <query> [--type T] [--project P] [--scope S] [--limit N]")
+		if len(args) < 2 || args[1] == "--help" || args[1] == "-h" {
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem search [<query>|--query Q] [--type T] [--project P] [--scope S] [--limit N] [--all]")
 			return 1
 		}
-		query := args[1]
+		var query string
+		var argsRest []string
+		if args[1] == "--" {
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "error: missing query after '--'")
+				return 1
+			}
+			query = args[2]
+			argsRest = args[3:]
+		} else if args[1] == "--query" {
+			if len(args) < 3 {
+				fmt.Fprintln(os.Stderr, "error: missing value for --query")
+				return 1
+			}
+			query = args[2]
+			argsRest = args[3:]
+		} else if strings.HasPrefix(args[1], "-") {
+			fmt.Fprintf(os.Stderr, "error: query %q looks like a flag (starts with \"-\"). Use --query %q or search -- %q\n", args[1], args[1], args[1])
+			return 1
+		} else {
+			query = args[1]
+			argsRest = args[2:]
+		}
 		opts := bigmem.SearchOptions{Limit: 20}
-		for i := 2; i < len(args)-1; i++ {
-			switch args[i] {
+		hasProject := false
+		for i := 0; i < len(argsRest); i++ {
+			switch argsRest[i] {
 			case "--type":
-				opts.Type = args[i+1]
+				if i+1 >= len(argsRest) {
+					fmt.Fprintln(os.Stderr, "error: missing value for --type")
+					return 1
+				}
+				opts.Type = argsRest[i+1]
 				i++
 			case "--project":
-				opts.Project = args[i+1]
+				if i+1 >= len(argsRest) {
+					fmt.Fprintln(os.Stderr, "error: missing value for --project")
+					return 1
+				}
+				opts.Project = argsRest[i+1]
+				hasProject = true
 				i++
 			case "--scope":
-				opts.Scope = args[i+1]
+				if i+1 >= len(argsRest) {
+					fmt.Fprintln(os.Stderr, "error: missing value for --scope")
+					return 1
+				}
+				opts.Scope = argsRest[i+1]
 				i++
 			case "--limit":
-				if n, err := strconv.Atoi(args[i+1]); err == nil {
+				if i+1 >= len(argsRest) {
+					fmt.Fprintln(os.Stderr, "error: missing value for --limit")
+					return 1
+				}
+				if n, err := strconv.Atoi(argsRest[i+1]); err == nil {
 					opts.Limit = n
 				}
 				i++
+			case "--all", "--all-projects":
+				opts.AllProjects = true
+			default:
+				if strings.HasPrefix(argsRest[i], "-") {
+					fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", argsRest[i])
+					return 1
+				}
+				fmt.Fprintf(os.Stderr, "error: unexpected argument %q\n", argsRest[i])
+				return 1
+			}
+		}
+		if !hasProject && !opts.AllProjects {
+			info := project.DetectProjectFull(".")
+			if info.Error != nil && errors.Is(info.Error, project.ErrAmbiguousProject) {
+				fmt.Fprintf(os.Stderr, "[bigmem] warning: ambiguous project (%s); searching ALL. Available: %s\n", info.Error.Error(), strings.Join(info.AvailableProjects, ", "))
+			} else if info.Error == nil && info.Project != "" && info.Project != "unknown" {
+				opts.Project = info.Project
+				fmt.Fprintf(os.Stderr, "[bigmem] auto-detected project %q via %s\n", info.Project, info.Source)
+			} else {
+				fmt.Fprintln(os.Stderr, "[bigmem] no project detected, searching ALL...")
 			}
 		}
 		results, err := store.Search(query, opts)
@@ -136,6 +196,9 @@ func bigmemRun() int {
 		}
 		if len(results) == 0 {
 			fmt.Println("No results.")
+			if opts.Project != "" {
+				fmt.Fprintf(os.Stderr, "No results for %q in project %q. Try --all or --project biggz-ai.\n", query, opts.Project)
+			}
 			return 0
 		}
 		for _, r := range results {
