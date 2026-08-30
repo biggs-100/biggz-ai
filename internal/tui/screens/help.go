@@ -1,6 +1,12 @@
 package screens
 
-import "github.com/biggs-100/biggz-ai/internal/tui/styles"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 // HelpContent describes the help for a screen.
 type HelpContent struct {
@@ -216,6 +222,101 @@ func GetHelp(screenID int) HelpContent {
 		return h
 	}
 	return HelpContent{Title: "Unknown Screen", Keys: []HelpKey{{"ESC", "Go back"}}}
+}
+
+// HelpModel is a minimal placeholder for foundation PR.
+// Full Bubbletea implementation with textinput+viewport is added in PR2.
+type HelpModel struct {
+	width, height int
+	filter        string
+	filtered      []HelpContent
+}
+
+// NewHelpModel creates the help screen.
+func NewHelpModel() HelpModel {
+	return HelpModel{
+		filtered: filterHelp(""),
+	}
+}
+
+// Init initializes the help model.
+func (m HelpModel) Init() tea.Cmd { return nil }
+
+// filterHelp filters helpData case-insensitively across Title/Keys/Paragraph.
+func filterHelp(q string) []HelpContent {
+	if q == "" {
+		out := make([]HelpContent, 0, len(helpData))
+		for _, v := range helpData {
+			out = append(out, v)
+		}
+		return out
+	}
+	ql := strings.ToLower(q)
+	var out []HelpContent
+	for _, v := range helpData {
+		if strings.Contains(strings.ToLower(v.Title), ql) || strings.Contains(strings.ToLower(v.Paragraph), ql) {
+			out = append(out, v)
+			continue
+		}
+		matched := false
+		for _, k := range v.Keys {
+			if strings.Contains(strings.ToLower(k.Key), ql) || strings.Contains(strings.ToLower(k.Desc), ql) {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+// Update handles input (minimal stub).
+func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		return m, nil
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			if m.filter != "" {
+				m.filter = ""
+				m.filtered = filterHelp("")
+				return m, nil
+			}
+			return m, func() tea.Msg { return NavigateMsg{Screen: 0} }
+		}
+	}
+	return m, nil
+}
+
+// View renders the help screen (minimal).
+func (m HelpModel) View() string {
+	var b strings.Builder
+	b.WriteString(styles.Title.Render("Help"))
+	b.WriteString("\n\n")
+	if len(m.filtered) == 0 {
+		b.WriteString(styles.StatusInfo.Render("No matches"))
+		return styles.AppStyle.Render(b.String())
+	}
+	for _, h := range m.filtered {
+		b.WriteString(styles.Section.Render(TruncateToWidth(h.Title, 80)))
+		b.WriteString("\n")
+		if h.Paragraph != "" {
+			b.WriteString(TruncateToWidth(h.Paragraph, 80))
+			b.WriteString("\n")
+		}
+		for _, k := range h.Keys {
+			line := fmt.Sprintf("  %s  — %s", k.Key, k.Desc)
+			b.WriteString(TruncateToWidth(line, 80))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+	return styles.AppStyle.Render(b.String())
 }
 
 // HelpOverlay renders the help as a styled string.
