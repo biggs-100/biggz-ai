@@ -140,9 +140,15 @@ func LoadRuntimeGuardrailsConfig(cwd string, configHome ...string) RuntimeGuardr
 	if data, err := os.ReadFile(projectPath); err == nil {
 		if cfg, ok := ParseGuardrailsConfigFile(string(data)); ok {
 			if hasGlobal {
-				for k, v := range cfg.GuardedCommands {
-					merged.GuardedCommands[k] = v
+				// copy-on-merge: shallow-copy global map so global not mutated
+				newMap := make(map[string]string, len(merged.GuardedCommands)+len(cfg.GuardedCommands))
+				for k, v := range merged.GuardedCommands {
+					newMap[k] = v
 				}
+				for k, v := range cfg.GuardedCommands {
+					newMap[k] = v
+				}
+				merged.GuardedCommands = newMap
 				merged.AutonomousMode = cfg.AutonomousMode
 			} else {
 				merged = *cfg

@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/policy"
 	"github.com/biggs-100/biggz-ai/model"
 	"gopkg.in/yaml.v3"
 )
@@ -235,6 +237,40 @@ func ScopeDiff(snapshotTree string) ([]string, error) {
 		}
 	}
 	return files, nil
+}
+
+// ---------------------------------------------------------------------------
+// Safety pre-check — verbatim DENIED[6]/SENSITIVE[8]/GUARDED[5] via internal/policy.
+// Parity across 3 surfaces: biggz-synthesis-gate.js (Pi), safety.ts (opencode), gate.go (pre-check).
+// Denied/sensitive→Allowed=false (block), guarded per ClassifyGuardedCommand.
+// Logs surface+kind+pattern/path; never blocks non-denied human actions.
+// ---------------------------------------------------------------------------
+
+// SafetyPreCheck evaluates a tool call against the shared policy.
+// Returns non-nil GateResult with Allowed=false when the call must be blocked,
+// or with Reason indicating confirm; nil means not-guarded/allowed.
+func SafetyPreCheck(tool string, args map[string]any, cwd string) *GateResult {
+	cmd, _ := args["command"].(string)
+	if cmd != "" && policy.IsDenied(cmd) {
+		log.Printf("[safety] block surface=gate kind=block pattern=IsDenied cmd=%.80s", cmd)
+		return &GateResult{Gate: GatePrePR, Allowed: false, Passed: false, Reason: "Gentle AI safety policy blocked a destructive shell command.", Reasons: []string{"safety: IsDenied"}}
+	}
+	if dec := policy.EvaluateSensitivePathTool(tool, args); dec != nil && dec.Kind == policy.DecisionBlock {
+		log.Printf("[safety] block surface=gate kind=block path=%s", dec.Reason)
+		return &GateResult{Gate: GatePrePR, Allowed: false, Passed: false, Reason: dec.Reason, Reasons: []string{"safety: sensitive path"}}
+	}
+	if cmd != "" {
+		cfg := policy.LoadRuntimeGuardrailsConfig(cwd)
+		switch policy.ClassifyGuardedCommand(cmd, cfg) {
+		case "block":
+			log.Printf("[safety] block surface=gate kind=block guarded cmd=%.80s", cmd)
+			return &GateResult{Gate: GatePrePR, Allowed: false, Passed: false, Reason: "Gentle AI safety policy blocked guarded command."}
+		case "confirm":
+			log.Printf("[safety] confirm surface=gate kind=confirm guarded cmd=%.80s", cmd)
+			return &GateResult{Gate: GatePrePR, Allowed: true, Passed: true, Reason: "safety: confirm"}
+		}
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
