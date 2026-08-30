@@ -1,6 +1,14 @@
 package screens
 
-import "github.com/biggs-100/biggz-ai/internal/tui/styles"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
+	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+)
 
 // HelpContent describes the help for a screen.
 type HelpContent struct {
@@ -216,6 +224,206 @@ func GetHelp(screenID int) HelpContent {
 		return h
 	}
 	return HelpContent{Title: "Unknown Screen", Keys: []HelpKey{{"ESC", "Go back"}}}
+}
+
+// HelpModel provides searchable help with textinput + viewport.
+type HelpModel struct {
+	input    textinput.Model
+	viewport viewport.Model
+	filter   string
+	filtered []HelpContent
+	focused  bool
+	width    int
+	height   int
+}
+
+// NewHelpModel creates the help screen.
+func NewHelpModel() HelpModel {
+	ti := textinput.New()
+	ti.Placeholder = "Filter help..."
+	ti.CharLimit = 64
+	ti.Width = 30
+	vp := viewport.New(60, 10)
+	vp.SetContent(buildHelpContent(filterHelp(""), 80))
+	return HelpModel{
+		input:    ti,
+		viewport: vp,
+		filtered: filterHelp(""),
+		width:    80,
+		height:   24,
+	}
+}
+
+// Init initializes the help model.
+func (m HelpModel) Init() tea.Cmd { return textinput.Blink }
+
+// IsFocused reports whether filter input is focused (for tui help-toggle suppression).
+func (m HelpModel) IsFocused() bool { return m.focused }
+
+// Filter returns current filter (for tests).
+func (m HelpModel) Filter() string { return m.filter }
+
+// Filtered returns filtered contents (for tests).
+func (m HelpModel) Filtered() []HelpContent { return m.filtered }
+
+// filterHelp filters helpData case-insensitively across Title/Keys/Paragraph.
+func filterHelp(q string) []HelpContent {
+	if q == "" {
+		out := make([]HelpContent, 0, len(helpData))
+		for _, v := range helpData {
+			out = append(out, v)
+		}
+		return out
+	}
+	ql := strings.ToLower(q)
+	var out []HelpContent
+	for _, v := range helpData {
+		if strings.Contains(strings.ToLower(v.Title), ql) || strings.Contains(strings.ToLower(v.Paragraph), ql) {
+			out = append(out, v)
+			continue
+		}
+		matched := false
+		for _, k := range v.Keys {
+			if strings.Contains(strings.ToLower(k.Key), ql) || strings.Contains(strings.ToLower(k.Desc), ql) {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func buildHelpContent(items []HelpContent, width int) string {
+	var b strings.Builder
+	if len(items) == 0 {
+		b.WriteString(styles.StatusInfo.Render("No matches"))
+		b.WriteString("\n")
+		b.WriteString(styles.Help.Render("No help entries match your filter."))
+		return b.String()
+	}
+	for _, h := range items {
+		title := TruncateToWidth(h.Title, width)
+		b.WriteString(styles.Section.Render(title))
+		b.WriteString("\n")
+		if h.Paragraph != "" {
+			para := TruncateToWidth(h.Paragraph, width)
+			lines := WrapTextWithAnsi(para, width)
+			for _, l := range lines {
+				b.WriteString(l)
+				b.WriteString("\n")
+			}
+		}
+		for _, k := range h.Keys {
+			line := fmt.Sprintf("  %s  — %s", k.Key, k.Desc)
+			b.WriteString(TruncateToWidth(line, width))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// Update handles input.
+func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		m.viewport.Width = max(0, msg.Width-4)
+		m.viewport.Height = max(0, msg.Height-8)
+		m.input.Width = max(10, msg.Width-20)
+		m.viewport.SetContent(buildHelpContent(m.filtered, max(20, m.viewport.Width)))
+		return m, nil
+	case tea.KeyMsg:
+		if m.focused {
+			switch msg.String() {
+			case "esc":
+				if m.filter != "" {
+					m.filter = ""
+					m.input.SetValue("")
+					m.input.Blur()
+					m.focused = false
+					m.filtered = filterHelp("")
+					m.viewport.SetContent(buildHelpContent(m.filtered, max(20, m.viewport.Width)))
+					return m, nil
+				}
+				m.input.Blur()
+				m.focused = false
+				return m, func() tea.Msg { return NavigateMsg{Screen: 0} }
+			case "enter":
+				m.input.Blur()
+				m.focused = false
+				return m, nil
+			}
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			newFilter := m.input.Value()
+			if newFilter != m.filter {
+				m.filter = newFilter
+				m.filtered = filterHelp(m.filter)
+				m.viewport.SetContent(buildHelpContent(m.filtered, max(20, m.viewport.Width)))
+				m.viewport.GotoTop()
+			}
+			return m, cmd
+		}
+		switch msg.String() {
+		case "/":
+			m.focused = true
+			m.input.Focus()
+			return m, textinput.Blink
+		case "esc":
+			if m.filter != "" {
+				m.filter = ""
+				m.input.SetValue("")
+				m.filtered = filterHelp("")
+				m.viewport.SetContent(buildHelpContent(m.filtered, max(20, m.viewport.Width)))
+				m.viewport.GotoTop()
+				return m, nil
+			}
+			return m, func() tea.Msg { return NavigateMsg{Screen: 0} }
+		case "down", "j":
+			m.viewport.LineDown(1)
+			return m, nil
+		case "up", "k":
+			m.viewport.LineUp(1)
+			return m, nil
+		case "q":
+			return m, nil
+		}
+	}
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
+}
+
+// View renders the help screen.
+func (m HelpModel) View() string {
+	contentWidth := max(20, m.viewport.Width)
+	if contentWidth == 20 && m.width > 4 {
+		contentWidth = max(20, m.width-4)
+	}
+	m.viewport.SetContent(buildHelpContent(m.filtered, contentWidth))
+	var b strings.Builder
+	b.WriteString(styles.Title.Render("Help"))
+	b.WriteString("\n\n")
+	if m.focused {
+		b.WriteString(m.input.View())
+		b.WriteString("\n\n")
+	} else {
+		hint := "/ filter"
+		if m.filter != "" {
+			hint = fmt.Sprintf("Filter: %s  (ESC clear, / edit)", m.filter)
+		}
+		b.WriteString(styles.Help.Render(TruncateToWidth(hint, max(20, m.width-4))))
+		b.WriteString("\n\n")
+	}
+	b.WriteString(m.viewport.View())
+	b.WriteString("\n\n")
+	b.WriteString(styles.Help.Render("↑↓/j k scroll · / filter · ESC clear/back · ? help"))
+	return styles.AppStyle.Render(b.String())
 }
 
 // HelpOverlay renders the help as a styled string.

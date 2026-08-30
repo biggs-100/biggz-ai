@@ -107,7 +107,14 @@ const (
 	screenSync
 	screenUpdatePrompt
 	screenPluginUninstall
+	screenHelp
 	screenCount
+)
+
+// Exported screen IDs for CLI routing.
+const (
+	ScreenHelp   = screenHelp
+	ScreenBackup = screenBackup
 )
 
 // Model is the top-level TUI model.
@@ -123,6 +130,7 @@ type Model struct {
 	status          screens.StatusModel
 	memory          screens.MemoryModel
 	backup          screens.BackupModel
+	help            screens.HelpModel
 	profile         screens.ProfileModel
 	recovery        screens.RecoveryModel
 	modelPicker     screens.ModelPickerScreen
@@ -151,6 +159,7 @@ func New() Model {
 		status:          screens.NewStatusModel(),
 		memory:          screens.NewMemoryModel(),
 		backup:          screens.NewBackupModel(),
+		help:            screens.NewHelpModel(),
 		profile:         screens.NewProfileModel(),
 		recovery:        screens.NewRecoveryModel(),
 		modelPicker:     screens.NewModelPickerScreen(),
@@ -169,7 +178,14 @@ func New() Model {
 
 // Init initializes the TUI.
 func (m Model) Init() tea.Cmd {
-	return m.dashboard.Init()
+	switch m.currentScreen {
+	case screenHelp:
+		return m.help.Init()
+	case screenBackup:
+		return m.backup.Init()
+	default:
+		return m.dashboard.Init()
+	}
 }
 
 // feedPaste processes a raw chunk that may contain bracketed paste markers.
@@ -288,13 +304,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		// Forward to screens that need viewport sizing
+		if m.currentScreen == screenHelp {
+			u, cmd := m.help.Update(msg)
+			m.help = u.(screens.HelpModel)
+			return m, cmd
+		}
+		if m.currentScreen == screenBackup {
+			u, cmd := m.backup.Update(msg)
+			m.backup = u.(screens.BackupModel)
+			return m, cmd
+		}
 		return m, nil
 
 	case tea.KeyMsg:
-		// Help toggle — works on any screen
+		// Help toggle — works on any screen, suppressed when help filter focused
 		if msg.String() == "?" {
-			m.showHelp = !m.showHelp
-			return m, nil
+			if m.currentScreen == screenHelp && m.help.IsFocused() {
+				// Let HelpModel handle '?' as filter input
+			} else {
+				m.showHelp = !m.showHelp
+				return m, nil
+			}
 		}
 
 		// When help is shown, only ESC or ? close it
@@ -372,6 +403,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case screenBackup:
 		u, cmd := m.backup.Update(msg)
 		m.backup = u.(screens.BackupModel)
+		return m, cmd
+	case screenHelp:
+		u, cmd := m.help.Update(msg)
+		m.help = u.(screens.HelpModel)
 		return m, cmd
 	case screenProfile:
 		u, cmd := m.profile.Update(msg)
@@ -458,6 +493,8 @@ func (m Model) View() string {
 		frame = m.memory.View()
 	case screenBackup:
 		frame = m.backup.View()
+	case screenHelp:
+		frame = m.help.View()
 	case screenProfile:
 		frame = m.profile.View()
 	case screenUpgrade:
@@ -488,6 +525,22 @@ func (m Model) View() string {
 		frame = ""
 	}
 	return syncOutput(frame)
+}
+
+// RunWithScreen starts the TUI at the given screen with alt screen.
+// Unknown screen falls back to dashboard.
+func RunWithScreen(id int) {
+	m := New()
+	if id < 0 || id >= screenCount {
+		m.currentScreen = screenDashboard
+	} else {
+		m.currentScreen = id
+	}
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	if _, err := p.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 // Run starts the TUI.

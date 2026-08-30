@@ -196,4 +196,28 @@ var (
 			BorderStyle(lipgloss.RoundedBorder()).
 			BorderForeground(Primary).
 			Padding(1, 2)
+
+	// Table styles — shared single source (Rose Pine)
+	TableHeader = lipgloss.NewStyle().
+			Foreground(ColorSubtext).
+			Background(ColorSurface).
+			Bold(true).
+			Padding(0, 1)
+
+	TableSelected = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#FFFFFF")).
+			Background(Primary).
+			Bold(true).
+			Padding(0, 1)
+
+	PreviewPane = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(ColorOverlay).
+			Padding(0, 1)
+
+	ModalOverlay = lipgloss.NewStyle().
+			Border(lipgloss.DoubleBorder()).
+			BorderForeground(ColorPeach).
+			Padding(1, 2).
+			Background(ColorBase)
 )

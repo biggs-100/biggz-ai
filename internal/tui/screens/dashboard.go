@@ -31,6 +31,8 @@ var dashboardActions = []struct {
 	{"r", "Recent observations", 4},  // screenMemory (already has list)
 	{"e", "Browse sessions", 11},     // screenSessions
 	{"i", "Install agent plugin", 1}, // screenInstall
+	{"h", "Help", 21},                // screenHelp
+	{"b", "Backup & Restore", 5},     // screenBackup
 	{"q", "Quit", -1},
 }
 
@@ -93,6 +95,10 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return NavigateMsg{Screen: 11} }
 		case "i":
 			return m, func() tea.Msg { return NavigateMsg{Screen: 1} }
+		case "h":
+			return m, func() tea.Msg { return NavigateMsg{Screen: 21} }
+		case "b":
+			return m, func() tea.Msg { return NavigateMsg{Screen: 5} }
 		case "q":
 			return m, func() tea.Msg { return QuitMsg{} }
 		case "esc":
