@@ -18,11 +18,11 @@ var deniedBashPatterns = []*regexp.Regexp{
 }
 
 const (
-	GuardGitPush             = "gitPush"
-	GuardGitRebase           = "gitRebase"
-	GuardBranchDeleteForce   = "gitBranchDeleteForce"
-	GuardNpmPublish          = "npmPublish"
-	GuardPiRemove            = "piRemove"
+	GuardGitPush           = "gitPush"
+	GuardGitRebase         = "gitRebase"
+	GuardBranchDeleteForce = "gitBranchDeleteForce"
+	GuardNpmPublish        = "npmPublish"
+	GuardPiRemove          = "piRemove"
 )
 
 var guardedKeyPatterns = map[string]*regexp.Regexp{
@@ -58,10 +58,10 @@ func IsDenied(command string) bool {
 		}
 		// Special handling for patterns that were lookahead-based in TS
 		if i == 2 { // git clean
-			if !(strings.Contains(command, "-f") || strings.Contains(command, "--force")) {
+			if !(regexp.MustCompile(`\s-[^\s]*f`).MatchString(command) || strings.Contains(command, "--force")) {
 				continue
 			}
-			if !(strings.Contains(command, "-d") || strings.Contains(command, "--directories")) {
+			if !(regexp.MustCompile(`\s-[^\s]*d`).MatchString(command) || strings.Contains(command, "--directories")) {
 				continue
 			}
 		}
@@ -76,10 +76,8 @@ func IsDenied(command string) bool {
 }
 
 func ClassifyGuardedCommand(command string, cfg RuntimeGuardrailsConfig) string {
-	for _, p := range deniedBashPatterns {
-		if p.MatchString(command) {
-			return "block"
-		}
+	if IsDenied(command) {
+		return "block"
 	}
 	for key, pat := range guardedKeyPatterns {
 		if !pat.MatchString(command) {

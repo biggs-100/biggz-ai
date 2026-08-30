@@ -8,10 +8,10 @@ import (
 )
 
 type PreflightPrefs struct {
-	ExecutionMode      string `json:"executionMode"`
-	ArtifactStore      string `json:"artifactStore"`
-	ChainedPrStrategy  string `json:"chainedPrStrategy"`
-	ReviewBudgetLines  int    `json:"reviewBudgetLines"`
+	ExecutionMode     string `json:"executionMode"`
+	ArtifactStore     string `json:"artifactStore"`
+	ChainedPrStrategy string `json:"chainedPrStrategy"`
+	ReviewBudgetLines int    `json:"reviewBudgetLines"`
 }
 
 var preflightCache = map[string]PreflightPrefs{}
@@ -110,10 +110,10 @@ func ResolvePreflightPrefs(cwd string, home ...string) PreflightPrefs {
 }
 
 type PreflightQuestionEnvelope struct {
-	Pace     string `json:"pace"`
+	Pace      string `json:"pace"`
 	Artifacts string `json:"artifacts"`
-	PRs      string `json:"prs"`
-	Review   string `json:"review"`
+	PRs       string `json:"prs"`
+	Review    string `json:"review"`
 }
 
 func ValidatePreflightQuestionEnvelope(env PreflightQuestionEnvelope) bool {
