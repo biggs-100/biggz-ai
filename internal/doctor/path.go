@@ -66,7 +66,23 @@ func (c *PathCheck) Run(ctx context.Context) *Result {
 
 	// Split PATH into directories using filepath.SplitList which handles
 	// both Unix (:) and Windows (;) separators automatically.
-	dirs := filepath.SplitList(path)
+	// Deduplicate directories so the same dir appearing twice in PATH
+	// (common when shell rc appends) does not count as duplicate binaries.
+	rawDirs := filepath.SplitList(path)
+	seenDir := make(map[string]bool)
+	var dirs []string
+	for _, d := range rawDirs {
+		d = strings.TrimSpace(d)
+		if d == "" {
+			continue
+		}
+		key := strings.ToLower(d)
+		if seenDir[key] {
+			continue
+		}
+		seenDir[key] = true
+		dirs = append(dirs, d)
+	}
 
 	targets := c.targetNames()
 	type location struct {
@@ -76,10 +92,6 @@ func (c *PathCheck) Run(ctx context.Context) *Result {
 	found := make(map[string][]location) // binary name → locations
 
 	for _, dir := range dirs {
-		dir = strings.TrimSpace(dir)
-		if dir == "" {
-			continue
-		}
 		for _, name := range targets {
 			fullPath := filepath.Join(dir, name)
 			_, err := c.statFn(fullPath)

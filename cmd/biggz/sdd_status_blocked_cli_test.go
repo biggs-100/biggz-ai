@@ -51,11 +51,13 @@ func gitInit(t *testing.T, dir string) {
 }
 
 // TestSDDStatusBlockedPrintsEnvelopeAndGrantRerunClearsIt is the WU5
-// end-to-end fixture: sdd-status prints the blocked(edit_authority_missing)
-// reason with the typed consent envelope's granted invocation, rerunning
-// that exact invocation through `biggz sdd-attempt grant` exits 0 and
-// persists the grant, and a second status projects the granted root and
-// clears the block.
+// end-to-end fixture for V2 (gentle v2.5.0-rc.1 I6): sdd-status is
+// authority-free and never blocks on edit_authority_missing. The status
+// projection filters blocked(edit_authority_missing) and the human view
+// does not print the block. The native guard `biggz sdd-apply` still
+// blocks and prints the typed consent envelope; rerunning that exact
+// invocation through `biggz sdd-attempt grant` persists the grant and
+// a second guard run passes. A second status remains unblocked (V2).
 func TestSDDStatusBlockedPrintsEnvelopeAndGrantRerunClearsIt(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("USERPROFILE", t.TempDir())
@@ -80,22 +82,35 @@ func TestSDDStatusBlockedPrintsEnvelopeAndGrantRerunClearsIt(t *testing.T) {
 	}
 	chdir(t, planning)
 
+	// V2: sdd-status is authority-free — never prints blocked for edit_authority_missing.
 	code, stdout, stderr := runSDDStatusCLI(t)
 	if code != 0 {
-		t.Fatalf("blocked status exit code = %d (stderr: %q)", code, stderr)
+		t.Fatalf("status exit code = %d (stderr: %q)", code, stderr)
 	}
-	if !strings.Contains(stdout, "blocked(edit_authority_missing)") {
-		t.Fatalf("blocked status stdout lacks the reason code: %s", stdout)
+	if strings.Contains(stdout, "blocked(edit_authority_missing)") {
+		t.Fatalf("V2 status must not print blocked(edit_authority_missing), got: %s", stdout)
 	}
-	if !strings.Contains(stdout, "consent grant: biggz sdd-attempt grant multi-repo-rollout ") ||
-		!strings.Contains(stdout, "--change-instance ") {
-		t.Fatalf("blocked status stdout lacks the runnable granted invocation: %s", stdout)
+	if strings.Contains(stdout, "consent grant:") {
+		t.Fatalf("V2 status must not print consent envelope, got: %s", stdout)
+	}
+
+	// The native apply-side guard still blocks and prints the envelope.
+	gCode, gOut, gErr := runSDDApplyCLI(t, "multi-repo-rollout")
+	if gCode != 1 {
+		t.Fatalf("blocked guard exit code = %d, want 1 (stderr: %q, stdout: %q)", gCode, gErr, gOut)
+	}
+	if !strings.Contains(gOut, "blocked(edit_authority_missing)") {
+		t.Fatalf("blocked guard stdout lacks the reason code: %s", gOut)
+	}
+	if !strings.Contains(gOut, "consent grant: biggz sdd-attempt grant multi-repo-rollout ") ||
+		!strings.Contains(gOut, "--change-instance ") {
+		t.Fatalf("blocked guard stdout lacks the runnable granted invocation: %s", gOut)
 	}
 
 	// Extract the granted invocation and rerun it through the real grant
 	// verb: exit 0 and a committed revision.
 	invocation := ""
-	for _, line := range strings.Split(stdout, "\n") {
+	for _, line := range strings.Split(gOut, "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "consent grant: ") {
 			invocation = strings.TrimPrefix(line, "consent grant: ")
@@ -103,7 +118,7 @@ func TestSDDStatusBlockedPrintsEnvelopeAndGrantRerunClearsIt(t *testing.T) {
 		}
 	}
 	if invocation == "" {
-		t.Fatalf("no consent grant invocation in status stdout: %s", stdout)
+		t.Fatalf("no consent grant invocation in guard stdout: %s", gOut)
 	}
 	fields := strings.Fields(invocation)
 	if len(fields) < 3 || fields[0] != "biggz" || fields[1] != "sdd-attempt" || fields[2] != "grant" {
@@ -117,15 +132,21 @@ func TestSDDStatusBlockedPrintsEnvelopeAndGrantRerunClearsIt(t *testing.T) {
 		t.Fatalf("granted invocation rerun did not emit a GrantResult envelope: %s", grantOut)
 	}
 
-	// Second status projects the granted root and clears the block.
+	// Second guard run projects the granted root and clears the block.
+	gCode, gOut, gErr = runSDDApplyCLI(t, "multi-repo-rollout")
+	if gCode != 0 {
+		t.Fatalf("post-grant guard exit code = %d, want 0 (stderr: %q, stdout: %q)", gCode, gErr, gOut)
+	}
+	if !strings.Contains(gOut, "edit authority OK") {
+		t.Fatalf("post-grant guard is not allowed: %s", gOut)
+	}
+
+	// Second status remains unblocked (V2 authority-free).
 	code, stdout, stderr = runSDDStatusCLI(t)
 	if code != 0 {
 		t.Fatalf("post-grant status exit code = %d (stderr: %q)", code, stderr)
 	}
 	if strings.Contains(stdout, "blocked(edit_authority_missing)") {
-		t.Fatalf("post-grant status is still blocked: %s", stdout)
-	}
-	if strings.Contains(stdout, "consent grant:") {
-		t.Fatalf("post-grant status still prints the consent envelope: %s", stdout)
+		t.Fatalf("post-grant V2 status must not be blocked: %s", stdout)
 	}
 }
