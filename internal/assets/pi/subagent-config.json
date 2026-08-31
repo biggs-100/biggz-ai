@@ -6,6 +6,6 @@
   "defaultSubagentContext": "fresh",
   "mainWindowRenderer": {
     "horizontalSpacing": 0,
-    "compactResultMaxLines": 100
+    "compactResultMaxLines": 20
   }
 }

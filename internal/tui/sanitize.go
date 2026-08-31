@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -9,7 +10,85 @@ import (
 )
 
 func ReplaceTabs(s string) string { return strings.ReplaceAll(s, "\t", "    ") }
-func VisibleWidth(s string) int   { return runewidth.StringWidth(ansi.Strip(s)) }
+func VisibleWidth(s string) int { return runewidth.StringWidth(ansi.Strip(s)) }
+
+// compactK formats tokens compactly: 4100→4.1k, 2250→2.2k, 3000→3k, 600→600.
+// For 1k–10k shows one decimal unless divisible by 1000, >10k shows integer k.
+func compactK(n int) string {
+	if n < 0 {
+		n = 0
+	}
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	if n < 10000 {
+		if n%1000 == 0 {
+			return fmt.Sprintf("%dk", n/1000)
+		}
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%dk", n/1000)
+}
+
+// CompactK is exported wrapper for tests.
+func CompactK(n int) string { return compactK(n) }
+
+// formatFleetTokens hides window when window==spent or window<1000 per POLISH-TS-01.
+// Otherwise shows window›spent with › separator.
+func formatFleetTokens(window, spent int) string {
+	if window == spent || window < 1000 {
+		return compactK(spent)
+	}
+	return compactK(window) + "›" + compactK(spent)
+}
+
+// FormatFleetTokens exported wrapper.
+func FormatFleetTokens(window, spent int) string { return formatFleetTokens(window, spent) }
+
+// FormatFleetTokensStyled returns muted fixed-width token string (10c right-aligned).
+// Caller can use VisibleWidth to verify width; ANSI dim is stripped for width.
+func FormatFleetTokensStyled(window, spent int) string {
+	tok := formatFleetTokens(window, spent)
+	tok = RightAlign(tok, 10)
+	return "\x1b[2m" + tok + "\x1b[0m"
+}
+
+// RightAlign pads left with spaces to reach visible width w.
+func RightAlign(s string, w int) string {
+	vw := VisibleWidth(s)
+	if vw >= w {
+		return s
+	}
+	return strings.Repeat(" ", w-vw) + s
+}
+
+// FormatElapsed returns elapsed string right-aligned to 5c dim style.
+func FormatElapsed(seconds int) string {
+	s := fmt.Sprintf("%ds", seconds)
+	s = RightAlign(s, 5)
+	return "\x1b[2m" + s + "\x1b[0m"
+}
+
+// TableCellBudget returns left cell budget (width-6)/2 per design, min 5.
+func TableCellBudget(width int) int {
+	b := (width - 6) / 2
+	if b < 5 {
+		b = 5
+	}
+	return b
+}
+
+// RowLeftBudget returns left budget for 2-line row (width-6)/2 per design.
+func RowLeftBudget(width int) int {
+	b := (width - 6) / 2
+	if b < 1 {
+		b = 1
+	}
+	return b
+}
+
+// FixedRightWidth is total right columns width (5 elapsed +1 sep +10 tokens =16).
+const FixedRightWidth = 16
 
 func coalesceSGR(s string) string {
 	if s == "" {

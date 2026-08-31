@@ -27,6 +27,121 @@ type SubAgentResult struct {
 	Failure         string
 }
 
+// compactK formats tokens: 4100→4.1k, 2250→2.2k, hide window if ==spent or <1k.
+func compactK(n int) string {
+	if n < 0 {
+		n = 0
+	}
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	if n < 10000 {
+		if n%1000 == 0 {
+			return fmt.Sprintf("%dk", n/1000)
+		}
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%dk", n/1000)
+}
+func formatFleetTokens(window, spent int) string {
+	if window == spent || window < 1000 {
+		return compactK(spent)
+	}
+	return compactK(window) + "›" + compactK(spent)
+}
+
+// FormatFleetTokens exported for tests.
+func FormatFleetTokens(window, spent int) string { return formatFleetTokens(window, spent) }
+func CompactK(n int) string { return compactK(n) }
+
+// WaitRun holds minimal run info for headline.
+type WaitRun struct {
+	Name  string
+	State string
+}
+
+// FormatWaitHeadline builds 1-line headline per POLISH-ORCH-02: Wait 23s · 2 runs (sdd-apply running, sdd-verify queued) — open Fleet for detail.
+// Returns solid headline and optional dim hint (≤2 lines total). Never dumps full formatAsyncRunList.
+func FormatWaitHeadline(elapsedSec int, runs []WaitRun) string {
+	if len(runs) == 0 {
+		return fmt.Sprintf("Wait %ds \u00b7 0 runs \u2014 open Fleet for detail", elapsedSec)
+	}
+	var summaries []string
+	for _, r := range runs {
+		n := strings.TrimSpace(r.Name)
+		if n == "" {
+			n = "run"
+		}
+		st := strings.TrimSpace(r.State)
+		if st == "" {
+			st = "waiting"
+		}
+		summaries = append(summaries, fmt.Sprintf("%s %s", n, st))
+	}
+	inner := strings.Join(summaries, ", ")
+	headline := fmt.Sprintf("Wait %ds \u00b7 %d runs (%s) \u2014 open Fleet for detail", elapsedSec, len(runs), inner)
+	return headline
+}
+
+// FormatWaitHeadlineLines returns headline split into ≤2 lines: first solid, optional dim hint.
+func FormatWaitHeadlineLines(elapsedSec int, runs []WaitRun) []string {
+	head := FormatWaitHeadline(elapsedSec, runs)
+	// ensure single line headline, no extra dump
+	head = strings.Join(strings.Fields(head), " ")
+	if visibleWidth(head) <= 120 {
+		return []string{head}
+	}
+	// if excessively long, truncate headline to 120 and add dim hint as second line (never full list)
+	head = truncateToWidth(head, 120)
+	return []string{head, "\x1b[2m\u2014 open Fleet for detail\x1b[0m"}
+}
+
+// RightAlign pads left to width w visible.
+func RightAlign(s string, w int) string {
+	vw := visibleWidth(s)
+	if vw >= w {
+		return s
+	}
+	return strings.Repeat(" ", w-vw) + s
+}
+
+// TableCellBudget mirrors tui.TableCellBudget: (width-6)/2 min 5.
+func TableCellBudget(width int) int {
+	b := (width - 6) / 2
+	if b < 5 {
+		b = 5
+	}
+	return b
+}
+
+// HeaderGroups renders collapsed header 2 groups per POLISH-TUI-03.
+func HeaderGroups(running, queued, capU, capL int, paneWarn bool, elapsed, tok string) string {
+	g1 := fmt.Sprintf("%d running\u00b7%d queued\u00b7cap %d/%d", running, queued, capU, capL)
+	if paneWarn {
+		g1 += "\u00b7pane \u26a0"
+	}
+	g2 := fmt.Sprintf("%s\u00b7%s", strings.TrimSpace(elapsed), strings.TrimSpace(tok))
+	return g1 + " \u00b7 " + g2
+}
+
+// VisibleWorkflowRows implements tail visibility per POLISH-TUI-05.
+func VisibleWorkflowRows[T any](rows []T, limit int) ([]T, int) {
+	if limit <= 0 || len(rows) <= limit {
+		return rows, 0
+	}
+	hidden := len(rows) - limit
+	return rows[:limit], hidden
+}
+
+// VisibleWorkflowRowsStrings helper for string slices with hidden tail formatting.
+func VisibleWorkflowRowsStrings(rows []string, limit int) ([]string, string) {
+	vis, hidden := VisibleWorkflowRows(rows, limit)
+	if hidden == 0 {
+		return vis, ""
+	}
+	return vis, fmt.Sprintf("\u2026 +%d hidden", hidden)
+}
+
 func RenderSynthesis(r SubAgentResult) string {
 	phase := strings.TrimSpace(r.Phase)
 	if phase == "" {

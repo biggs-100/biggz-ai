@@ -7,6 +7,7 @@
 package screens
 
 import (
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -15,7 +16,63 @@ import (
 )
 
 func ReplaceTabs(s string) string { return strings.ReplaceAll(s, "\t", "    ") }
-func VisibleWidth(s string) int   { return runewidth.StringWidth(ansi.Strip(s)) }
+func VisibleWidth(s string) int { return runewidth.StringWidth(ansi.Strip(s)) }
+
+func compactK(n int) string {
+	if n < 0 {
+		n = 0
+	}
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	if n < 10000 {
+		if n%1000 == 0 {
+			return fmt.Sprintf("%dk", n/1000)
+		}
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return fmt.Sprintf("%dk", n/1000)
+}
+func CompactK(n int) string { return compactK(n) }
+func formatFleetTokens(window, spent int) string {
+	if window == spent || window < 1000 {
+		return compactK(spent)
+	}
+	return compactK(window) + "›" + compactK(spent)
+}
+func FormatFleetTokens(window, spent int) string { return formatFleetTokens(window, spent) }
+func FormatFleetTokensStyled(window, spent int) string {
+	tok := formatFleetTokens(window, spent)
+	tok = RightAlign(tok, 10)
+	return "\x1b[2m" + tok + "\x1b[0m"
+}
+func RightAlign(s string, w int) string {
+	vw := VisibleWidth(s)
+	if vw >= w {
+		return s
+	}
+	return strings.Repeat(" ", w-vw) + s
+}
+func FormatElapsed(seconds int) string {
+	s := fmt.Sprintf("%ds", seconds)
+	s = RightAlign(s, 5)
+	return "\x1b[2m" + s + "\x1b[0m"
+}
+func TableCellBudget(width int) int {
+	b := (width - 6) / 2
+	if b < 5 {
+		b = 5
+	}
+	return b
+}
+func RowLeftBudget(width int) int {
+	b := (width - 6) / 2
+	if b < 1 {
+		b = 1
+	}
+	return b
+}
+const FixedRightWidth = 16
 
 func coalesceSGR(s string) string {
 	if s == "" {
