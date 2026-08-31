@@ -184,7 +184,7 @@ func TestHelpModel_ViewportRenderingWithFilter(t *testing.T) {
 	m.width = 80
 	m.height = 24
 	m.viewport.Width = 76
-	m.viewport.Height = 10
+	m.viewport.Height = 30
 	m.filter = "backup"
 	m.filtered = filterHelp("backup")
 	view := m.View()

@@ -2,6 +2,7 @@ package screens
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
@@ -273,6 +274,7 @@ func filterHelp(q string) []HelpContent {
 		for _, v := range helpData {
 			out = append(out, v)
 		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Title < out[j].Title })
 		return out
 	}
 	ql := strings.ToLower(q)
@@ -293,6 +295,7 @@ func filterHelp(q string) []HelpContent {
 			out = append(out, v)
 		}
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Title < out[j].Title })
 	return out
 }
 
