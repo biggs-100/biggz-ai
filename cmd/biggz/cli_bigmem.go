@@ -203,7 +203,7 @@ func bigmemRun() int {
 		}
 		for _, r := range results {
 			ago := time.Since(r.CreatedAt).Round(time.Hour)
-			fmt.Printf("  %s [%s] %s (%s)\n", r.ID[:min(20, len(r.ID))], r.Type, r.Title, ago)
+			fmt.Printf("  %s [%s] %s (%s)\n", r.ID, r.Type, r.Title, ago)
 		}
 
 	case "get":
@@ -355,7 +355,7 @@ func bigmemRun() int {
 			if e.IsBefore {
 				marker = "<="
 			}
-			fmt.Printf("%s %s [%s] %s (%s)\n", marker, e.ID[:min(20, len(e.ID))], e.Type, e.Title, e.CreatedAt.Format(time.RFC3339))
+			fmt.Printf("%s %s [%s] %s (%s)\n", marker, e.ID, e.Type, e.Title, e.CreatedAt.Format(time.RFC3339))
 		}
 
 	case "context":
@@ -562,8 +562,8 @@ func bigmemRun() int {
 			fmt.Fprintf(os.Stderr, "error: compare: %v\n", err)
 			return 1
 		}
-		fmt.Printf("A: %s — %s [%s]\n", r.A.ID[:min(20, len(r.A.ID))], r.A.Title, r.A.Type)
-		fmt.Printf("B: %s — %s [%s]\n", r.B.ID[:min(20, len(r.B.ID))], r.B.Title, r.B.Type)
+		fmt.Printf("A: %s — %s [%s]\n", r.A.ID, r.A.Title, r.A.Type)
+		fmt.Printf("B: %s — %s [%s]\n", r.B.ID, r.B.Title, r.B.Type)
 		fmt.Printf("Same topic: %v\n", r.SameTopic)
 		fmt.Printf("Same project: %v\n", r.SameProject)
 		fmt.Printf("Time diff: %s\n", r.TimeDiff)
