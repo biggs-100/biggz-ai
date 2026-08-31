@@ -3,6 +3,7 @@ package sdd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -27,6 +28,12 @@ var backtickedSpan = regexp.MustCompile("`([^`]+)`")
 // taskCheckbox matches markdown task-list lines whose tokens are eligible
 // for edit-authority detection.
 var taskCheckbox = regexp.MustCompile(`^\s*(?:[-*]|\d+[.)])\s+\[([ xX])\]`)
+
+// readOnlyMarkerAfterToken matches a per-token "(read-only)" suffix
+// immediately after a backticked token. Case-insensitive, allows leading
+// whitespace. Used to exempt a token from both edit-authority and
+// topology guards.
+var readOnlyMarkerAfterToken = regexp.MustCompile(`(?i)^\s*\(read-only\)`)
 
 var investigativePhrases = []string{"investigate", "explore", "check", "look into"}
 var conditionalPhrases = []string{"if possible", "maybe", "consider", "when ready"}
@@ -68,7 +75,20 @@ func collectUnauthorizedFromLine(line, workspaceRoot, planningGitRoot string, al
 	if len(taskCheckbox.FindStringSubmatch(line)) == 0 {
 		return
 	}
-	for _, token := range pathLikeTokens(line) {
+	// Use index-aware extraction to filter per-token read-only suffix
+	matches := backtickedSpan.FindAllStringSubmatchIndex(line, -1)
+	for _, m := range matches {
+		token := line[m[2]:m[3]]
+		if strings.ContainsAny(token, " \t") || strings.Contains(token, "://") {
+			continue
+		}
+		if !strings.ContainsRune(token, '/') && !strings.ContainsRune(token, filepath.Separator) {
+			continue
+		}
+		suffix := line[m[1]:]
+		if readOnlyMarkerAfterToken.MatchString(suffix) {
+			continue
+		}
 		resolved := token
 		if !filepath.IsAbs(resolved) {
 			resolved = filepath.Join(workspaceRoot, resolved)
@@ -138,14 +158,20 @@ func HasExplicitEditIntent(prompt string) bool {
 // line: backticked tokens that contain a path separator (which subsumes
 // `../` prefixes and absolute paths). Tokens with whitespace are commands or
 // prose, and URL-like tokens are references, not filesystem targets.
+// It also filters tokens whose suffix matches readOnlyMarkerAfterToken.
 func pathLikeTokens(line string) []string {
 	var tokens []string
-	for _, match := range backtickedSpan.FindAllStringSubmatch(line, -1) {
-		token := match[1]
+	matches := backtickedSpan.FindAllStringSubmatchIndex(line, -1)
+	for _, m := range matches {
+		token := line[m[2]:m[3]]
 		if strings.ContainsAny(token, " \t") || strings.Contains(token, "://") {
 			continue
 		}
 		if !strings.ContainsRune(token, '/') && !strings.ContainsRune(token, filepath.Separator) {
+			continue
+		}
+		suffix := line[m[1]:]
+		if readOnlyMarkerAfterToken.MatchString(suffix) {
 			continue
 		}
 		tokens = append(tokens, token)
@@ -206,6 +232,124 @@ func withinAnyRoot(target string, roots []string) bool {
 		}
 	}
 	return false
+}
+
+// gitCommonDirForPath returns the git common dir for the given path via
+// "git rev-parse --git-common-dir" memoized per Status via memo map.
+// Uses exec.Command, not shell, and validates via filepath.EvalSymlinks.
+func gitCommonDirForPath(dir string, memo map[string]string) (string, error) {
+	if memo != nil {
+		if cached, ok := memo[dir]; ok {
+			return cached, nil
+		}
+	}
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		return "", err
+	}
+	common := strings.TrimSpace(string(out))
+	if common == "" {
+		return "", fmt.Errorf("empty git common dir")
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(dir, common)
+	}
+	common = filepath.Clean(common)
+	if resolved, err := filepath.EvalSymlinks(common); err == nil {
+		common = resolved
+	}
+	if memo != nil {
+		memo[dir] = common
+	}
+	return common, nil
+}
+
+func sameFile(a, b string) (bool, error) {
+	ai, err := os.Stat(a)
+	if err != nil {
+		return false, err
+	}
+	bi, err := os.Stat(b)
+	if err != nil {
+		return false, err
+	}
+	return os.SameFile(ai, bi), nil
+}
+
+// foreignRuntimeTopologyRoots scans checkbox lines for path-like backticked
+// tokens (filtered by readOnlyMarkerAfterToken) and reports every resolved
+// Git repository whose common dir differs from the planning repository's
+// common dir and lies outside allowedEditRoots. Memoized per Status via
+// memo map (3 tokens -> 1 rev-parse). Returns sorted unique foreign roots
+// (gitRootOf of the resolved path) for blocked status.
+func foreignRuntimeTopologyRoots(tasksText, workspaceRoot string, allowed []string, memo map[string]string) []string {
+	if memo == nil {
+		memo = make(map[string]string)
+	}
+	allowedNorm := normalizeAllowedRoots(allowed)
+	// Planning common dir via resolveExistingPath + gitCommonDir
+	planningPath := resolveExistingPath(workspaceRoot)
+	planningDir := planningPath
+	if info, err := os.Stat(planningPath); err == nil && !info.IsDir() {
+		planningDir = filepath.Dir(planningPath)
+	}
+	planningCommon, err := gitCommonDirForPath(planningDir, memo)
+	if err != nil {
+		// If planning repo not git or error, fail closed: no topology block (conservative)
+		return nil
+	}
+	foreign := map[string]bool{}
+	for _, line := range strings.Split(tasksText, "\n") {
+		if len(taskCheckbox.FindStringSubmatch(line)) == 0 {
+			continue
+		}
+		matches := backtickedSpan.FindAllStringSubmatchIndex(line, -1)
+		for _, m := range matches {
+			token := line[m[2]:m[3]]
+			if strings.ContainsAny(token, " \t") || strings.Contains(token, "://") {
+				continue
+			}
+			if !strings.ContainsRune(token, '/') && !strings.ContainsRune(token, filepath.Separator) {
+				continue
+			}
+			suffix := line[m[1]:]
+			if readOnlyMarkerAfterToken.MatchString(suffix) {
+				continue
+			}
+			resolved := token
+			if !filepath.IsAbs(resolved) {
+				resolved = filepath.Join(workspaceRoot, resolved)
+			}
+			resolved = resolveExistingPath(filepath.Clean(resolved))
+			targetDir := resolved
+			if info, err := os.Stat(targetDir); err == nil && !info.IsDir() {
+				targetDir = filepath.Dir(targetDir)
+			}
+			targetCommon, err := gitCommonDirForPath(targetDir, memo)
+			if err != nil {
+				continue // not a git repo
+			}
+			same, err := sameFile(planningCommon, targetCommon)
+			if err == nil && same {
+				continue // same common dir
+			}
+			// Different common dir: report foreign git root if outside allowed
+			foreignRoot := gitRootOf(resolved)
+			if foreignRoot == "" {
+				foreignRoot = targetDir
+			}
+			if withinAnyRoot(foreignRoot, allowedNorm) {
+				continue
+			}
+			foreign[foreignRoot] = true
+		}
+	}
+	roots := make([]string, 0, len(foreign))
+	for r := range foreign {
+		roots = append(roots, r)
+	}
+	sort.Strings(roots)
+	return roots
 }
 
 // editAuthorityBlockedReason names each unauthorized root and both exits:

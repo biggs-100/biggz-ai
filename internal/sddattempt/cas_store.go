@@ -88,7 +88,26 @@ type Store struct {
 	Change     string
 	LegacyPath string // legacy home-dir single-file location (migration source)
 	Scope      string // ScopeClone or ScopeMachine
+	instance   string // change-instance identity for ForInstance sugar, empty means unscoped
 }
+
+// ForInstance returns a Store scoped to the given change-instance identity.
+// The instance is validated as trimmed single-line 1..128 bytes via
+// validateChangeInstance; an invalid identity returns an error and the
+// zero Store. The scoped Store's instance is used by GrantedRootsFor
+// projection and by the Grant sugar equivalence Grant{ChangeInstance:x}.
+func (s Store) ForInstance(instance string) (Store, error) {
+	if err := validateChangeInstance(instance); err != nil {
+		return Store{}, err
+	}
+	// validateChangeInstance already ensures trimmed, but store the exact trimmed value
+	s.instance = instance
+	return s, nil
+}
+
+// Instance returns the change-instance identity this Store is scoped to, or
+// empty when unscoped.
+func (s Store) Instance() string { return s.instance }
 
 // grantClock renders the GrantedAt timestamp of grant records; a package
 // variable so tests can pin it. Production records UTC.

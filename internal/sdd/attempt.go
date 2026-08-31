@@ -2,11 +2,16 @@ package sdd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"time"
 )
+
+// ErrLegacyRetired is returned by the legacy file ledger operations that
+// have been retired in favor of the git-common-dir CAS store.
+var ErrLegacyRetired = errors.New("legacy ledger retired; use biggz sdd-attempt acquire|settle; status: biggz sdd-attempt status --change <change>")
 
 // AttemptState tracks review/correction attempts for an SDD change.
 // Stored as a JSON file in the change directory.
@@ -36,78 +41,24 @@ func AttemptStatus(openspecRoot, changeName string) (*AttemptState, error) {
 }
 
 // AttemptBegin starts a new attempt for a change.
-// Returns error if max attempts exceeded or an attempt is already in progress.
+// Legacy file ledger is retired: always returns ErrLegacyRetired without
+// creating or mutating ".attempt.json" so callers fail closed.
 func AttemptBegin(openspecRoot, changeName string, budgetLines int) (*AttemptState, error) {
-	state, err := readOrCreateAttemptState(openspecRoot, changeName)
-	if err != nil {
-		return nil, err
-	}
-
-	if state.Status == "in_progress" {
-		return nil, fmt.Errorf("attempt already in progress for change %q", changeName)
-	}
-
-	if state.TotalAttempts >= state.MaxAttempts {
-		return nil, fmt.Errorf("max attempts (%d) exhausted for change %q", state.MaxAttempts, changeName)
-	}
-
-	state.ActiveAttempt = state.TotalAttempts + 1
-	state.TotalAttempts++
-	state.Status = "in_progress"
-	if budgetLines > 0 {
-		state.MaxChangedLines = budgetLines
-	}
-	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-
-	if err := saveAttemptState(openspecRoot, changeName, state); err != nil {
-		return nil, err
-	}
-	return state, nil
+	return nil, ErrLegacyRetired
 }
 
 // AttemptFinish marks the current attempt as completed or failed.
+// Legacy file ledger is retired: always returns ErrLegacyRetired without
+// mutating ".attempt.json".
 func AttemptFinish(openspecRoot, changeName string, success bool, linesChanged int) (*AttemptState, error) {
-	state, err := readAttemptState(openspecRoot, changeName)
-	if err != nil {
-		return nil, err
-	}
-
-	if state.Status != "in_progress" {
-		return nil, fmt.Errorf("no active attempt for change %q", changeName)
-	}
-
-	state.CorrectionLines += linesChanged
-	state.ActiveAttempt = 0
-
-	if success {
-		state.Status = "completed"
-	} else if state.TotalAttempts >= state.MaxAttempts {
-		state.Status = "exhausted"
-	} else {
-		state.Status = "idle"
-	}
-
-	state.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-
-	if err := saveAttemptState(openspecRoot, changeName, state); err != nil {
-		return nil, err
-	}
-	return state, nil
+	return nil, ErrLegacyRetired
 }
 
 // AttemptReset resets the attempt state for a change.
+// Legacy file ledger is retired: always returns ErrLegacyRetired without
+// mutating ".attempt.json".
 func AttemptReset(openspecRoot, changeName string) (*AttemptState, error) {
-	state := &AttemptState{
-		ChangeName:      changeName,
-		MaxAttempts:     3,
-		MaxChangedLines: 400,
-		Status:          "idle",
-		UpdatedAt:       time.Now().UTC().Format(time.RFC3339),
-	}
-	if err := saveAttemptState(openspecRoot, changeName, state); err != nil {
-		return nil, err
-	}
-	return state, nil
+	return nil, ErrLegacyRetired
 }
 
 // --- internal helpers ---

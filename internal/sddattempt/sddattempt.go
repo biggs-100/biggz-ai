@@ -1990,6 +1990,7 @@ func LedgerExists(changeName, repoRoot string) bool {
 
 var (
 	ErrRuntimeRescopeWidened    = errors.New("rescope widened budget")
+	ErrRuntimeRescopeExhausted  = errors.New("rescope budget exhausted")
 	ErrRuntimeRescopeNotAllowed = errors.New("rescope not allowed")
 )
 
@@ -2052,8 +2053,19 @@ func Rescope(params RescopeParams) (*ResetResult, error) {
 		if params.ExpectedRev != "" && store.Revision != params.ExpectedRev {
 			return fmt.Errorf("CAS conflict: expected revision %s, got %s", params.ExpectedRev, store.Revision)
 		}
+		// Verbatim narrowing predicate: Active==0 && ObjectiveID!="" && !DecisionRequired && !Complete && len>0 && last.Outcome!="" && !drifted
+		// Drift stub is false until CandidateTree is wired (TODO), so !drift is always true.
 		if store.ActiveAttempt != 0 {
 			return fmt.Errorf("%w: rescope requires no active attempt", ErrRuntimeRescopeNotAllowed)
+		}
+		if store.ObjectiveID == "" {
+			return fmt.Errorf("%w: rescope requires non-empty objective_id", ErrRuntimeRescopeNotAllowed)
+		}
+		if store.DecisionRequired {
+			return fmt.Errorf("%w: rescope blocked while decision required", ErrRuntimeRescopeNotAllowed)
+		}
+		if store.Complete {
+			return fmt.Errorf("%w: rescope blocked when complete", ErrRuntimeRescopeNotAllowed)
 		}
 		if len(store.Attempts) == 0 {
 			return fmt.Errorf("%w: rescope requires prior terminal attempt", ErrRuntimeRescopeNotAllowed)
@@ -2061,6 +2073,11 @@ func Rescope(params RescopeParams) (*ResetResult, error) {
 		last := store.Attempts[len(store.Attempts)-1]
 		if last.Outcome == "" {
 			return fmt.Errorf("%w: last attempt not finished", ErrRuntimeRescopeNotAllowed)
+		}
+		// Drift stub false: candidateTree not wired, treat as not drifted.
+		drifted := false // TODO: wire candidateTree wiring for drift stub
+		if drifted {
+			return fmt.Errorf("%w: rescope blocked when drifted", ErrRuntimeRescopeNotAllowed)
 		}
 		oldMaxAttempts := store.MaxAttempts
 		oldMaxLines := store.MaxLines
@@ -2074,8 +2091,13 @@ func Rescope(params RescopeParams) (*ResetResult, error) {
 		}
 		cumAttempts := len(store.Attempts)
 		cumLines := store.CumulativeChangedLines
-		if !(newMaxAttempts > cumAttempts && newMaxLines > cumLines) {
-			return fmt.Errorf("%w: rescope wedge requires newMaxAttempts > cumAttempts (%d) && newMaxLines > cumLines (%d), got %d->%d attempts %d->%d lines", ErrRuntimeRescopeWidened, cumAttempts, cumLines, oldMaxAttempts, newMaxAttempts, oldMaxLines, newMaxLines)
+		// Narrowing check first: new <= old => Widened
+		if newMaxAttempts <= oldMaxAttempts || newMaxLines <= oldMaxLines {
+			return fmt.Errorf("%w: rescope widened budget requires newMaxAttempts > oldMaxAttempts (%d) && newMaxLines > oldMaxLines (%d), got %d->%d attempts %d->%d lines", ErrRuntimeRescopeWidened, oldMaxAttempts, oldMaxLines, oldMaxAttempts, newMaxAttempts, oldMaxLines, newMaxLines)
+		}
+		// Wedge violation: new <= cumulative => Exhausted (must be after Widened)
+		if newMaxAttempts <= cumAttempts || newMaxLines <= cumLines {
+			return fmt.Errorf("%w: rescope wedge requires newMaxAttempts > cumAttempts (%d) && newMaxLines > cumLines (%d), got %d->%d attempts %d->%d lines", ErrRuntimeRescopeExhausted, cumAttempts, cumLines, oldMaxAttempts, newMaxAttempts, oldMaxLines, newMaxLines)
 		}
 		// Cumulative never reset — preserve attempts slice
 		store.MaxAttempts = newMaxAttempts

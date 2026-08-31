@@ -471,6 +471,19 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 	allowedEditRoots = append(allowedEditRoots, workspaceRoot)
 	allowedEditRoots = append(allowedEditRoots, cs.GrantedRoots...)
 	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, tasksContent, workspaceRoot, allowedEditRoots)
+	// Topology guard: foreign common-dir check memoized per Status, block only apply/verify/remediate
+	if tasksContent != "" && coreReady {
+		memo := make(map[string]string)
+		foreignRoots := foreignRuntimeTopologyRoots(tasksContent, workspaceRoot, allowedEditRoots, memo)
+		if len(foreignRoots) > 0 {
+			// Only block when eligible for apply/verify/remediate (i.e., not already blocked by missing artifacts)
+			// coreReady ensures planning complete, so next would be apply/verify etc.
+			if applyState != ApplyBlocked {
+				applyState = ApplyBlocked
+			}
+			blockedReasons.genuine = append(blockedReasons.genuine, "cross_common_dir_runtime_target: tasks.md references repositories outside planning common dir: "+strings.Join(foreignRoots, ", "))
+		}
+	}
 	verifyReportCurrent := artifacts["verifyReport"] == ArtifactDone
 	remediationState, staleDecision, remediationComplete, _, err := buildRemediationState(changeDir, cs.Name, workspaceRoot, artifacts, applyState, verifyResult, &blockedReasons)
 	if err != nil {

@@ -27,12 +27,17 @@
 package review
 
 import (
+	"bytes"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -165,6 +170,89 @@ var configurationBasenames = map[string]struct{}{
 // commentary, or config-documentation material: inert content that cannot
 // execute. A path under a docs segment, a doc extension, the README/LICENSE/
 // CHANGELOG basename family, or a non-executing project-doc config all count.
+// isPassiveDocumentExtension reports whether a path's extension is in the
+// allowlist for adapted passive content proof (.md/.markdown/.mdown/.rst/.adoc/.txt/.png/.jpg/.jpeg/.gif).
+func isPassiveDocumentExtension(p string) bool {
+	ext := strings.ToLower(filepath.Ext(p))
+	switch ext {
+	case ".md", ".markdown", ".mdown", ".rst", ".adoc", ".txt", ".png", ".jpg", ".jpeg", ".gif", ".mdx":
+		return true
+	default:
+		return false
+	}
+}
+
+// isPassiveContentFile reads at most 8 MiB and checks for NUL, invalid UTF-8,
+// interpreter directive, MDX, and process-boundary substrings. Fail-closed
+// if over budget or unreadable.
+func isPassiveContentFile(p string) bool {
+	if !isPassiveDocumentExtension(p) {
+		return false
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		return false
+	}
+	if info.Size() > 8<<20 {
+		return false
+	}
+	f, err := os.Open(p)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 8<<20+1))
+	if err != nil {
+		return false
+	}
+	if len(data) > 8<<20 {
+		return false
+	}
+	if bytes.Contains(data, []byte{0}) {
+		return false
+	}
+	if !utf8.Valid(data) {
+		return false
+	}
+	if hasInterpreterDirective(data) {
+		return false
+	}
+	if isStaticMDXDocument(data) {
+		return false
+	}
+	lower := strings.ToLower(string(data))
+	if strings.Contains(lower, "subprocess") || strings.Contains(lower, "execute_process") || strings.Contains(lower, "exec") {
+		return false
+	}
+	return true
+}
+
+func hasInterpreterDirective(data []byte) bool {
+	i := 0
+	if len(data) >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF {
+		i = 3
+	}
+	for i < len(data) && (data[i] == ' ' || data[i] == '\t' || data[i] == '\r' || data[i] == '\n') {
+		i++
+	}
+	if i+1 < len(data) && data[i] == '#' && data[i+1] == '!' {
+		return true
+	}
+	return false
+}
+
+func isStaticMDXDocument(data []byte) bool {
+	s := string(data)
+	lower := strings.ToLower(s)
+	if strings.Contains(lower, "import ") || strings.Contains(lower, "export ") {
+		return true
+	}
+	if strings.Contains(s, "<{") || strings.Contains(s, "}>") {
+		return true
+	}
+	return false
+}
+
 func isDocumentationPath(p string) bool {
 	lower := strings.ToLower(p)
 	base := path.Base(lower)
@@ -206,13 +294,21 @@ func documentationOnly(paths []string) bool {
 }
 
 // triviallyInert reports whether every changed path is provably passive:
-// documentation, or an inert non-source, non-config file with authored lines.
-// A binary or empty entry (no authored lines, when the summary is provided)
-// is never proven passive and fails closed, mirroring gentle-ai's rule that
-// only frozen bytes can withdraw a passive nomination.
+// documentation (gated by adapted passive proof), or an inert non-source,
+// non-config file with authored lines. A binary or empty entry (no authored
+// lines, when the summary is provided) is never proven passive and fails
+// closed, mirroring gentle-ai's rule that only frozen bytes can withdraw a
+// passive nomination. Adapted passive proof is gated behind
+// isPassiveDocumentExtension and uses isPassiveContentFile (≤8 MiB,
+// NUL/utf8, shebang, MDX, exec).
 func triviallyInert(paths []string, diffSummary map[string]int) bool {
 	for _, p := range paths {
 		if isDocumentationPath(p) {
+			if isPassiveDocumentExtension(p) {
+				if !isPassiveContentFile(p) {
+					return false
+				}
+			}
 			continue
 		}
 		lower := strings.ToLower(p)
@@ -227,6 +323,11 @@ func triviallyInert(paths []string, diffSummary map[string]int) bool {
 		}
 		if executionConfigPath([]string{p}) != "" {
 			return false
+		}
+		if isPassiveDocumentExtension(p) {
+			if !isPassiveContentFile(p) {
+				return false
+			}
 		}
 		if diffSummary != nil {
 			lines, present := diffSummary[p]
