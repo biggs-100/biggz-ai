@@ -1,4 +1,10 @@
 /**
+ * biggz-wait-pretty — subagent_wait pretty wrapper (polish-wait-visuals C)
+ *
+ * Extends polish-wait-visuals B: single-run now renders as 2-line FleetRow
+ * ◐ agent · state  2m04s   4.1k›80k / └ task truncated 60 — no UUID/fan-out/output dump.
+ * Throttles 3s, ≤2 lines, flag BIGGZ_PRETTY=0 to disable, child bypass.
+ *
  * biggz-pi-pretty — FleetView wait pretty wrapper (polish-wait-visuals B intermedia)
  *
  * Throttles asyncWaitUpdate / detachedForegroundWaitUpdate 1s→3s, collapses
