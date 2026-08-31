@@ -16,26 +16,44 @@ import (
 )
 
 // rddRun handles the "biggz rdd" subcommand.
-// Usage: biggz rdd <enable|disable|status> [--scope worktree|clone|global] [--expected-revision <hash>]
+// Usage: biggz rdd <enable|disable|status> [--scope worktree|clone|global] [--expected-revision <hash>] [--json]
 func rddRun() int {
 	args := os.Args[2:]
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
-		fmt.Fprintln(os.Stderr, "Usage: biggz rdd <enable|disable|status> [--scope worktree|clone|global] [--expected-revision <hash>]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz rdd <enable|disable|status> [--scope worktree|clone|global] [--expected-revision <hash>] [--json]")
 		fmt.Fprintln(os.Stderr, "  --scope <scope>       Scope: worktree (default), clone, or global")
 		fmt.Fprintln(os.Stderr, "  --expected-revision   Verify head generation revision before writing (clone/worktree disable only)")
+		fmt.Fprintln(os.Stderr, "  --json                Machine-readable JSON output (status only)")
 		return 0
 	}
 
 	op := args[0]
 	scope := "worktree" // default to narrowest scope (Alan's #1973 recommendation)
 	expectedRevision := ""
+	jsonOutput := false
 	for i := 1; i < len(args); i++ {
-		if args[i] == "--scope" && i+1 < len(args) {
-			scope = args[i+1]
-			i++
-		} else if args[i] == "--expected-revision" && i+1 < len(args) {
-			expectedRevision = args[i+1]
-			i++
+		arg := args[i]
+		if strings.HasPrefix(arg, "--scope=") {
+			scope = strings.TrimPrefix(arg, "--scope=")
+			continue
+		}
+		if strings.HasPrefix(arg, "--expected-revision=") {
+			expectedRevision = strings.TrimPrefix(arg, "--expected-revision=")
+			continue
+		}
+		switch arg {
+		case "--scope":
+			if i+1 < len(args) {
+				scope = args[i+1]
+				i++
+			}
+		case "--expected-revision":
+			if i+1 < len(args) {
+				expectedRevision = args[i+1]
+				i++
+			}
+		case "--json":
+			jsonOutput = true
 		}
 	}
 
@@ -43,75 +61,116 @@ func rddRun() int {
 	// and --git-dir (worktree scope, private to this worktree)
 	commonDir, worktreeDir := detectGitDirs()
 
-	// Resolve target git dir for the chosen scope
-	var targetDir string
-	switch scope {
-	case "worktree":
-		targetDir = worktreeDir
-		if targetDir == "" {
-			fmt.Fprintln(os.Stderr, "error: not in a git worktree — cannot use --scope=worktree")
-			return 1
-		}
-	case "clone":
-		targetDir = commonDir
-		if targetDir == "" {
-			fmt.Fprintln(os.Stderr, "error: not in a git repository — cannot use --scope=clone")
-			return 1
-		}
-	}
-
 	var status *review.RDDStatusReport
 	var err error
 
 	switch op {
 	case "status":
 		status, err = review.RDDStatus(worktreeDir, commonDir)
-	case "enable":
-		status, err = review.RDDEnable(worktreeDir, commonDir)
-	case "disable":
-		// Validate expected revision before writing (CAS integrity)
-		if expectedRevision != "" && targetDir != "" {
-			if vErr := review.VerifyCloneRevision(targetDir, expectedRevision); vErr != nil {
-				fmt.Fprintf(os.Stderr, "error: %v\n", vErr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if jsonOutput {
+			enc := json.NewEncoder(os.Stdout)
+			enc.SetIndent("", "  ")
+			if encErr := enc.Encode(status); encErr != nil {
+				fmt.Fprintf(os.Stderr, "error: encoding status: %v\n", encErr)
 				return 1
 			}
+			return 0
 		}
-		status, err = review.RDDDisable(worktreeDir, commonDir, scope)
+	case "enable":
+		// Enable does not use CAS; expectedRevision is ignored for global enable (clear).
+		if expectedRevision != "" && (scope == "clone" || scope == "worktree") {
+			// For clone/worktree enable, clearing with CAS is not required; treat as advisory.
+			// Still forward to the CAS-aware clear via RDDEnable which tolerates non-git dirs.
+		}
+		status, err = review.RDDEnable(worktreeDir, commonDir)
+	case "disable":
+		// Forward expectedRevision to the CAS-aware writer for clone/worktree.
+		switch scope {
+		case "worktree":
+			if worktreeDir == "" {
+				fmt.Fprintln(os.Stderr, "error: not in a git worktree — cannot use --scope=worktree")
+				return 1
+			}
+			if expectedRevision != "" {
+				_, werr := review.SetWorktreeRDDMode(worktreeDir, review.RDDModeDisabled, expectedRevision)
+				if werr != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", werr)
+					return 1
+				}
+				status, err = review.RDDStatus(worktreeDir, commonDir)
+			} else {
+				status, err = review.RDDDisable(worktreeDir, commonDir, scope)
+			}
+		case "clone":
+			if commonDir == "" {
+				fmt.Fprintln(os.Stderr, "error: not in a git repository — cannot use --scope=clone")
+				return 1
+			}
+			if expectedRevision != "" {
+				_, werr := review.SetCloneLocalRDDMode(worktreeDir, commonDir, review.RDDModeDisabled, expectedRevision)
+				if werr != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", werr)
+					return 1
+				}
+				status, err = review.RDDStatus(worktreeDir, commonDir)
+			} else {
+				status, err = review.RDDDisable(worktreeDir, commonDir, scope)
+			}
+		default: // global
+			if expectedRevision != "" {
+				fmt.Fprintln(os.Stderr, "error: --expected-revision is only supported for --scope=clone and --scope=worktree")
+				return 1
+			}
+			status, err = review.RDDDisable(worktreeDir, commonDir, scope)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown rdd command: %s\n", op)
 		return 1
 	}
 
 	if err != nil {
-		// Fail closed: an unreadable kill-switch record is NOT a disabled
-		// switch. The error names the exact file and the repair command.
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return 1
 	}
 
-	// Print status
-	fmt.Printf("RDD Status: %s\n", status.EffectiveMode)
-	fmt.Printf("  Global:   %s\n", status.GlobalMode)
-	if commonDir != "" {
-		fmt.Printf("  Clone:    %s\n", status.CloneMode)
-	}
-	if worktreeDir != "" && worktreeDir != commonDir {
-		fmt.Printf("  Worktree: %s\n", status.WorktreeMode)
-	}
-	fmt.Printf("  Source:   %s\n", status.Source)
-	if status.RecordedAt != nil {
-		fmt.Printf("  Since:    %s\n", status.RecordedAt.Format(time.RFC3339))
-	}
+	// Print status (text mode). JSON already returned.
+	if !jsonOutput || op != "status" {
+		fmt.Printf("RDD Status: %s\n", status.EffectiveMode)
+		fmt.Printf("  Global:   %s\n", status.GlobalMode)
+		if commonDir != "" {
+			fmt.Printf("  Clone:    %s\n", status.CloneMode)
+		}
+		if worktreeDir != "" && worktreeDir != commonDir {
+			fmt.Printf("  Worktree: %s\n", status.WorktreeMode)
+		}
+		fmt.Printf("  Source:   %s\n", status.Source)
+		if status.Revision != "" {
+			fmt.Printf("  Revision: %s\n", status.Revision)
+		}
+		if status.Reach != "" {
+			fmt.Printf("  Reach:    %s\n", status.Reach)
+		} else if op == "disable" && (scope == "clone" || scope == "worktree") {
+			// After a write, show Reach if available; otherwise status Reach is unreported.
+			fmt.Printf("  Reach:    %s\n", status.Reach)
+		}
+		if status.RecordedAt != nil {
+			fmt.Printf("  Since:    %s\n", status.RecordedAt.Format(time.RFC3339))
+		}
 
-	// Blast radius announcement (Alan's #1973 item 1)
-	if op == "disable" && status.WorktreeCount > 0 {
-		fmt.Printf("\n⚠️  Disabled RDD for scope %q — this reaches %d linked worktrees of this clone.\n",
-			scope, status.WorktreeCount)
-		fmt.Println("   Use --scope=worktree to disable for THIS worktree only.")
-	}
-	if op == "enable" && status.WorktreeCount > 0 {
-		fmt.Printf("\n⚠️  Enabled RDD globally — this re-enables RDD for all %d worktrees of this clone.\n",
-			status.WorktreeCount)
+		// Blast radius announcement (Alan's #1973 item 1)
+		if op == "disable" && status.WorktreeCount > 0 {
+			fmt.Printf("\n⚠️  Disabled RDD for scope %q — this reaches %d linked worktrees of this clone.\n",
+				scope, status.WorktreeCount)
+			fmt.Println("   Use --scope=worktree to disable for THIS worktree only.")
+		}
+		if op == "enable" && status.WorktreeCount > 0 {
+			fmt.Printf("\n⚠️  Enabled RDD globally — this re-enables RDD for all %d worktrees of this clone.\n",
+				status.WorktreeCount)
+		}
 	}
 
 	return 0
@@ -258,3 +317,5 @@ func _deprecated_updateStrictTDDInConfig(cfgPath string, enabled bool) {
 	}
 	os.WriteFile(cfgPath, out, 0644)
 }
+
+var _ = time.Now

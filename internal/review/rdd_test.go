@@ -152,8 +152,15 @@ func TestAuthorizeRDDOperation_StartBlockedWhenDisabled(t *testing.T) {
 	if rddErr.Source != "global" {
 		t.Errorf("expected Source=global, got %s", rddErr.Source)
 	}
-	if rddErr.Error() != "review start blocked by RDD. Enable with: biggz rdd enable" {
-		t.Errorf("unexpected error message: %s", rddErr.Error())
+	msg := rddErr.Error()
+	if !strings.Contains(msg, "biggz rdd enable --scope=global") {
+		t.Errorf("expected source-aware command, got %s", msg)
+	}
+	if strings.Contains(msg, "frozen, not discarded") {
+		t.Errorf("start must not contain frozen wording, got %s", msg)
+	}
+	if strings.Contains(msg, "then") {
+		t.Errorf("global source must not contain chained command, got %s", msg)
 	}
 }
 
@@ -175,8 +182,15 @@ func TestAuthorizeRDDOperation_MutateBlockedWhenDisabled(t *testing.T) {
 	if rddErr.Operation != RDDOperationMutate {
 		t.Errorf("expected Operation=Mutate, got %v", rddErr.Operation)
 	}
-	if rddErr.Error() != "review mutation blocked by RDD. Enable with: biggz rdd enable" {
-		t.Errorf("unexpected error message: %s", rddErr.Error())
+	msg := rddErr.Error()
+	if !strings.Contains(msg, "biggz rdd enable --scope=global") {
+		t.Errorf("expected source-aware command, got %s", msg)
+	}
+	if !strings.Contains(msg, "the review is frozen, not discarded") {
+		t.Errorf("mutate must contain frozen wording, got %s", msg)
+	}
+	if !strings.Contains(msg, "to continue it from where it stopped") {
+		t.Errorf("mutate must contain continuation wording, got %s", msg)
 	}
 }
 
