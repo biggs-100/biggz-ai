@@ -33,6 +33,12 @@
  *   tools not wrapped via execute path).
  *
  * Minimal but functional — mirrors biggz-thinking-wrap.js pattern.
+ *
+ * Parity truth: internal/sdd/synthesis_gate.go:ShouldBlock is canonical.
+ * JS MUST mirror Go: only currentTurnMarkdown ≤120s with HasSynthesis satisfies blocking;
+ * history (ctx.history / lastAssistantMarkdown) is advise-only (BIGGZ_ADVISE=1 thin concern)
+ * and MUST NEVER satisfy block. Drift risk in internal/assets/biggz/biggz-orchestrator.md
+ * noted (duplicated checkpoint block) — no edit this change.
  */
 
 /** @type {import("@earendil-works/pi-coding-agent").ExtensionAPI} */
@@ -637,28 +643,16 @@ export default function biggzSynthesisGate(pi) {
 	}
 
 	function checkSynthesisPrecondition(ctx) {
-		// Prefer STRICT same-turn: currentTurnMarkdown satisfies immediately.
-		// Fallback: if not in current turn, allow with warning when synthesis exists in history within 120s.
+		// STRICT: only currentTurnMarkdown ≤120s with HasSynthesis satisfies. Mirrors Go truth
+		// internal/sdd/synthesis_gate.go:ShouldBlock = !child && !recall && checkpoint && ≤120s && !HasSynthesis(currentTurn)
+		// History (ctx.history / lastAssistantMarkdown) MUST NOT satisfy blocking; it is only for
+		// BIGGZ_ADVISE=1 thin concern via getCurrentTurnSynthesis fallback, never for block.
 		const now = Date.now();
-		if (currentTurnMarkdown) {
-			const has = hasSynthesis(currentTurnMarkdown) || hasSynthesisLoose(currentTurnMarkdown) || (currentTurnMarkdown.includes("Sub-agent Result") && currentTurnMarkdown.includes("Artifacts/Paths"));
-			if (has) {
-				if (now - currentTurnUpdateTime < 120000) return true;
-				return true;
-			}
-		}
-		const fallback = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
-		if (fallback) {
-			const hasFb = hasSynthesis(fallback) || hasSynthesisLoose(fallback) || (fallback.includes("Sub-agent Result") && fallback.includes("Artifacts/Paths"));
-			if (hasFb) {
-				const isRecent = (now - lastUpdateTime < 120000) || (now - currentTurnUpdateTime < 120000) || !!getCtxHistory(ctx);
-				if (isRecent) {
-					emitHistoryFallbackWarning(ctx);
-					return true;
-				}
-			}
-		}
-		return false;
+		if (!currentTurnMarkdown) return false;
+		const has = hasSynthesis(currentTurnMarkdown) || hasSynthesisLoose(currentTurnMarkdown) || (currentTurnMarkdown.includes("Sub-agent Result") && currentTurnMarkdown.includes("Artifacts/Paths"));
+		if (!has) return false;
+		if (now - currentTurnUpdateTime > 120000) return false;
+		return true;
 	}
 
 	// Expose helpers for testing (no network, fixture-only)
@@ -776,28 +770,12 @@ export default function biggzSynthesisGate(pi) {
 			}
 			const has = checkSynthesisPrecondition(ctx);
 			if (!has) {
-				// Session Recall exception: if currentTurn contains ## Session Recall, allow the
-				// subsequent preflight ask without requiring ## Sub-agent Result (recall is not
-				// a delegation result, but a mandatory boot gate before preflight). This exception
-				// is narrow: only same-turn Session Recall satisfies it, not mere history.
 				if (checkSessionRecallInCurrentTurn()) {
-					// Session Recall present in same turn — allow (recall -> preflight transition)
+					// allow: recall -> preflight (same-turn Session Recall)
 				} else {
-				// Preflight allowance: if no synthesis has EVER existed in this session,
-				// it's not a post-delegation violation — allow first asks (e.g. SDD Session Preflight)
-				// without requiring prior synthesis. After at least one synthesis exists,
-				// strict same-turn is enforced.
-				const anySynthesis = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
-				if (!anySynthesis) {
-					// No synthesis anywhere in session history — likely preflight/first ask — allow
-				} else {
-					// History fallback with warning: synthesis in history within 120s — allow with concern instead of blocking
-					const fallback = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
-					const hasFb = fallback && (hasSynthesis(fallback) || hasSynthesisLoose(fallback) || (fallback.includes("Sub-agent Result") && fallback.includes("Artifacts/Paths")));
-					const now2 = Date.now();
-					const isRecent = hasFb && ((now2 - lastUpdateTime < 120000) || (now2 - currentTurnUpdateTime < 120000) || !!getCtxHistory(ctx));
-					if (hasFb && isRecent) {
-						emitHistoryFallbackWarning(ctx);
+					const anySynthesis = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
+					if (!anySynthesis) {
+						// Preflight allowance — no synthesis ever in session, allow first asks
 					} else {
 						const reason =
 							"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
@@ -808,13 +786,14 @@ export default function biggzSynthesisGate(pi) {
 						try {
 							pi.notify?.(reason, "error");
 						} catch {}
-						// Return error payload rather than throw to show in TUI as tool result error
+						try {
+							pi.ui?.notify?.(reason, "error");
+						} catch {}
 						return {
 							content: [{ type: "text", text: reason }],
 							isError: true,
 						};
 					}
-				}
 				}
 			}
 			// Has synthesis or preflight allowance — check advise thin path (non-blocking concern)
@@ -993,21 +972,12 @@ export default function biggzSynthesisGate(pi) {
 					}
 					const has = checkSynthesisPrecondition(ctx);
 					if (!has) {
-						// Session Recall same-turn exception (narrow)
 						if (checkSessionRecallInCurrentTurn()) {
 							// allow: recall -> preflight
 						} else {
-						const anySynthesis = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
-						if (!anySynthesis) {
-							// Preflight allowance — no synthesis ever in session, allow first asks
-						} else {
-							// History fallback with warning: synthesis in history within 120s — allow with concern instead of blocking
-							const fallback = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
-							const hasFb = fallback && (hasSynthesis(fallback) || hasSynthesisLoose(fallback) || (fallback.includes("Sub-agent Result") && fallback.includes("Artifacts/Paths")));
-							const now2 = Date.now();
-							const isRecent = hasFb && ((now2 - lastUpdateTime < 120000) || (now2 - currentTurnUpdateTime < 120000) || !!getCtxHistory(ctx));
-							if (hasFb && isRecent) {
-								emitHistoryFallbackWarning(ctx);
+							const anySynthesis = getCurrentTurnSynthesis(ctx) || getSynthesisSource(ctx);
+							if (!anySynthesis) {
+								// Preflight allowance — no synthesis ever in session, allow first asks
 							} else {
 								const reason =
 									"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
@@ -1018,11 +988,12 @@ export default function biggzSynthesisGate(pi) {
 								try {
 									pi.notify?.(reason, "error");
 								} catch {}
-								// Pi's tool_call handler blocks via return {block:true}
+								try {
+									pi.ui?.notify?.(reason, "error");
+								} catch {}
 								return { block: true, reason };
 							}
 						}
-					}
 					}
 					// Has synthesis or preflight allowance — check thin + advise for concern (non-blocking)
 					try {

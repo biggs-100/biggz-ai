@@ -6,10 +6,10 @@ import { pathToFileURL } from 'node:url';
 const gatePath = path.resolve('internal/assets/pi/biggz-synthesis-gate.js');
 const gateUrl = pathToFileURL(gatePath).href;
 
-// helper to create fresh mockPi with tracking
+// helper to create fresh mockPi with tracking — supports multiple tool_call handlers (gate + safety)
 function createMockPi() {
   const tools = new Map();
-  let toolCallHandler = null;
+  const toolCallHandlers = [];
   const notifyCalls = [];
   const onHandlers = {};
   const mock = {
@@ -18,8 +18,9 @@ function createMockPi() {
     },
     registerCommand: () => {},
     on: (ev, handler) => {
+      // keep last for onHandlers for message_end etc, but accumulate tool_call handlers
       onHandlers[ev] = handler;
-      if (ev === 'tool_call') toolCallHandler = handler;
+      if (ev === 'tool_call') toolCallHandlers.push(handler);
     },
     notify: (msg, level) => {
       notifyCalls.push({ msg, level });
@@ -29,7 +30,15 @@ function createMockPi() {
     _tools: tools,
     _notifyCalls: notifyCalls,
     _onHandlers: onHandlers,
-    _getToolCallHandler: () => toolCallHandler,
+    _getToolCallHandler: () => async (event, ctx) => {
+      // emulate Pi calling handlers sequentially; return first block result if any
+      for (const h of toolCallHandlers) {
+        const r = await h(event, ctx);
+        if (r && (r.block === true || r.isError === true)) return r;
+      }
+      return undefined;
+    },
+    _toolCallHandlers: toolCallHandlers,
   };
   return mock;
 }
@@ -137,15 +146,16 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
       });
       const wrapped = mock._tools.get('ask_user_question');
       assert.ok(wrapped, 'wrapped tool exists');
-      // ensure post-delegation state: a prior synthesis exists in history so missing currentTurn should block for checkpoint asks
+      // strict: prior synthesis in history must NOT satisfy blocking; only currentTurn counts
       mock._biggzSynthesisGate._test.clearLast();
+      mock._biggzSynthesisGate._test.clearCurrent();
       mock._biggzSynthesisGate._test.setLast(richMarkdown);
       const ctx = makeCtx(missingMarkdown, ctxNotify);
       const result = await wrapped.execute('id1', checkpointParams, null, null, ctx);
-      assert.ok(result.isError !== true, `should allow with history fallback when missing current but prior synthesis exists (advise=${advise})`);
-      assert.equal(originalCalled, true, 'original should be called when history fallback allows');
-      const hasFallbackWarning = ctxNotify.some((n) => String(n.msg).includes('synthesis from previous turn')) || mock._notifyCalls.some((n) => String(n.msg).includes('synthesis from previous turn'));
-      assert.ok(hasFallbackWarning, 'should notify history fallback warning');
+      assert.equal(result.isError, true, `should block when only history has synthesis (advise=${advise})`);
+      assert.equal(originalCalled, false, 'original must NOT be called when blocked');
+      const hasBlockNotify = ctxNotify.some((n) => String(n.msg).includes('Please synthesize before asking')) || mock._notifyCalls.some((n) => String(n.msg).includes('Please synthesize before asking'));
+      assert.ok(hasBlockNotify, 'should notify Please synthesize before asking');
       // cleanup for next loop
       mock._biggzSynthesisGate._test.clearLast();
     }
@@ -449,14 +459,13 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
     // Now clear current again to simulate no synthesis in THIS turn (bash intermediates vaciaron buffer)
     mock._biggzSynthesisGate._test.clearCurrent();
-    const ctx = makeCtx(richMarkdown, ctxNotify); // ctx.history has rich synthesis from previous turn
-    // Relaxed: history fallback within 120s should allow with warning instead of blocking
-    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx), true, 'relaxed check must be true when history/last has synthesis within 120s');
+    const ctx = makeCtx(richMarkdown, ctxNotify); // ctx.history has rich synthesis from previous turn but currentTurn empty -> strict block
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx), false, 'strict check must be false when only history has synthesis, currentTurn empty');
     const result = await wrapped.execute('id-regression', checkpointParams, null, null, ctx);
-    assert.equal(result.isError, undefined, 'must allow with history fallback when only history has synthesis, currentTurn empty');
-    const hasFallback2 = ctxNotify.some((n) => String(n.msg).includes('synthesis from previous turn')) || mock._notifyCalls.some((n) => String(n.msg).includes('synthesis from previous turn'));
-    assert.ok(hasFallback2, 'should emit history fallback warning');
-    assert.equal(originalCalled, true, 'original must be called on history fallback allow');
+    assert.equal(result.isError, true, 'must block when only history has synthesis, currentTurn empty');
+    const hasBlock2 = ctxNotify.some((n) => String(n.msg).includes('Please synthesize before asking')) || mock._notifyCalls.some((n) => String(n.msg).includes('Please synthesize before asking'));
+    assert.ok(hasBlock2, 'should notify Please synthesize before asking');
+    assert.equal(originalCalled, false, 'original must NOT be called when blocked');
     // history is still available for advise path (non-blocking) — getCurrentTurnSynthesis should return history
     const adviseSource = mock._biggzSynthesisGate.getCurrentTurnSynthesis(ctx);
     assert.ok(adviseSource.includes('Sub-agent Result'), 'advise fallback may still see history');
@@ -493,12 +502,15 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     assert.equal(r1.isError, undefined, 'first call with currentTurn should pass');
     // currentTurn should now be empty after reset
     assert.equal(mock._biggzSynthesisGate._test.getCurrent(), '', 'currentTurn reset after success');
-    // second call without new synthesis, even though history still has old richMarkdown, now allows via history fallback (relaxed)
-    const ctx2 = makeCtx(richMarkdown, []);
+    // second call without new synthesis, even though history still has old richMarkdown, strict must block (no history fallback for block)
+    const ctx2Notify = [];
+    const ctx2 = makeCtx(richMarkdown, ctx2Notify);
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
-    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx2), true, 'second call with history fallback should allow when history/last present within 120s');
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx2), false, 'second call with only history must block (strict, no fallback)');
     const r2 = await wrapped.execute('id2', checkpointParams, null, null, ctx2);
-    assert.equal(r2.isError, undefined, 'second call must allow with history fallback (relaxed)');
+    assert.equal(r2.isError, true, 'second call must block when only history has synthesis');
+    const hasBlock3 = ctx2Notify.some((n) => String(n.msg).includes('Please synthesize before asking')) || mock._notifyCalls.some((n) => String(n.msg).includes('Please synthesize before asking'));
+    assert.ok(hasBlock3, 'should notify Please synthesize before asking on second call');
   });
 
   it('load-order race: tool already registered before gate loads must still be blocked when missing synthesis — checkpoint only', async () => {
@@ -526,13 +538,12 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
     const ctxNotify = [];
     const ctxMissing = makeCtx(missingMarkdown, ctxNotify);
-    // Relaxed: history fallback allows even for pre-registered tools when prior synthesis exists within 120s
-    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctxMissing), true);
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctxMissing), false, 'strict check must be false when only history has synthesis');
     const resultMissing = await wrapped.execute('id-pre', checkpointParams, null, null, ctxMissing);
-    assert.equal(resultMissing.isError, undefined, 'pre-registered tool must allow with history fallback when missing current but prior synthesis exists');
-    const hasFallback4 = ctxNotify.some((n) => String(n.msg).includes('synthesis from previous turn')) || mock._notifyCalls.some((n) => String(n.msg).includes('synthesis from previous turn'));
-    assert.ok(hasFallback4, 'should emit history fallback warning');
-    assert.equal(originalCalled, true, 'original must be called for pre-registered history fallback allow');
+    assert.equal(resultMissing.isError, true, 'pre-registered tool must block when only history has synthesis');
+    const hasBlock4 = ctxNotify.some((n) => String(n.msg).includes('Please synthesize before asking')) || mock._notifyCalls.some((n) => String(n.msg).includes('Please synthesize before asking'));
+    assert.ok(hasBlock4, 'should notify Please synthesize before asking');
+    assert.equal(originalCalled, false, 'original must NOT be called when blocked');
     // With currentTurn synthesis, pre-registered tool must allow (checkpoint with synthesis)
     mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
     const ctxRich = makeCtx('', []);
@@ -555,11 +566,11 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
     const ctxNotify = [];
     const ctx = makeCtx(missingMarkdown, ctxNotify);
-    // Relaxed: tool_call with missing synthesis but prior history should allow with warning (not block)
     const ret = await handler({ toolName: 'ask_user_question', params: checkpointParams }, ctx);
-    assert.equal(ret, undefined, `tool_call handler must allow with history fallback, got ${JSON.stringify(ret)}`);
-    const hasFallback5 = ctxNotify.some((n) => String(n.msg).includes('synthesis from previous turn')) || mock._notifyCalls.some((n) => String(n.msg).includes('synthesis from previous turn'));
-    assert.ok(hasFallback5 || mock._notifyCalls.some((n) => String(n.msg).includes('synthesis from previous turn')), 'should emit history fallback warning');
+    assert.ok(ret && ret.block === true, `tool_call handler must block when only history has synthesis, got ${JSON.stringify(ret)}`);
+    assert.ok(String(ret.reason).includes('Please synthesize before asking'), 'block reason must contain Please synthesize before asking');
+    const hasBlock5 = ctxNotify.some((n) => String(n.msg).includes('Please synthesize before asking')) || mock._notifyCalls.some((n) => String(n.msg).includes('Please synthesize before asking'));
+    assert.ok(hasBlock5, 'should notify Please synthesize before asking');
     // With currentTurn synthesis, handler must NOT block (allow checkpoint)
     mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
     const ctx2Notify = [];
@@ -718,11 +729,12 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
       execute: async () => { originalCalled = true; return { content: [{ type: 'text', text: 'ok' }] }; },
     });
     const wrapped = mock._tools.get('ask_user_question');
-    // Simulate post-delegation: prior synthesis exists, current empty — relaxed allows with warning for checkpoint
+    // Simulate post-delegation: prior synthesis exists, current empty — strict must block for checkpoint, general bypass remains
     mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
     const ctx = makeCtx(missingMarkdown, []);
-    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx), true, 'relaxed: history fallback should allow');
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx), false, 'strict check must be false when only history has synthesis (general bypass separate)');
     // general should pass
     const resultGeneral = await wrapped.execute('id-general', generalParams, null, null, ctx);
     assert.equal(resultGeneral.isError, undefined, 'general must not block even without current synthesis');
@@ -735,15 +747,19 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     const resultEmpty = await wrapped.execute('id-empty', {}, null, null, ctxEmpty);
     assert.equal(resultEmpty.isError, undefined, 'empty params must not block');
     assert.equal(originalCalled, true);
-    // checkpoint now allows via history fallback (relaxed) instead of blocking
+    // checkpoint must block when only history has synthesis (strict, no fallback)
     originalCalled = false;
     mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
     const checkpointParams = { questions: [{ question: 'Next?', options: [{ label: 'proceed' }, { label: 'adjust' }, { label: 'stop' }] }] };
-    const ctxCp = makeCtx(missingMarkdown, []);
+    const ctxCpNotify = [];
+    const ctxCp = makeCtx(missingMarkdown, ctxCpNotify);
     const resultCheckpoint = await wrapped.execute('id-cp', checkpointParams, null, null, ctxCp);
-    assert.equal(resultCheckpoint.isError, undefined, 'checkpoint must allow with history fallback when missing current but history exists');
-    assert.equal(originalCalled, true);
+    assert.equal(resultCheckpoint.isError, true, 'checkpoint must block when only history has synthesis');
+    assert.equal(originalCalled, false, 'original must NOT be called when blocked');
+    const hasBlockCp = ctxCpNotify.some((n) => String(n.msg).includes('Please synthesize before asking')) || mock._notifyCalls.some((n) => String(n.msg).includes('Please synthesize before asking'));
+    assert.ok(hasBlockCp, 'should notify Please synthesize before asking for checkpoint');
     // tool_call guard: general must not block
     const handler = mock._getToolCallHandler();
     mock._biggzSynthesisGate._test.clearCurrent();
@@ -751,11 +767,16 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     const ctxGeneral2 = makeCtx(missingMarkdown, []);
     const retGeneral = await handler({ toolName: 'ask_user_question', params: generalParams }, ctxGeneral2);
     assert.equal(retGeneral, undefined, 'tool_call general must not block');
-    const ctxCp2 = makeCtx(missingMarkdown, []);
+    const ctxCp2Notify = [];
+    const ctxCp2 = makeCtx(missingMarkdown, ctxCp2Notify);
     mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
     const retCheckpoint = await handler({ toolName: 'ask_user_question', params: checkpointParams }, ctxCp2);
-    assert.equal(retCheckpoint, undefined, 'tool_call checkpoint must allow with history fallback (relaxed)');
+    assert.ok(retCheckpoint && retCheckpoint.block === true, 'tool_call checkpoint must block when only history has synthesis');
+    assert.ok(String(retCheckpoint.reason).includes('Please synthesize before asking'));
+    const hasBlockCp2 = ctxCp2Notify.some((n) => String(n.msg).includes('Please synthesize before asking')) || mock._notifyCalls.some((n) => String(n.msg).includes('Please synthesize before asking'));
+    assert.ok(hasBlockCp2);
   });
   it('envelope validation � PR2 limits and fallback', async () => {
     const mock = createMockPi(); gateFn(mock); const h = mock._biggzSynthesisGate;
@@ -797,7 +818,7 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     delete process.env.BIGGZ_ADVISE;
   });
 
-  it('history fallback — checkpoint with synthesis in history but not currentTurn should allow with concern (not block)', async () => {
+  it('history fallback — checkpoint with synthesis in history but not currentTurn must block (strict, no history fallback)', async () => {
     delete process.env.BIGGZ_ADVISE;
     const mock = createMockPi();
     gateFn(mock);
@@ -814,28 +835,29 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
       },
     });
     const wrapped = mock._tools.get('ask_user_question');
-    // Simulate turn_start cleared currentTurn but history still has synthesis within 120s
+    // Simulate turn_start cleared currentTurn but history still has synthesis within 120s -> strict must block
     mock._biggzSynthesisGate._test.clearCurrent();
     mock._biggzSynthesisGate._test.clearLast();
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
     const ctx = makeCtx(richMarkdown, ctxNotify);
-    // No currentTurn synthesis, but history has it — relaxed should allow
-    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx), true, 'history fallback should return true');
+    assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(ctx), false, 'strict check must be false when only history has synthesis');
     const result = await wrapped.execute('id-history-fallback', checkpointParams, null, null, ctx);
-    assert.equal(result.isError, undefined, 'checkpoint must allow with history fallback (not block)');
-    assert.equal(originalCalled, true, 'original should be called on history fallback');
-    const hasWarning = ctxNotify.some((n) => String(n.msg).includes('synthesis from previous turn')) || mock._notifyCalls.some((n) => String(n.msg).includes('synthesis from previous turn'));
-    assert.ok(hasWarning, 'should emit history fallback warning via notify');
-    // Also verify tool_call secondary guard allows with same fallback
+    assert.equal(result.isError, true, 'checkpoint must block when only history has synthesis');
+    assert.equal(originalCalled, false, 'original must NOT be called when blocked');
+    const hasBlock = ctxNotify.some((n) => String(n.msg).includes('Please synthesize before asking')) || mock._notifyCalls.some((n) => String(n.msg).includes('Please synthesize before asking'));
+    assert.ok(hasBlock, 'should notify Please synthesize before asking');
+    // Also verify tool_call secondary guard blocks
     mock._biggzSynthesisGate._test.clearCurrent();
+    mock._biggzSynthesisGate._test.clearLast();
     mock._biggzSynthesisGate._test.setLast(richMarkdown);
     const ctx2Notify = [];
     const ctx2 = makeCtx(richMarkdown, ctx2Notify);
     const handler = mock._getToolCallHandler();
     const ret = await handler({ toolName: 'ask_user_question', params: checkpointParams }, ctx2);
-    assert.equal(ret, undefined, 'tool_call should allow with history fallback');
-    const hasWarning2 = ctx2Notify.some((n) => String(n.msg).includes('synthesis from previous turn')) || mock._notifyCalls.some((n) => String(n.msg).includes('synthesis from previous turn'));
-    assert.ok(hasWarning2, 'tool_call should emit history fallback warning');
+    assert.ok(ret && ret.block === true, 'tool_call should block when only history has synthesis');
+    assert.ok(String(ret.reason).includes('Please synthesize before asking'));
+    const hasBlock2 = ctx2Notify.some((n) => String(n.msg).includes('Please synthesize before asking')) || mock._notifyCalls.some((n) => String(n.msg).includes('Please synthesize before asking'));
+    assert.ok(hasBlock2, 'tool_call should notify Please synthesize before asking');
     // Preflight case: no synthesis anywhere still allows
     mock._biggzSynthesisGate._test.clearCurrent();
     mock._biggzSynthesisGate._test.clearLast();
@@ -845,6 +867,39 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     mock._biggzSynthesisGate._test.clearLast();
     const resultPreflight = await wrapped.execute('id-preflight-history', checkpointParams, null, null, ctxPreflight);
     assert.equal(resultPreflight.isError, undefined, 'preflight with no prior synthesis should still allow');
+  });
+
+  it('expired window — currentTurn older than 120s must block (strict window)', async () => {
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi();
+    gateFn(mock);
+    const checkpointParams = { questions: [{ question: 'Next?', header: 'Checkpoint', options: [{ label: 'proceed' }, { label: 'adjust' }, { label: 'stop' }] }] };
+    let originalCalled = false;
+    mock.registerTool({
+      name: 'ask_user_question',
+      description: 'test',
+      parameters: { type: 'object', properties: {} },
+      execute: async () => { originalCalled = true; return { content: [{ type: 'text', text: 'ok' }] }; },
+    });
+    const wrapped = mock._tools.get('ask_user_question');
+    mock._biggzSynthesisGate._test.clearLast();
+    mock._biggzSynthesisGate._test.setCurrent(richMarkdown);
+    const originalNow = Date.now;
+    try {
+      const future = originalNow() + 121000;
+      Date.now = () => future;
+      assert.equal(mock._biggzSynthesisGate.checkSynthesisPrecondition(makeCtx('', [])), false, 'expired 121s must be false');
+      const ctxNotify = [];
+      const ctx = makeCtx('', ctxNotify);
+      const result = await wrapped.execute('id-expired', checkpointParams, null, null, ctx);
+      assert.equal(result.isError, true, 'expired window must block');
+      assert.equal(originalCalled, false);
+      const hasBlock = ctxNotify.some((n) => String(n.msg).includes('Please synthesize before asking')) || mock._notifyCalls.some((n) => String(n.msg).includes('Please synthesize before asking'));
+      assert.ok(hasBlock);
+    } finally {
+      Date.now = originalNow;
+    }
+    mock._biggzSynthesisGate._test.clearCurrent();
   });
 
 });
