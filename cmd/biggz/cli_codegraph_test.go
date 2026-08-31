@@ -184,6 +184,249 @@ func TestCodeGraph_MissingBinaryReportsHelpfully(t *testing.T) {
 	}
 }
 
+func TestCodeGraph_HelpDocumentsReport(t *testing.T) {
+	savedArgs := os.Args
+	defer func() { os.Args = savedArgs }()
+	// Capture stderr
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	os.Args = []string{"biggz", "codegraph", "--help"}
+	code := codegraphRun()
+	w.Close()
+	os.Stderr = oldStderr
+	if code != 0 {
+		t.Fatalf("expected 0 for --help, got %d", code)
+	}
+	buf := make([]byte, 8192)
+	n, _ := r.Read(buf)
+	out := string(buf[:n])
+	if !strings.Contains(out, "report") {
+		t.Errorf("expected help to contain 'report', got %q", out)
+	}
+	if !strings.Contains(out, "--cwd") || !strings.Contains(out, "--json") || !strings.Contains(out, "--md") {
+		t.Errorf("expected help to document --cwd/--json/--md, got %q", out)
+	}
+	// Also check report --help
+	r2, w2, _ := os.Pipe()
+	os.Stderr = w2
+	os.Args = []string{"biggz", "codegraph", "report", "--help"}
+	code = codegraphRun()
+	w2.Close()
+	os.Stderr = oldStderr
+	if code != 0 {
+		t.Fatalf("expected 0 for report --help, got %d", code)
+	}
+	n2, _ := r2.Read(buf)
+	out2 := string(buf[:n2])
+	if !strings.Contains(out2, "report <change>") {
+		t.Errorf("expected report help to contain 'report <change>', got %q", out2)
+	}
+}
+
+func TestCodeGraph_ReportMissingChangeFails(t *testing.T) {
+	savedArgs := os.Args
+	defer func() { os.Args = savedArgs }()
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	os.Args = []string{"biggz", "codegraph", "report"}
+	code := codegraphRun()
+	w.Close()
+	os.Stderr = oldStderr
+	if code == 0 {
+		t.Fatalf("expected non-zero for missing <change>")
+	}
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	out := string(buf[:n])
+	if !strings.Contains(out, "usage") && !strings.Contains(out, "<change>") {
+		t.Errorf("expected usage for missing change, got %q", out)
+	}
+}
+
+func TestCodeGraph_ReportMissingProposalFails(t *testing.T) {
+	dir := t.TempDir()
+	savedArgs := os.Args
+	defer func() { os.Args = savedArgs }()
+	oldStderr := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	os.Args = []string{"biggz", "codegraph", "report", "my-change", "--cwd", dir}
+	code := codegraphRun()
+	w.Close()
+	os.Stderr = oldStderr
+	if code == 0 {
+		t.Fatalf("expected non-zero for missing proposal")
+	}
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	out := string(buf[:n])
+	if !strings.Contains(out, "proposal required") {
+		t.Errorf("expected 'proposal required', got %q", out)
+	}
+}
+
+func TestCodeGraph_ReportCustomPaths(t *testing.T) {
+	dir := t.TempDir()
+	change := "custom-change"
+	changeDir := filepath.Join(dir, "openspec", "changes", change)
+	if err := os.MkdirAll(changeDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(changeDir, "proposal.md"), []byte("Need PaymentService for custom"), 0644); err != nil {
+		t.Fatalf("proposal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "svc.go"), []byte("package main\nfunc PaymentService(){}\n"), 0644); err != nil {
+		t.Fatalf("svc.go: %v", err)
+	}
+	jsonPath := filepath.Join(dir, "tmp", "nested", "cg.json")
+	mdPath := filepath.Join(dir, "tmp", "nested", "cg.md")
+	savedArgs := os.Args
+	defer func() { os.Args = savedArgs }()
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	rErr, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+	os.Args = []string{"biggz", "codegraph", "report", change, "--cwd", dir, "--json", jsonPath, "--md", mdPath}
+	code := codegraphRun()
+	wOut.Close()
+	wErr.Close()
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	if code != 0 {
+		buf := make([]byte, 4096)
+		n, _ := rErr.Read(buf)
+		t.Fatalf("expected 0, got %d, stderr: %s", code, string(buf[:n]))
+	}
+	// Check custom paths exact
+	if _, err := os.Stat(jsonPath); err != nil {
+		t.Fatalf("json not at custom path: %v", err)
+	}
+	if _, err := os.Stat(mdPath); err != nil {
+		t.Fatalf("md not at custom path: %v", err)
+	}
+	// Parents must be created (MkdirAll) - already verified via Stat
+	// Check stdout contains JSON
+	buf := make([]byte, 8192)
+	n, _ := rOut.Read(buf)
+	out := string(buf[:n])
+	if !strings.Contains(out, "files") || !strings.Contains(out, "graph") {
+		t.Errorf("expected JSON stdout with files+graph, got %q", out)
+	}
+}
+
+func TestCodeGraph_ReportDefaults(t *testing.T) {
+	dir := t.TempDir()
+	change := "default-change"
+	changeDir := filepath.Join(dir, "openspec", "changes", change)
+	if err := os.MkdirAll(changeDir, 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(changeDir, "proposal.md"), []byte("Need PaymentService default"), 0644); err != nil {
+		t.Fatalf("proposal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "app.go"), []byte("package main\nfunc PaymentService(){}\n"), 0644); err != nil {
+		t.Fatalf("app.go: %v", err)
+	}
+	savedArgs := os.Args
+	defer func() { os.Args = savedArgs }()
+	oldStdout := os.Stdout
+	oldStderr := os.Stderr
+	rOut, wOut, _ := os.Pipe()
+	_, wErr, _ := os.Pipe()
+	os.Stdout = wOut
+	os.Stderr = wErr
+	os.Args = []string{"biggz", "codegraph", "report", change, "--cwd", dir}
+	code := codegraphRun()
+	wOut.Close()
+	wErr.Close()
+	os.Stdout = oldStdout
+	os.Stderr = oldStderr
+	if code != 0 {
+		t.Fatalf("expected 0 for default paths, got %d", code)
+	}
+	jsonPath := filepath.Join(changeDir, "codegraph.json")
+	mdPath := filepath.Join(changeDir, "codegraph.md")
+	if _, err := os.Stat(jsonPath); err != nil {
+		t.Fatalf("default json not created at %s: %v", jsonPath, err)
+	}
+	if _, err := os.Stat(mdPath); err != nil {
+		t.Fatalf("default md not created at %s: %v", mdPath, err)
+	}
+	buf := make([]byte, 8192)
+	n, _ := rOut.Read(buf)
+	if !strings.Contains(string(buf[:n]), "files") {
+		t.Errorf("expected stdout JSON, got %q", string(buf[:n]))
+	}
+}
+
+func TestCodeGraph_ReportPreservesInitAndGuidance(t *testing.T) {
+	// Ensure init validation still works and guidance still works after report addition
+	savedArgs := os.Args
+	defer func() { os.Args = savedArgs }()
+	// guidance
+	oldStdout := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	os.Args = []string{"biggz", "codegraph", "guidance"}
+	code := codegraphRun()
+	w.Close()
+	os.Stdout = oldStdout
+	if code != 0 {
+		t.Fatalf("guidance should still return 0, got %d", code)
+	}
+	buf := make([]byte, 4096)
+	n, _ := r.Read(buf)
+	if !strings.Contains(string(buf[:n]), "CodeGraph") {
+		t.Errorf("guidance missing CodeGraph")
+	}
+	// init with invalid cwd should still fail with usage, not routed to report
+	oldStderr := os.Stderr
+	r2, w2, _ := os.Pipe()
+	os.Stderr = w2
+	os.Args = []string{"biggz", "codegraph", "init", "--cwd", "/nonexistent"}
+	code = codegraphRun()
+	w2.Close()
+	os.Stderr = oldStderr
+	if code == 0 {
+		t.Errorf("init with bad cwd should still fail")
+	}
+	buf2 := make([]byte, 4096)
+	n2, _ := r2.Read(buf2)
+	_ = n2
+	_ = buf2
+}
+
+func TestResolveReportRoot(t *testing.T) {
+	dir := t.TempDir()
+	root, err := resolveReportRoot(dir)
+	if err != nil {
+		t.Fatalf("resolveReportRoot: %v", err)
+	}
+	abs, _ := filepath.Abs(dir)
+	canon, _ := filepath.EvalSymlinks(abs)
+	canon, _ = filepath.Abs(canon)
+	if root != canon {
+		t.Errorf("expected %q, got %q", canon, root)
+	}
+	// traversal via .. should still resolve to parent but not error (Abs handles)
+	parent := filepath.Dir(dir)
+	child := filepath.Join(dir, "..")
+	root2, err := resolveReportRoot(child)
+	if err != nil {
+		t.Fatalf("resolveReportRoot with traversal: %v", err)
+	}
+	parentAbs, _ := filepath.Abs(parent)
+	parentCanon, _ := filepath.EvalSymlinks(parentAbs)
+	parentCanon, _ = filepath.Abs(parentCanon)
+	if root2 != parentCanon {
+		t.Errorf("expected traversal to resolve to parent %q, got %q", parentCanon, root2)
+	}
+}
+
 // Helper to run git in tests (reuses the helper from main_test.go if available)
 func init() {
 	// Ensure exec is available for git
