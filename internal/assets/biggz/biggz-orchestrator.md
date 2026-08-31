@@ -249,6 +249,15 @@ Steps (execute in order, all are mandatory):
 4. Inject summary into context: synthesize top observations/sessions for the current project into a short recap (who did what, last decisions, open tasks)
 5. Fallback: if BigMem returns empty (no observations/sessions) or is unavailable, run `biggz sdd-status --json --instructions` to get filesystem status and note fallback in recall block
 
+```
+BigMem CLI syntax (strict):
+- search: `biggz bigmem search "<query>" [--project P] [--limit N]`
+- get: `biggz bigmem get <id>`  # positional only, NO --id/--topic flags
+- to resolve a topic_key like `sdd/{change}/tasks`, use search with "/" prefix: `biggz bigmem search "sdd/{change}/tasks"` then get by returned ID
+```
+
+Fallback rule: `Fallback Used: no` when ANY of the 3 BigMem calls returned data, even if a subsequent optional `get` failed due to malformed syntax (e.g. `sql: no rows` from `get --topic`/`--id` misuse); fallback is `yes` ONLY when all 3 BigMem calls returned empty/unavailable.
+
 Required markdown (copy-paste, emit immediately after the three tool calls, before any preflight question):
 ```markdown
 ## Session Recall

@@ -211,7 +211,29 @@ func bigmemRun() int {
 			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem get <id>")
 			return 1
 		}
-		obs, err := store.Get(args[1])
+		id := args[1]
+		if strings.HasPrefix(id, "-") {
+			if id == "--help" || id == "-h" {
+				fmt.Fprintln(os.Stderr, "Usage: biggz bigmem get <id>")
+				return 1
+			}
+			if id == "--id" {
+				if len(args) >= 3 {
+					fmt.Fprintln(os.Stderr, "warning: use `biggz bigmem get <id>` without --id")
+					id = args[2]
+				} else {
+					fmt.Fprintln(os.Stderr, "error: missing value for --id. Usage: biggz bigmem get <id>")
+					return 1
+				}
+			} else if id == "--topic" || id == "--topic-key" {
+				fmt.Fprintln(os.Stderr, "error: get takes an observation ID, not a topic_key. Use `biggz bigmem search \"<topic_key>\"` to find the ID, then `biggz bigmem get <id>`")
+				return 1
+			} else {
+				fmt.Fprintf(os.Stderr, "error: unknown flag %q for get. Usage: biggz bigmem get <id>\n", id)
+				return 1
+			}
+		}
+		obs, err := store.Get(id)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: get: %v\n", err)
 			return 1
