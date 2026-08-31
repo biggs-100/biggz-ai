@@ -339,7 +339,7 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 	cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: allowedEditRoots}
 	cs.Relationships = Relationships{}
 	cs.RemediationState = remediationState
-	cs.ReviewOffer = nil
+	cs.ReviewOffer = deriveReviewOffer(name, workspaceRoot, applyState, artifacts, verifyResult)
 	cs.NextRecommended = nextRecommended
 	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
 	if includeInstructions {

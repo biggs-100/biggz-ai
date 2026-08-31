@@ -43,6 +43,7 @@ func ArchiveChange(openspecRoot, change string) (string, error) {
 	} else if err != nil && !os.IsNotExist(err) {
 		return "", fmt.Errorf("archive: stat destination: %w", err)
 	}
+	// never auto-disable RDD
 	if err := os.Rename(src, dst); err != nil {
 		return "", fmt.Errorf("archive: move %s to %s: %w", src, dst, err)
 	}

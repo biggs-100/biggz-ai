@@ -9,12 +9,15 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/pathquote"
+	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
 	"github.com/charmbracelet/x/ansi"
 	"gopkg.in/yaml.v3"
@@ -520,7 +523,7 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 	cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: allowedEditRoots}
 	cs.Relationships = Relationships{}
 	cs.RemediationState = remediationState
-	cs.ReviewOffer = nil
+	cs.ReviewOffer = deriveReviewOffer(cs.Name, workspaceRoot, applyState, artifacts, verifyResult)
 	cs.NextRecommended = nextRecommended
 	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
 	if includeInstructions {
@@ -528,6 +531,76 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 		cs.PhaseInstructions = &instructions
 	}
 	return nil
+}
+
+// deriveReviewOffer emits a fresh post-verification invitation iff
+// applyState==all_done && verifyReport==done && passing && RDD enabled.
+// No lineage/binding/receipt is persisted, only the quoted invocation.
+func deriveReviewOffer(changeName, workspaceRoot string, applyState ApplyState, artifacts map[string]ArtifactState, vr verifyResultEvaluation) *ReviewOfferBlock {
+	if applyState != ApplyAllDone {
+		return nil
+	}
+	if artifacts["verifyReport"] != ArtifactDone {
+		return nil
+	}
+	if !vr.Passing {
+		return nil
+	}
+	if !isRDDEnabled(workspaceRoot) {
+		return nil
+	}
+	shortSHA := shortSHAForWorkspace(workspaceRoot)
+	if shortSHA == "" {
+		shortSHA = "unknown"
+	}
+	invocation := fmt.Sprintf("biggz review start --lineage %s", pathquote.Quote(changeName+"-"+shortSHA))
+	return &ReviewOfferBlock{Available: true, Invocation: invocation}
+}
+
+func detectGitDirs(workspaceRoot string) (worktreeDir, commonDir string) {
+	if out, err := exec.Command("git", "-C", workspaceRoot, "rev-parse", "--git-dir").Output(); err == nil {
+		worktreeDir = strings.TrimSpace(string(out))
+		if !filepath.IsAbs(worktreeDir) {
+			worktreeDir = filepath.Join(workspaceRoot, worktreeDir)
+		}
+		worktreeDir = filepath.Clean(worktreeDir)
+	}
+	if out, err := exec.Command("git", "-C", workspaceRoot, "rev-parse", "--git-common-dir").Output(); err == nil {
+		commonDir = strings.TrimSpace(string(out))
+		if !filepath.IsAbs(commonDir) {
+			commonDir = filepath.Join(workspaceRoot, commonDir)
+		}
+		commonDir = filepath.Clean(commonDir)
+	}
+	if commonDir == "" {
+		commonDir = worktreeDir
+	}
+	return worktreeDir, commonDir
+}
+
+func isRDDEnabled(workspaceRoot string) bool {
+	worktreeDir, commonDir := detectGitDirs(workspaceRoot)
+	// When not in a git repo, fall back to global mode check via RDDStatus with empty dirs
+	// RDDStatus handles empty dirs as global-only check.
+	status, err := review.RDDStatus(worktreeDir, commonDir)
+	if err != nil {
+		// Corrupt or unreadable should be treated as managed (enabled) for offer gating
+		// unless the report itself says disabled
+		if status != nil {
+			return status.EffectiveMode == review.RDDModeEnabled
+		}
+		// If we cannot determine, assume enabled (default ON)
+		return true
+	}
+	return status.EffectiveMode == review.RDDModeEnabled
+}
+
+func shortSHAForWorkspace(workspaceRoot string) string {
+	out, err := exec.Command("git", "-C", workspaceRoot, "rev-parse", "--short", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // declaredArtifactStore resolves the declared artifact store by reading

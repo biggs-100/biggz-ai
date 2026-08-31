@@ -552,6 +552,10 @@ func ensureRDDEnabled(homeDir string) {
 		}()
 	}
 
+	// Check if RDD was explicitly disabled before overriding, to warn (idempotent second call is no-op)
+	if status, err := review.RDDStatus(worktreeGitDir, commonGitDir); err == nil && status.EffectiveMode == review.RDDModeDisabled {
+		fmt.Fprintf(os.Stderr, "warning: RDD was explicitly disabled (source: %s), re-enabling to ensure default ON\n", status.Source)
+	}
 	if _, err := review.RDDEnable(worktreeGitDir, commonGitDir); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: failed to ensure RDD enabled: %v\n", err)
 	}
