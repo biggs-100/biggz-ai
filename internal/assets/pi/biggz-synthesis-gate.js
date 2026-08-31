@@ -537,7 +537,7 @@ export default function biggzSynthesisGate(pi) {
 			}
 		}
 		if (typeof params !== "object") return false;
-		const tokens = new Set(["proceed", "adjust", "stop", "continue", "correct"]);
+		const tokens = new Set(["proceed", "adjust", "stop", "continue", "correct", "continuar", "ajustar", "detener", "parar", "cerrar", "corregir", "proseguir"]);
 		const normalize = (s) => String(s).trim().toLowerCase();
 		const isToken = (s) => {
 			const n = normalize(s);

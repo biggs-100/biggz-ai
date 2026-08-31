@@ -57,9 +57,21 @@ func IsChildBypass() bool {
 	return os.Getenv("PI_SUBAGENT_CHILD") == "1"
 }
 
+// checkpointTokens bilingual: English + Spanish. Gate scans whole envelope JSON string case-insensitive
+// so localized labels like "Continuar (Recomendado)" are detected. Keep English for backward compat.
+var checkpointTokens = []string{
+	"proceed", "adjust", "stop", "continue", "correct",
+	"continuar", "ajustar", "detener", "parar", "cerrar", "corregir", "proseguir",
+}
+
 func IsCheckpointAsk(question string) bool {
 	low := strings.ToLower(question)
-	return strings.Contains(low, "proceed") || strings.Contains(low, "adjust") || strings.Contains(low, "stop") || strings.Contains(low, "continue") || strings.Contains(low, "correct")
+	for _, tok := range checkpointTokens {
+		if strings.Contains(low, tok) {
+			return true
+		}
+	}
+	return false
 }
 
 func ShouldBlock(question string, md string, now time.Time) bool {

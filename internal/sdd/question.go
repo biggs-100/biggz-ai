@@ -33,7 +33,7 @@ const (
 )
 
 func IsCheckpointEnvelope(q QuestionEnvelope) bool {
-	toks := []string{"proceed", "adjust", "stop", "continue", "correct"}
+	toks := []string{"proceed", "adjust", "stop", "continue", "correct", "continuar", "ajustar", "detener", "parar", "cerrar", "corregir", "proseguir"}
 	hasTok := func(s string) bool {
 		l := strings.ToLower(strings.TrimSpace(s))
 		for _, t := range toks {
