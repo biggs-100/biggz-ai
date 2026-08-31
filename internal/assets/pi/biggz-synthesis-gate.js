@@ -2,7 +2,7 @@
  * biggz-synthesis-gate — Pi extension that enforces Post-Delegation Human Checkpoint.
  *
  * Ensures orchestrator emits synthesis markdown with ## Sub-agent Result + Artifacts/Paths + Risks + Next
- * BEFORE calling ask_user_question / question. Without synthesis the orchestrator would skip to tool call
+ * BEFORE calling ask_user_choice (Pi closed) / ask_user_question (Pi open) / question (OpenCode). Without synthesis the orchestrator would skip to tool call
  * and human loses artifacts/paths, risks, next.
  *
  * Dual-mode (PR4 advisor):
@@ -19,17 +19,17 @@
  *
  * Behavior:
  * - Tracks current-turn assistant markdown via pi.on("message_end") / pi.on("message_update") / pi.on("assistant_message") fallbacks
- *   into currentTurnMarkdown (reset after each successful ask_user_question/question and at turn_start).
+ *   into currentTurnMarkdown (reset after each successful ask_user_choice/ask_user_question/question and at turn_start).
  *   The buffer fixes the streaming race where markdown is emitted milliseconds before the tool call and
  *   has not yet landed in ctx.history.
- * - Wraps ask_user_question and question tools via pi.registerTool interception AND via pre-registered sweep
+ * - Wraps ask_user_choice (Pi closed), ask_user_question and question tools via pi.registerTool interception AND via pre-registered sweep
  *   (iterate pi.tools / pi._tools / pi.getAllTools+getToolDefinition if available) — load-order safe.
  *   Each wrapped execute verifies STRICT same-turn markdown contains required markers (currentTurnMarkdown only).
  *   If missing, returns {isError:true} with instructive error and does NOT call original.
  * - Secondary guard via pi.on("tool_call") ALSO blocks (returns {block:true, reason}) when hasSynthesis fails,
  *   not just warning — ensures bypass via load-order (tool already registered before gate) cannot escape.
  *   If thin and advise enabled, emits concern warning but allows the call (advise path MAY use history fallback).
- * - Also hooks pi.on("tool_execution_end") to reset currentTurn after successful question (covers pre-registered
+ * - Also hooks pi.on("tool_execution_end") to reset currentTurn after successful ask_user_choice/ask_user_question/question (covers pre-registered
  *   tools not wrapped via execute path).
  *
  * Minimal but functional — mirrors biggz-thinking-wrap.js pattern.
@@ -403,7 +403,7 @@ export default function biggzSynthesisGate(pi) {
 				pi.on(ev, (event) => {
 					try {
 						const name = event?.toolName ?? event?.name ?? "";
-						if (name === "ask_user_question" || name === "question") {
+						if (name === "ask_user_choice" || name === "ask_user_question" || name === "question") {
 							// Only reset if last execution was not an error (avoid clearing on blocked)
 							const isErr = event?.isError === true || event?.result?.isError === true;
 							if (!isErr) {
@@ -696,7 +696,7 @@ export default function biggzSynthesisGate(pi) {
 	function wrapSingleTool(def) {
 		if (!def || typeof def.execute !== "function" || def._biggzGateWrapped) return false;
 		const origExecute = def.execute;
-		const toolName = def.name || "ask_user_question";
+		const toolName = def.name || "ask_user_choice"; // ask_user_choice for Pi closed
 		def._biggzGateWrapped = true;
 		def.execute = async (...args) => {
 			// args: toolCallId, params, signal, onUpdate, ctx — ctx is last arg if object with ui/history
@@ -779,7 +779,7 @@ export default function biggzSynthesisGate(pi) {
 						// Preflight allowance — no synthesis ever in session, allow first asks
 					} else {
 						const reason =
-							"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question. Diagnostic: if envelope error (header >16 e.g. 'Decisión del checkpoint' 23 vs 'Decisión' 8, or label >60) fix header/label first; else ensure synthesis has 4 verbatim markers, plain markdown not in ``` code block, same turn ≤120s, not from history.";
+							"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_choice/ask_user_question/question (closed: ask_user_choice). Diagnostic: if envelope error (header >16 e.g. 'Decisión del checkpoint' 23 vs 'Decisión' 8, or label >60) fix header/label first; else ensure synthesis has 4 verbatim markers, plain markdown not in ``` code block, same turn ≤120s, not from history.";
 						console.error(`[biggz-synthesis-gate] blocked ${toolName}: ${reason}`);
 						try {
 							ctx?.ui?.notify?.(reason, "error");
@@ -829,7 +829,7 @@ export default function biggzSynthesisGate(pi) {
 				try {
 					if (
 						def &&
-						(def.name === "ask_user_question" || def.name === "question") &&
+						(def.name === "ask_user_choice" || def.name === "ask_user_question" || def.name === "question") &&
 						typeof def.execute === "function"
 					) {
 						wrapSingleTool(def);
@@ -839,7 +839,7 @@ export default function biggzSynthesisGate(pi) {
 				}
 				return origRegister(def);
 			};
-			console.log("[biggz-synthesis-gate] wrapped registerTool for ask_user_question/question");
+			console.log("[biggz-synthesis-gate] wrapped registerTool for ask_user_choice/ask_user_question/question");
 		}
 	} catch (e) {
 		console.log(`[biggz-synthesis-gate] failed to wrap registerTool: ${e?.message || e}`);
@@ -856,7 +856,7 @@ export default function biggzSynthesisGate(pi) {
 				if (!m) continue;
 				if (m instanceof Map) {
 					for (const [name, def] of m.entries()) {
-						if (name !== "ask_user_question" && name !== "question") continue;
+						if (name !== "ask_user_choice" && name !== "ask_user_question" && name !== "question") continue;
 						const target = def && def.definition ? def.definition : def;
 						if (wrapSingleTool(target)) wrappedCount++;
 						// Also handle case where Map value is definition itself
@@ -866,7 +866,7 @@ export default function biggzSynthesisGate(pi) {
 					}
 				} else if (typeof m === "object") {
 					for (const k of Object.keys(m)) {
-						if (k !== "ask_user_question" && k !== "question") continue;
+						if (k !== "ask_user_choice" && k !== "ask_user_question" && k !== "question") continue;
 						const v = m[k];
 						const target = v && v.definition ? v.definition : v;
 						if (target && typeof target.execute === "function") {
@@ -882,7 +882,7 @@ export default function biggzSynthesisGate(pi) {
 				const all = pi.getAllTools();
 				if (Array.isArray(all)) {
 					for (const info of all) {
-						if (!info || (info.name !== "ask_user_question" && info.name !== "question")) continue;
+						if (!info || (info.name !== "ask_user_choice" && info.name !== "ask_user_question" && info.name !== "question")) continue;
 						let def = null;
 						try {
 							if (typeof pi.getToolDefinition === "function") def = pi.getToolDefinition(info.name);
@@ -904,7 +904,7 @@ export default function biggzSynthesisGate(pi) {
 			}
 		} catch {}
 		// Strategy 3: direct pi.getTool / pi.getToolDefinition without getAllTools
-		for (const name of ["ask_user_question", "question"]) {
+		for (const name of ["ask_user_choice", "ask_user_question", "question"]) {
 			try {
 				if (typeof pi.getToolDefinition === "function") {
 					const def = pi.getToolDefinition(name);
@@ -935,7 +935,7 @@ export default function biggzSynthesisGate(pi) {
 			pi.on("tool_call", async (event, ctx) => {
 				try {
 					const name = event?.toolName ?? event?.name ?? "";
-					if (name !== "ask_user_question" && name !== "question") return;
+					if (name !== "ask_user_choice" && name !== "ask_user_question" && name !== "question") return;
 					const toolParams = extractParamsFromToolCall(event);
 					// Single ownership: block sub-agent checkpoint even before generic bypass
 					if (isChildBypass()) {
@@ -981,7 +981,7 @@ export default function biggzSynthesisGate(pi) {
 								// Preflight allowance — no synthesis ever in session, allow first asks
 							} else {
 								const reason =
-									"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question. Diagnostic: if envelope error (header >16 e.g. 'Decisión del checkpoint' 23 vs 'Decisión' 8, or label >60) fix header/label first; else ensure synthesis has 4 verbatim markers, plain markdown not in ``` code block, same turn ≤120s, not from history.";
+									"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_choice/ask_user_question/question (closed: ask_user_choice). Diagnostic: if envelope error (header >16 e.g. 'Decisión del checkpoint' 23 vs 'Decisión' 8, or label >60) fix header/label first; else ensure synthesis has 4 verbatim markers, plain markdown not in ``` code block, same turn ≤120s, not from history.";
 								console.error(`[biggz-synthesis-gate] blocked (tool_call) ${name}: ${reason}`);
 								try {
 									ctx?.ui?.notify?.(reason, "error");
@@ -1091,7 +1091,7 @@ export default function biggzSynthesisGate(pi) {
 	try { pi._biggzSafety = { isDenied: isDeniedSafety, classifyGuardedCommand: classifyGuardedCommandSafety, evaluateSensitivePathTool: evaluateSensitivePathToolSafety, isSensitivePath: isSensitivePathSafety }; } catch {}
 
 	pi.registerCommand?.("synthesis-gate-status", {
-		description: "Show synthesis gate status (checks # Sub-agent Result before ask_user_question)",
+		description: "Show synthesis gate status (checks # Sub-agent Result before ask_user_choice/ask_user_question)",
 		handler: async (_args, ctx) => {
 			if (isChildBypass()) {
 				const msg = "synthesis gate bypassed: PI_SUBAGENT_CHILD=1";
@@ -1100,7 +1100,7 @@ export default function biggzSynthesisGate(pi) {
 			}
 			const has = checkSynthesisPrecondition(ctx);
 			if (!has) {
-				const status = "✗ synthesis gate: missing ## Sub-agent Result — emit markdown before ask_user_question/question";
+				const status = "✗ synthesis gate: missing ## Sub-agent Result — emit markdown before ask_user_choice/ask_user_question/question";
 				ctx.ui.notify(status, "warning");
 				return { content: [{ type: "text", text: status }] };
 			}

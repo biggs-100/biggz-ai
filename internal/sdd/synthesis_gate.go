@@ -1,3 +1,10 @@
+// synthesis_gate — enforces Post-Delegation Human Checkpoint.
+// Ensures orchestrator emits synthesis markdown with ## Sub-agent Result + Artifacts/Paths + Risks + Next
+// BEFORE calling ask_user_choice (Pi closed single-select, 2-4 ordered options) / ask_user_question (Pi open/free-text) / question (OpenCode).
+// In Pi, strictly closed single-select (proceed/adjust/stop, continue/correct) must use ask_user_choice; open/free-text uses ask_user_question.
+// Gate is tool-agnostic: ShouldBlock checks HasSynthesis + 120s window + IsCheckpointAsk tokens, not tool name.
+// See internal/assets/pi/biggz-synthesis-gate.js for JS counterpart that wraps ask_user_choice/ask_user_question/question.
+
 package sdd
 
 import (
