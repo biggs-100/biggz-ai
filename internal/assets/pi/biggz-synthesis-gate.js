@@ -644,6 +644,7 @@ export default function biggzSynthesisGate(pi) {
 
 	function checkSynthesisPrecondition(ctx) {
 		// STRICT: only currentTurnMarkdown ≤120s with HasSynthesis satisfies. Mirrors Go truth
+		// Diagnostic: missing synthesis vs envelope limit (>16 header, >60 label) are distinct errors;
 		// internal/sdd/synthesis_gate.go:ShouldBlock = !child && !recall && checkpoint && ≤120s && !HasSynthesis(currentTurn)
 		// History (ctx.history / lastAssistantMarkdown) MUST NOT satisfy blocking; it is only for
 		// BIGGZ_ADVISE=1 thin concern via getCurrentTurnSynthesis fallback, never for block.
@@ -743,8 +744,8 @@ export default function biggzSynthesisGate(pi) {
 					const v = validateQuestionEnvelope(params);
 					if (v) {
 						const fb = formatFallback(params);
-						const reason = `isError:true ${v.message} (limit ${v.limit})`;
-						console.error(`[biggz-synthesis-gate] blocked envelope ${toolName}: ${reason}`);
+						const reason = `isError:true ${v.message} (limit ${v.limit}) — fix header ≤16 (e.g. "Decisión" 8 not "Decisión del checkpoint" 23) or label ≤60, then retry`;
+						console.error(`[biggz-synthesis-gate] blocked envelope ${toolName}: ${reason} — diagnostic: envelope limit vs synthesis missing`);
 						try { if (fb) ctx?.ui?.notify?.(fb, "error"); } catch {}
 						try { if (fb) pi.notify?.(fb, "error"); } catch {}
 						try { if (fb) pi.ui?.notify?.(fb, "error"); } catch {}
@@ -778,7 +779,7 @@ export default function biggzSynthesisGate(pi) {
 						// Preflight allowance — no synthesis ever in session, allow first asks
 					} else {
 						const reason =
-							"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
+							"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question. Diagnostic: if envelope error (header >16 e.g. 'Decisión del checkpoint' 23 vs 'Decisión' 8, or label >60) fix header/label first; else ensure synthesis has 4 verbatim markers, plain markdown not in ``` code block, same turn ≤120s, not from history.";
 						console.error(`[biggz-synthesis-gate] blocked ${toolName}: ${reason}`);
 						try {
 							ctx?.ui?.notify?.(reason, "error");
@@ -952,8 +953,8 @@ export default function biggzSynthesisGate(pi) {
 						const v = validateQuestionEnvelope(toolParams);
 						if (v) {
 							const fb = formatFallback(toolParams);
-							const reason = `isError:true ${v.message} (limit ${v.limit})`;
-							console.error(`[biggz-synthesis-gate] blocked envelope (tool_call) ${name}: ${reason}`);
+							const reason = `isError:true ${v.message} (limit ${v.limit}) — fix header ≤16 (e.g. "Decisión" 8 not "Decisión del checkpoint" 23) or label ≤60, then retry`;
+							console.error(`[biggz-synthesis-gate] blocked envelope (tool_call) ${name}: ${reason} — diagnostic: envelope limit vs synthesis missing`);
 							try { if (fb) ctx?.ui?.notify?.(fb, "error"); } catch {}
 							try { if (fb) pi.notify?.(fb, "error"); } catch {}
 							return { block: true, reason: reason + (fb ? "\n\nFallback:\n" + fb : "") };
@@ -980,7 +981,7 @@ export default function biggzSynthesisGate(pi) {
 								// Preflight allowance — no synthesis ever in session, allow first asks
 							} else {
 								const reason =
-									"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question.";
+									"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_question/question. Diagnostic: if envelope error (header >16 e.g. 'Decisión del checkpoint' 23 vs 'Decisión' 8, or label >60) fix header/label first; else ensure synthesis has 4 verbatim markers, plain markdown not in ``` code block, same turn ≤120s, not from history.";
 								console.error(`[biggz-synthesis-gate] blocked (tool_call) ${name}: ${reason}`);
 								try {
 									ctx?.ui?.notify?.(reason, "error");

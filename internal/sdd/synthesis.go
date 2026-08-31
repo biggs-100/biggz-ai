@@ -52,7 +52,7 @@ func formatFleetTokens(window, spent int) string {
 
 // FormatFleetTokens exported for tests.
 func FormatFleetTokens(window, spent int) string { return formatFleetTokens(window, spent) }
-func CompactK(n int) string { return compactK(n) }
+func CompactK(n int) string                      { return compactK(n) }
 
 // WaitRun holds minimal run info for headline.
 type WaitRun struct {
@@ -225,6 +225,24 @@ func RenderSynthesis(r SubAgentResult) string {
 	return b.String()
 }
 
+// RenderPrettySynthesis returns a pretty-decorated synthesis that remains valid for HasSynthesis.
+// It wraps RenderSynthesis with external separators and emoji outside the markers,
+// never wrapping markers in a code fence. The markers remain verbatim so
+// synthesis_gate.go HasSynthesis still passes, and visibleWidth handles emoji width 2 via go-runewidth.
+func RenderPrettySynthesis(r SubAgentResult) string {
+	raw := RenderSynthesis(r)
+	var b strings.Builder
+	// External pretty decoration: separator + emoji header outside markers
+	b.WriteString("---\n")
+	b.WriteString("✨ Sub-agent Result — pretty ✨\n\n")
+	b.WriteString(raw)
+	if !strings.HasSuffix(raw, "\n") {
+		b.WriteString("\n")
+	}
+	b.WriteString("\n---\n")
+	return b.String()
+}
+
 func deriveLifecycleStatus(r SubAgentResult) string {
 	failure := strings.TrimSpace(r.Failure)
 	if failure != "" {
@@ -245,7 +263,9 @@ func deriveLifecycleStatus(r SubAgentResult) string {
 	return "success"
 }
 
-// sanitizePlain replaces tabs, strips OSC/ANSI/controls and normalizes spaces
+// sanitizePlain replaces tabs, strips OSC/ANSI/controls and normalizes spaces.
+// It preserves emoji and wide runes; visibleWidth/truncateToWidth use go-runewidth
+// so emoji like ✨ count as width 2, and Preview 300 / Diff 80 truncation remains safe.
 func sanitizePlain(s string) string {
 	if s == "" {
 		return s
@@ -503,107 +523,108 @@ func renderTable(rows [][]string, width int) string {
 	return b.String()
 }
 
-
+// visibleWidth returns visible column width using go-runewidth (emoji width 2).
 func visibleWidth(s string) int { return runewidth.StringWidth(ansi.Strip(s)) }
 
 func coalesceSGR(s string) string {
-    if s == "" {
-        return s
-    }
-    var b strings.Builder
-    b.Grow(len(s))
-    last, was := "", false
-    i := 0
-    for i < len(s) {
-        if s[i] == '' && i+1 < len(s) && s[i+1] == '[' {
-            j := i + 2
-            for j < len(s) && s[j] != 'm' {
-                j++
-            }
-            if j < len(s) {
-                seq := s[i : j+1]
-                if was && seq == last {
-                    i = j + 1
-                    continue
-                }
-                b.WriteString(seq)
-                last, was = seq, true
-                i = j + 1
-                continue
-            }
-        }
-        b.WriteByte(s[i])
-        last, was = "", false
-        i++
-    }
-    return b.String()
+	if s == "" {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	last, was := "", false
+	i := 0
+	for i < len(s) {
+		if s[i] == '' && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && s[j] != 'm' {
+				j++
+			}
+			if j < len(s) {
+				seq := s[i : j+1]
+				if was && seq == last {
+					i = j + 1
+					continue
+				}
+				b.WriteString(seq)
+				last, was = seq, true
+				i = j + 1
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		last, was = "", false
+		i++
+	}
+	return b.String()
 }
 
+// truncateToWidth truncates to visible width w using go-runewidth (emoji width 2), preserving ANSI SGR.
 func truncateToWidth(s string, w int) string {
-    if w <= 0 {
-        return ""
-    }
-    if visibleWidth(s) <= w {
-        return s
-    }
-    if w == 1 {
-        return "…"
-    }
-    s = coalesceSGR(s)
-    target := w - 1
-    var b strings.Builder
-    cur, i, stop := 0, 0, len(s)
-    for i < len(s) {
-        if s[i] == '' && i+1 < len(s) && s[i+1] == '[' {
-            j := i + 2
-            for j < len(s) && s[j] != 'm' {
-                j++
-            }
-            if j < len(s) {
-                b.WriteString(s[i : j+1])
-                i = j + 1
-                continue
-            }
-        }
-        r, sz := utf8.DecodeRuneInString(s[i:])
-        if r == utf8.RuneError && sz == 1 {
-            sz = 1
-        }
-        rw := runewidth.RuneWidth(r)
-        if rw < 0 {
-            rw = 0
-        }
-        if cur+rw > target {
-            stop = i
-            break
-        }
-        b.WriteString(s[i : i+sz])
-        cur += rw
-        i += sz
-        if i >= len(s) {
-            stop = len(s)
-        }
-    }
-    b.WriteString("…")
-    for idx := stop; idx < len(s); {
-        if s[idx] == '' && idx+1 < len(s) && s[idx+1] == '[' {
-            j := idx + 2
-            for j < len(s) && s[j] != 'm' {
-                j++
-            }
-            if j < len(s) {
-                b.WriteString(s[idx : j+1])
-                idx = j + 1
-                continue
-            }
-        }
-        _, sz := utf8.DecodeRuneInString(s[idx:])
-        if sz == 0 {
-            sz = 1
-        }
-        idx += sz
-    }
-    return coalesceSGR(b.String())
+	if w <= 0 {
+		return ""
+	}
+	if visibleWidth(s) <= w {
+		return s
+	}
+	if w == 1 {
+		return "…"
+	}
+	s = coalesceSGR(s)
+	target := w - 1
+	var b strings.Builder
+	cur, i, stop := 0, 0, len(s)
+	for i < len(s) {
+		if s[i] == '' && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && s[j] != 'm' {
+				j++
+			}
+			if j < len(s) {
+				b.WriteString(s[i : j+1])
+				i = j + 1
+				continue
+			}
+		}
+		r, sz := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError && sz == 1 {
+			sz = 1
+		}
+		rw := runewidth.RuneWidth(r)
+		if rw < 0 {
+			rw = 0
+		}
+		if cur+rw > target {
+			stop = i
+			break
+		}
+		b.WriteString(s[i : i+sz])
+		cur += rw
+		i += sz
+		if i >= len(s) {
+			stop = len(s)
+		}
+	}
+	b.WriteString("…")
+	for idx := stop; idx < len(s); {
+		if s[idx] == '' && idx+1 < len(s) && s[idx+1] == '[' {
+			j := idx + 2
+			for j < len(s) && s[j] != 'm' {
+				j++
+			}
+			if j < len(s) {
+				b.WriteString(s[idx : j+1])
+				idx = j + 1
+				continue
+			}
+		}
+		_, sz := utf8.DecodeRuneInString(s[idx:])
+		if sz == 0 {
+			sz = 1
+		}
+		idx += sz
+	}
+	return coalesceSGR(b.String())
 }
 
 func humanizeFailure(raw string) string {

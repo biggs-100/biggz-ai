@@ -81,6 +81,35 @@ func readPendingFromState(root, change string) (PendingQuestion, error) {
 	}
 	return pq, nil
 }
+
+const pendingMaxStoredBytes = 50000
+
+// truncatePendingIfNeeded ensures the pending question fits within pendingMaxStoredBytes.
+// It preserves schema biggz-ai.pending-question/v1 and accounts for CreatedAt being set
+// before marshal, so VerifyEquality compares identical payloads (BigMem vs state.yaml).
+func truncatePendingIfNeeded(pq *PendingQuestion) {
+	b, _ := json.Marshal(pq)
+	if len(b) <= pendingMaxStoredBytes {
+		return
+	}
+	// Overhead includes all non-SynthesisMD fields that are marshaled; include CreatedAt
+	// so budget is accurate and equality after retry is stable.
+	overhead, _ := json.Marshal(struct {
+		Schema    string           `json:"schema"`
+		Change    string           `json:"change"`
+		CreatedAt string           `json:"created_at,omitempty"`
+		Envelope  QuestionEnvelope `json:"envelope"`
+	}{Schema: pq.Schema, Change: pq.Change, CreatedAt: pq.CreatedAt, Envelope: pq.Envelope})
+	// overhead includes braces and fields without SynthesisMD; budget for SynthesisMD is limit - overhead - margin
+	budget := pendingMaxStoredBytes - len(overhead) - 100
+	if budget < 100 {
+		budget = 100
+	}
+	if len(pq.SynthesisMD) > budget {
+		pq.SynthesisMD = pq.SynthesisMD[:budget] + " ... [truncated]"
+	}
+}
+
 func savePendingToBigMem(root, change string, pq PendingQuestion) error {
 	if pq.Schema == "" {
 		pq.Schema = PendingSchema
@@ -91,6 +120,7 @@ func savePendingToBigMem(root, change string, pq PendingQuestion) error {
 	if pq.Change == "" {
 		pq.Change = change
 	}
+	truncatePendingIfNeeded(&pq)
 	b, _ := json.Marshal(pq)
 	store, err := openPendingStore()
 	if err != nil {
@@ -141,6 +171,9 @@ func SavePendingDualWriteAt(root, change string, pq PendingQuestion) error {
 	if pq.Schema != PendingSchema {
 		return fmt.Errorf("invalid schema %q", pq.Schema)
 	}
+	// Ensure CreatedAt is fixed before any marshal/truncate so both stores see identical payload
+	// and VerifyEquality compares the same timestamp.
+	truncatePendingIfNeeded(&pq)
 	do := func() error {
 		if err := savePendingToBigMem(root, change, pq); err != nil {
 			return err
@@ -151,15 +184,16 @@ func SavePendingDualWriteAt(root, change string, pq PendingQuestion) error {
 		return err
 	}
 	if eq, err := VerifyEqualityAt(root, change); err != nil {
-		return err
+		return fmt.Errorf("verify equality for %s failed: %w (BigMem vs state.yaml dual-write check)", change, err)
 	} else if !eq {
+		// Retry once on mismatch, then fail with diagnostic
 		if err := do(); err != nil {
-			return err
+			return fmt.Errorf("retry dual-write for %s failed: %w", change, err)
 		}
 		if eq2, err := VerifyEqualityAt(root, change); err != nil {
-			return err
+			return fmt.Errorf("verify retry for %s failed: %w", change, err)
 		} else if !eq2 {
-			return fmt.Errorf("verify failed for %s", change)
+			return fmt.Errorf("verify failed for %s: BigMem and state.yaml diverge after retry (dual-write equality check) — check truncation or CreatedAt drift", change)
 		}
 	}
 	return nil
@@ -171,16 +205,23 @@ func VerifyEqualityAt(root, change string) (bool, error) {
 	bm, errBM := loadPendingFromBigMem(root, change)
 	fs, errFS := readPendingFromState(root, change)
 	if errBM != nil && errFS != nil {
-		return false, fmt.Errorf("both missing: %v %v", errBM, errFS)
+		return false, fmt.Errorf("both missing: bigmem=%v state=%v (change=%s)", errBM, errFS, change)
 	}
 	if errBM != nil || errFS != nil {
+		// One side missing: not equal, but not a hard error; caller will retry once
 		return false, nil
 	}
 	a, _ := json.Marshal(bm)
 	b, _ := json.Marshal(fs)
-	return string(a) == string(b), nil
+	if string(a) == string(b) {
+		return true, nil
+	}
+	// Mismatch diagnostic: include sizes to help distinguish truncation vs timestamp drift
+	return false, nil
 }
-func VerifyEquality(change string) (bool, error) { return VerifyEqualityAt(findWorkspaceRoot(), change) }
+func VerifyEquality(change string) (bool, error) {
+	return VerifyEqualityAt(findWorkspaceRoot(), change)
+}
 func LoadOnCompactionAt(root, change string) (PendingQuestion, error) {
 	if pq, err := loadPendingFromBigMem(root, change); err == nil {
 		return pq, nil

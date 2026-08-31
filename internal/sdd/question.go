@@ -6,13 +6,27 @@ import (
 	"strings"
 )
 
-type QuestionOption struct{ Label string `json:"label"`; Description string `json:"description,omitempty"` }
-type Question struct{ Question string `json:"question"`; Header string `json:"header"`; Options []QuestionOption `json:"options"` }
-type QuestionEnvelope struct{ Questions []Question `json:"questions"`; Options []QuestionOption `json:"options,omitempty"` }
+type QuestionOption struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+}
+type Question struct {
+	Question string           `json:"question"`
+	Header   string           `json:"header"`
+	Options  []QuestionOption `json:"options"`
+}
+type QuestionEnvelope struct {
+	Questions []Question       `json:"questions"`
+	Options   []QuestionOption `json:"options,omitempty"`
+}
 
+// Envelope limits: keep maxHeaderLen=16 (do not raise to 24 without migrating pendingMaxStoredBytes).
+// Pretty Spanish headers must stay short: use "Decisión" (8) not "Decisión del checkpoint" (23),
+// otherwise FormatFallback inherits the same limits and breaks biggz-ai.pending-question/v1 contract.
+// If you raise the limit, update pending.go truncate bounds and tests together.
 const (
-	maxHeaderLen = 16
-	maxLabelLen  = 60
+	maxHeaderLen = 16 // header ≤16 runes, e.g. "Decisión" (8); not "Decisión del checkpoint" (23)
+	maxLabelLen  = 60 // label ≤60 runes, e.g. "Continuar (Recomendado)" is safe
 	maxQuestions = 4
 	minOptions   = 2
 	maxOptions   = 4

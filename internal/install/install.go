@@ -455,6 +455,8 @@ func VerifyCheckpointSynthesis(content string) error {
 // when ANY deployed surface carries the checkpoint markers. Demanding all
 // surfaces would fail agents that legitimately keep the prompt in only one.
 // Permission hints are non-fatal warnings.
+// Pretty decoration outside the markers (separators "---", emoji "✨", blockquote "> ")
+// is optional and must NOT block install; only the 4 verbatim markers above are required.
 func verifyOrchestratorDeployment(homeDir string, adapter plugin.AgentAdapter) error {
 	required := []string{
 		"Post-Delegation Human Checkpoint",
