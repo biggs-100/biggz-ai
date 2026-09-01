@@ -144,6 +144,18 @@ func TestDeployPiSubAgents(t *testing.T) {
 			t.Errorf("pi agent should contain <!-- biggz:bigmem-protocol --> block, got %q", p[:800])
 		}
 	}
+	// Fallback agents (general/explore) must also have BigMem protocol so
+	// generic queries like "en que nos quedamos" check memory.
+	for _, name := range []string{"general", "explore"} {
+		p := filepath.Join(home, ".pi", "agent", "agents", name+".md")
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("%s.md not created: %v", name, err)
+		}
+		if !strings.Contains(string(data), "biggz:bigmem-protocol") {
+			t.Errorf("%s.md should contain <!-- biggz:bigmem-protocol --> block, got %q", name, string(data)[:800])
+		}
+	}
 
 	// web_* must be in sdd-research only (REQ-INST-002/005)
 	if !strings.Contains(rcontent, "- web_search") || !strings.Contains(rcontent, "- web_fetch") {

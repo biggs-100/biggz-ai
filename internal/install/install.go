@@ -253,6 +253,10 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	// Inject BigMem protocol into system prompt file (AGENTS.md or equivalent)
 	// Making BigMem instructions available to ALL agents (including sub-agents)
 	// without depending on the orchestrator to forward them at delegation time.
+	// Runs after persona so that on upgrades from buggy duplicate-marker files,
+	// the BigMem block is re-added after persona's stripOrphanMarkers truncates
+	// the tail (see stripOrphanMarkers). Both functions handle missing file via
+	// MkdirAll + InjectByMarker on empty content.
 	if err := DeployBigMemProtocol(adapter, homeDir, cfg.DryRun); err != nil {
 		return result, fmt.Errorf("deploy bigmem protocol: %w", err)
 	}
@@ -937,11 +941,21 @@ func DeployPersona(adapter plugin.AgentAdapter, homeDir string, dryRun bool) err
 	}
 
 	// Read persona content from embedded assets
+	// Strip <!-- biggz:persona --> markers before InjectByMarker to avoid
+	// double-wrapping (asset file includes markers for self-documentation).
 	personaData, err := fs.ReadFile(assets.FS, "biggz/biggz-persona.md")
 	if err != nil {
 		return nil // persona file not embedded, skip
 	}
-	personaContent := string(personaData)
+	rawPersona := string(personaData)
+	personaContent := strings.TrimSpace(rawPersona)
+	personaStart := "<!-- biggz:persona -->"
+	personaEnd := "<!-- /biggz:persona -->"
+	if s := strings.Index(rawPersona, personaStart); s != -1 {
+		if e := strings.Index(rawPersona[s+len(personaStart):], personaEnd); e != -1 {
+			personaContent = strings.TrimSpace(rawPersona[s+len(personaStart) : s+len(personaStart)+e])
+		}
+	}
 
 	// Read existing system prompt file
 	var existing []byte
@@ -1007,13 +1021,22 @@ func DeployBigMemProtocol(adapter plugin.AgentAdapter, homeDir string, dryRun bo
 	}
 
 	// Read BigMem protocol content from embedded assets
-	// The file includes <!-- biggz:bigmem-protocol --> markers so InjectByMarker
-	// can update it idempotently on subsequent installs.
+	// The file includes <!-- biggz:bigmem-protocol --> markers; strip them
+	// before InjectByMarker so the managed block is not doubly wrapped
+	// (otherwise APPEND_SYSTEM.md gets nested markers).
 	protocolData, err := fs.ReadFile(assets.FS, "biggz/bigmem-protocol.md")
 	if err != nil {
 		return nil // protocol file not embedded, skip
 	}
-	protocolContent := string(protocolData)
+	rawProtocol := string(protocolData)
+	protocolContent := strings.TrimSpace(rawProtocol)
+	startMarker := "<!-- biggz:bigmem-protocol -->"
+	endMarker := "<!-- /biggz:bigmem-protocol -->"
+	if s := strings.Index(rawProtocol, startMarker); s != -1 {
+		if e := strings.Index(rawProtocol[s+len(startMarker):], endMarker); e != -1 {
+			protocolContent = strings.TrimSpace(rawProtocol[s+len(startMarker) : s+len(startMarker)+e])
+		}
+	}
 
 	// Read existing system prompt file
 	var existing []byte
@@ -1209,9 +1232,40 @@ func stripOrphanMarkers(input, name string) string {
 		return result
 	}
 
-	// Keep everything before the first opener, and content between first pair.
-	// Discard everything after first closer (removes all duplicate blocks).
-	return input[:firstOpen] + openMarker + input[firstOpen+len(openMarker):firstClose] + closeMarker
+	// Keep prefix before first opener and suffix after first closer, but clean
+	// duplicate blocks for the same marker that may appear in inner or suffix.
+	// Previously this truncated everything after firstClose, which discarded
+	// unrelated managed sections (e.g., bigmem after persona duplicate). Now
+	// we preserve tail and strip only duplicate marker blocks for `name`.
+	prefix := input[:firstOpen]
+	innerRaw := input[firstOpen+len(openMarker) : firstClose]
+	suffixRaw := input[firstClose+len(closeMarker):]
+	// Clean nested duplicate markers inside the first block (inner double-injection).
+	innerClean := strings.ReplaceAll(innerRaw, openMarker, "")
+	innerClean = strings.ReplaceAll(innerClean, closeMarker, "")
+	// Clean duplicate blocks for `name` from suffix, preserving other content.
+	cleanSuffix := suffixRaw
+	for {
+		oi := strings.Index(cleanSuffix, openMarker)
+		ci := strings.Index(cleanSuffix, closeMarker)
+		if oi == -1 && ci == -1 {
+			break
+		}
+		if oi != -1 && ci != -1 {
+			if ci > oi {
+				// Duplicate block: remove from oi to ci+len
+				cleanSuffix = cleanSuffix[:oi] + cleanSuffix[ci+len(closeMarker):]
+			} else {
+				// Orphan close before open
+				cleanSuffix = cleanSuffix[:ci] + cleanSuffix[ci+len(closeMarker):]
+			}
+		} else if ci != -1 {
+			cleanSuffix = cleanSuffix[:ci] + cleanSuffix[ci+len(closeMarker):]
+		} else if oi != -1 {
+			cleanSuffix = cleanSuffix[:oi] + cleanSuffix[oi+len(openMarker):]
+		}
+	}
+	return prefix + openMarker + innerClean + closeMarker + cleanSuffix
 }
 
 // DeployMCPBinaryToHomeDir copies the MCP server binary to ~/.biggz/ so it
@@ -2194,6 +2248,11 @@ func DeployPiSubAgents(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 			sb.WriteString("---\n\n")
 			sb.WriteString(body)
 			sb.WriteString("\n")
+			if protocolContent != "" {
+				sb.WriteString("\n<!-- biggz:bigmem-protocol -->\n")
+				sb.WriteString(strings.TrimSpace(protocolContent))
+				sb.WriteString("\n<!-- /biggz:bigmem-protocol -->\n")
+			}
 			targetPath := filepath.Join(agentsDir, fallback.name+".md")
 			if _, err := filemerge.WriteFileAtomic(targetPath, []byte(sb.String()), 0644); err != nil {
 				return count, fmt.Errorf("write %s: %w", targetPath, err)
