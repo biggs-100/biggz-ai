@@ -26,7 +26,7 @@ internal/
 ├── agentbuilder/    — Custom SDD agent generation (engines, parser, installer, registry)
 ├── assets/          — Embedded skills + configs + OpenCode plugins (opencode plugins + biggz-orchestrator.md + biggz-synthesis-gate.js)
 ├── backup/          — tar.gz snapshot/restore
-├── bigmem/          — Persistent observation store + MCP tools (22 agent-facing + 3 internal branching (25 total), SQLite) — Profiles[agent]=20, admin=3
+├── bigmem/          — Persistent observation store + MCP tools (22 agent-facing + 3 internal branching (25 total), SQLite) — Profiles[agent]=20, admin=3 — files: bigmem.go (Store/Search/Save+FTS5/dedup), full.go (sessions/prompts/timeline/stats/doctor), graph.go (BuildGraph/Render*), blobstore.go (PutBlob/GetBlob), sync.go (FileTransport), sync_journal.go (journal/lease), engram_import.go (compat)
 ├── codegraph/       — CodeGraph index + change-intent report (safe-root validation)
 ├── contracts/       — Wire-envelope formalization engine (test-only validation, draft 2020-12)
 ├── doctor/          — System health checks (BigMem FTS, stale locks, skill registry)
@@ -180,6 +180,14 @@ Transitions are validated by `FSM.Transition(current, target, role, counters)` v
 Proactive save triggers: architecture decisions, bug fixes, discoveries, config changes, patterns, user preferences.
 
 **CLI notes (biggz bigmem):** save --type enum (bugfix|decision|architecture|discovery|pattern|config|preference|session_summary|etc), --scope project|personal (default project), content >50k truncated [truncated] (see `internal/bigmem/bigmem.go:truncateIfNeeded` → `maxStoredBytes=50000` + `... [truncated]` marker), topic-key hierarchy (`architecture/auth-model`, `decision/api-design`); search --match-mode all|any (default all, MCP validates, CLI forwards to `SearchOptions.MatchMode`), --all canonical alias --all-projects.
+
+**Storage note (F7):** CLI (`biggz bigmem save`) and MCP (`mem_save`) both pre-externalize >100k/`data:image/` via `PutBlob` → `blob:sha256:…` (converged). `Store.Save` is fallback: it avoids truncate for `ShouldExternalize` payloads and stores raw >100k inline if caller didn't externalize; `DoctorFixBlobs` later migrates inline large rows to blobs — see `internal/bigmem/blobstore.go` and `bigmem.go:ShouldExternalize`. Content ≤50k is truncated with `[truncated]`; >100k is blob-externalized eagerly (CLI/MCP) or preserved raw until `DoctorFixBlobs`.
+
+**Search limit (F10):** `Search` caps at 50 (default 20 via `defaultMaxSearchResults`) to allow `BuildGraph(limit=50)` and `biggz bigmem search --limit 50` without silent downgrade to 20 — see `internal/bigmem/bigmem.go:Search`.
+
+**Session note (P2-7):** CLI/MCP pre-call `EnsureImplicitSession` is best-effort; authoritative ownership claim is inside `Store.Save` TX (`resolveWriteProjectTx`). Pre-call errors (especially `ErrProjectOwnershipAmbiguous`) are surfaced, not swallowed — `Store.Save` remains fallback.
+
+**File map (P2-8, verifiable without rg):** `internal/bigmem/*.go` — `bigmem.go` (core Store/Search/Save+FTS5/dedup), `full.go` (sessions/prompts/timeline/stats/doctor), `graph.go` (BuildGraph/Render*), `blobstore.go` (PutBlob/GetBlob), `sync.go` (FileTransport/export), `sync_journal.go` (journal/lease), `engram_import.go` (compat) + `*_test.go` for audit.
 
 ## SGH Graph Execution
 

@@ -130,7 +130,22 @@ func bigmemRun() int {
 				}
 			}
 		}
-		_ = store.EnsureImplicitSession(obs.SessionID, obs.Project)
+		if err := store.EnsureImplicitSession(obs.SessionID, obs.Project); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: EnsureImplicitSession: "+err.Error())
+			if errors.Is(err, bigmem.ErrProjectOwnershipAmbiguous) {
+				fmt.Fprintf(os.Stderr, "error: save blocked: %v\n", err)
+				return 1
+			}
+		}
+		// F7 parity: externalize >100k/data:image via PutBlob before Save (mirrors MCP) — Store.Save also
+		// avoids truncate for ShouldExternalize as fallback, but eager PutBlob keeps CLI/MCP converged.
+		if bigmem.ShouldExternalize(obs.Content) {
+			if addr, err := bigmem.PutBlob([]byte(obs.Content)); err == nil {
+				obs.Content = addr
+			} else {
+				fmt.Fprintf(os.Stderr, "[bigmem] PutBlob failed: %v\n", err)
+			}
+		}
 		if err := store.Save(obs); err != nil {
 			fmt.Fprintf(os.Stderr, "error: save: %v\n", err)
 			return 1

@@ -1449,7 +1449,10 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 	// Batch S: private-tag redaction + truncation (Engram parity)
 	obs.Title = stripPrivateTags(obs.Title)
 	stripped := stripPrivateTags(obs.Content)
-	// Do not truncate blob addresses or content eligible for blob externalization (DoctorFixBlobs parity)
+	// F7: do not truncate blob addresses or ShouldExternalize (>100k/data:image) payloads — CLI and MCP both
+	// benefit (MCP pre-externalizes via PutBlob, CLI now also pre-externalizes; Store.Save is fallback that
+	// preserves raw >100k without truncate so DoctorFixBlobs can later migrate). PutBlob is handled
+	// eagerly in cmd callers; Store.Save avoids truncate for blob-eligible content.
 	if IsBlobAddr(stripped) || ShouldExternalize(stripped) {
 		obs.Content = stripped
 	} else {
@@ -1707,10 +1710,10 @@ func (s *Store) Search(query string, opts SearchOptions) (results []*Observation
 	if limit <= 0 {
 		limit = defaultMaxSearchResults
 	}
-	if limit > defaultMaxSearchResults {
-		// cap to max to avoid excessive rows; allow env override via SearchOptions? keeps parity with engram cfg
-		limit = defaultMaxSearchResults
+	if limit > 50 {
+		limit = 50
 	}
+	// Cap is 50 (not 20) to allow BuildGraph(limit=50) and external --limit 50 (F10); default remains 20 via defaultMaxSearchResults.
 	// BM25Floor is stored for caller instrumentation; Search does not rank-filter (candidates use BM25Floor)
 	_ = opts.BM25Floor
 

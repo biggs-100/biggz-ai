@@ -628,7 +628,10 @@ func handleToolCall(id any, name string, args map[string]any) {
 			if strings.TrimSpace(obs.SessionID) == "" {
 				obs.SessionID = resolveFallbackSessionID(store, resolvedProject)
 			}
-			_ = ensureImplicitSessionWithCWD(store, obs.SessionID, resolvedProject)
+			if err := ensureImplicitSessionWithCWD(store, obs.SessionID, resolvedProject); err != nil {
+				writeError(id, err.Error())
+				return
+			}
 			obs.Project = resolvedProject
 			// Wire capture_prompt (Engram parity): best-effort prompt persistence when enabled (default true).
 			if getBool(args, "capture_prompt", true) {
@@ -904,7 +907,10 @@ func handleToolCall(id any, name string, args map[string]any) {
 		if !ok {
 			return
 		}
-		_ = ensureImplicitSessionWithCWD(store, sessionID, resolvedProj)
+		if err := ensureImplicitSessionWithCWD(store, sessionID, resolvedProj); err != nil {
+			writeError(id, err.Error())
+			return
+		}
 		s, err := store.SessionEnd(sessionID, summary)
 		if err != nil {
 			writeError(id, err.Error())
@@ -962,7 +968,10 @@ func handleToolCall(id any, name string, args map[string]any) {
 			if strings.TrimSpace(sessionID) == "" {
 				sessionID = resolveFallbackSessionID(store, resolvedProj)
 			}
-			_ = ensureImplicitSessionWithCWD(store, sessionID, resolvedProj)
+			if err := ensureImplicitSessionWithCWD(store, sessionID, resolvedProj); err != nil {
+				writeError(id, err.Error())
+				return
+			}
 			origPrompt := content
 			p, err := store.SavePrompt(content, sessionID)
 			if err != nil {
@@ -1111,7 +1120,10 @@ func handleToolCall(id any, name string, args map[string]any) {
 		if strings.TrimSpace(sessionID) == "" {
 			sessionID = resolveFallbackSessionID(store, resolvedProj)
 		}
-		_ = ensureImplicitSessionWithCWD(store, sessionID, resolvedProj)
+		if err := ensureImplicitSessionWithCWD(store, sessionID, resolvedProj); err != nil {
+			writeError(id, err.Error())
+			return
+		}
 		obs, err := bigmem.CapturePassive(content, resolvedProj)
 		if err != nil {
 			writeError(id, err.Error())
