@@ -80,6 +80,7 @@ func sddStatusRun() int {
 		}
 	}
 
+	// contract is validated but status always renders v2 (authority-free); flag kept for future v3 compat
 	_ = contract
 
 	if hasHelp {

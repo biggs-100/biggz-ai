@@ -24,7 +24,7 @@ cmd/
 internal/
 ├── agents/          — Agent adapters (opencode, claude, qwen)
 ├── agentbuilder/    — Custom SDD agent generation (engines, parser, installer, registry)
-├── assets/          — Embedded skills + configs + OpenCode plugins (opencode plugins + biggz-orchestrator.md + biggz-synthesis-gate.js)
+├── assets/          — Embedded skills + configs + OpenCode plugins (opencode plugins + biggz-orchestrator.md [internal/assets/biggz/] + biggz-synthesis-gate.js [internal/assets/pi/biggz-synthesis-gate.js])
 ├── backup/          — tar.gz snapshot/restore
 ├── bigmem/          — Persistent observation store + MCP tools (22 agent-facing + 3 internal branching (25 total), SQLite) — Profiles[agent]=20, admin=3 — files: bigmem.go (Store/Search/Save+FTS5/dedup), full.go (sessions/prompts/timeline/stats/doctor), graph.go (BuildGraph/Render*), blobstore.go (PutBlob/GetBlob), sync.go (FileTransport), sync_journal.go (journal/lease), engram_import.go (compat)
 ├── codegraph/       — CodeGraph index + change-intent report (safe-root validation)
@@ -57,7 +57,7 @@ internal/
 ├── policy/          — PolicyEvaluator interface + guardrails
 ├── project/         — Project detection (git remote → BigMem project pinning)
 ├── tui/             — Terminal UI (theme, gallery, status-line, ask dialog)
-└── skillregistry/   — Skill registry scan + generation
+└── skillregistry/   — Skill registry scan + generation (generated at .atl/skill-registry.md and ~/.biggz/skills/, not a static asset)
 
 model/               — Core types (ReviewState, FSM 13-state, hash domainHash+writeLengthPrefixed, ReviewStatus, Role)
 ├── hash.go          — domainHash(domain+"\x00"+payload) + writeLengthPrefixed(u32 BE), EvidenceDomain/MerkleDomain

@@ -92,7 +92,7 @@ proposal → spec → design → tasks → apply → verify → archive
                                               ↑
                                             design
 ```
-Full graph: init → explore → research (optional) → proposal → spec → design → tasks → apply → verify → archive — see internal/assets/biggz/biggz-orchestrator-workflow.md
+> **Note:** Pre-proposal init->explore->research (orchestrator skills) before proposal — full workflow: init → explore → research (optional) → proposal → spec → design → tasks → apply → verify → archive — see internal/assets/biggz/biggz-orchestrator-workflow.md
 
 Each phase is a skill (`/sdd-propose`, `/sdd-spec`, etc.) that the orchestrator delegates to sub-agents. Review lenses are captured per-slot via `biggz review capture-result` (content-addressed, strict admission) and committed once via `biggz review finalize` — no DAG; `Graph.Execute()` is legacy (see `docs/architecture.md` for the `review start → capture → finalize → gate` pipeline).
 

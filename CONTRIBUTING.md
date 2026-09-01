@@ -10,15 +10,18 @@
 
 ## Development Workflow
 
-This project follows **Spec-Driven Development (SDD)**. Every significant change starts with a proposal:
+This project follows **Spec-Driven Development (SDD)**. Every significant change starts with pre-proposal phases before the proposal:
 
-1. **Propose** — Open an issue describing the change, or use `/sdd-new` inside OpenCode.
-2. **Spec** — Write delta specs with GIVEN/WHEN/THEN scenarios in `openspec/specs/`.
-3. **Design** — Document architecture decisions, data flow, and file changes.
-4. **Tasks** — Break the work into verifiable tasks.
-5. **Apply** — Implement, commit in work units.
-6. **Verify** — Run tests, validate against specs.
-7. **Archive** — Move completed change to `openspec/changes/archive/`.
+1. **Init** — Initialize SDD context (`/sdd-init`): cache testing capabilities, activate Strict TDD when supported, and build `.atl/skill-registry.md`.
+2. **Explore** — Explore the codebase and context (`/sdd-explore`): produce `explore.md` with findings.
+3. **Research** — Research product decisions (optional, `/sdd-research`): when selected, completion is mandatory before proposal; resolves open questions and product choices.
+4. **Propose** — Open an issue describing the change, or use `/sdd-new` inside OpenCode.
+5. **Spec** — Write delta specs with GIVEN/WHEN/THEN scenarios in `openspec/specs/`.
+6. **Design** — Document architecture decisions, data flow, and file changes.
+7. **Tasks** — Break the work into verifiable tasks.
+8. **Apply** — Implement, commit in work units.
+9. **Verify** — Run tests, validate against specs.
+10. **Archive** — Move completed change to `openspec/changes/archive/`.
 
 ## Commit Conventions
 
