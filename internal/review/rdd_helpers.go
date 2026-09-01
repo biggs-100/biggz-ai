@@ -286,3 +286,63 @@ func buildWorktreeStatus(gen rddGeneration, genNum int64) *RDDModeStatus {
 		RecordedAt: gen.RecordedAt,
 	}
 }
+
+func validateWriteRDDPreconditions(gitDir string, mode RDDMode) (string, error) {
+	if mode == RDDModeEnabled {
+		return "", ErrRDDModeRepositoryForcedOn
+	}
+	if !plausibleGitDir(gitDir) {
+		return "", fmt.Errorf(
+			"%s is not a git directory (missing HEAD or objects/refs): refusing to write review mode state there; run from inside a repository or use 'biggz rdd disable --scope=global'",
+			gitDir)
+	}
+	genDir := filepath.Join(gitDir, rddGenerationsDir)
+	if err := os.MkdirAll(genDir, 0755); err != nil {
+		return "", err
+	}
+	return genDir, nil
+}
+
+func acquireRDDLock(genDir string) (*FileLock, error) {
+	fl := NewNamedFileLock(genDir, "LOCK")
+	if err := fl.AcquireWithTimeout(5 * time.Second); err != nil {
+		return nil, fmt.Errorf("file lock acquire: %w", err)
+	}
+	return fl, nil
+}
+
+func readAndValidateRDDHead(genDir string, expectedRevision string) (int64, *rddGeneration, bool, error) {
+	headGen, head, isCorrupt, err := readRDDHead(genDir)
+	if err != nil {
+		return -1, nil, false, err
+	}
+	if err := validateRDDCAS(head, isCorrupt, expectedRevision); err != nil {
+		return -1, nil, false, err
+	}
+	return headGen, head, isCorrupt, nil
+}
+
+func prepareRDDGeneration(headGen int64, head *rddGeneration, isCorrupt bool, mode RDDMode) (rddGeneration, []byte, string, int64, string, error) {
+	genNum, prevRev, err := computeNextRDDGeneration(headGen, head, isCorrupt)
+	if err != nil {
+		return rddGeneration{}, nil, "", 0, "", err
+	}
+	gen, data, filename, err := buildRDDGeneration(genNum, prevRev, mode)
+	if err != nil {
+		return rddGeneration{}, nil, "", 0, "", err
+	}
+	return gen, data, filename, genNum, prevRev, nil
+}
+
+func publishRDDGeneration(genDir, filename string, data []byte, isCorrupt bool) (string, error) {
+	return publishRelocatedGeneration(genDir, filename, data, isCorrupt)
+}
+
+func buildRDDStatusFromGeneration(gen rddGeneration, genNum int64) *RDDModeStatus {
+	return &RDDModeStatus{
+		Reach:      ReachThisBuild,
+		Revision:   gen.Revision,
+		Generation: genNum,
+		RecordedAt: gen.RecordedAt,
+	}
+}

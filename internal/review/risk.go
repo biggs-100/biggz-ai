@@ -303,37 +303,8 @@ func documentationOnly(paths []string) bool {
 // NUL/utf8, shebang, MDX, exec).
 func triviallyInert(paths []string, diffSummary map[string]int) bool {
 	for _, p := range paths {
-		if isDocumentationPath(p) {
-			if isPassiveDocumentExtension(p) {
-				if !isPassiveContentFile(p) {
-					return false
-				}
-			}
-			continue
-		}
-		lower := strings.ToLower(p)
-		if _, source := semanticSourceExtensions[path.Ext(lower)]; source {
+		if !isPathTriviallyInert(p, diffSummary) {
 			return false
-		}
-		if _, config := configurationExtensions[path.Ext(lower)]; config {
-			return false
-		}
-		if _, config := configurationBasenames[lower]; config {
-			return false
-		}
-		if executionConfigPath([]string{p}) != "" {
-			return false
-		}
-		if isPassiveDocumentExtension(p) {
-			if !isPassiveContentFile(p) {
-				return false
-			}
-		}
-		if diffSummary != nil {
-			lines, present := diffSummary[p]
-			if !present || lines <= 0 {
-				return false
-			}
 		}
 	}
 	return true

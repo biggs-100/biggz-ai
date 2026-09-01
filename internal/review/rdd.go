@@ -489,114 +489,27 @@ func writeRDDMode(gitDir string, m RDDMode) error {
 // It is used by writeRDDMode (empty expectedRevision). Mirror handling is
 // done by SetCloneLocalRDDMode; this helper only publishes the relocated root.
 func writeRDDModeCAS(gitDir string, m RDDMode, expectedRevision string) (*RDDModeStatus, error) {
-	if m == RDDModeEnabled {
-		return nil, ErrRDDModeRepositoryForcedOn
-	}
-	if !plausibleGitDir(gitDir) {
-		return nil, fmt.Errorf(
-			"%s is not a git directory (missing HEAD or objects/refs): refusing to write review mode state there; run from inside a repository or use 'biggz rdd disable --scope=global'",
-			gitDir)
-	}
-	genDir := filepath.Join(gitDir, rddGenerationsDir)
-	if err := os.MkdirAll(genDir, 0755); err != nil {
-		return nil, err
-	}
-
-	var result *RDDModeStatus
-	var writeErr error
-
-	fl := NewNamedFileLock(genDir, "LOCK")
-	if err := fl.AcquireWithTimeout(5 * time.Second); err != nil {
-		return nil, fmt.Errorf("file lock acquire: %w", err)
-	}
-	defer fl.Release()
-
-	// Hold LOCK across scan→read→CAS→compute→publish.
-	headGen, _, scanErr := scanGenerationHead(genDir)
-	if scanErr != nil {
-		return nil, scanErr
-	}
-	head, headErr := readLatestGeneration(genDir)
-	isCorrupt := headErr != nil && errors.Is(headErr, ErrRDDModeCorrupt)
-
-	// CAS validation (only when caller supplies expectedRevision).
-	if isCorrupt {
-		if expectedRevision != "" {
-			return nil, fmt.Errorf("%w: expected %q but head is %q", ErrRDDModeRevisionMismatch, expectedRevision, "")
-		}
-	} else if head == nil {
-		if expectedRevision != "" {
-			return nil, fmt.Errorf("%w: expected %q but head is %q", ErrRDDModeRevisionMismatch, expectedRevision, "")
-		}
-	} else {
-		if expectedRevision != "" && expectedRevision != head.Revision {
-			return nil, fmt.Errorf("%w: expected %q but head is %q", ErrRDDModeRevisionMismatch, expectedRevision, head.Revision)
-		}
-	}
-
-	var genNum int64
-	var prevRev string
-	switch {
-	case isCorrupt:
-		// Repair: overwrite exact corrupt slot.
-		if headGen >= 0 {
-			genNum = headGen
-		} else {
-			genNum = 0
-		}
-		prevRev = ""
-	case head != nil:
-		genNum = head.Generation + 1
-		prevRev = head.Revision
-	default:
-		genNum = 0
-		prevRev = ""
-	}
-
-	if genNum > maxGeneration {
-		return nil, fmt.Errorf("rdd generation exhausted: %d exceeds max %d", genNum, maxGeneration)
-	}
-	if genNum < 0 {
-		genNum = 0
-	}
-
-	gen := rddGeneration{
-		Schema:           rddStatusSchema,
-		Generation:       genNum,
-		PreviousRevision: prevRev,
-		Mode:             m,
-		RecordedAt:       time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	gen.Revision = computeGenerationRevision(gen)
-	data, err := json.MarshalIndent(gen, "", "  ")
+	genDir, err := validateWriteRDDPreconditions(gitDir, m)
 	if err != nil {
 		return nil, err
 	}
-	filename := fmt.Sprintf("gen-%010d.json", genNum)
-	relocatedPath := filepath.Join(genDir, filename)
-	if isCorrupt {
-		if err := os.WriteFile(relocatedPath, data, 0644); err != nil {
-			return nil, err
-		}
-		_ = SyncReviewDirectory(filepath.Dir(relocatedPath))
-	} else {
-		if err := rddPublishImmutable(relocatedPath, data); err != nil {
-			return nil, err
-		}
+	fl, err := acquireRDDLock(genDir)
+	if err != nil {
+		return nil, err
 	}
-
-	result = &RDDModeStatus{
-		Reach:      ReachThisBuild,
-		Revision:   gen.Revision,
-		Generation: genNum,
-		RecordedAt: gen.RecordedAt,
+	defer fl.Release()
+	headGen, head, isCorrupt, err := readAndValidateRDDHead(genDir, expectedRevision)
+	if err != nil {
+		return nil, err
 	}
-	// Mirror publishing is handled by SetCloneLocalRDDMode which knows
-	// commonGitDir. This helper alone reports ThisBuild; the caller upgrades
-	// to Machine when mirror succeeds.
-	writeErr = nil
-	_ = writeErr
-	return result, nil
+	gen, data, filename, genNum, _, err := prepareRDDGeneration(headGen, head, isCorrupt, m)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := publishRDDGeneration(genDir, filename, data, isCorrupt); err != nil {
+		return nil, err
+	}
+	return buildRDDStatusFromGeneration(gen, genNum), nil
 }
 
 // rddPublishImmutable publishes payload at path with O_CREATE|O_EXCL semantics.
