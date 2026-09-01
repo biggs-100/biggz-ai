@@ -3,10 +3,13 @@
  * Mirrors biggz-tool-interception but delegates to Runner reusing PolicyInterceptor.
  * Handles PI_SUBAGENT_CHILD=1 bypass, block/revise short-circuit, tool_result no-mutate.
  * Rank1 port: status-line presets/separators/segments + git head watch stub.
+ * Pi parity slice: PR hyperlink OSC 8, subagents +N, contextUsage memo 10-char gauge,
+ * SafeToolRenderer try/catch, stabilizeStreamingPreviews.
  * @param {import("@earendil-works/pi-coding-agent").ExtensionAPI} pi
  */
 
 // ── Rank1: Status-line presets (mirrors oh-my-pi presets.ts) ──
+// Guard note: BIGGZ_PRETTY=0 check lives at top of biggzExtensionAPI() below; keep it there for single-file revert.
 export const STATUS_LINE_PRESETS = Object.freeze({
 	default: {
 		leftSegments: ["model", "mode", "path", "git", "pr", "context_pct", "cost"],
@@ -57,8 +60,164 @@ export function getSeparator(style) {
 	return SEPARATORS[style] ?? SEPARATORS["powerline-thin"];
 }
 
-// ── Segments (subset required by task) ──
-export const SEGMENTS = Object.freeze(["model", "mode", "path", "git", "pr", "context_pct", "cost"]);
+// ── Context-usage memo (mirrors component.ts messageFingerprint) ──
+// Cheap O(blocks) fingerprint, hash of last message drives memo invalidation.
+export function messageFingerprint(msg) {
+	if (!msg || typeof msg !== "object") return "";
+	const role = msg.role || "";
+	const ts = msg.timestamp || 0;
+	let textLen = 0;
+	let blocks = 0;
+	let images = 0;
+	const content = msg.content;
+	if (typeof content === "string") {
+		textLen += content.length;
+	} else if (Array.isArray(content)) {
+		blocks = content.length;
+		for (const b of content) {
+			if (!b || typeof b !== "object") continue;
+			if (b.type === "text" && typeof b.text === "string") textLen += b.text.length;
+			else if (b.type === "image") images++;
+			else if (b.type === "thinking" && typeof b.thinking === "string") textLen += b.thinking.length;
+			else if (b.type === "toolCall" && typeof b.name === "string") textLen += b.name.length;
+		}
+	}
+	// bashExecution-like messages
+	if (typeof msg.command === "string") textLen += msg.command.length;
+	if (typeof msg.output === "string") textLen += msg.output.length;
+	if (role === "assistant" && msg.usage && typeof msg.usage.totalTokens === "number") {
+		textLen += msg.usage.totalTokens;
+	}
+	return `${role}:${ts}:${textLen}:${blocks}:${images}`;
+}
+
+export function hashMessages(messages) {
+	if (!Array.isArray(messages) || messages.length === 0) return "empty:0";
+	// Full structural hash: O(n) over fingerprints, catches in-place tail growth and mid-history mutations
+	// Last-message-only would miss edits to earlier messages that affect context tokens.
+	const len = messages.length;
+	let acc = `${len}:`;
+	for (let i = 0; i < len; i++) acc += messageFingerprint(messages[i]) + "|";
+	// cheap djb2-like short-circuit to keep memo key bounded
+	let hash = 5381;
+	for (let i = 0; i < acc.length; i++) hash = ((hash << 5) + hash) ^ acc.charCodeAt(i);
+	return `${len}:${hash >>> 0}:${messageFingerprint(messages[len - 1])}`;
+}
+
+// 10-char gauge: ━ filled, ─ empty (mirrors pi progress gauge for context)
+export function getContextGauge(pct) {
+	const p = Math.max(0, Math.min(100, Number(pct) || 0));
+	const filled = Math.round(p / 10);
+	const f = Math.max(0, Math.min(10, filled));
+	return "━".repeat(f) + "─".repeat(10 - f);
+}
+
+let _ctxMemo = { hash: null, pct: null, gauge: null, memo: null };
+export function getContextUsageMemo(messages, pct, contextWindow) {
+	const hash = hashMessages(messages);
+	if (_ctxMemo.hash === hash && _ctxMemo.pct === pct && _ctxMemo.contextWindow === contextWindow) {
+		return _ctxMemo.memo;
+	}
+	const gauge = getContextGauge(pct);
+	const memo = { pct, gauge, hash, contextWindow };
+	_ctxMemo = { hash, pct, contextWindow, gauge, memo };
+	return memo;
+}
+
+// ── SafeToolRenderer + stabilizeStreamingPreviews (mirrors tool-execution.ts) ──
+export function stabilizeStreamingPreviews(input) {
+	// Strip trailing `+` artefacts and trailing whitespace from streamed preview
+	// before capPreviewLines. Handles string, array<string>, and PerFile-like objects.
+	if (typeof input === "string") {
+		let s = input.replace(/\s+$/g, "");
+		// diff streaming may leave a lone trailing `+` where the added line hasn't arrived yet
+		if (s.endsWith("+")) s = s.slice(0, -1).replace(/\s+$/g, "");
+		return s;
+	}
+	if (Array.isArray(input)) {
+		let changed = false;
+		const out = input.map((v) => {
+			const nv = stabilizeStreamingPreviews(v);
+			if (nv !== v) changed = true;
+			return nv;
+		});
+		return changed ? out : input;
+	}
+	if (input && typeof input === "object") {
+		// PerFileDiffPreview-like { diff?: string, path?: string }
+		if (typeof input.diff === "string") {
+			const stabilized = stabilizeStreamingPreviews(input.diff);
+			if (stabilized !== input.diff) return { ...input, diff: stabilized };
+		}
+		// contentPadding normalization: strip trailing whitespace
+		if (typeof input.content === "string") {
+			const c = input.content.replace(/\s+$/g, "");
+			if (c !== input.content) return { ...input, content: c };
+		}
+	}
+	return input;
+}
+
+export function SafeToolRenderer(renderFn, fallbackText = "✗ render error") {
+	return (...args) => {
+		try {
+			return renderFn(...args);
+		} catch (e) {
+			// dim fallback, never throw into stream
+			return `\x1b[2m${fallbackText}\x1b[22m`;
+		}
+	};
+}
+
+// Class wrapper mirroring SafeToolRendererComponent in tool-execution.ts
+export class SafeToolRendererComponent {
+	constructor(toolName, component, fallback) {
+		this.toolName = toolName;
+		this.component = component;
+		this.fallback = fallback;
+		this._warned = false;
+	}
+	render(width) {
+		try {
+			if (this.component && typeof this.component.render === "function") return this.component.render(width);
+			if (typeof this.component === "function") return this.component(width);
+			return this.component;
+		} catch (err) {
+			if (!this._warned) {
+				this._warned = true;
+				try { console.warn(`Tool renderer failed ${this.toolName}: ${String(err)}`); } catch {}
+			}
+			try {
+				if (typeof this.fallback === "function") {
+					const fb = this.fallback();
+					if (fb && typeof fb.render === "function") return fb.render(width);
+					return fb;
+				}
+				if (this.fallback) return [String(this.fallback)];
+			} catch {}
+			return ["\x1b[2m✗ render error\x1b[22m"];
+		}
+	}
+}
+
+// ── Segments (subset required by task, extended with Pi parity) ──
+export const SEGMENTS = Object.freeze(["model", "mode", "path", "git", "pr", "subagents", "context_pct", "cost"]);
+
+function renderPR(pr) {
+	if (!pr) return "";
+	const label = `⤴ #${pr.number}`;
+	if (pr.url) {
+		// OSC 8 hyperlink with BEL terminators (ST \x1b\\ also valid, BEL is canonical for gh helper)
+		// Format: ESC ]8;;URL BEL label ESC ]8;; BEL
+		return `\x1b]8;;${pr.url}\x07${label}\x1b]8;;\x07`;
+	}
+	// Fallback: construct GH URL if owner/repo known via pr.repo
+	if (pr.repo && pr.number) {
+		const url = `https://github.com/${pr.repo}/pull/${pr.number}`;
+		return `\x1b]8;;${url}\x07${label}\x1b]8;;\x07`;
+	}
+	return label;
+}
 
 export function renderSegment(id, ctx = {}) {
 	switch (id) {
@@ -94,13 +253,33 @@ export function renderSegment(id, ctx = {}) {
 		case "pr": {
 			const pr = ctx.git?.pr;
 			if (!pr) return "";
-			return `⤴ #${pr.number}`;
+			return renderPR(pr);
+		}
+		case "subagents": {
+			const n = ctx.subagentCount ?? ctx.subagents ?? ctx.subagentsCount ?? ctx.runningSubagents ?? 0;
+			if (!n || Number(n) <= 0) return "";
+			// Spec: subagents count `+N` (compact badge for parallel workers)
+			// Keep icon variant available via ctx.icon flag but default to +N compact
+			if (ctx.compactSubagents === false) {
+				return `👥 ${n}`;
+			}
+			return `+${n}`;
 		}
 		case "context_pct": {
-			const pct = ctx.contextPercent;
+			const pct = ctx.contextPercent ?? ctx.pct;
 			if (pct == null) return "";
 			const v = pct > 0 && pct < 1 ? pct.toFixed(1) : Math.round(pct);
-			return `◫ ${v}%`;
+			// contextUsage memo gauge: 10-char ━/─, memoized on messages hash
+			if (Array.isArray(ctx.messages) && ctx.contextWindow != null) {
+				const memo = getContextUsageMemo(ctx.messages, pct, ctx.contextWindow);
+				// gauge is memoized; render as `◫ 45% ━━━━──────` compact
+				return `◫ ${v}% ${memo.gauge}`;
+			}
+			// Fallback gauge without memo
+			const gauge = getContextGauge(pct);
+			// Minimal display keeps `◫ 45%` compat; append gauge when space allows (compact flag off)
+			if (ctx.withGauge === false) return `◫ ${v}%`;
+			return `◫ ${v}% ${gauge}`;
 		}
 		case "cost": {
 			if (ctx.cost == null && ctx.usageStats?.cost == null) return "";
@@ -120,8 +299,10 @@ export function renderStatusLine(opts = {}, themeSepDot = " · ") {
 	const sepDef = getSeparator(opts.separator ?? preset.separator);
 	const sep = sepDef.left?.trim() ? ` ${sepDef.left.trim()} ` : themeSepDot;
 	const ctx = opts.ctx || opts;
-	const leftParts = leftIds.map((id) => renderSegment(id, ctx)).filter(Boolean);
-	const rightParts = rightIds.map((id) => renderSegment(id, ctx)).filter(Boolean);
+	// stabilize streamed preview fields before rendering if present
+	const stableCtx = ctx && (ctx.preview || ctx.streamedPreview) ? { ...ctx, preview: stabilizeStreamingPreviews(ctx.preview), streamedPreview: stabilizeStreamingPreviews(ctx.streamedPreview) } : ctx;
+	const leftParts = leftIds.map((id) => renderSegment(id, stableCtx)).filter(Boolean);
+	const rightParts = rightIds.map((id) => renderSegment(id, stableCtx)).filter(Boolean);
 	const left = leftParts.join(sep);
 	const right = rightParts.join(sep);
 	if (left && right) return `${left}${themeSepDot}${right}`;
@@ -167,6 +348,14 @@ export default function biggzExtensionAPI(pi) {
 			renderStatusLine,
 			SPINNER_FRAMES,
 			watchGitHead,
+			messageFingerprint,
+			hashMessages,
+			getContextGauge,
+			getContextUsageMemo,
+			stabilizeStreamingPreviews,
+			SafeToolRenderer,
+			SafeToolRendererComponent,
+			renderPR,
 		};
 	} catch {}
 	try {
@@ -189,6 +378,7 @@ export default function biggzExtensionAPI(pi) {
 				}
 				return { block: true, reason: "awaiting consent" };
 			}
+			// SafeToolRenderer wrap is applied at render time; here we ensure even if upstream rendering throws we don't crash stream
 			try { ctx?.ui?.setStatus?.("tool", `tool_execution_start ${name}`); } catch {}
 			return undefined;
 		});
