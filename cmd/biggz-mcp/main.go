@@ -112,6 +112,66 @@ func (a *SessionActivity) ActivityScore(sessionID string) string {
 	return fmt.Sprintf("Activity: %d tool calls (threshold %d)", c, a.threshold)
 }
 
+func currentWorkingDirectory() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return cwd
+}
+
+func defaultSessionID(proj string) string {
+	if strings.TrimSpace(proj) == "" {
+		return "manual-save"
+	}
+	return "manual-save-" + strings.TrimSpace(proj)
+}
+
+func resolveFallbackSessionID(s *bigmem.Store, proj string) string {
+	if s != nil {
+		if id, ok, err := s.MostRecentActiveSession(proj); err == nil && ok {
+			return id
+		}
+	}
+	return defaultSessionID(proj)
+}
+
+func ensureImplicitSessionWithCWD(s *bigmem.Store, sessionID, proj string) error {
+	if s == nil || strings.TrimSpace(sessionID) == "" {
+		return nil
+	}
+	return s.EnsureImplicitSession(sessionID, proj)
+}
+
+func resolveProject(provided string) string {
+	trimmed := strings.TrimSpace(provided)
+	if trimmed != "" {
+		return project.NormalizeProjectName(trimmed)
+	}
+	cwd := currentWorkingDirectory()
+	if cwd != "" {
+		info, err := project.DetectProject(cwd)
+		if err == nil && strings.TrimSpace(info.Project) != "" && info.Project != "unknown" {
+			return project.NormalizeProjectName(info.Project)
+		}
+		// Fallback to basename even on ambiguous/error
+		if strings.TrimSpace(info.Project) != "" && info.Project != "unknown" {
+			return project.NormalizeProjectName(info.Project)
+		}
+		// If DetectProject failed with ambiguous, fallback to basename via NormalizeProjectName of cwd base
+		if cwd != "" {
+			base := filepath.Base(cwd)
+			if base != "" && base != "." {
+				n := project.NormalizeProjectName(base)
+				if n != "" && n != "unknown" {
+					return n
+				}
+			}
+		}
+	}
+	return "biggz-ai"
+}
+
 // queuedWriteHandler serializes write operations via writeQueue (buffered-1).
 func queuedWriteHandler(fn func()) {
 	writeQueue <- struct{}{}
@@ -307,6 +367,12 @@ func handleToolCall(id any, name string, args map[string]any) {
 				writeError(id, "title is required")
 				return
 			}
+			resolvedProject := resolveProject(obs.Project)
+			if strings.TrimSpace(obs.SessionID) == "" {
+				obs.SessionID = resolveFallbackSessionID(store, resolvedProject)
+			}
+			_ = ensureImplicitSessionWithCWD(store, obs.SessionID, resolvedProject)
+			obs.Project = resolvedProject
 			origContent := obs.Content
 			origWasExternalized := bigmem.ShouldExternalize(origContent)
 			if bigmem.ShouldExternalize(obs.Content) {
@@ -498,10 +564,12 @@ func handleToolCall(id any, name string, args map[string]any) {
 	case "mem_session_summary":
 		sessionID := getStr(args, "session_id")
 		summary := getStr(args, "content")
-		if sessionID == "" || summary == "" {
+		if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(summary) == "" {
 			writeError(id, "session_id and content are required")
 			return
 		}
+		resolvedProj := resolveProject(getStr(args, "project"))
+		_ = ensureImplicitSessionWithCWD(store, sessionID, resolvedProj)
 		s, err := store.SessionEnd(sessionID, summary)
 		if err != nil {
 			writeError(id, err.Error())
@@ -545,6 +613,11 @@ func handleToolCall(id any, name string, args map[string]any) {
 				writeError(id, "content is required")
 				return
 			}
+			resolvedProj := resolveProject(getStr(args, "project"))
+			if strings.TrimSpace(sessionID) == "" {
+				sessionID = resolveFallbackSessionID(store, resolvedProj)
+			}
+			_ = ensureImplicitSessionWithCWD(store, sessionID, resolvedProj)
 			origPrompt := content
 			p, err := store.SavePrompt(content, sessionID)
 			if err != nil {
@@ -681,18 +754,26 @@ func handleToolCall(id any, name string, args map[string]any) {
 
 	case "mem_capture_passive":
 		content := getStr(args, "content")
-		project := getStr(args, "project")
+		projectArg := getStr(args, "project")
+		sessionID := getStr(args, "session_id")
 		if content == "" {
 			writeError(id, "content required")
 			return
 		}
-		obs, err := bigmem.CapturePassive(content, project)
+		resolvedProj := resolveProject(projectArg)
+		if strings.TrimSpace(sessionID) == "" {
+			sessionID = resolveFallbackSessionID(store, resolvedProj)
+		}
+		_ = ensureImplicitSessionWithCWD(store, sessionID, resolvedProj)
+		obs, err := bigmem.CapturePassive(content, resolvedProj)
 		if err != nil {
 			writeError(id, err.Error())
 			return
 		}
 		saved := 0
 		for _, o := range obs {
+			o.SessionID = sessionID
+			o.Project = resolvedProj
 			if e := store.Save(o); e == nil {
 				saved++
 			}

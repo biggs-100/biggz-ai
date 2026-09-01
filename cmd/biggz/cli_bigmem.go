@@ -98,6 +98,28 @@ func bigmemRun() int {
 				i++
 			}
 		}
+		// Engram parity: ensure implicit session for CLI saves
+		if strings.TrimSpace(obs.Project) == "" {
+			if info, err := project.DetectProject("."); err == nil && strings.TrimSpace(info.Project) != "" && info.Project != "unknown" {
+				obs.Project = project.NormalizeProjectName(info.Project)
+			} else if strings.TrimSpace(obs.Project) == "" {
+				obs.Project = "biggz-ai"
+			}
+		} else {
+			obs.Project = project.NormalizeProjectName(obs.Project)
+		}
+		if strings.TrimSpace(obs.SessionID) == "" {
+			if sid, ok, _ := store.MostRecentActiveSession(obs.Project); ok {
+				obs.SessionID = sid
+			} else {
+				if strings.TrimSpace(obs.Project) == "" {
+					obs.SessionID = "manual-save"
+				} else {
+					obs.SessionID = "manual-save-" + strings.TrimSpace(obs.Project)
+				}
+			}
+		}
+		_ = store.EnsureImplicitSession(obs.SessionID, obs.Project)
 		if err := store.Save(obs); err != nil {
 			fmt.Fprintf(os.Stderr, "error: save: %v\n", err)
 			return 1

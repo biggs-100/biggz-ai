@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	projpkg "github.com/biggs-100/biggz-ai/internal/project"
 )
 
 // ─── Session ─────────────────────────────────────────────────────────────────
@@ -25,6 +27,102 @@ type Session struct {
 	ParentID      *string   `json:"parent_id,omitempty"`
 	LeafID        string    `json:"leaf_id,omitempty"`
 	BranchSummary string    `json:"branch_summary,omitempty"`
+}
+
+// ─── Implicit session helpers (Engram parity) ───────────────────────────────
+
+func defaultSessionID(project string) string {
+	if strings.TrimSpace(project) == "" {
+		return "manual-save"
+	}
+	return "manual-save-" + strings.TrimSpace(project)
+}
+
+func currentWorkingDirectory() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return cwd
+}
+
+// MostRecentActiveSession resolves the active (un-ended) session for a project
+// from the persisted sessions table. Mirrors Engram's Store.MostRecentActiveSession.
+func (s *Store) MostRecentActiveSession(project string) (string, bool, error) {
+	normalized := projpkg.NormalizeProjectName(strings.TrimSpace(project))
+	if strings.TrimSpace(project) == "" || normalized == "" {
+		return "", false, nil
+	}
+	// Use normalized value for query; keep case-insensitive via LOWER.
+	var id string
+	err := s.db.QueryRow(`
+		SELECT id
+		FROM sessions
+		WHERE LOWER(project) = LOWER(?)
+		  AND (end_time IS NULL OR end_time = '')
+		  AND id NOT LIKE 'manual-save%'
+		ORDER BY datetime(start_time) DESC, id DESC
+		LIMIT 1
+	`, normalized).Scan(&id)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	return id, true, nil
+}
+
+// EnsureImplicitSession ensures a session row exists for sessionID/project.
+// It is idempotent: duplicate primary-key errors are ignored. It also creates
+// the sessions table if missing and fills directory with cwd when empty.
+func (s *Store) EnsureImplicitSession(sessionID, project string) error {
+	return s.EnsureImplicitSessionWithCWD(sessionID, project)
+}
+
+func (s *Store) EnsureImplicitSessionWithCWD(sessionID, project string) error {
+	if strings.TrimSpace(sessionID) == "" {
+		return fmt.Errorf("sessionID required")
+	}
+	cwd := currentWorkingDirectory()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, _ = s.db.Exec(`CREATE TABLE IF NOT EXISTS sessions
+		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT, parent_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, leaf_id TEXT, branch_summary TEXT)`)
+	_ = ensureColumns(s.db, "sessions", []columnDef{
+		{name: "parent_id", ddl: "TEXT REFERENCES sessions(id) ON DELETE SET NULL"},
+		{name: "leaf_id", ddl: "TEXT"},
+		{name: "branch_summary", ddl: "TEXT"},
+	})
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_parent_id ON sessions(parent_id)`)
+	_, _ = s.db.Exec(`CREATE INDEX IF NOT EXISTS idx_sessions_leaf_id ON sessions(leaf_id)`)
+	_, err := s.db.Exec("INSERT INTO sessions (id, start_time, project, directory, parent_id, leaf_id) VALUES (?, ?, ?, ?, NULL, ?)",
+		sessionID, time.Now().Format(time.RFC3339), project, cwd, sessionID)
+	if err != nil {
+		if strings.Contains(err.Error(), "UNIQUE") || strings.Contains(strings.ToLower(err.Error()), "constraint") || strings.Contains(err.Error(), "PRIMARY") {
+			if cwd != "" {
+				_, _ = s.db.Exec("UPDATE sessions SET directory = ? WHERE id = ? AND (directory IS NULL OR directory = '')", cwd, sessionID)
+			}
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func ensureImplicitSessionWithCWD(s *Store, sessionID, project string) error {
+	return s.EnsureImplicitSessionWithCWD(sessionID, project)
+}
+
+// resolveFallbackSessionID resolves the session a write should attach to when
+// caller did not provide explicit session_id (Engram parity).
+func resolveFallbackSessionID(s *Store, project string) string {
+	if s != nil {
+		if id, ok, err := s.MostRecentActiveSession(project); err == nil && ok {
+			return id
+		}
+	}
+	return defaultSessionID(project)
 }
 
 // SessionStart registers a new session.
