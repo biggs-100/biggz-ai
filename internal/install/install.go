@@ -346,6 +346,12 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		if _, err := DeployPiWaitPretty(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi wait pretty: %w", err)
 		}
+		if _, err := DeployPiFooter(homeDir, assets.FS, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy pi footer: %w", err)
+		}
+		if _, err := DeployPiToolPills(homeDir, assets.FS, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy pi tool pills: %w", err)
+		}
 		if cfg.DryRun {
 			result.PiWebSearch = true
 		} else if res, err := DeployPiWebSearch(ctx, homeDir); err != nil {
@@ -1993,6 +1999,66 @@ func DeployPiWaitPretty(homeDir string, ffs fs.FS, dryRun ...bool) (bool, error)
 		data, err = fs.ReadFile(assets.FS, "pi/biggz-wait-pretty.js")
 		if err != nil {
 			return false, fmt.Errorf("read pi wait pretty asset: %w", err)
+		}
+	}
+	if isDry {
+		return true, nil
+	}
+	if err := os.MkdirAll(extensionsDir, 0755); err != nil {
+		return false, fmt.Errorf("mkdir %s: %w", extensionsDir, err)
+	}
+	if _, err := filemerge.WriteFileAtomic(targetPath, data, 0644); err != nil {
+		return false, fmt.Errorf("write %s: %w", targetPath, err)
+	}
+	return true, nil
+}
+
+// DeployPiFooter deploys the biggz powerline footer extension to
+// ~/.pi/agent/extensions/biggz-footer.js. It renders a single-line
+// powerline footer: path (abbrev) │ git branch │ tokens ↑↓ │ cost │ context% │ model • thinking
+// Uses STATUS_LINE_PRESETS from biggz-extension-api.js and theme colors (statusLine*).
+// Reads from ffs at pi/biggz-footer.js (embedded via assets.FS all:pi)
+// and writes atomically. Dry-run counts without writing.
+func DeployPiToolPills(homeDir string, ffs fs.FS, dryRun ...bool) (bool, error) {
+	isDry := len(dryRun) > 0 && dryRun[0]
+	extensionsDir := piExtensionsDir(homeDir)
+	targetPath := filepath.Join(extensionsDir, "biggz-tool-pills.js")
+	var data []byte
+	var err error
+	if ffs != nil {
+		data, err = fs.ReadFile(ffs, "pi/biggz-tool-pills.js")
+	}
+	if err != nil || len(data) == 0 {
+		data, err = fs.ReadFile(assets.FS, "pi/biggz-tool-pills.js")
+		if err != nil {
+			return false, fmt.Errorf("read pi tool pills asset: %w", err)
+		}
+	}
+	if isDry {
+		return true, nil
+	}
+	if err := os.MkdirAll(extensionsDir, 0755); err != nil {
+		return false, fmt.Errorf("mkdir %s: %w", extensionsDir, err)
+	}
+	if _, err := filemerge.WriteFileAtomic(targetPath, data, 0644); err != nil {
+		return false, fmt.Errorf("write %s: %w", targetPath, err)
+	}
+	return true, nil
+}
+
+func DeployPiFooter(homeDir string, ffs fs.FS, dryRun ...bool) (bool, error) {
+	isDry := len(dryRun) > 0 && dryRun[0]
+	extensionsDir := piExtensionsDir(homeDir)
+	targetPath := filepath.Join(extensionsDir, "biggz-footer.js")
+	var data []byte
+	var err error
+	if ffs != nil {
+		data, err = fs.ReadFile(ffs, "pi/biggz-footer.js")
+	}
+	if err != nil || len(data) == 0 {
+		data, err = fs.ReadFile(assets.FS, "pi/biggz-footer.js")
+		if err != nil {
+			return false, fmt.Errorf("read pi footer asset: %w", err)
 		}
 	}
 	if isDry {
