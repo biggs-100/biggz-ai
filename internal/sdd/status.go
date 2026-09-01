@@ -280,6 +280,16 @@ func applyStoreRouting(active, archived []ChangeStatus, workspaceRoot string, in
 	}
 	if IsEngramStore(store) {
 		if memActive, memArchived, err := collectBigMemChangesWithArchive(workspaceRoot, includeInstructions); err == nil {
+			if len(memActive)+len(memArchived) == 0 {
+				// fallback to filesystem when BigMem empty (fresh clone), like hybrid
+				// When store is engram, initial active/archived were derived with BigMem paths
+				// and may be empty due to derivation failure (bigmem: paths unreadable).
+				// Re-collect filesystem changes with openspec store for correct fallback.
+				if fsActive, fsArchived, err := collectFilesystemChanges(workspaceRoot, includeInstructions); err == nil {
+					return fsActive, fsArchived, nil
+				}
+				return active, archived, nil
+			}
 			return memActive, memArchived, nil
 		}
 		return nil, nil, nil
@@ -301,6 +311,151 @@ func clearArtifactStoreFields(active, archived []ChangeStatus) {
 		archived[i].ContextFiles = ArtifactPaths{}
 		archived[i].ArtifactStore = ArtifactStore("")
 	}
+}
+
+// collectFilesystemChanges re-collects filesystem changes with openspec store
+// for the engram empty-DB fallback. When BigMem is empty (fresh clone), the
+// initial active/archived were derived with BigMem paths (bigmem:sdd/...) and
+// may be empty due to derivation failure (os.ReadFile on bigmem: path). This
+// helper forces ArtifactStoreOpenSpec so filesystem files are correctly read.
+func collectFilesystemChanges(workspaceRoot string, includeInstructions bool) ([]ChangeStatus, []ChangeStatus, error) {
+	changesDir := filepath.Join(workspaceRoot, "openspec", "changes")
+	archiveDir := filepath.Join(changesDir, "archive")
+	active, err := collectActiveChangesForcedStore(changesDir, workspaceRoot, includeInstructions, ArtifactStoreOpenSpec)
+	if err != nil {
+		return nil, nil, err
+	}
+	archived, err := collectArchivedChangesForcedStore(archiveDir, workspaceRoot, includeInstructions, ArtifactStoreOpenSpec)
+	if err != nil {
+		return active, nil, err
+	}
+	return active, archived, nil
+}
+
+func collectActiveChangesForcedStore(changesDir, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) ([]ChangeStatus, error) {
+	entries, err := os.ReadDir(changesDir)
+	if err != nil {
+		return nil, fmt.Errorf("read changes dir: %w", err)
+	}
+	var active []ChangeStatus
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Name() == "archive" {
+			continue
+		}
+		cs, err := readChangeWithForcedStore(filepath.Join(changesDir, entry.Name()), entry.Name(), false, workspaceRoot, includeInstructions, forcedStore)
+		if err != nil {
+			continue
+		}
+		active = append(active, cs)
+	}
+	return active, nil
+}
+
+func collectArchivedChangesForcedStore(archiveDir, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) ([]ChangeStatus, error) {
+	entries, err := os.ReadDir(archiveDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read archive dir: %w", err)
+	}
+	var archived []ChangeStatus
+	for i := len(entries) - 1; i >= 0 && len(archived) < 3; i-- {
+		entry := entries[i]
+		if !entry.IsDir() {
+			continue
+		}
+		cs, err := readChangeWithForcedStore(filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot, includeInstructions, forcedStore)
+		if err != nil {
+			continue
+		}
+		archived = append(archived, cs)
+	}
+	return archived, nil
+}
+
+func readChangeWithForcedStore(dir, name string, isArchived bool, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) (ChangeStatus, error) {
+	cs := ChangeStatus{Name: name, IsArchived: isArchived}
+	probeArtifacts(dir, workspaceRoot, name, &cs)
+	hasTasks, tasksText, total, done := loadTasksInfo(dir)
+	cs.HasTasks = hasTasks
+	cs.TasksTotal = total
+	cs.TasksDone = done
+	if tasksText != "" {
+		if err := applyEditAuthorityForChange(dir, name, workspaceRoot, tasksText, &cs); err != nil {
+			return cs, err
+		}
+	}
+	if err := deriveChangeStatusWithForcedStore(&cs, dir, workspaceRoot, includeInstructions, forcedStore); err != nil {
+		return cs, err
+	}
+	return cs, nil
+}
+
+func deriveChangeStatusWithForcedStore(cs *ChangeStatus, changeDir, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) error {
+	if cs.IsArchived {
+		cs.NextRecommended = "done"
+		return nil
+	}
+	store := forcedStore
+	artifactPaths, artifacts, taskProgress, tasksContent, _, verifyResult, err := collectArtifactDerivation(changeDir, store)
+	if err != nil {
+		return err
+	}
+	coreReady := artifacts["proposal"] == ArtifactDone && artifacts["specs"] == ArtifactDone &&
+		artifacts["design"] == ArtifactDone && artifacts["tasks"] == ArtifactDone && taskProgress.Total > 0
+	applyState := resolveApplyState(coreReady, taskProgress)
+	blockedReasons := artifactBlockedReasons(artifacts, taskProgress)
+	allowedEditRoots := make([]string, 0, 1+len(cs.GrantedRoots))
+	allowedEditRoots = append(allowedEditRoots, workspaceRoot)
+	allowedEditRoots = append(allowedEditRoots, cs.GrantedRoots...)
+	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, tasksContent, workspaceRoot, allowedEditRoots)
+	if tasksContent != "" && coreReady {
+		memo := make(map[string]string)
+		foreignRoots := foreignRuntimeTopologyRoots(tasksContent, workspaceRoot, allowedEditRoots, memo)
+		if len(foreignRoots) > 0 {
+			if applyState != ApplyBlocked {
+				applyState = ApplyBlocked
+			}
+			blockedReasons.genuine = append(blockedReasons.genuine, "cross_common_dir_runtime_target: tasks.md references repositories outside planning common dir: "+strings.Join(foreignRoots, ", "))
+		}
+	}
+	verifyReportCurrent := artifacts["verifyReport"] == ArtifactDone
+	remediationState, staleDecision, remediationComplete, _, err := buildRemediationState(changeDir, cs.Name, workspaceRoot, artifacts, applyState, verifyResult, &blockedReasons)
+	if err != nil {
+		return err
+	}
+	effectiveRemediationComplete := remediationComplete || staleDecision
+	dependencies := resolveDependencies(artifacts, taskProgress, applyState, coreReady, verifyReportCurrent, verifyResult.Passing, effectiveRemediationComplete)
+	syncState, syncReasons := deriveSyncState(cs.Name, workspaceRoot, changeDir, store, verifyResult, tasksContent, artifacts, applyState)
+	dependencies.Sync = syncState
+	for _, r := range syncReasons {
+		blockedReasons.genuine = append(blockedReasons.genuine, r)
+	}
+	dependencies = applyStaleDecisionRouting(dependencies, staleDecision)
+	nextRecommended := resolveNextRecommended(dependencies, applyState, verifyReportCurrent, remediationState)
+	cs.SchemaName = StatusSchemaName
+	cs.SchemaVersion = StatusSchemaVersion
+	cs.ChangeRoot = changeDir
+	cs.PlanningHome = PlanningHome{Mode: "repo-local", Path: filepath.Join(workspaceRoot, "openspec")}
+	cs.ArtifactStore = store
+	cs.ArtifactPaths = artifactPaths
+	cs.ContextFiles = artifactPaths
+	cs.Artifacts = artifacts
+	cs.TaskProgress = taskProgress
+	cs.Dependencies = dependencies
+	cs.ApplyState = applyState
+	cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: allowedEditRoots}
+	cs.Relationships = Relationships{}
+	cs.RemediationState = remediationState
+	cs.ReviewOffer = deriveReviewOffer(cs.Name, workspaceRoot, applyState, artifacts, verifyResult)
+	cs.NextRecommended = nextRecommended
+	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
+	if includeInstructions {
+		instructions := renderPhaseInstructions(*cs)
+		cs.PhaseInstructions = &instructions
+	}
+	return nil
 }
 
 func probeArtifacts(dir, workspaceRoot, name string, cs *ChangeStatus) {

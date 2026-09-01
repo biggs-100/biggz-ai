@@ -361,7 +361,9 @@ func collectBigMemChanges(workspaceRoot string) ([]ChangeStatus, error) {
 // collectBigMemChangesWithArchive is the hybrid authority used by
 // StatusWithOptions. It returns both active and archived BigMem changes,
 // reconstructing ChangeStatus via deriveBigMemChangeStatus. When the BigMem
-// DB is absent or has no sdd/ observations, it returns (nil,nil,nil).
+// DB is absent or has no sdd/ observations, it returns (nil,nil,nil) —
+// caller (applyStoreRouting) will fallback to filesystem when BigMem has
+// no observations (fresh clone), mirroring hybrid len>0 guard.
 func collectBigMemChangesWithArchive(workspaceRoot string, includeInstructions bool) (active []ChangeStatus, archived []ChangeStatus, err error) {
 	if declaredArtifactStore(workspaceRoot) == "" {
 		return nil, nil, nil
