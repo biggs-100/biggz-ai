@@ -9,10 +9,12 @@ biggz-ai is an **AI agent harness** — it runs inside AI coding agents (OpenCod
 1. **Harness, not an agent** — biggz-ai doesn't call AI APIs. The agent IS the AI.
 2. **Human-in-the-loop** — the orchestrator delegates, the human decides every phase transition.
 3. **Protocol-first** — designed with a single data model from day one (unlike gentle-ai's evolved architecture).
-4. **Minimal surface area** — ~36K production Go lines vs gentle-ai's ~112K, and ~60K vs ~313K including tests (measured 2026-08-10, parity-v25 added ~1.1K lines (pending 4+6, store, hash) — still minimal).
+4. **Minimal surface area** — ~40K filtered production Go lines (cmd/ + internal/) vs ~60K full-module prod (59,725 prod, 103,782 total) vs gentle-ai ~313K total (measured 2026-08-28, filtered ~58.4K prod) — see docs/comparison-with-gentle.md for method.
 5. **Under-demand loading** — skills, tools, and memory are loaded only when needed.
 
 ## Package Map
+
+34 internal packages (see docs/comparison-with-gentle.md 2026-08-28):
 
 ```
 cmd/
@@ -40,7 +42,7 @@ internal/
 │   ├── store.go     — GitCommonDir → <commonDir>/biggz/review-transactions/<lineage>/v1/events/<sha256>, publishImmutable, dual-read legacy flat
 │   ├── lock.go      — flock(LOCK_EX|LOCK_NB) on .lock, BusyError, stale 5m PID+mtime
 │   ├── finalize.go  — Finalize + FixDeltaHashForSnapshot + BurnEnabled + burned.json
-│   ├── receipt.go   — Receipt binding via domainHash("biggz-ai.review-receipt/v1")
+│   ├── receipt.go   — Receipt binding via domainHash("biggz-ai.review-receipt-binding/v1")
 │   ├── snapshot.go  — Snapshot chain via domainHash("biggz-ai.review-snapshot/v1")
 │   └── artifact.go  — Artifact subject / manifest / admission (domainHash + writeLengthPrefixed)
 ├── sdd/             — SDD native commands (synthesis, pending, question, status_v2)
@@ -75,7 +77,7 @@ pipeline/            — Sequential + DAG graph (legacy — superseded by captur
 ```
 biggz review start --subject <file> [--lineage <id>] [--lenses risk,readability,...]
   → Store.Open via GitCommonDir: <commonDir>/biggz/review-transactions/<lineage>/v1/events/<sha256>
-  → Append genesis (start_review) with CorrectionBudget = min(200, ceil(changedLines/2)), frozen lens plan
+  → Append genesis (start_review) with CorrectionBudget = min(200, max(2, ceil(changedLines/2))), frozen lens plan
   → HEAD = genesis
 
 biggz review capture-result --lineage <id> --lens <name> --order <n> \

@@ -4,7 +4,7 @@
 
 biggz-ai is a lightweight, self-contained harness for AI coding agents (OpenCode, Claude Code, Qwen). It provides SDD (Spec-Driven Development) workflow orchestration, code review pipelines with 6 lenses (R1-R4 + performance, dependencies), persistent memory (BigMem), and full lifecycle management — all with the human always in control.
 
-Inspired by gentle-ai, but rebuilt from scratch with roughly 80% less code (measured 2026-08-28: ~60K vs ~313K Go lines including tests — see docs/comparison-with-gentle.md for method and refresh date), a cleaner architecture, and no legacy debt.
+Inspired by gentle-ai, but rebuilt from scratch with ~40K filtered production Go lines (cmd/ + internal/) vs ~60K full-module prod (59,725 prod, 103,782 total) vs gentle-ai ~313K total (measured 2026-08-28, filtered ~58.4K prod) — see docs/comparison-with-gentle.md for method, a cleaner architecture, and no legacy debt.
 
 ## Quick Start
 
@@ -15,8 +15,11 @@ biggz install
 # Check SDD status
 biggz sdd-status
 
-# Run a code review pipeline
-echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
+# Run a code review (content-addressed)
+biggz review start --subject subject.json --lineage demo-001
+# biggz review capture-result --lineage demo-001 --target <subject-id> --expected-revision <sha> --lens risk --order 1
+# biggz review finalize --lineage demo-001
+# biggz review gate --lineage demo-001
 ```
 
 ## CLI Commands
@@ -39,7 +42,7 @@ echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
 | `biggz bigmem compare <id-a> <id-b>` | Compare two observations |
 | `biggz bigmem conflicts list\|show\|judge\|scan\|stats\|deferred` | Pending memory conflicts |
 | `biggz bigmem projects list\|consolidate` | Project index and dedup |
-| `biggz bigmem sync [--import\|--status]` | Sync observations via `.bigmem/` |
+| `biggz bigmem sync [--import] [--status] [--project P] [--all] [--from-engram] [--engram-dir PATH]` | Sync observations via `.bigmem/` |
 | `biggz backup create\|list\|restore` | Snapshot/restore state |
 | `biggz release status\|tag\|verify` | Version management |
 | `biggz skill-registry refresh [--force] [--quiet]` | Regenerate skill registry |
@@ -71,7 +74,7 @@ CLI (cmd/biggz)
   ├── TDD / Plugin / MCP ──► Strict TDD, community plugins, MCP server
   └── Release ──► Version tagging and verification
 ```
-> Full package map with 30+ internal packages lives in [docs/architecture.md](docs/architecture.md).
+> Full package map with 34 internal packages (see docs/comparison-with-gentle.md 2026-08-28) lives in [docs/architecture.md](docs/architecture.md).
 
 ### Key Design Decisions
 
@@ -89,6 +92,7 @@ proposal → spec → design → tasks → apply → verify → archive
                                               ↑
                                             design
 ```
+Full graph: init → explore → research (optional) → proposal → spec → design → tasks → apply → verify → archive — see internal/assets/biggz/biggz-orchestrator-workflow.md
 
 Each phase is a skill (`/sdd-propose`, `/sdd-spec`, etc.) that the orchestrator delegates to sub-agents. Review lenses are captured per-slot via `biggz review capture-result` (content-addressed, strict admission) and committed once via `biggz review finalize` — no DAG; `Graph.Execute()` is legacy (see `docs/architecture.md` for the `review start → capture → finalize → gate` pipeline).
 
@@ -104,7 +108,7 @@ Apply-side enforcement is native: `biggz sdd-apply <change>` is a guard that val
 biggz review start --subject <file> [--lineage <id>] [--lenses <list>]
   → Store.Open via GitCommonDir → <commonDir>/biggz/review-transactions/<lineage>/v1/events/<sha256>
     (publishImmutable, dual-read legacy flat) → append genesis (start_review)
-    with CorrectionBudget = min(200, ceil(changedLines/2)), frozen lens plan
+    with CorrectionBudget = min(200, max(2, ceil(changedLines/2))), frozen lens plan
 
 biggz review capture-result --lineage <id> --lens <name> --order <n> --expected-revision <sha> --input <reviewer-json>
   → Admit (subjectHash echo, full-manifest inspection, findings canonicalized)
