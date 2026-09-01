@@ -374,79 +374,109 @@ func parseWhatDoneRows(s string) ([][]string, []string) {
 	if s == "" || s == "None" {
 		return nil, nil
 	}
-	// First extract checklist lines
-	var rows [][]string
-	var checklist []string
+	lines := splitWhatDoneLines(s)
+	rows, checklist := classifyWhatDoneLines(lines)
+	if len(rows) == 0 {
+		rows = fallbackWhatDoneRows(s)
+	}
+	return rows, checklist
+}
+
+func splitWhatDoneLines(s string) []string {
 	lines := strings.Split(s, "\n")
-	// If no newline but contains semicolon, split there for rows
-	if len(lines) == 1 && strings.Contains(s, ";") {
-		parts := strings.Split(s, ";")
-		// treat each part as potential row
-		var newLines []string
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if p != "" {
-				newLines = append(newLines, p)
-			}
-		}
-		if len(newLines) > 1 {
-			lines = newLines
+	if len(lines) != 1 || !strings.Contains(s, ";") {
+		return lines
+	}
+	parts := strings.Split(s, ";")
+	var filtered []string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			filtered = append(filtered, p)
 		}
 	}
+	if len(filtered) > 1 {
+		return filtered
+	}
+	return lines
+}
+
+func isChecklistLine(line string) bool {
+	if strings.HasPrefix(line, "- [x]") {
+		return true
+	}
+	if strings.HasPrefix(line, "- [ ]") {
+		return true
+	}
+	return strings.HasPrefix(line, "- [X]")
+}
+
+func sanitizeCell(cell string) string {
+	cell = sanitizePlain(cell)
+	const budget = 17
+	return truncateToWidth(cell, budget)
+}
+
+func tryParseRow(line string) (string, string, bool) {
+	topic, decision := splitTopicDecision(line)
+	if topic == "" && decision == "" {
+		return "", "", false
+	}
+	topic = sanitizeCell(topic)
+	decision = sanitizeCell(decision)
+	return topic, decision, true
+}
+
+func classifyWhatDoneLines(lines []string) ([][]string, []string) {
+	var rows [][]string
+	var checklist []string
 	for _, raw := range lines {
 		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
-		if strings.HasPrefix(line, "- [x]") || strings.HasPrefix(line, "- [ ]") || strings.HasPrefix(line, "- [X]") {
+		if isChecklistLine(line) {
 			checklist = append(checklist, line)
 			continue
 		}
-		// also handle lines that contain checklist after table delimiter? skip
-		// parse topic/decision
-		topic, decision := splitTopicDecision(line)
-		if topic == "" && decision == "" {
+		topic, decision, ok := tryParseRow(line)
+		if !ok {
 			continue
 		}
-		// sanitize cells before truncation budget
-		topic = sanitizePlain(topic)
-		decision = sanitizePlain(decision)
-		// per-cell truncate to conservative budget 17 for narrow 40
-		// budget = (40-6)/2 =17, use 17 to guarantee VisibleWidth <= budget on narrow
-		const cellBudget = 17
-		topic = truncateToWidth(topic, cellBudget)
-		decision = truncateToWidth(decision, cellBudget)
 		rows = append(rows, []string{topic, decision})
 	}
-	// fallback: if no rows but original had content without delimiters, split by comma
-	if len(rows) == 0 && s != "" {
-		if strings.Contains(s, ",") {
-			parts := strings.Split(s, ",")
-			for _, p := range parts {
-				p = strings.TrimSpace(p)
-				if p == "" {
-					continue
-				}
-				topic, decision := splitTopicDecision(p)
-				if topic == "" {
-					topic = p
-				}
-				topic = sanitizePlain(topic)
-				decision = sanitizePlain(decision)
-				const cellBudget = 17
-				topic = truncateToWidth(topic, cellBudget)
-				decision = truncateToWidth(decision, cellBudget)
-				rows = append(rows, []string{topic, decision})
-			}
-		} else {
-			// single entry as topic
-			topic := sanitizePlain(s)
-			const cellBudget = 17
-			topic = truncateToWidth(topic, cellBudget)
-			rows = append(rows, []string{topic, ""})
-		}
-	}
 	return rows, checklist
+}
+
+func fallbackWhatDoneRows(s string) [][]string {
+	if strings.Contains(s, ",") {
+		return splitCommaFallback(s)
+	}
+	return singleFallback(s)
+}
+
+func splitCommaFallback(s string) [][]string {
+	parts := strings.Split(s, ",")
+	var rows [][]string
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		topic, decision := splitTopicDecision(p)
+		if topic == "" {
+			topic = p
+		}
+		topic = sanitizeCell(topic)
+		decision = sanitizeCell(decision)
+		rows = append(rows, []string{topic, decision})
+	}
+	return rows
+}
+
+func singleFallback(s string) [][]string {
+	topic := sanitizeCell(s)
+	return [][]string{{topic, ""}}
 }
 
 func splitTopicDecision(line string) (string, string) {
@@ -559,6 +589,78 @@ func coalesceSGR(s string) string {
 	return b.String()
 }
 
+func sgrEnd(s string, i int) int {
+	if i >= len(s) {
+		return -1
+	}
+	if s[i] != '\x1b' {
+		return -1
+	}
+	if i+1 >= len(s) || s[i+1] != '[' {
+		return -1
+	}
+	j := i + 2
+	for j < len(s) && s[j] != 'm' {
+		j++
+	}
+	if j < len(s) {
+		return j
+	}
+	return -1
+}
+
+func runeWidthSafe(r rune) int {
+	w := runewidth.RuneWidth(r)
+	if w < 0 {
+		return 0
+	}
+	return w
+}
+
+func buildTruncatedPrefix(s string, target int) (string, int) {
+	var b strings.Builder
+	cur := 0
+	i := 0
+	stop := len(s)
+	for i < len(s) {
+		if end := sgrEnd(s, i); end != -1 {
+			b.WriteString(s[i : end+1])
+			i = end + 1
+			continue
+		}
+		r, sz := utf8.DecodeRuneInString(s[i:])
+		rw := runeWidthSafe(r)
+		if cur+rw > target {
+			stop = i
+			break
+		}
+		b.WriteString(s[i : i+sz])
+		cur += rw
+		i += sz
+		if i >= len(s) {
+			stop = len(s)
+		}
+	}
+	return b.String(), stop
+}
+
+func trailingSGR(s string, stop int) string {
+	var b strings.Builder
+	for idx := stop; idx < len(s); {
+		if end := sgrEnd(s, idx); end != -1 {
+			b.WriteString(s[idx : end+1])
+			idx = end + 1
+			continue
+		}
+		_, sz := utf8.DecodeRuneInString(s[idx:])
+		if sz == 0 {
+			sz = 1
+		}
+		idx += sz
+	}
+	return b.String()
+}
+
 // truncateToWidth truncates to visible width w using go-runewidth (emoji width 2), preserving ANSI SGR.
 func truncateToWidth(s string, w int) string {
 	if w <= 0 {
@@ -572,59 +674,9 @@ func truncateToWidth(s string, w int) string {
 	}
 	s = coalesceSGR(s)
 	target := w - 1
-	var b strings.Builder
-	cur, i, stop := 0, 0, len(s)
-	for i < len(s) {
-		if s[i] == '' && i+1 < len(s) && s[i+1] == '[' {
-			j := i + 2
-			for j < len(s) && s[j] != 'm' {
-				j++
-			}
-			if j < len(s) {
-				b.WriteString(s[i : j+1])
-				i = j + 1
-				continue
-			}
-		}
-		r, sz := utf8.DecodeRuneInString(s[i:])
-		if r == utf8.RuneError && sz == 1 {
-			sz = 1
-		}
-		rw := runewidth.RuneWidth(r)
-		if rw < 0 {
-			rw = 0
-		}
-		if cur+rw > target {
-			stop = i
-			break
-		}
-		b.WriteString(s[i : i+sz])
-		cur += rw
-		i += sz
-		if i >= len(s) {
-			stop = len(s)
-		}
-	}
-	b.WriteString("…")
-	for idx := stop; idx < len(s); {
-		if s[idx] == '' && idx+1 < len(s) && s[idx+1] == '[' {
-			j := idx + 2
-			for j < len(s) && s[j] != 'm' {
-				j++
-			}
-			if j < len(s) {
-				b.WriteString(s[idx : j+1])
-				idx = j + 1
-				continue
-			}
-		}
-		_, sz := utf8.DecodeRuneInString(s[idx:])
-		if sz == 0 {
-			sz = 1
-		}
-		idx += sz
-	}
-	return coalesceSGR(b.String())
+	prefix, stop := buildTruncatedPrefix(s, target)
+	suffix := trailingSGR(s, stop)
+	return coalesceSGR(prefix + "…" + suffix)
 }
 
 func humanizeFailure(raw string) string {
