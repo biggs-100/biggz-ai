@@ -36,12 +36,15 @@ Before routing, continuing, applying, verifying, or archiving, determine artifac
 
 Before SDD Session Preflight, perform Session Recall to restore context. This gate is BLOCKING.
 
+> For recency use `bigmem search --query "" ORDER BY updated_at DESC` or `biggz recall`; never use FTS term search for 'latest'.
+> FTS rank is for relevance, not recency.
+
 Steps (all mandatory):
-1. `biggz_mem_context(limit=5)` — recent sessions
-2. `biggz_mem_search(query:"sdd {project}" limit=10)` — SDD artifacts for project
-3. `biggz_mem_search(query:"session_summary" limit=5)` — previous summaries
-4. Inject summary: synthesize top observations/sessions into short recap
-5. Fallback: if BigMem empty/unavailable, run `biggz sdd-status --json --instructions` and note fallback
+1. `biggz_mem_context(limit=5)` — recent sessions (or `biggz recall --limit 5 --json` / `Search("", opts)` → `ORDER BY updated_at DESC` @1801)
+2. `biggz recall` / `biggz bigmem recent` / `Search("", opts)` — latest observations ordered by `updated_at DESC` for "en que nos quedamos?" — MUST NOT use FTS `search --query "session"` or `ORDER BY rank` (@1844) for latest
+3. `biggz_mem_search(query:"sdd {project}" limit=10)` — SDD artifacts for project (relevance, not recency)
+4. Inject summary: synthesize top observations/sessions into short recap (fresh `2026-09-01` before stale `2026-08-27`)
+5. Fallback: if BigMem empty/unavailable, run `git log --oneline -15` + `biggz sdd-status --json --instructions` and note fallback (ban FTS for latest even in fallback)
 
 Required markdown after the three calls, before preflight:
 
@@ -54,6 +57,10 @@ Required markdown after the three calls, before preflight:
 ```
 
 REMINDER: Session Recall markdown is separate chat markdown emitted FIRST, adjacent, same turn, before preflight question.
+
+## Human Language Detection — `languageHint` (MANDATORY before synthesis)
+
+Detect human language before every synthesis and before injecting `sdd-*` prompts. Use `internal/sdd/synthesis.go:DetectLanguage` heuristic: diacritics `á/é/í/ó/ú/ñ/¿/¡` → `es`; keywords `que/en/por/con/para/continua/dale/procede` vs `hello/continue/proceed/adjust/stop`; short `hi/ok/go/dale` → `en` default (ambiguous → `en`, fallback `DetectLanguage(lastHumanMessage)` or `en`). Store as `languageHint` in session and persist dual-write `pending_question.languageHint` (`BigMem sdd/{change}/pending-question` + `openspec/changes/{change}/state.yaml pending_question`) via `SavePendingDualWrite` / `pending.go` (`biggz-ai.pending-question/v1`). Inject `Human language: es|en — render synthesis content in that language, keep markers English, keep paths/code English` into every `sdd-*` prompt (`sdd-propose`/`sdd-spec`/`sdd-design`/`sdd-tasks`/`sdd-apply`/`sdd-verify`/`sdd-archive`). Synthesis content follows `languageHint`; markers (`## Sub-agent Result:`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`, `| Topic | Decision |`) and technical identifiers (paths, `sdd/...`, `ORDER BY`, `Search`, code, branches, topic_keys) stay English — gate `b0d2fc1` (`HasSynthesis`/`isCheckpointAsk`) validates verbatim English markers; whitelist via `sanitizePlain` never translates. Fallback at render: `RenderSynthesisLocalized(r, languageHint)` or `DetectLanguage(lastHumanMessage)` if hint empty, else `en`.
 
 ## SDD Session Preflight (HARD GATE)
 

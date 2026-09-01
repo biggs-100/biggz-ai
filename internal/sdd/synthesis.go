@@ -243,6 +243,134 @@ func RenderPrettySynthesis(r SubAgentResult) string {
 	return b.String()
 }
 
+// DetectLanguage heuristically detects human language: "es" for Spanish, "en" otherwise.
+// Heuristic: diacritics áéíóúñ¿¡ -> es, Spanish keywords que/en/por/con/para/continua/dale/procede etc.,
+// short ambiguous hi/ok/go/dale -> en default, tie or unknown -> en.
+func DetectLanguage(text string) string {
+	if text == "" {
+		return "en"
+	}
+	if strings.ContainsAny(text, "áéíóúÁÉÍÓÚñÑ¿¡") {
+		return "es"
+	}
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "en"
+	}
+	words := extractWordsLower(trimmed)
+	if len(words) == 0 {
+		return "en"
+	}
+	if len(words) == 1 && isAmbiguousShort(words[0]) {
+		return "en"
+	}
+	// Very short single token without diacritic defaults to en unless it's a strong Spanish keyword longer than 2.
+	// This handles "ok", "hi", "dale", "go" as en, but "que" alone should be es.
+	// So check if single token is Spanish strong and not ambiguous -> es.
+	if len(words) == 1 {
+		if _, ok := spanishKeywords[words[0]]; ok && !isAmbiguousShort(words[0]) {
+			// except single "en"? "en" is length 2 and Spanish, treat as es
+			return "es"
+		}
+		if _, ok := englishKeywords[words[0]]; ok {
+			return "en"
+		}
+		// unknown single short word defaults en
+		if len(words[0]) <= 3 {
+			return "en"
+		}
+	}
+	spanishCount := 0
+	englishCount := 0
+	for _, w := range words {
+		if isAmbiguousShort(w) {
+			continue
+		}
+		if _, ok := spanishKeywords[w]; ok {
+			spanishCount++
+		}
+		if _, ok := englishKeywords[w]; ok {
+			englishCount++
+		}
+	}
+	if spanishCount > englishCount {
+		return "es"
+	}
+	if englishCount > spanishCount {
+		return "en"
+	}
+	// tie: if any Spanish keyword present, prefer es when text contains Spanish diacritic-like pattern already handled;
+	// otherwise default en (spec PS5 short ambiguous -> en)
+	return "en"
+}
+
+func extractWordsLower(s string) []string {
+	lower := strings.ToLower(s)
+	var words []string
+	var cur strings.Builder
+	for _, r := range lower {
+		if unicode.IsLetter(r) {
+			cur.WriteRune(r)
+		} else {
+			if cur.Len() > 0 {
+				words = append(words, cur.String())
+				cur.Reset()
+			}
+		}
+	}
+	if cur.Len() > 0 {
+		words = append(words, cur.String())
+	}
+	return words
+}
+
+func isAmbiguousShort(w string) bool {
+	_, ok := ambiguousShort[w]
+	return ok
+}
+
+var ambiguousShort = map[string]struct{}{
+	"ok": {}, "okay": {}, "hi": {}, "hello": {}, "hey": {}, "go": {}, "dale": {},
+}
+
+var spanishKeywords = map[string]struct{}{
+	"que": {}, "qué": {}, "en": {}, "por": {}, "con": {}, "para": {}, "sin": {}, "sobre": {}, "entre": {}, "hasta": {}, "desde": {},
+	"nos": {}, "nosotros": {}, "vamos": {}, "quedamos": {}, "continua": {}, "continúa": {}, "continuar": {}, "continuamos": {}, "procede": {}, "procedamos": {}, "dale": {},
+	"donde": {}, "dónde": {}, "quien": {}, "quién": {}, "como": {}, "cómo": {}, "cuando": {}, "cuándo": {}, "porque": {}, "porqué": {},
+	"hola": {}, "gracias": {}, "si": {}, "sí": {}, "listo": {}, "perfecto": {}, "ajusta": {}, "ajustar": {}, "detener": {}, "parar": {}, "cerrar": {}, "corregir": {}, "proseguir": {},
+	"esta": {}, "está": {}, "este": {}, "esto": {}, "estamos": {}, "estoy": {}, "estas": {}, "estás": {}, "tiene": {}, "tienen": {}, "tenemos": {}, "tengo": {}, "eres": {}, "es": {}, "son": {}, "mucho": {}, "muy": {}, "bien": {},
+	"siguiente": {}, "pendiente": {}, "sigamos": {}, "prosigue": {},
+}
+
+var englishKeywords = map[string]struct{}{
+	"hello": {}, "continue": {}, "continuing": {}, "proceed": {}, "proceeding": {}, "adjust": {}, "adjusting": {}, "stop": {}, "stopping": {}, "correct": {}, "correcting": {}, "close": {}, "closing": {},
+	"please": {}, "thanks": {}, "thank": {}, "lets": {}, "let": {},
+}
+
+// RenderSynthesisLocalized renders synthesis with language hint. Markers and technical identifiers stay English
+// (## Sub-agent Result:, **Artifacts/Paths:**, **Risks / Open Questions:**, **Next Recommended:**, | Topic | Decision |,
+// paths with "/" or "sdd/", code like "ORDER BY"). If lang is empty, falls back to "en" (or DetectLanguage).
+// Keeps RenderSynthesis compatible; localized content is provided by sub-agent via hint, wrapper preserves whitelist.
+func RenderSynthesisLocalized(r SubAgentResult, lang string) string {
+	normalized := strings.ToLower(strings.TrimSpace(lang))
+	if normalized == "" {
+		normalized = "en"
+	}
+	if normalized != "es" && normalized != "en" {
+		// Try to detect if lang is actually a human message rather than code
+		detected := DetectLanguage(lang)
+		if detected == "es" || detected == "en" {
+			normalized = detected
+		} else {
+			normalized = "en"
+		}
+	}
+	// Localized content is supplied in r fields by caller (hint injection); we preserve markers/whitelist by delegating.
+	// No marker translation; technical whitelist via sanitizePlain (never translate "/", "sdd/", "ORDER BY").
+	_ = normalized // currently no per-language string table needed; markers stay English per b0d2fc1
+	return RenderSynthesis(r)
+}
+
 func deriveLifecycleStatus(r SubAgentResult) string {
 	failure := strings.TrimSpace(r.Failure)
 	if failure != "" {

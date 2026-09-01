@@ -71,6 +71,9 @@ Topic update rules:
 
 ### WHEN TO SEARCH MEMORY
 
+> For recency use `bigmem search --query "" ORDER BY updated_at DESC` or `biggz recall`; never use FTS term search for 'latest'.
+> FTS rank is for relevance, not recency.
+
 On any variation of "remember", "recall", "what did we do", "how did we solve", or references to past work (in any language the user writes in):
 1. Call `biggz_mem_context` — checks recent session history (fast, cheap)
 2. If not found, call `biggz_mem_search` with relevant keywords
@@ -80,6 +83,19 @@ Also search PROACTIVELY when:
 - Starting work on something that might have been done before
 - User mentions a topic you have no context on
 - User's FIRST message references the project, a feature, or a problem — call `biggz_mem_search` with keywords from their message to check for prior work before responding
+
+### RANK VS RECENCY
+
+| Query | ORDER BY | When | Example |
+|-------|----------|------|---------|
+| `""` (empty) | `o.updated_at DESC` @1801 | Recency — latest context (en que nos quedamos?) | `bigmem search --query ""` or `biggz recall --limit 5 --json` |
+| `"session"` (non-empty) | `rank` @1844 (BM25) | Relevance — keyword search | `bigmem search --query "session"` or `bigmem search "session"` |
+
+Use empty query for recency; use FTS term for relevance. Help warns accordingly.
+
+### Language Boundary
+
+Harness prompts stay English; synthesis content is localized per human language. Detect via `internal/sdd/synthesis.go:DetectLanguage` (diacritics `á/é/í/ó/ú/ñ/¿/¡` + keywords `que/en/por/con/para` vs `hello/continue/proceed`; short `hi/ok/go/dale` → `en` default), store `languageHint` (`pending_question.languageHint` / `BigMem sdd/{change}/pending-question`, `biggz-ai.pending-question/v1`), inject `Human language: es|en — render synthesis content in that language, keep markers English, keep paths/code English` into `sdd-*` prompts. Markers (`## Sub-agent Result:`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`, `| Topic | Decision |`) and technical identifiers (paths, `sdd/...`, `ORDER BY`, `Search`, code, branches, topic_keys) stay English — gate `b0d2fc1` (`HasSynthesis`/`isCheckpointAsk`) validates verbatim English markers; whitelist via `sanitizePlain` never translates them. Fallback at render: `RenderSynthesisLocalized(r, languageHint)` or `DetectLanguage(lastHumanMessage)` if hint empty, else `en`.
 
 Before architecture-sensitive work, call biggz_mem_review with action list; do NOT call mark_reviewed automatically — only after explicit user confirmation. Search results may show state: needs_review and supersedes:/conflicts: annotations.
 

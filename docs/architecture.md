@@ -46,7 +46,7 @@ internal/
 │   ├── snapshot.go  — Snapshot chain via domainHash("biggz-ai.review-snapshot/v1")
 │   └── artifact.go  — Artifact subject / manifest / admission (domainHash + writeLengthPrefixed)
 ├── sdd/             — SDD native commands (synthesis, pending, question, status_v2)
-│   ├── synthesis.go — RenderSynthesis 4+6 markers, ReadLoop >50KB paginated
+│   ├── synthesis.go — RenderSynthesis 4+6 markers, DetectLanguage + RenderSynthesisLocalized (es|en heuristic diacritics/keywords, whitelist), ReadLoop >50KB paginated
 │   ├── pending.go   — Pending dual-write BigMem + state.yaml (biggz-ai.pending-question/v1)
 │   ├── question.go  — ValidateQuestionEnvelope 16/60/4/2-4, IsCheckpointEnvelope
 │   └── status_v2.go — biggz-ai.sdd-status/v2 authority-free projection (hides edit_authority_missing from blockedReasons/nextRecommended; orchestrator must check raw EditAuthorityBlocked before apply, sdd-apply guard is authoritative)
@@ -154,7 +154,17 @@ Transitions are validated by `FSM.Transition(current, target, role, counters)` v
 
 22 agent-facing + 3 internal branching (25 total) MCP tools exposed by `biggz-mcp` plus Session Boot Recall hard gate (Profiles[agent]=20, admin=3):
 
-**Session Boot Recall (HARD GATE):** before SDD Session Preflight the orchestrator MUST run `biggz_mem_context(limit=5)` + `biggz_mem_search(query:"sdd {project}" limit=10)` + `biggz_mem_search(query:"session_summary" limit=5)`, inject a short recap, emit `## Session Recall` markdown, and fallback to `biggz sdd-status --json --instructions` when BigMem is empty. The gate is blocking like preflight (see `internal/assets/biggz/biggz-orchestrator.md` Session Boot Recall). The synthesis gate has a narrow same-turn exception for `## Session Recall` → preflight, but does not weaken the `## Sub-agent Result` block after delegation.
+**Session Boot Recall (HARD GATE):** before SDD Session Preflight the orchestrator MUST run `biggz_mem_context(limit=5)` + `biggz recall` / `Search("", opts)` → `ORDER BY updated_at DESC` (for recency, "en que nos quedamos?") + `biggz_mem_search(query:"sdd {project}" limit=10)` (relevance), inject a short recap, emit `## Session Recall` markdown, and fallback to `git log --oneline -15` + `biggz sdd-status --json --instructions` when BigMem is empty (never use FTS term search for 'latest'). FTS rank is for relevance, not recency. See `internal/assets/biggz/biggz-orchestrator-workflow.md` Session Boot Recall.
+
+**Rank vs Recency:**
+
+| Query | ORDER BY | When | Example |
+|-------|----------|------|---------|
+| `""` (empty) | `o.updated_at DESC` @1801 | Recency — latest context | `biggz recall --limit 5 --json` or `biggz bigmem recent --limit 5 --json` or `bigmem search --query ""` |
+| `"session"` (non-empty) | `rank` @1844 (BM25) | Relevance — keyword search | `bigmem search "session"` or `bigmem search --query "session"` |
+
+> For recency use `bigmem search --query "" ORDER BY updated_at DESC` or `biggz recall`; never use FTS term search for 'latest'.
+> FTS rank is for relevance, not recency.
 
 22 agent-facing + 3 internal branching (25 total) MCP tools exposed by `biggz-mcp` (Profiles[agent]=20, admin=3):
 
@@ -215,7 +225,9 @@ Kill switch with three persistence scopes (see `internal/review/rdd.go`, `rdd_he
 
 ### Synthesis Gate (3-layer defense) + Session Recall
 
-Guarantees the human sees audited `## Sub-agent Result` before deciding. Gate `b0d2fc1` enforces the Post-Delegation Human Checkpoint. Session Boot Recall (`## Session Recall`) is a preceding hard gate that restores prior session context via BigMem before preflight. Synthesis rendering uses `internal/sdd/synthesis.go` `RenderSynthesis` with 4 required markers + 6 optional (Preview/Diff/Decisions/Commands/Validation/Failure), omit-empty, >50KB `ReadLoop` paginated `ReadAt` with verify-retry, `ValidateQuestionEnvelope` 16/60/4/2-4, `pending` dual-write BigMem + `state.yaml` (`biggz-ai.pending-question/v1`), `PI_SUBAGENT_CHILD=1` bypass, and `BIGGZ_ADVISE=1` thin-advise.
+Guarantees the human sees audited `## Sub-agent Result` before deciding. Gate `b0d2fc1` enforces the Post-Delegation Human Checkpoint. Session Boot Recall (`## Session Recall`) is a preceding hard gate that restores prior session context via BigMem before preflight. Synthesis rendering uses `internal/sdd/synthesis.go` `RenderSynthesis` / `RenderSynthesisLocalized` (with `DetectLanguage` heuristic) with 4 required markers + 6 optional (Preview/Diff/Decisions/Commands/Validation/Failure), omit-empty, >50KB `ReadLoop` paginated `ReadAt` with verify-retry, `ValidateQuestionEnvelope` 16/60/4/2-4, `pending` dual-write BigMem + `state.yaml` (`biggz-ai.pending-question/v1`), `PI_SUBAGENT_CHILD=1` bypass, and `BIGGZ_ADVISE=1` thin-advise.
+
+**Language Boundary (harness vs artifact):** Harness prompts stay English; synthesis content is localized per human language (`languageHint` / `Human language: es|en — render synthesis content in that language, keep markers English, keep paths/code English`), stored via `pending_question.languageHint` dual-write (`BigMem sdd/{change}/pending-question` + `state.yaml`, `biggz-ai.pending-question/v1`) and injected into every `sdd-*` prompt with fallback `DetectLanguage(lastHumanMessage)` or `en` at render via `RenderSynthesisLocalized`. Markers (`## Sub-agent Result:`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`, `| Topic | Decision |`) and technical identifiers (paths, `sdd/...`, `ORDER BY`, `Search`, code, branches, topic_keys) stay English — gate `b0d2fc1` (`HasSynthesis`/`isCheckpointAsk`) validates verbatim English markers; whitelist via `sanitizePlain` never translates them. `isCheckpointAsk` scans option labels only, not synthesis content, so Spanish synthesis with English markers passes; missing marker blocks regardless of language.
 
 **Layer 1 — Prompt (machine-verifiable invariant):** `internal/assets/biggz/biggz-orchestrator.md` contains a copy-pasteable block with 4 markers (`## Sub-agent Result: {phase/agent}`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`) and states `INVALID and will be blocked` for any **checkpoint** `ask_user_question`/`question` (those presenting `proceed`/`adjust`/`stop` or `continue`/`correct` after a delegated sub-agent) without immediately preceding markdown. General clarification questions that are NOT a checkpoint do NOT require synthesis and MUST NOT be blocked — e.g. '¿por dónde empezamos?', preflight, or other orchestration clarifications not presenting a delegated result use the question tool directly without synthesis. Every checkpoint `ask` reference is followed by `REMINDER: synthesis markdown is separate chat markdown emitted FIRST...` (12× convergence) so prompt and gate cannot drift.
 

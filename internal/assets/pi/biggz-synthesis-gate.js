@@ -530,6 +530,10 @@ export default function biggzSynthesisGate(pi) {
 		return false;
 	}
 
+	// Language-aware synthesis (polish-synthesis-human-language): content may be localized (es/en) per human language
+	// (`languageHint` / `Human language: es|en`), but markers stay English verbatim b0d2fc1;
+	// isCheckpointAsk scans only option labels (proceed/continuar/proseguir, adjust/ajustar, stop/detener/parar, continue/continuar, correct/corregir/cerrar)
+	// not synthesis content — Spanish content with English markers passes, missing marker blocks regardless of language.
 	function isCheckpointAsk(params) {
 		if (params == null) return false;
 		if (typeof params === "string") {
