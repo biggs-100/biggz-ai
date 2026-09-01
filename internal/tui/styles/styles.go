@@ -77,6 +77,76 @@ var (
 			Bold(true)
 )
 
+// ── Rank1: Status-line colors mirroring oh-my-pi dark.json (~40 tokens) ──
+// Rose Pine remains default dark; these tokens provide statusLineBg etc. for TUI parity.
+var (
+	ColorStatusLineBg      = lipgloss.Color("#121212")
+	ColorStatusLineFg      = ColorText
+	ColorStatusLineSep     = lipgloss.Color("#6e6a86") // 244 → overlay
+	ColorStatusLineModel   = lipgloss.Color("#d787af")
+	ColorStatusLinePath    = lipgloss.Color("#00afaf")
+	ColorStatusLineGitClean = lipgloss.Color("#5faf5f")
+	ColorStatusLineGitDirty = lipgloss.Color("#d7af5f")
+	ColorStatusLineContext = lipgloss.Color("#8787af")
+	ColorStatusLineSpend   = lipgloss.Color("#5fafaf")
+	ColorStatusLineStaged  = lipgloss.Color("#5faf5f") // 70 → green
+	ColorStatusLineDirty   = lipgloss.Color("#d7af5f") // 178
+	ColorStatusLineUntracked = lipgloss.Color("#945ff9") // 39 alt via violet
+	ColorStatusLineOutput  = lipgloss.Color("#b281d6") // 205
+	ColorStatusLineCost    = lipgloss.Color("#b281d6")
+	ColorStatusLineSubagents = ColorLavender
+	ColorToolPendingBg     = lipgloss.Color("#1d2129")
+	ColorToolSuccessBg     = lipgloss.Color("#161a1f")
+	ColorToolErrorBg       = lipgloss.Color("#291d1d")
+	ColorToolTitle         = ColorText
+	ColorAccent            = lipgloss.Color("#febc38") // dark.json accent
+)
+
+var (
+	StatusLineStyle = lipgloss.NewStyle().
+			Background(ColorStatusLineBg).
+			Foreground(ColorStatusLineFg)
+
+	StatusLineModelStyle = lipgloss.NewStyle().
+			Foreground(ColorStatusLineModel).
+			Bold(true)
+
+	StatusLinePathStyle = lipgloss.NewStyle().
+			Foreground(ColorStatusLinePath)
+
+	StatusLineGitCleanStyle = lipgloss.NewStyle().
+			Foreground(ColorStatusLineGitClean)
+
+	StatusLineGitDirtyStyle = lipgloss.NewStyle().
+			Foreground(ColorStatusLineGitDirty)
+
+	StatusLineContextStyle = lipgloss.NewStyle().
+			Foreground(ColorStatusLineContext)
+
+	StatusLineCostStyle = lipgloss.NewStyle().
+			Foreground(ColorStatusLineCost)
+
+	ToolPendingStyle = lipgloss.NewStyle().
+			Background(ColorToolPendingBg).
+			Foreground(ColorText)
+
+	ToolSuccessStyle = lipgloss.NewStyle().
+			Background(ColorToolSuccessBg).
+			Foreground(ColorText)
+)
+
+// GetStatusLineStyle returns preset-aware status-line base style.
+func GetStatusLineStyle(preset string) lipgloss.Style {
+	switch preset {
+	case "minimal":
+		return StatusLineStyle.Copy().Foreground(ColorSubtext)
+	case "compact":
+		return StatusLineStyle.Copy().Foreground(ColorMauve)
+	default:
+		return StatusLineStyle
+	}
+}
+
 var (
 	// Legacy aliases — now map to Rose Pine (single source of truth).
 	Primary   = ColorLavender
