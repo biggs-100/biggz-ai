@@ -116,6 +116,8 @@ biggz review gate pre-pr test-lineage-001 --json
 # - receipt binding validated, DeliveryBurned when BurnEnabled
 ```
 
+> **Note:** `capture-result` also accepts optional flags `[--repository-context <json>]`, `[--subject-hash <sha>]`, `[--agent <name>]`, `[--preflight]` (see `cli_review.go:reviewCaptureResultRun`); `review start` also accepts `[--lineage <id>]` and `[--lenses <list>]` — examples above use the minimal required set.
+
 ## Test 5: Review with per-slot capture (content-addressed, no pipe)
 
 The review captures each lens slot independently (replaces legacy stdin | biggz DAG). Verify every slot binds the frozen manifest:
@@ -131,6 +133,8 @@ biggz review gate pre-pr test-lineage-001 --json > gate.json
 type gate.json | findstr "chainValid"
 # Should show chainValid:true, receiptValid:true (or DeliveryBurned when BurnEnabled)
 ```
+
+> See note in Test 4 for optional flags.
 
 ## Test 6: RDD Kill Switch
 
@@ -360,6 +364,8 @@ Move-Item openspec\changes\first-feature openspec\changes\archive\2026-07-28-fir
 biggz sdd-status
 # Expected: No active changes, archived change visible
 ```
+
+> See note in Test 4 for optional flags.
 
 ## Test 9: Backup/Restore
 
