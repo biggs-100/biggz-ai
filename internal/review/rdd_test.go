@@ -405,15 +405,14 @@ func TestDeliveryDisposition_GateBypass(t *testing.T) {
 
 	RDDDisable("", "", "global")
 
-	// With RDD disabled, the gate must NOT bypass: it reports allowed=false
-	// with delivery disabled/unmanaged and never fabricates a pass, even for
-	// an empty lineage that would fail every other check.
+	// With RDD disabled, the gate reports Passed:true, Allowed:false
+	// with delivery disabled/unmanaged (unmanaged delivery, exit 0, no approval fabricated).
 	result, err := EvaluateGate(GatePrePush, "", "empty", GateOptions{})
 	if err != nil {
 		t.Fatalf("EvaluateGate: %v", err)
 	}
-	if result.Passed {
-		t.Fatal("expected gate NOT to pass when RDD disabled (delivery unmanaged)")
+	if !result.Passed {
+		t.Fatal("expected gate to pass (Passed:true) when RDD disabled (delivery unmanaged)")
 	}
 	if result.Allowed {
 		t.Fatal("expected allowed=false when RDD disabled")

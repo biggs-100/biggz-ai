@@ -290,7 +290,7 @@ func PrePRGate(chain ValidatedChain, findings []Finding, receipt *Receipt, dryRu
 	disp := ResolveDeliveryDisposition(gitDir)
 	if disp == DispositionDisabledUnmanaged {
 		fmt.Fprintln(os.Stderr, "RDD disabled: delivery unmanaged")
-		return GateResult{Gate: GatePrePR, Passed: true, DryRun: dryRun}
+		return GateResult{Gate: GatePrePR, Passed: true, Allowed: false, Delivery: DeliveryDisabledUnmanaged, Reason: "RDD disabled: delivery unmanaged", DryRun: dryRun}
 	}
 	return evaluateGate(GatePrePR, chain, findings, receipt, "", dryRun)
 }
@@ -307,7 +307,7 @@ func PrePushGate(chain ValidatedChain, findings []Finding, receipt *Receipt, sna
 	disp := ResolveDeliveryDisposition(gitDir)
 	if disp == DispositionDisabledUnmanaged {
 		fmt.Fprintln(os.Stderr, "RDD disabled: delivery unmanaged")
-		return GateResult{Gate: GatePrePush, Passed: true, DryRun: dryRun}
+		return GateResult{Gate: GatePrePush, Passed: true, Allowed: false, Delivery: DeliveryDisabledUnmanaged, Reason: "RDD disabled: delivery unmanaged", DryRun: dryRun}
 	}
 	return evaluateGate(GatePrePush, chain, findings, receipt, snapshotTree, dryRun)
 }
@@ -598,10 +598,12 @@ func ValidateCheck(kind GateKind, state *model.ReviewState, cfg GateConfigLegacy
 //     (documented reduced scope).
 //
 // Disabled-mode semantics: when the kill switch is off, ANY gate returns
-// allowed=false with delivery "disabled/unmanaged" and never reports a pass.
-// An UNREADABLE switch is NOT a disabled switch: RDDStatus errors resolve as
-// managed and the gate evaluates normally — delivery never fabricates
-// "disabled/unmanaged" from a corrupt file.
+// Passed:true, Allowed:false with delivery "disabled/unmanaged" (exit 0 but
+// delivery unmanaged, consistent with PrePRGate/PrePushGate). This is the
+// honest unmanaged disposition: delivery follows ordinary repository policy,
+// never an approval. An UNREADABLE switch is NOT a disabled switch:
+// RDDStatus errors resolve as managed and the gate evaluates normally —
+// delivery never fabricates "disabled/unmanaged" from a corrupt file.
 
 // gateBinding is the repository-derived state every gate check shares: the
 // frozen start plan, the immutable base/candidate trees, the ordered
@@ -676,6 +678,8 @@ func EvaluateGate(kind GateKind, repo, lineageID string, opts GateOptions) (Gate
 func evaluateGateKillSwitch(repo string, result GateResult) (bool, GateResult) {
 	worktreeDir, commonDir := detectRDDDirs(repo)
 	if status, rddErr := RDDStatus(worktreeDir, commonDir); rddErr == nil && status.EffectiveMode == RDDModeDisabled {
+		result.Passed = true
+		result.Allowed = false
 		result.Delivery = DeliveryDisabledUnmanaged
 		result.Reason = "RDD disabled: delivery unmanaged"
 		return true, result

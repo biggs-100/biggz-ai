@@ -556,8 +556,8 @@ func TestEvaluateGate_DisabledModeAllKinds(t *testing.T) {
 		if err != nil {
 			t.Fatalf("EvaluateGate(%s): %v", kind, err)
 		}
-		if result.Passed || result.Allowed {
-			t.Errorf("gate %s: disabled mode must not pass (passed=%t allowed=%t)", kind, result.Passed, result.Allowed)
+		if !result.Passed || result.Allowed {
+			t.Errorf("gate %s: disabled mode must pass with allowed=false (passed=%t allowed=%t)", kind, result.Passed, result.Allowed)
 		}
 		if result.Delivery != DeliveryDisabledUnmanaged {
 			t.Errorf("gate %s: delivery = %q, want %q", kind, result.Delivery, DeliveryDisabledUnmanaged)

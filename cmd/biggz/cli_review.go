@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -443,6 +444,22 @@ func reviewGateRun() int {
 
 	gateType := review.GateKind(args[0])
 	lineageID := args[1]
+	// RDD kill-switch wiring (P0-1): gate is read-only. Use RDDOperationGate
+	// which always passes; disabled disposition is handled via EvaluateGate's
+	// DeliveryDisabledUnmanaged (Passed:true, Allowed:false) so that
+	// `biggz review gate` can return JSON instead of failing.
+	{
+		wt, cd := review.ResolveRDDDirs("")
+		if err := review.AuthorizeRDDOperation(review.RDDOperationGate, wt, cd); err != nil {
+			var rddErr *review.RDDDisabledError
+			if errors.As(err, &rddErr) {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+	}
 	useJSON := false
 	var opts review.GateOptions
 	for i := 2; i < len(args); i++ {
@@ -638,6 +655,27 @@ func reviewStartRun() int {
 	if err := json.Unmarshal(data, &subject); err != nil {
 		fmt.Fprintf(os.Stderr, "error: parsing subject JSON: %v\n", err)
 		return 1
+	}
+
+	// RDD kill-switch (P0-1): block review start when disabled.
+	// Resolve dirs from subject.Repository (the repo where review will run)
+	// with cwd fallback. This is the primary enforcement point for
+	// AuthorizeRDDOperation; previously it had zero callers so disabled
+	// clones could still start reviews.
+	{
+		wt, cd := review.ResolveRDDDirs(subject.Repository)
+		if wt == "" && cd == "" {
+			wt, cd = review.ResolveRDDDirs("")
+		}
+		if err := review.AuthorizeRDDOperation(review.RDDOperationStart, wt, cd); err != nil {
+			var rddErr *review.RDDDisabledError
+			if errors.As(err, &rddErr) {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 	}
 
 	if lineageID == "" {
@@ -862,6 +900,20 @@ func reviewFinalizeRun() int {
 	}
 	lineageID := os.Args[3]
 
+	// RDD kill-switch (P0-1): block finalize (mutation) when disabled.
+	{
+		wt, cd := review.ResolveRDDDirs("")
+		if err := review.AuthorizeRDDOperation(review.RDDOperationMutate, wt, cd); err != nil {
+			var rddErr *review.RDDDisabledError
+			if errors.As(err, &rddErr) {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+	}
+
 	outcome, err := review.Finalize("", lineageID)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -978,6 +1030,22 @@ func reviewCaptureResultRun() int {
 		// provider prompt binding is added.
 	}
 
+	// RDD kill-switch (P0-1): block capture (mutation) when disabled.
+	// Use cwd dirs for early check; binding.Repo check follows after binding
+	// construction for accuracy when repository-context names a different repo.
+	{
+		wt, cd := review.ResolveRDDDirs("")
+		if err := review.AuthorizeRDDOperation(review.RDDOperationMutate, wt, cd); err != nil {
+			var rddErr *review.RDDDisabledError
+			if errors.As(err, &rddErr) {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+	}
+
 	if lineageID == "" || targetID == "" || lensName == "" || order < 0 || expectedRevision == "" {
 		fmt.Fprintln(os.Stderr, "error: --lineage, --target, --lens, --order, and --expected-revision are required")
 		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight]")
@@ -1008,6 +1076,20 @@ func reviewCaptureResultRun() int {
 			return 1
 		}
 		binding.Repo = context.Repo
+	}
+	// Second RDD check using the resolved binding repo (if any) for accuracy.
+	// If repository-context named a repo different from cwd, enforce that one.
+	if binding.Repo != "" {
+		wt, cd := review.ResolveRDDDirs(binding.Repo)
+		if err := review.AuthorizeRDDOperation(review.RDDOperationMutate, wt, cd); err != nil {
+			var rddErr *review.RDDDisabledError
+			if errors.As(err, &rddErr) {
+				fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				return 1
+			}
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
 	}
 
 	if preflight {

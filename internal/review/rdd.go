@@ -140,6 +140,7 @@ const (
 	RDDOperationRead RDDOperation = iota
 	RDDOperationStart
 	RDDOperationMutate
+	RDDOperationGate
 )
 
 // reviewModeEnableForSource returns the exact runnable continuation for the
@@ -166,6 +167,8 @@ func rddOperationSubject(op RDDOperation) string {
 		return "review start"
 	case RDDOperationMutate:
 		return "review mutation"
+	case RDDOperationGate:
+		return "review gate"
 	default:
 		return "RDD operation"
 	}
@@ -185,16 +188,21 @@ func (e *RDDDisabledError) Error() string {
 		return fmt.Sprintf("%s blocked by RDD (source: %s). Enable with: %s", subj, e.Source, cmd)
 	case RDDOperationMutate:
 		return fmt.Sprintf("%s blocked by RDD (source: %s). Enable with: %s; the review is frozen, not discarded; to continue it from where it stopped, run %s", subj, e.Source, cmd, cmd)
+	case RDDOperationGate:
+		return fmt.Sprintf("%s blocked by RDD (source: %s). Enable with: %s", subj, e.Source, cmd)
 	default:
 		return fmt.Sprintf("RDD disabled (%v) source %s. Enable with: %s", e.Operation, e.Source, cmd)
 	}
 }
 
 // AuthorizeRDDOperation checks whether the given operation is allowed for the
-// RDD state. Read operations always pass; Start and Mutate are blocked when
-// the effective RDD mode is disabled.
+// RDD state. Read and Gate operations always pass; Start and Mutate are blocked when
+// the effective RDD mode is disabled. Gate is read-only and its disabled
+// disposition is handled via EvaluateGate's DeliveryDisabledUnmanaged, not via
+// an authorization error, so that `biggz review gate` can return JSON with
+// Passed:true and DeliveryDisabledUnmanaged instead of failing.
 func AuthorizeRDDOperation(op RDDOperation, worktreeGitDir, commonGitDir string) error {
-	if op == RDDOperationRead {
+	if op == RDDOperationRead || op == RDDOperationGate {
 		return nil
 	}
 	status, err := RDDStatus(worktreeGitDir, commonGitDir)

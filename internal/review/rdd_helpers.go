@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -345,4 +347,40 @@ func buildRDDStatusFromGeneration(gen rddGeneration, genNum int64) *RDDModeStatu
 		Generation: genNum,
 		RecordedAt: gen.RecordedAt,
 	}
+}
+
+// ResolveRDDDirs resolves worktree and common git dirs for the given repo
+// path. Outside a git repository both are empty and RDDStatus falls back to
+// the global mode. This is the exported helper for CLI wiring of
+// AuthorizeRDDOperation (P0-1).
+func ResolveRDDDirs(repo string) (worktreeDir, commonDir string) {
+	worktreeDir = revParseRDDDir(repo, "--git-dir")
+	commonDir = revParseRDDDir(repo, "--git-common-dir")
+	if commonDir == "" {
+		commonDir = worktreeDir
+	}
+	return worktreeDir, commonDir
+}
+
+func revParseRDDDir(repo, flag string) string {
+	args := []string{"rev-parse", flag}
+	if repo != "" {
+		args = append([]string{"-C", repo}, args...)
+	}
+	out, err := exec.Command("git", args...).Output()
+	if err != nil {
+		return ""
+	}
+	dir := strings.TrimSpace(string(out))
+	if dir == "" {
+		return ""
+	}
+	if !filepath.IsAbs(dir) {
+		base := repo
+		if base == "" {
+			base, _ = os.Getwd()
+		}
+		dir = filepath.Join(base, dir)
+	}
+	return filepath.Clean(dir)
 }
