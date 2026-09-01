@@ -20,9 +20,9 @@ import (
 func rddRun() int {
 	args := os.Args[2:]
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
-		fmt.Fprintln(os.Stderr, "Usage: biggz rdd <enable|disable|status> [--scope worktree|clone|global] [--expected-revision <hash>] [--json]")
-		fmt.Fprintln(os.Stderr, "  --scope <scope>       Scope: worktree (default), clone, or global")
-		fmt.Fprintln(os.Stderr, "  --expected-revision   Verify head generation revision before writing (clone/worktree disable only)")
+		fmt.Fprintln(os.Stderr, "Usage: biggz rdd enable|disable|status [--scope worktree|clone|global] [--expected-revision <hash>] [--json]")
+		fmt.Fprintln(os.Stderr, "  --scope worktree|clone|global (default worktree for enable/disable)")
+		fmt.Fprintln(os.Stderr, "  --expected-revision <hash> only for disable --scope=clone|worktree (CAS)")
 		fmt.Fprintln(os.Stderr, "  --json                Machine-readable JSON output (status only)")
 		return 0
 	}

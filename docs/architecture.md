@@ -200,12 +200,14 @@ The pipeline implements SGH (Structured Graph Harness) principles:
 
 ## RDD (Review-Driven Development)
 
-Kill switch stored in:
+Kill switch with three persistence scopes (see `internal/review/rdd.go`, `rdd_helpers.go`):
 
-- **Global**: `~/.biggz/rdd-mode.json`
-- **Clone-local**: `.git/rdd-mode.json` (can only disable)
+- **Global**: `~/.biggz/rdd-mode.json` (JSON `rddState` schema `biggz-ai.rdd-status/v1`, fields `mode` + `recorded_at`)
+- **Clone**: `<gitCommon>/biggz/rdd-mode/gen-*.json` (CAS generation, `flock` + `O_EXCL` via `rddPublishImmutable`, not `.git/rdd-mode.json`)
+- **Worktree**: `<gitDir>/biggz/rdd-mode` (private `gen-*.json` CAS, flock + O_EXCL, only when `worktreeDir != commonDir`; no mirror)
+- **Mirror** (read-only fallback): `<gitCommon>/gentle-ai/rdd-mode` (pre-relocation mirror, probed for `ReachMachine` vs `ReachThisBuild`)
 
-Any "off" wins. Status is read-only. Re-enabling applies to future candidates only.
+**Precedence**: `worktree > clone > global`, any-off-wins. Default `enabled` when no file exists (`decideRDDEffective` returns `enabled` / `SourceDefault`). Any scope `off` disables all gates (`RDDOperationStart`/`Mutate` blocked, `Gate` reports `DeliveryDisabledUnmanaged`). Re-enabling (`biggz rdd enable`) clears clone + worktree generations and writes `enabled` globally; applies to future candidates only. Status is read-only (`biggz rdd status --json` reports `effective_mode`, `source`, `revision`, `reach`, `worktree_count`).
 
 ### Synthesis Gate (3-layer defense) + Session Recall
 

@@ -139,31 +139,39 @@ type gate.json | findstr "chainValid"
 ## Test 6: RDD Kill Switch
 
 ```bash
-# Check default status
+# Check default status (SourceDefault when no file; effective_mode=enabled via decideRDDEffective)
 biggz rdd status
 # Expected: enabled
 
-# Disable
-biggz rdd disable
-
-# Verify disabled
+# Disable worktree-private (default scope — not global)
+biggz rdd disable  # defaults to --scope=worktree (not global)
 biggz rdd status
-# Expected: disabled
+# Expected: disabled, source=worktree (or clone when worktreeDir==commonDir)
 
-# Clone-local disable (requires git repo)
+# Disable globally (explicit)
+biggz rdd disable --scope=global  # global
+biggz rdd status
+# Expected: disabled, source=global
+
+# Clone-local disable (requires git repo, CAS generation)
 cd C:\temp\biggz-test-repo
-biggz rdd disable --scope clone
+biggz rdd disable --scope=clone  # shared clone: <gitCommon>/biggz/rdd-mode/gen-*.json (flock + O_EXCL)
 
-# Global + clone should both show disabled
-biggz rdd status
-# Expected: disabled (clone overrides)
+# Global + clone should both show disabled (worktree > clone > global, any-off-wins)
+biggz rdd status --json
+# Expected: disabled (any scope off disables all gates); check effective_mode, source, revision, reach
 
-# Re-enable
+# Check blast radius + mirror reach (WorktreeCount, ReachMachine/ThisBuild)
+biggz rdd status --json | findstr "WorktreeCount"
+# WorktreeCount = number of linked worktrees (from <commonDir>/worktrees)
+# Reach: ReachMachine (mirror <commonDir>/gentle-ai/rdd-mode written) vs ReachThisBuild (mirror unreachable) vs "" on reads
+
+# Re-enable (clears clone+worktree generations, writes global enabled)
 biggz rdd enable
-
-# Verify enabled
 biggz rdd status
 # Expected: enabled
+biggz rdd status --json
+# Expected: enabled, source=default when no file, effective_mode=enabled
 ```
 
 ## Test 7: bigmem Memory (via MCP)

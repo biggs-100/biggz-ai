@@ -142,11 +142,13 @@ User-owned kill switch:
 
 ```bash
 biggz rdd status     # show current mode
-biggz rdd disable    # stop reviews
+biggz rdd disable    # stop reviews (defaults to --scope=worktree, not global)
 biggz rdd enable     # re-enable reviews
 ```
 
-Any "off" wins: clone-local override beats global enable.
+> `biggz rdd disable` without `--scope` defaults to `--scope=worktree` (narrowest, not global). Use `--scope=global` to disable globally, `--scope=clone` for shared clone, `--scope=worktree` for worktree private. See `biggz rdd status --json` for effective mode (`effective_mode`, `source`, `revision`, `reach`).
+
+Any "off" wins: `worktree > clone > global`; any scope `off` disables all gates.
 
 ## Agent Adapters
 
