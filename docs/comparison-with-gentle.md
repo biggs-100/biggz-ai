@@ -8,11 +8,11 @@
 | Test Go lines | 200,631 | 25,555 | **87%** |
 | Production Go files | 424 | 189 | **55%** |
 | Test files | 606 | 108 | **82%** |
-| Agent adapters | 16 (17 dirs incl. manifest) | 16 (ported, same set) | — |
-| Internal packages | 33 | 34 | — |
+| Agent adapters | 16 (17 dirs incl. manifest) | 16 core (27 entries in capability manifest incl. community adapters — same set) | — |
+| Internal packages | 33 | 34 (at 2026-08-23; see docs/architecture.md for current list — 30+ packages post 2026-08-28) | — |
 
-Measured 2026-08-23 (base) and 2026-08-28 (refresh). Gentle-ai counts are from a filtered clone of `cmd/` and
-`internal/` (no testdata); biggz-ai counts are the full module (`wc -l` via `find . -name "*.go"`).
+Measured 2026-08-23 (base) and 2026-08-28 (refresh; next refresh due). Gentle-ai counts are from a filtered clone of `cmd/` and
+`internal/` (no testdata); biggz-ai counts are the full module (`wc -l` via `find . -name "*.go"`). Metrics are point-in-time — see `docs/architecture.md` for current package map and `git log --oneline` for delta since last refresh.
 
 **2026-08-28 refresh (method: `wc -l` full module via `find . -name "*.go" ! -path "./.git/*"`):** **59,725 prod lines** (260 files), **44,057 test lines** (177 files), **103,782 total**. Filtered `cmd/`+`internal/` prod is ~58.4K; the filtered baseline 39,427 (2026-08-10) + parity P0/P1 (~1.1K) + P0 docs (~0.4K) → ~40–41K prod when measured on the same filtered `cmd/`/`internal/` scope. At filtered scope: **~40K prod vs gentle ~112K — still ~65% reduction**; **~60K vs ~313K incl. tests still ~80% reduction** — updated from 2026-08-10 39,427. Full-module 59.7K/103.8K remains ~47% prod / ~67% total reduction vs gentle — method explains the delta; architecture win unchanged.
 

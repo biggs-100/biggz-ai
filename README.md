@@ -4,7 +4,7 @@
 
 biggz-ai is a lightweight, self-contained harness for AI coding agents (OpenCode, Claude Code, Qwen). It provides SDD (Spec-Driven Development) workflow orchestration, code review pipelines with 6 lenses (R1-R4 + performance, dependencies), persistent memory (BigMem), and full lifecycle management — all with the human always in control.
 
-Inspired by gentle-ai, but rebuilt from scratch with roughly 80% less code (measured 2026-08-10: ~60K vs ~313K Go lines including tests), a cleaner architecture, and no legacy debt.
+Inspired by gentle-ai, but rebuilt from scratch with roughly 80% less code (measured 2026-08-28: ~60K vs ~313K Go lines including tests — see docs/comparison-with-gentle.md for method and refresh date), a cleaner architecture, and no legacy debt.
 
 ## Quick Start
 
@@ -26,14 +26,16 @@ echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
 | `biggz` | Run review pipeline (content-addressed) |
 | `biggz install` | Install skills + config in agent |
 | `biggz uninstall` | Remove managed assets (keeps memory data unless `--purge`) |
-| `biggz sdd-status [--json --contract biggz-ai.sdd-status/v2]` | Show active/archived SDD changes (V2 authority-free) |
+| `biggz sdd-status [--cwd <dir>] [--json] [--instructions] [--watch] [--contract biggz-ai.sdd-status/v2]` | Show active/archived SDD changes (V2 authority-free) |
 | `biggz sdd-verify-validate --input <path\|->` | Validate verify reports (`--requirements`/`--scenarios`, `--json`) |
 | `biggz sdd-attempt acquire\|settle\|status\|grant\|begin\|finish\|reset` | Manage attempt budgets (CAS, tokens, grants) |
 | `biggz sdd-continue [change]` | Determine next SDD phase (picker when omitted) |
 | `biggz sdd-apply <change>` | Validate edit authority for the apply phase (guard, warn `blocked(edit_authority_missing)`) |
 | `biggz sdd-new [change]` | Interactive SDD change wizard |
-| `biggz bigmem save\|search\|get\|delete\|update\|timeline\|context` | Persistent memory core |
-| `biggz bigmem graph [--project P] [--format dot\|ascii\|json]` | Topic hierarchy and relations |
+| `biggz sdd-profile list\|apply\|remove` | Manage SDD model profiles (default/balanced/quality/cheap) |
+| `biggz sdd-remediate <change> [--verify-report <path>]` | Validate remediation result for a verify failure |
+| `biggz bigmem save\|search\|get\|delete\|update\|timeline\|context\|stats\|doctor\|export\|import\|rescue-ownership` | Persistent memory core |
+| `biggz bigmem graph [--project P] [--format dot\|ascii\|json] [--limit N] [--scope project\|all]` | Topic hierarchy and relations |
 | `biggz bigmem compare <id-a> <id-b>` | Compare two observations |
 | `biggz bigmem conflicts list\|show\|judge\|scan\|stats\|deferred` | Pending memory conflicts |
 | `biggz bigmem projects list\|consolidate` | Project index and dedup |
@@ -45,6 +47,9 @@ echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
 | `biggz update` | Check for updates (stable/beta channel) |
 | `biggz upgrade` | Upgrade binary with signature verification |
 | `biggz doctor [--json] [--fix]` | Run system health checks and auto-fix |
+| `biggz tdd enable\|disable\|status` | Strict TDD mode (AGENTS.md marker) |
+| `biggz plugin list\|install\|uninstall` | Manage OpenCode community plugins |
+| `biggz mcp [--tools] [--prefix <name>]` | Start MCP server for agent memory tools (22 tools) — binary also available as `biggz-mcp` |
 | `biggz pr create <change> [--with-evidence]` | Auto-generate branch and PR from SDD apply |
 | `biggz codegraph init --cwd <dir>` | Initialize CodeGraph index (safe-root validation) |
 | `biggz hooks init` | Create default `.biggz/hooks.yaml` |
@@ -52,20 +57,21 @@ echo '{"repository":"my/repo","commit_sha":"abc123"}' | biggz
 | `biggz recovery list\|show\|generate\|validate\|export\|import\|delete` | Recovery trace ledger |
 | `biggz review start\|capture-result\|finalize\|gate\|...` | Content-addressed review pipeline (GitCommonDir, flock, Burn) |
 | `biggz rdd enable\|disable\|status` | Review-Driven Development kill switch |
-| `biggz-mcp` | MCP server for agent memory tools (22 tools) |
 
 ## Architecture
 
 ```
 CLI (cmd/biggz)
   ├── Install ──► Agent Detection ──► Skill Deploy ──► Config Merge
-  ├── SDD ──► Status, Verify, Attempt, Continue
-  ├── BigMem ──► MCP Server ──► 22 memory tools
+  ├── SDD ──► Status, Verify, Attempt, Continue, Profile, Remediate
+  ├── BigMem ──► MCP Server ──► 22 memory tools (graph, conflicts, projects, sync)
   ├── Review ──► Lifecycle, Findings, Corrections, Receipt, Gates, Ledger
   ├── Judgment Day ──► Dual-blind adversarial review
   ├── Backup/Restore ──► tar.gz snapshots
+  ├── TDD / Plugin / MCP ──► Strict TDD, community plugins, MCP server
   └── Release ──► Version tagging and verification
 ```
+> Full package map with 30+ internal packages lives in [docs/architecture.md](docs/architecture.md).
 
 ### Key Design Decisions
 
@@ -107,7 +113,7 @@ biggz review capture-result --lineage <id> --lens <name> --order <n> --expected-
 biggz review finalize <lineage>
   → Under flock: LoadChain + Validate + FixDeltaHashForSnapshot(baseTree, candidate, pathsDigest, cumulative, ledgerIDs)
     via domainHash("fix-delta/v1\x00"+writeLengthPrefixed(...))
-  → Build PersistedReceipt (domainHash("biggz-ai.review-receipt-binding/v1"))
+  → Build PersistedReceipt (domainHash("biggz-ai.review-receipt-binding/v1") — legacy FixDelta domain "fix-delta/v1" kept for compat)
     → receipts/<sha256>.json → append complete_review (receipt_path + receipt_hash)
     → if BurnEnabled write burned.json tombstone, delete receipt (ephemeral)
 
@@ -147,14 +153,15 @@ Any "off" wins: clone-local override beats global enable.
 | Qwen | `exec.LookPath("qwen")` | `~/.qwen/` | ✅ |
 
 Plus 13 more adapters ported for parity (cursor, windsurf, gemini, codex, pi,
-vscode, kiro, antigravity, hermes, kimi, kilocode, trae, openclaw).
+vscode, kiro, antigravity, hermes, kimi, kilocode, trae, openclaw) — 16 core adapters.
+Full capability manifest lists 27 entries including community adapters (see `internal/agents/capabilitymanifest`).
 
 ## Comparison with gentle-ai
 
 | Dimension | gentle-ai | biggz-ai |
 |---|---|---|
-| Lines of code (Go, measured) | ~313K | ~60K |
-| Files (Go, measured) | 1,030 | 291 |
+| Lines of code (Go, measured) | ~313K | ~60K (refreshed 2026-08-28, see docs/comparison-with-gentle.md) |
+| Files (Go, measured) | 1,030 | 291 (refreshed 2026-08-28) |
 | State machine | 2 parallel (Transaction + CompactState) | 1 (ReviewState + SchemaVersion) |
 | Integrity | 8+ hashes | Evidence chain + MerkleRoot |
 | Business rules | Embedded in FSM | PolicyEvaluator interface |

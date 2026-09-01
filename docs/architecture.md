@@ -24,9 +24,11 @@ internal/
 ├── agentbuilder/    — Custom SDD agent generation (engines, parser, installer, registry)
 ├── assets/          — Embedded skills + configs + OpenCode plugins (opencode plugins + biggz-orchestrator.md + biggz-synthesis-gate.js)
 ├── backup/          — tar.gz snapshot/restore
-├── BigMem/          — Persistent observation store + MCP tools (22 tools, SQLite)
+├── bigmem/          — Persistent observation store + MCP tools (22 tools, SQLite)
+├── codegraph/       — CodeGraph index + change-intent report (safe-root validation)
 ├── contracts/       — Wire-envelope formalization engine (test-only validation, draft 2020-12)
-├── filemerge/       — Atomic write, JSONC merge, section injection (domain hash helpers)
+├── doctor/          — System health checks (BigMem FTS, stale locks, skill registry)
+├── filemerge/       — Atomic write, JSONC merge, section injection
 ├── install/         — Agent detection + deploy
 ├── lens/            — Legacy lens infra — review now uses content-addressed event store (risk, readability, reliability, resilience kept for parity)
 │   ├── gitdiff/     — Shared git diff parsing
@@ -49,6 +51,10 @@ internal/
 ├── sddattempt/      — SDD runtime attempt ledger (acquire/settle, CAS, tokens, grants)
 │   ├── sddattempt.go — Acquire/Settle/Begin/Finish/Grant/Rescope, BlockedError, SettleObligation
 │   └── cas_store.go  — GitCommonDir sdd-runtime/v1/<change>/ record-<sha>.json + HEAD + LOCK
+├── platform/        — OS/arch detection + shell quoting (pathidentity, pathquote)
+├── policy/          — PolicyEvaluator interface + guardrails
+├── project/         — Project detection (git remote → BigMem project pinning)
+├── tui/             — Terminal UI (theme, gallery, status-line, ask dialog)
 └── skillregistry/   — Skill registry scan + generation
 
 model/               — Core types (ReviewState, FSM 13-state, hash domainHash+writeLengthPrefixed, ReviewStatus, Role)
@@ -56,11 +62,10 @@ model/               — Core types (ReviewState, FSM 13-state, hash domainHash+
 ├── review.go        — MaxFixRounds=1, MaxScopedValidations=1, ReviewStatus 13 values, BudgetCounters
 └── fsm.go           — Guard table 13-state + Any→* wildcard + BudgetCheck (<1) verbatim errors
 contracts/           — Frozen JSON Schemas (review-integration/v1 21 schemas + sdd-integration/v1 2 schemas)
-orchestrator/        — (legacy) Review lifecycle orchestration — now superseded by internal/review event store
-pipeline/            — (legacy) Sequential + DAG graph — superseded by capture-result per-slot finalize
+model/hash.go        — domainHash(domain+"\x00"+payload) + writeLengthPrefixed helpers (EvidenceDomain/MerkleDomain)
 plugin/              — LensPlugin + AgentAdapter interfaces
-policy/              — PolicyEvaluator interface
 registry/            — Build-time plugin registry
+pipeline/            — Sequential + DAG graph (legacy — superseded by capture-result per-slot finalize, kept for compat)
 ```
 
 ## Data Flow
@@ -81,7 +86,7 @@ biggz review capture-result --lineage <id> --lens <name> --order <n> \
 
 biggz review finalize <lineage>
   → Under flock(LOCK_EX|LOCK_NB) on .lock: LoadChain + Validate + deriveFinalizeData
-  → Compute FixDeltaHashForSnapshot(baseTree, candidateTree, pathsDigest, cumulative, ledgerIDs) via domainHash("fix-delta/v1\x00"+writeLengthPrefixed(...))
+  → Compute FixDeltaHashForSnapshot(baseTree, candidateTree, pathsDigest, cumulative, ledgerIDs) via domainHash("biggz-ai.fix-delta/v1\x00"+writeLengthPrefixed(...)) (legacy "fix-delta/v1" kept for compat)
   → Build PersistedReceipt (domainHash("biggz-ai.review-receipt-binding/v1")) → receipts/<sha256>.json via publishNoReplace
   → Append complete_review event (receipt_path + receipt_hash)
   → If BurnEnabled (default true): append burn_review, write burned.json tombstone, delete receipt file (ephemeral); else preserve receipt

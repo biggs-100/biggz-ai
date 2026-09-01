@@ -5,7 +5,25 @@ All notable changes to biggz-ai are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased] — 2026-08-28
+## [Unreleased] — 2026-08-31
+
+### Added
+- **bigmem-rescue-ownership** (2026-08-28) — orphan BigMem session rescue with DryRun/scope handling (15 tasks, archived).
+- **bigmem-sync-v2** (2026-08-28) — BigMem sync v2 parity with Engram (21 tasks, archived).
+- **parity-gentle-69** PR1-3 (2026-08-28/29) — ledger verify hardening slice, `internal/review` budget/ledger fixes (9fab44e/062006d/6c8a969).
+- **ola1-gentle-hardening** (2026-08-29) — 5-case detection + Batch S/M redaction, quarantine + lease, rescue-ownership journal
+- **ola2-guardrails-preflight-synthesis** + **ola3-gentle-final-hardening** (2026-08-29) — guardrails preflight + synthesis gate hardening
+- **gentle-safety-sealed-explorers** (2026-08-30) — 6/8/5 sealed explorers, archive ola1/ola2
+- **gentle-model-bg-verify** (2026-08-30) — model routing BG verify + gentle-model parity (THINKING_LEVELS `biggz-ai.agent_model_routing/v1`)
+- **sdd-sync** (2026-08-30) — SDD sync executor + deltas + RENAMED fix + skill registry watcher (fsnotify)
+- **help-backup-tui** (2026-08-30) — help backup TUI + orchestrator synthesis scannable
+- **codegraph-change-intent-full** (2026-08-30) — CodeGraph change-intent full graph (JSON + Markdown)
+- **fix-orchestrator-checkpoint-synthesis** (2026-08-30) + **polish-wait-visuals** (2026-08-31) — checkpoint synthesis + wait visuals
+- **rdd-cas-reach-parity** (2026-08-31) — RDD CAS reach parity (archived)
+- **refactors** (2026-08-30/31) — extract helpers: `renderTable`, `ValidateSymlinkTarget`, `writeRDDModeCAS`, `status`/`synthesis`/`ParseDeltaSpec`/`ApplyDeltas`/`foreignRuntimeTopologyRoots`/`RDDStatus`/`SetWorktreeRDDMode`/`SetCloneLocalRDDMode`/`deriveSyncState`/`sync`
+- **ui-port** (2026-09-01) — BigMem implicit session fix (`MostRecentActiveSession`/`EnsureImplicitSession`), 6 Engram parity prompts, orchestrator thin 792→68L + `biggz-synthesis-gate.js`, TUI theme engine + gallery + Pi pretty (tool-pills, powerline footer, Ask TabBar)
+
+## [Unreleased] — 2026-08-28 (archived)
 
 ### Added
 - **parity-gentle-v25** — 6 invariants fail-closed: budget 1/1 (`MaxFixRounds=1`, `MaxScopedValidations=1`), FixDelta `domainHash("fix-delta/v1\x00"+writeLengthPrefixed(...))` + `EmptyFixDeltaHash`, chain `domainHash` + `writeLengthPrefixed` (u32 BE) for `review-evidence/v1`/`review-merkle/v1`/`review-snapshot/v1`, store `GitCommonDir` (`--git-common-dir` fallback `--git-dir`) + `v1/events/<sha256>` + `publishImmutable` + dual-read, `flock(LOCK_EX|LOCK_NB)` on `.lock` + stale 5m PID+mtime, `BurnEnabled` + `burned.json` → `DeliveryBurned`, SDD V2 authority-free (`biggz-ai.sdd-status/v2` omits `granted_roots`/`missing_roots`/`edit_authority_blocked`). 3 PRs stacked `0587db9`/`4f091d4`/`87c93dd` (task refs `c72cd17`/`961ced6`/`fb27fdf`), archive `42cd08c` (specs `core-review`/`review`/`sdd-status`).
