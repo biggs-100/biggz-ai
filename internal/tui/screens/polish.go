@@ -215,3 +215,156 @@ func VisibleWorkflowRowsStrings(rows []string, limit int) ([]string, string) {
 	}
 	return vis, tail
 }
+
+// ── Rank4/5: CachedOutputBlock helpers (Go variant, trivial) ──
+// Mirrors oh-my-pi output-block.ts + render-utils.ts tail-window logic.
+
+const (
+	TruncateTitleLength   = 60
+	TruncatePreviewLength = 120
+	PreviewCollapsedLines = 3
+	PreviewCollapsedItems = 8
+)
+
+func PreviewWindowRows(termRows int) int {
+	if termRows <= 0 {
+		termRows = 30
+	}
+	rows := termRows - 20
+	if rows < 6 {
+		rows = 6
+	}
+	return rows
+}
+
+func CapPreviewLines(lines []string, maxRows int, expanded bool) []string {
+	if expanded {
+		return lines
+	}
+	if maxRows <= 0 {
+		maxRows = PreviewCollapsedLines
+	}
+	if len(lines) <= maxRows {
+		return lines
+	}
+	visible := maxRows - 1
+	if visible <= 0 {
+		return []string{fmt.Sprintf("… %d earlier lines", len(lines))}
+	}
+	start := len(lines) - visible
+	hidden := len(lines) - visible
+	marker := fmt.Sprintf("… %d earlier lines", hidden)
+	out := make([]string, 0, visible+1)
+	out = append(out, marker)
+	out = append(out, lines[start:]...)
+	return out
+}
+
+// OutputBlockOptions mirrors oh-my-pi OutputBlockOptions (subset).
+type OutputBlockOptions struct {
+	Header      string
+	HeaderMeta  string
+	State       string // pending|running|success|error|warning
+	Width       int
+	BorderColor string
+	Sections    []OutputBlockSection
+}
+
+type OutputBlockSection struct {
+	Label     string
+	Lines     []string
+	Separator bool
+}
+
+func borderColorForState(state, override string) string {
+	if override != "" {
+		return override
+	}
+	switch state {
+	case "error":
+		return "error"
+	case "warning":
+		return "warning"
+	case "running", "pending":
+		return "accent"
+	default:
+		return "dim"
+	}
+}
+
+// RenderOutputBlock renders a bordered card (header + sections) at given width.
+// Emulates oh-my-pi renderOutputBlock but via Go lipgloss-agnostic strings.
+func RenderOutputBlock(opts OutputBlockOptions) []string {
+	width := opts.Width
+	if width <= 0 {
+		width = 80
+	}
+	border := borderColorForState(opts.State, opts.BorderColor)
+	h := "─"
+	tl, tr, bl, br := "╭", "╮", "╰", "╯"
+	capStr := h + h + h
+	label := strings.TrimSpace(opts.Header)
+	if opts.HeaderMeta != "" {
+		if label != "" {
+			label += " · " + opts.HeaderMeta
+		} else {
+			label = opts.HeaderMeta
+		}
+	}
+	topLabel := ""
+	if label != "" {
+		topLabel = " " + TruncateToWidth(label, width-6) + " "
+	}
+	_ = border // keep for parity; top includes borderColor hint
+	top := tl + capStr + topLabel + strings.Repeat(h, max(0, width-len(capStr)-VisibleWidth(topLabel)-2)) + tr + " [" + border + "]"
+	var lines []string
+	lines = append(lines, top)
+	if len(opts.Sections) == 0 {
+		opts.Sections = []OutputBlockSection{{Lines: []string{}}}
+	}
+	for _, sec := range opts.Sections {
+		if sec.Label != "" {
+			lbl := " " + sec.Label + " "
+			lines = append(lines, "├"+capStr+lbl+strings.Repeat(h, max(0, width-len(capStr)-VisibleWidth(lbl)-2))+"┤")
+		} else if sec.Separator {
+			lines = append(lines, "├"+capStr+strings.Repeat(h, max(0, width-len(capStr)-2))+"┤")
+		}
+		for _, l := range sec.Lines {
+			for _, wrapped := range WrapTextWithAnsi(l, max(1, width-4)) {
+				inner := wrapped + strings.Repeat(" ", max(0, width-4-VisibleWidth(wrapped)))
+				lines = append(lines, "│ "+inner+" │")
+			}
+		}
+	}
+	bottom := bl + capStr + strings.Repeat(h, max(0, width-len(capStr)-2)) + br
+	lines = append(lines, bottom)
+	return lines
+}
+
+// CachedOutputBlock caches last render (dedupes visibleWidth computations).
+type CachedOutputBlock struct {
+	lastKey   string
+	lastLines []string
+}
+
+func (c *CachedOutputBlock) Render(opts OutputBlockOptions) []string {
+	key := fmt.Sprintf("%d|%s|%s|%s|%s|%d", opts.Width, opts.Header, opts.HeaderMeta, opts.State, opts.BorderColor, len(opts.Sections))
+	for _, s := range opts.Sections {
+		key += "|" + s.Label + fmt.Sprint(len(s.Lines))
+		for _, l := range s.Lines {
+			key += "|" + l
+		}
+	}
+	if c.lastKey == key && c.lastLines != nil {
+		return c.lastLines
+	}
+	lines := RenderOutputBlock(opts)
+	c.lastKey = key
+	c.lastLines = lines
+	return lines
+}
+
+func (c *CachedOutputBlock) Invalidate() {
+	c.lastKey = ""
+	c.lastLines = nil
+}
