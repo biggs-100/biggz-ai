@@ -276,6 +276,92 @@ func sameFile(a, b string) (bool, error) {
 	return os.SameFile(ai, bi), nil
 }
 
+func ensureTopologyMemo(memo map[string]string) map[string]string {
+	if memo == nil {
+		return make(map[string]string)
+	}
+	return memo
+}
+
+func dirForTopologyTarget(path string) string {
+	if info, err := os.Stat(path); err == nil && !info.IsDir() {
+		return filepath.Dir(path)
+	}
+	return path
+}
+
+func resolvePlanningCommonDir(workspaceRoot string, memo map[string]string) (string, error) {
+	planningPath := resolveExistingPath(workspaceRoot)
+	planningDir := dirForTopologyTarget(planningPath)
+	return gitCommonDirForPath(planningDir, memo)
+}
+
+func isTopologyTokenExcluded(token, suffix string) bool {
+	if strings.ContainsAny(token, " \t") || strings.Contains(token, "://") {
+		return true
+	}
+	if !strings.ContainsRune(token, '/') && !strings.ContainsRune(token, filepath.Separator) {
+		return true
+	}
+	if readOnlyMarkerAfterToken.MatchString(suffix) {
+		return true
+	}
+	return false
+}
+
+func resolveTopologyToken(token, workspaceRoot string) string {
+	if !filepath.IsAbs(token) {
+		token = filepath.Join(workspaceRoot, token)
+	}
+	return resolveExistingPath(filepath.Clean(token))
+}
+
+func topologyForeignRoot(resolved, planningCommon string, allowedNorm []string, memo map[string]string) (string, bool) {
+	targetDir := dirForTopologyTarget(resolved)
+	targetCommon, err := gitCommonDirForPath(targetDir, memo)
+	if err != nil {
+		return "", false
+	}
+	if same, err := sameFile(planningCommon, targetCommon); err == nil && same {
+		return "", false
+	}
+	foreignRoot := gitRootOf(resolved)
+	if foreignRoot == "" {
+		foreignRoot = targetDir
+	}
+	if withinAnyRoot(foreignRoot, allowedNorm) {
+		return "", false
+	}
+	return foreignRoot, true
+}
+
+func collectForeignRootsFromLine(line, workspaceRoot string, allowedNorm []string, planningCommon string, memo map[string]string, out map[string]bool) {
+	if len(taskCheckbox.FindStringSubmatch(line)) == 0 {
+		return
+	}
+	matches := backtickedSpan.FindAllStringSubmatchIndex(line, -1)
+	for _, m := range matches {
+		token := line[m[2]:m[3]]
+		suffix := line[m[1]:]
+		if isTopologyTokenExcluded(token, suffix) {
+			continue
+		}
+		resolved := resolveTopologyToken(token, workspaceRoot)
+		if foreignRoot, ok := topologyForeignRoot(resolved, planningCommon, allowedNorm, memo); ok {
+			out[foreignRoot] = true
+		}
+	}
+}
+
+func sortedTopologyRoots(foreign map[string]bool) []string {
+	roots := make([]string, 0, len(foreign))
+	for r := range foreign {
+		roots = append(roots, r)
+	}
+	sort.Strings(roots)
+	return roots
+}
+
 // foreignRuntimeTopologyRoots scans checkbox lines for path-like backticked
 // tokens (filtered by readOnlyMarkerAfterToken) and reports every resolved
 // Git repository whose common dir differs from the planning repository's
@@ -283,73 +369,17 @@ func sameFile(a, b string) (bool, error) {
 // memo map (3 tokens -> 1 rev-parse). Returns sorted unique foreign roots
 // (gitRootOf of the resolved path) for blocked status.
 func foreignRuntimeTopologyRoots(tasksText, workspaceRoot string, allowed []string, memo map[string]string) []string {
-	if memo == nil {
-		memo = make(map[string]string)
-	}
+	memo = ensureTopologyMemo(memo)
 	allowedNorm := normalizeAllowedRoots(allowed)
-	// Planning common dir via resolveExistingPath + gitCommonDir
-	planningPath := resolveExistingPath(workspaceRoot)
-	planningDir := planningPath
-	if info, err := os.Stat(planningPath); err == nil && !info.IsDir() {
-		planningDir = filepath.Dir(planningPath)
-	}
-	planningCommon, err := gitCommonDirForPath(planningDir, memo)
+	planningCommon, err := resolvePlanningCommonDir(workspaceRoot, memo)
 	if err != nil {
-		// If planning repo not git or error, fail closed: no topology block (conservative)
 		return nil
 	}
 	foreign := map[string]bool{}
 	for _, line := range strings.Split(tasksText, "\n") {
-		if len(taskCheckbox.FindStringSubmatch(line)) == 0 {
-			continue
-		}
-		matches := backtickedSpan.FindAllStringSubmatchIndex(line, -1)
-		for _, m := range matches {
-			token := line[m[2]:m[3]]
-			if strings.ContainsAny(token, " \t") || strings.Contains(token, "://") {
-				continue
-			}
-			if !strings.ContainsRune(token, '/') && !strings.ContainsRune(token, filepath.Separator) {
-				continue
-			}
-			suffix := line[m[1]:]
-			if readOnlyMarkerAfterToken.MatchString(suffix) {
-				continue
-			}
-			resolved := token
-			if !filepath.IsAbs(resolved) {
-				resolved = filepath.Join(workspaceRoot, resolved)
-			}
-			resolved = resolveExistingPath(filepath.Clean(resolved))
-			targetDir := resolved
-			if info, err := os.Stat(targetDir); err == nil && !info.IsDir() {
-				targetDir = filepath.Dir(targetDir)
-			}
-			targetCommon, err := gitCommonDirForPath(targetDir, memo)
-			if err != nil {
-				continue // not a git repo
-			}
-			same, err := sameFile(planningCommon, targetCommon)
-			if err == nil && same {
-				continue // same common dir
-			}
-			// Different common dir: report foreign git root if outside allowed
-			foreignRoot := gitRootOf(resolved)
-			if foreignRoot == "" {
-				foreignRoot = targetDir
-			}
-			if withinAnyRoot(foreignRoot, allowedNorm) {
-				continue
-			}
-			foreign[foreignRoot] = true
-		}
+		collectForeignRootsFromLine(line, workspaceRoot, allowedNorm, planningCommon, memo, foreign)
 	}
-	roots := make([]string, 0, len(foreign))
-	for r := range foreign {
-		roots = append(roots, r)
-	}
-	sort.Strings(roots)
-	return roots
+	return sortedTopologyRoots(foreign)
 }
 
 // editAuthorityBlockedReason names each unauthorized root and both exits:
