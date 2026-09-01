@@ -223,113 +223,12 @@ func AuthorizeRDDOperation(op RDDOperation, worktreeGitDir, commonGitDir string)
 // Reach is always ReachUnreported on reads (no mirror probe).
 func RDDStatus(worktreeGitDir, commonGitDir string) (*RDDStatusReport, error) {
 	globalMode, globalErr := readGlobalMode()
-
-	// Read worktree and clone generations directly for revision tracking.
-	var worktreeGen *rddGeneration
-	var worktreeGenErr error
-	var cloneGen *rddGeneration
-	var cloneGenErr error
-
-	if worktreeGitDir != "" {
-		worktreeGen, worktreeGenErr = readLatestGeneration(filepath.Join(worktreeGitDir, rddGenerationsDir))
-	}
-	if commonGitDir != "" {
-		// Avoid double-read when worktree == common (main worktree or non-linked clone).
-		if worktreeGitDir == commonGitDir && worktreeGenErr == nil && worktreeGen != nil {
-			cloneGen = worktreeGen
-			cloneGenErr = worktreeGenErr
-		} else if worktreeGitDir == commonGitDir && worktreeGenErr != nil {
-			cloneGenErr = worktreeGenErr
-		} else {
-			cloneGen, cloneGenErr = readLatestGeneration(filepath.Join(commonGitDir, rddGenerationsDir))
-		}
-	}
-
-	var worktreeMode, cloneMode RDDMode
-	var worktreeErr, cloneErr error
-
-	if worktreeGenErr != nil {
-		worktreeErr = worktreeGenErr
-		worktreeMode = RDDModeUnset
-	} else if worktreeGen != nil {
-		worktreeMode = worktreeGen.Mode
-	} else {
-		worktreeMode = RDDModeUnset
-	}
-
-	if cloneGenErr != nil {
-		cloneErr = cloneGenErr
-		cloneMode = RDDModeUnset
-	} else if cloneGen != nil {
-		cloneMode = cloneGen.Mode
-	} else {
-		cloneMode = RDDModeUnset
-	}
-
-	var recordedAt *time.Time
-	var source string
-	var revision string
-	effective := RDDModeEnabled
-
-	switch {
-	case worktreeMode == RDDModeDisabled:
-		effective = RDDModeDisabled
-		if worktreeGitDir != commonGitDir && commonGitDir != "" {
-			source = "worktree"
-		} else {
-			source = "clone"
-		}
-		if worktreeGen != nil {
-			revision = worktreeGen.Revision
-			if t, err := time.Parse(time.RFC3339Nano, worktreeGen.RecordedAt); err == nil {
-				recordedAt = &t
-			}
-		}
-	case cloneMode == RDDModeDisabled:
-		effective = RDDModeDisabled
-		source = "clone"
-		if cloneGen != nil {
-			revision = cloneGen.Revision
-			if t, err := time.Parse(time.RFC3339Nano, cloneGen.RecordedAt); err == nil {
-				recordedAt = &t
-			}
-		}
-	case globalMode == RDDModeDisabled:
-		effective = RDDModeDisabled
-		source = "global"
-		recordedAt = parseGlobalRecordedAt()
-	default:
-		source = "default"
-		recordedAt = parseGlobalRecordedAt()
-	}
-
-	wtCount := countLinkedWorktrees(commonGitDir)
-
-	report := &RDDStatusReport{
-		Schema: rddStatusSchema, EffectiveMode: effective,
-		GlobalMode: globalMode, CloneMode: cloneMode,
-		WorktreeMode: worktreeMode, Source: source,
-		Revision: revision, Reach: ReachUnreported,
-		RecordedAt: recordedAt, WorktreeCount: wtCount,
-	}
-
-	// Fail closed on any unreadable source: collect every corrupt record so
-	// the caller can name them all. Dedupe by exact file.
-	seen := make(map[string]struct{}, 3)
-	var corrupt []error
-	for _, scopeErr := range []error{worktreeErr, cloneErr, globalErr} {
-		if scopeErr == nil {
-			continue
-		}
-		if unreadable, ok := scopeErr.(*RDDModeUnreadableError); ok {
-			if _, duplicate := seen[unreadable.File]; duplicate {
-				continue
-			}
-			seen[unreadable.File] = struct{}{}
-		}
-		corrupt = append(corrupt, scopeErr)
-	}
-	if len(corrupt) > 0 {
+	worktreeGen, worktreeGenErr, cloneGen, cloneGenErr := readRDDStatusGenerations(worktreeGitDir, commonGitDir)
+	worktreeMode, worktreeErr := resolveRDDMode(worktreeGen, worktreeGenErr)
+	cloneMode, cloneErr := resolveRDDMode(cloneGen, cloneGenErr)
+	effective, source, revision, recordedAt := decideRDDEffective(worktreeMode, cloneMode, globalMode, worktreeGen, cloneGen, worktreeGitDir, commonGitDir)
+	report := buildRDDStatusReport(globalMode, cloneMode, worktreeMode, effective, source, revision, recordedAt, commonGitDir)
+	if corrupt := collectRDDCorrupt(worktreeErr, cloneErr, globalErr); len(corrupt) > 0 {
 		return report, errors.Join(corrupt...)
 	}
 	return report, nil
@@ -783,106 +682,37 @@ func SetCloneLocalRDDMode(worktreeGitDir, commonGitDir string, mode RDDMode, exp
 // SetWorktreeRDDMode writes a worktree-private override with CAS and LOCK.
 // No mirror is published for worktree scope.
 func SetWorktreeRDDMode(worktreeGitDir string, mode RDDMode, expectedRevision string) (*RDDModeStatus, error) {
-	if worktreeGitDir == "" {
-		return nil, fmt.Errorf("not in a git repository — cannot use --scope=worktree")
+	genDir, err := validateWorktreePreconditions(worktreeGitDir, mode)
+	if err != nil {
+		return nil, err
 	}
-	if mode == RDDModeEnabled {
-		return nil, ErrRDDModeWorktreeForcedOn
-	}
-	if !plausibleGitDir(worktreeGitDir) {
-		return nil, fmt.Errorf(
-			"%s is not a git directory (missing HEAD or objects/refs): refusing to write review mode state there; run from inside a repository or use 'biggz rdd disable --scope=global'",
-			worktreeGitDir)
-	}
-	genDir := filepath.Join(worktreeGitDir, rddGenerationsDir)
 	if err := os.MkdirAll(genDir, 0755); err != nil {
 		return nil, err
 	}
-
 	fl := NewNamedFileLock(genDir, "LOCK")
 	if err := fl.AcquireWithTimeout(5 * time.Second); err != nil {
 		return nil, fmt.Errorf("file lock acquire: %w", err)
 	}
 	defer fl.Release()
-
-	headGen, _, scanErr := scanGenerationHead(genDir)
-	if scanErr != nil {
-		return nil, scanErr
-	}
-	head, headErr := readLatestGeneration(genDir)
-	isCorrupt := headErr != nil && errors.Is(headErr, ErrRDDModeCorrupt)
-	if headErr != nil && !isCorrupt {
-		return nil, headErr
-	}
-	if isCorrupt {
-		if expectedRevision != "" {
-			return nil, fmt.Errorf("%w: expected %q but head is %q", ErrRDDModeRevisionMismatch, expectedRevision, "")
-		}
-	} else if head == nil {
-		if expectedRevision != "" {
-			return nil, fmt.Errorf("%w: expected %q but head is %q", ErrRDDModeRevisionMismatch, expectedRevision, "")
-		}
-	} else {
-		if expectedRevision != "" && expectedRevision != head.Revision {
-			return nil, fmt.Errorf("%w: expected %q but head is %q", ErrRDDModeRevisionMismatch, expectedRevision, head.Revision)
-		}
-	}
-
-	var genNum int64
-	var prevRev string
-	switch {
-	case isCorrupt:
-		if headGen >= 0 {
-			genNum = headGen
-		} else {
-			genNum = 0
-		}
-		prevRev = ""
-	case head != nil:
-		genNum = head.Generation + 1
-		prevRev = head.Revision
-	default:
-		genNum = 0
-		prevRev = ""
-	}
-	if genNum > maxGeneration {
-		return nil, fmt.Errorf("rdd generation exhausted: %d exceeds max %d", genNum, maxGeneration)
-	}
-	if genNum < 0 {
-		genNum = 0
-	}
-
-	gen := rddGeneration{
-		Schema:           rddStatusSchema,
-		Generation:       genNum,
-		PreviousRevision: prevRev,
-		Mode:             mode,
-		RecordedAt:       time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	gen.Revision = computeGenerationRevision(gen)
-	data, err := json.MarshalIndent(gen, "", "  ")
+	headGen, head, isCorrupt, err := readRDDHead(genDir)
 	if err != nil {
 		return nil, err
 	}
-	filename := fmt.Sprintf("gen-%010d.json", genNum)
-	relocatedPath := filepath.Join(genDir, filename)
-	if isCorrupt {
-		if err := os.WriteFile(relocatedPath, data, 0644); err != nil {
-			return nil, err
-		}
-		_ = SyncReviewDirectory(filepath.Dir(relocatedPath))
-	} else {
-		if err := rddPublishImmutable(relocatedPath, data); err != nil {
-			return nil, err
-		}
+	if err := validateRDDCAS(head, isCorrupt, expectedRevision); err != nil {
+		return nil, err
 	}
-	// Worktree has no mirror; report ThisBuild as single-root reach (not Machine).
-	return &RDDModeStatus{
-		Reach:      ReachThisBuild,
-		Revision:   gen.Revision,
-		Generation: genNum,
-		RecordedAt: gen.RecordedAt,
-	}, nil
+	genNum, prevRev, err := computeNextRDDGeneration(headGen, head, isCorrupt)
+	if err != nil {
+		return nil, err
+	}
+	gen, data, filename, err := buildRDDGeneration(genNum, prevRev, mode)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := publishRelocatedGeneration(genDir, filename, data, isCorrupt); err != nil {
+		return nil, err
+	}
+	return buildWorktreeStatus(gen, genNum), nil
 }
 
 // countLinkedWorktrees returns the number of linked worktrees for the given

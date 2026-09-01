@@ -158,3 +158,131 @@ func publishCloneMirror(mirrorDir, filename string, data []byte, relocatedPath s
 		RecordedAt: gen.RecordedAt,
 	}, nil
 }
+
+func readRDDStatusGenerations(worktreeGitDir, commonGitDir string) (worktreeGen *rddGeneration, worktreeGenErr error, cloneGen *rddGeneration, cloneGenErr error) {
+	if worktreeGitDir != "" {
+		worktreeGen, worktreeGenErr = readLatestGeneration(filepath.Join(worktreeGitDir, rddGenerationsDir))
+	}
+	if commonGitDir != "" {
+		if worktreeGitDir == commonGitDir {
+			if worktreeGenErr == nil && worktreeGen != nil {
+				cloneGen = worktreeGen
+				cloneGenErr = worktreeGenErr
+			} else if worktreeGenErr != nil {
+				cloneGenErr = worktreeGenErr
+			} else {
+				cloneGen, cloneGenErr = readLatestGeneration(filepath.Join(commonGitDir, rddGenerationsDir))
+			}
+		} else {
+			cloneGen, cloneGenErr = readLatestGeneration(filepath.Join(commonGitDir, rddGenerationsDir))
+		}
+	}
+	return
+}
+
+func resolveRDDMode(gen *rddGeneration, genErr error) (RDDMode, error) {
+	if genErr != nil {
+		return RDDModeUnset, genErr
+	}
+	if gen != nil {
+		return gen.Mode, nil
+	}
+	return RDDModeUnset, nil
+}
+
+func rddWorktreeSource(worktreeGitDir, commonGitDir string) string {
+	if worktreeGitDir != commonGitDir && commonGitDir != "" {
+		return "worktree"
+	}
+	return "clone"
+}
+
+func parseGenerationRecordedAt(gen *rddGeneration) *time.Time {
+	if gen == nil || gen.RecordedAt == "" {
+		return nil
+	}
+	if t, err := time.Parse(time.RFC3339Nano, gen.RecordedAt); err == nil {
+		return &t
+	}
+	return nil
+}
+
+func decideRDDEffective(worktreeMode, cloneMode, globalMode RDDMode, worktreeGen, cloneGen *rddGeneration, worktreeGitDir, commonGitDir string) (RDDMode, string, string, *time.Time) {
+	effective := RDDModeEnabled
+	var source string
+	var revision string
+	var recordedAt *time.Time
+	switch {
+	case worktreeMode == RDDModeDisabled:
+		effective = RDDModeDisabled
+		source = rddWorktreeSource(worktreeGitDir, commonGitDir)
+		revision = worktreeGen.Revision
+		recordedAt = parseGenerationRecordedAt(worktreeGen)
+	case cloneMode == RDDModeDisabled:
+		effective = RDDModeDisabled
+		source = "clone"
+		revision = cloneGen.Revision
+		recordedAt = parseGenerationRecordedAt(cloneGen)
+	case globalMode == RDDModeDisabled:
+		effective = RDDModeDisabled
+		source = "global"
+		recordedAt = parseGlobalRecordedAt()
+	default:
+		source = "default"
+		recordedAt = parseGlobalRecordedAt()
+	}
+	return effective, source, revision, recordedAt
+}
+
+func buildRDDStatusReport(globalMode, cloneMode, worktreeMode, effective RDDMode, source, revision string, recordedAt *time.Time, commonGitDir string) *RDDStatusReport {
+	wtCount := countLinkedWorktrees(commonGitDir)
+	return &RDDStatusReport{
+		Schema: rddStatusSchema, EffectiveMode: effective,
+		GlobalMode: globalMode, CloneMode: cloneMode,
+		WorktreeMode: worktreeMode, Source: source,
+		Revision: revision, Reach: ReachUnreported,
+		RecordedAt: recordedAt, WorktreeCount: wtCount,
+	}
+}
+
+func collectRDDCorrupt(worktreeErr, cloneErr, globalErr error) []error {
+	seen := make(map[string]struct{}, 3)
+	var corrupt []error
+	for _, scopeErr := range []error{worktreeErr, cloneErr, globalErr} {
+		if scopeErr == nil {
+			continue
+		}
+		if unreadable, ok := scopeErr.(*RDDModeUnreadableError); ok {
+			if _, duplicate := seen[unreadable.File]; duplicate {
+				continue
+			}
+			seen[unreadable.File] = struct{}{}
+		}
+		corrupt = append(corrupt, scopeErr)
+	}
+	return corrupt
+}
+
+func validateWorktreePreconditions(worktreeGitDir string, mode RDDMode) (string, error) {
+	if worktreeGitDir == "" {
+		return "", fmt.Errorf("not in a git repository — cannot use --scope=worktree")
+	}
+	if mode == RDDModeEnabled {
+		return "", ErrRDDModeWorktreeForcedOn
+	}
+	if !plausibleGitDir(worktreeGitDir) {
+		return "", fmt.Errorf(
+			"%s is not a git directory (missing HEAD or objects/refs): refusing to write review mode state there; run from inside a repository or use 'biggz rdd disable --scope=global'",
+			worktreeGitDir)
+	}
+	return filepath.Join(worktreeGitDir, rddGenerationsDir), nil
+}
+
+func buildWorktreeStatus(gen rddGeneration, genNum int64) *RDDModeStatus {
+	return &RDDModeStatus{
+		Reach:      ReachThisBuild,
+		Revision:   gen.Revision,
+		Generation: genNum,
+		RecordedAt: gen.RecordedAt,
+	}
+}
