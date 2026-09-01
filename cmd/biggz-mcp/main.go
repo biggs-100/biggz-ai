@@ -3,12 +3,15 @@ package main
 
 import (
 	"bufio"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,7 +47,15 @@ DEFERRED TOOLS (use --tools=admin or --tools=all when needed):
   mem_stats, mem_timeline, mem_compare, mem_judge, mem_capture_passive, mem_merge_projects, mem_review,
   bigmem_branch_create, bigmem_branch_list, bigmem_branch_get
 
-PROACTIVE SAVE RULE: Call mem_save immediately after ANY decision, bug fix, discovery, or convention — not just when asked.`
+PROACTIVE SAVE RULE: Call mem_save immediately after ANY decision, bug fix, discovery, or convention — not just when asked.
+
+## CONFLICT SURFACING
+
+After biggz_mem_save: if judgment_required, iterate candidates[] and call biggz_mem_judge
+once per entry using that entry's judgment_id; never reuse the top-level judgment_id.
+Ask conversationally when confidence < 0.7 OR (relation in
+{supersedes, conflicts_with} AND type in {architecture, policy, decision}); else
+resolve with related | compatible | scoped | not_conflict. Pass evidence from user reply.`
 
 // MCPConfig holds optional overrides (Engram parity: BM25Floor, Limit).
 type MCPConfig struct {
@@ -52,12 +63,23 @@ type MCPConfig struct {
 	Limit     *int
 }
 
+const ambiguousProjectRecoveryTTL = 5 * time.Minute
+
 // SessionActivity tracks tool calls for nudge logic (parity with engram/internal/mcp SessionActivity).
 type SessionActivity struct {
-	mu        sync.Mutex
-	counts    map[string]int
-	threshold int
-	startedAt time.Time
+	mu             sync.Mutex
+	counts         map[string]int
+	threshold      int
+	startedAt      time.Time
+	recoveryTokens map[string]map[string]*ambiguousRecovery // sessionID -> token -> entry
+	now            func() time.Time
+}
+
+type ambiguousRecovery struct {
+	availableProjects []string
+	contextPath       string
+	expiresAt         time.Time
+	selectedProject   string
 }
 
 func NewSessionActivity(threshold int) *SessionActivity {
@@ -65,9 +87,11 @@ func NewSessionActivity(threshold int) *SessionActivity {
 		threshold = 20
 	}
 	return &SessionActivity{
-		counts:    make(map[string]int),
-		threshold: threshold,
-		startedAt: time.Now(),
+		counts:         make(map[string]int),
+		threshold:      threshold,
+		startedAt:      time.Now(),
+		recoveryTokens: make(map[string]map[string]*ambiguousRecovery),
+		now:            time.Now,
 	}
 }
 
@@ -110,6 +134,83 @@ func (a *SessionActivity) ActivityScore(sessionID string) string {
 	}
 	c := a.counts[sessionID]
 	return fmt.Sprintf("Activity: %d tool calls (threshold %d)", c, a.threshold)
+}
+
+func generateRecoveryToken() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return fmt.Sprintf("fallback-%d", time.Now().UnixNano())
+	}
+	return hex.EncodeToString(b[:])
+}
+
+func (a *SessionActivity) IssueAmbiguousProjectRecoveryToken(sessionID string, availableProjects []string, contextPath string) string {
+	if a == nil {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.recoveryTokens == nil {
+		a.recoveryTokens = make(map[string]map[string]*ambiguousRecovery)
+	}
+	if _, ok := a.recoveryTokens[sessionID]; !ok {
+		a.recoveryTokens[sessionID] = make(map[string]*ambiguousRecovery)
+	}
+	token := generateRecoveryToken()
+	projects := append([]string(nil), availableProjects...)
+	sort.Strings(projects)
+	if a.now == nil {
+		a.now = time.Now
+	}
+	a.recoveryTokens[sessionID][token] = &ambiguousRecovery{
+		availableProjects: projects,
+		contextPath:       filepath.Clean(contextPath),
+		expiresAt:         a.now().Add(ambiguousProjectRecoveryTTL),
+	}
+	return token
+}
+
+func (a *SessionActivity) ValidateAmbiguousProjectRecoveryToken(sessionID, token, selectedProject string, availableProjects []string, contextPath string) bool {
+	if a == nil || token == "" || selectedProject == "" {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	bucket, ok := a.recoveryTokens[sessionID]
+	if !ok {
+		return false
+	}
+	recovery, ok := bucket[token]
+	if !ok {
+		return false
+	}
+	if a.now == nil {
+		a.now = time.Now
+	}
+	if !recovery.expiresAt.IsZero() && !a.now().Before(recovery.expiresAt) {
+		delete(bucket, token)
+		return false
+	}
+	projects := append([]string(nil), availableProjects...)
+	sort.Strings(projects)
+	sortedRecovery := append([]string(nil), recovery.availableProjects...)
+	sort.Strings(sortedRecovery)
+	if len(projects) != len(sortedRecovery) {
+		return false
+	}
+	for i := range projects {
+		if projects[i] != sortedRecovery[i] {
+			return false
+		}
+	}
+	if recovery.contextPath != filepath.Clean(contextPath) {
+		return false
+	}
+	if recovery.selectedProject == "" {
+		recovery.selectedProject = selectedProject
+		return true
+	}
+	return recovery.selectedProject == selectedProject
 }
 
 func currentWorkingDirectory() string {
@@ -172,6 +273,105 @@ func resolveProject(provided string) string {
 	return "biggz-ai"
 }
 
+func containsProjectChoice(available []string, choice string) bool {
+	choice = strings.TrimSpace(choice)
+	for _, c := range available {
+		if strings.TrimSpace(c) == choice {
+			return true
+		}
+	}
+	return false
+}
+
+func writeProjectError(id any, code, msg string, available []string, extra map[string]any) {
+	envelope := map[string]any{
+		"error_code":         code,
+		"message":            msg,
+		"available_projects": available,
+	}
+	switch code {
+	case "ambiguous_project":
+		envelope["hint"] = "Ask the user to choose one of available_projects, then retry the same write tool (mem_save, mem_save_prompt, or mem_session_summary) with project and project_choice_reason=user_selected_after_ambiguous_project; alternatively cd into the target repo or add repo .biggz/config.json."
+	case "invalid_project_choice":
+		envelope["hint"] = "Use exactly one of available_projects after asking the user, or cd into the target repo, or add repo .biggz/config.json."
+	case "missing_recovery_token":
+		envelope["hint"] = "Retry with the recovery_token returned by the ambiguous_project error after the user selects one available_projects value."
+	case "invalid_recovery_token":
+		envelope["hint"] = "Request a fresh ambiguous_project recovery_token and retry with the same session, cwd context, and selected available_projects value before it expires."
+	}
+	for k, v := range extra {
+		envelope[k] = v
+	}
+	out, _ := json.Marshal(envelope)
+	writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32603, "message": string(out)}})
+}
+
+func writeAmbiguousProjectError(id any, available []string, cwdPath, sessionID string) {
+	token := sessionActivity.IssueAmbiguousProjectRecoveryToken(sessionID, available, cwdPath)
+	envelope := map[string]any{
+		"error_code":         "ambiguous_project",
+		"message":            fmt.Sprintf("Cannot determine project: %s", project.ErrAmbiguousProject.Error()),
+		"available_projects": available,
+		"recovery_token":     token,
+		"token_ttl_seconds":  int(ambiguousProjectRecoveryTTL.Seconds()),
+		"hint":               "Ask the user to choose one of available_projects, then retry the same write tool (mem_save, mem_save_prompt, or mem_session_summary) with project and project_choice_reason=user_selected_after_ambiguous_project; alternatively cd into the target repo or add repo .biggz/config.json.",
+	}
+	out, _ := json.Marshal(envelope)
+	writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32603, "message": string(out)}})
+}
+
+// resolveProjectWithAmbiguity handles ambiguous cwd detection with recovery token validation.
+// Returns resolved project and true if caller should continue, false if error already written.
+func resolveProjectWithAmbiguity(id any, provided, choiceReason, recoveryToken, sessionID string) (string, bool) {
+	cwd := currentWorkingDirectory()
+	if cwd != "" {
+		info, err := project.DetectProject(cwd)
+		if err != nil && errors.Is(err, project.ErrAmbiguousProject) {
+			available := info.AvailableProjects
+			cwdPath := info.Path
+			if cwdPath == "" {
+				cwdPath = cwd
+			}
+			// Normalize available for comparison (Engram uses exact string match on trimmed lower? but we keep as is)
+			if strings.TrimSpace(choiceReason) == project.SourceUserSelectedAfterAmbiguousProject {
+				choice := strings.TrimSpace(provided)
+				if choice == "" || !containsProjectChoice(available, choice) {
+					writeProjectError(id, "invalid_project_choice", fmt.Sprintf("Project choice %q is not one of available_projects", choice), available, nil)
+					return "", false
+				}
+				if strings.TrimSpace(recoveryToken) == "" {
+					writeProjectError(id, "missing_recovery_token", fmt.Sprintf("project_choice_reason=user_selected_after_ambiguous_project for %q requires the recovery_token from the ambiguous_project error", choice), available, nil)
+					return "", false
+				}
+				if !sessionActivity.ValidateAmbiguousProjectRecoveryToken(sessionID, recoveryToken, choice, available, cwdPath) {
+					writeProjectError(id, "invalid_recovery_token", fmt.Sprintf("recovery_token is invalid, stale, or not valid for selected project %q", choice), available, nil)
+					return "", false
+				}
+				return project.NormalizeProjectName(choice), true
+			}
+			// No valid recovery — return ambiguous error loud instead of silent fallback
+			writeAmbiguousProjectError(id, available, cwdPath, sessionID)
+			return "", false
+		}
+	}
+	// Not ambiguous — normal resolution
+	trimmed := strings.TrimSpace(provided)
+	if trimmed != "" {
+		return project.NormalizeProjectName(trimmed), true
+	}
+	// Try normal detection (non-ambiguous)
+	if cwd != "" {
+		info, err := project.DetectProject(cwd)
+		if err == nil && strings.TrimSpace(info.Project) != "" && info.Project != "unknown" {
+			return project.NormalizeProjectName(info.Project), true
+		}
+		if strings.TrimSpace(info.Project) != "" && info.Project != "unknown" {
+			return project.NormalizeProjectName(info.Project), true
+		}
+	}
+	return "biggz-ai", true
+}
+
 // queuedWriteHandler serializes write operations via writeQueue (buffered-1).
 func queuedWriteHandler(fn func()) {
 	writeQueue <- struct{}{}
@@ -200,10 +400,14 @@ var ProfileAgent = map[string]bool{
 	"mem_pin":               true,
 	"mem_unpin":             true,
 	"mem_compare":           true,
+	"mem_update":            true,
+	"mem_judge":             true,
+	"mem_doctor":            true,
+	"mem_review":            true,
+	"mem_capture_passive":   true,
 }
 
 var ProfileAdmin = map[string]bool{
-	"mem_doctor":         true,
 	"mem_update":         true,
 	"mem_delete":         true,
 	"mem_merge_projects": true,
@@ -363,11 +567,30 @@ func handleToolCall(id any, name string, args map[string]any) {
 				SessionID: getStr(args, "session_id"),
 				ToolName:  getStr(args, "tool_name"),
 			}
+			if strings.TrimSpace(obs.Content) == "" {
+				if alt := getStr(args, "observation"); strings.TrimSpace(alt) != "" {
+					obs.Content = alt
+				}
+			}
+			if strings.TrimSpace(obs.Content) == "" {
+				writeError(id, "content is required for mem_save (use content, or observation for backward-compatible clients)")
+				return
+			}
 			if obs.Title == "" {
 				writeError(id, "title is required")
 				return
 			}
-			resolvedProject := resolveProject(obs.Project)
+			provided := getStr(args, "project")
+			choiceReason := getStr(args, "project_choice_reason")
+			recoveryToken := getStr(args, "recovery_token")
+			sessForRecovery := getStr(args, "session_id")
+			if strings.TrimSpace(sessForRecovery) == "" {
+				sessForRecovery = "global"
+			}
+			resolvedProject, ok := resolveProjectWithAmbiguity(id, provided, choiceReason, recoveryToken, sessForRecovery)
+			if !ok {
+				return
+			}
 			if strings.TrimSpace(obs.SessionID) == "" {
 				obs.SessionID = resolveFallbackSessionID(store, resolvedProject)
 			}
@@ -437,16 +660,24 @@ func handleToolCall(id any, name string, args map[string]any) {
 			return
 		}
 		entries := make([]map[string]any, 0, len(results))
+		anyPreviewTruncated := false
 		for _, r := range results {
+			preview := truncate(r.Content, 300)
+			if len(r.Content) > 300 {
+				anyPreviewTruncated = true
+			}
 			entry := map[string]any{
 				"id": r.ID, "title": r.Title, "type": r.Type,
-				"content":    truncate(r.Content, 300),
+				"content":    preview,
 				"session_id": r.SessionID, "tool_name": r.ToolName,
 				"topic_key": r.TopicKey, "project": r.Project,
 				"scope": r.Scope, "revision_count": r.RevisionCount,
 				"duplicate_count": r.DuplicateCount,
 				"state":           r.State(),
 				"created":         r.CreatedAt,
+			}
+			if r.State() == bigmem.ObservationStateNeedsReview {
+				entry["state"] = "needs_review"
 			}
 			if r.ReviewAfter != nil {
 				entry["review_after"] = *r.ReviewAfter
@@ -455,6 +686,60 @@ func handleToolCall(id any, name string, args map[string]any) {
 				entry["truncation_warning"] = "⚠️ content truncated from >50000 to 50000 bytes"
 			}
 			entries = append(entries, entry)
+		}
+		// Annotate relations if available (supersedes / superseded_by / conflicts)
+		if len(results) > 0 {
+			if rels, err := store.ListRelations(""); err == nil && len(rels) > 0 {
+				// Build lookup for observation titles
+				titleByID := make(map[string]string, len(results))
+				for _, r := range results {
+					titleByID[r.ID] = r.Title
+				}
+				for i, r := range results {
+					for _, rel := range rels {
+						if rel.SourceID == r.ID && rel.Relation == "supersedes" {
+							title := titleByID[rel.TargetID]
+							if title == "" {
+								if obs, err := store.Get(rel.TargetID); err == nil {
+									title = obs.Title
+								} else {
+									title = "deleted"
+								}
+							}
+							entries[i]["supersedes"] = fmt.Sprintf("#%s (%s)", rel.TargetID, title)
+						}
+						if rel.TargetID == r.ID && rel.Relation == "supersedes" {
+							title := titleByID[rel.SourceID]
+							if title == "" {
+								if obs, err := store.Get(rel.SourceID); err == nil {
+									title = obs.Title
+								} else {
+									title = "deleted"
+								}
+							}
+							entries[i]["superseded_by"] = fmt.Sprintf("#%s (%s)", rel.SourceID, title)
+						}
+						if (rel.SourceID == r.ID || rel.TargetID == r.ID) && rel.Relation == "conflicts_with" {
+							otherID := rel.TargetID
+							if rel.TargetID == r.ID {
+								otherID = rel.SourceID
+							}
+							title := titleByID[otherID]
+							if title == "" {
+								if obs, err := store.Get(otherID); err == nil {
+									title = obs.Title
+								} else {
+									title = "deleted"
+								}
+							}
+							entries[i]["conflicts"] = fmt.Sprintf("#%s (%s)", otherID, title)
+						}
+					}
+				}
+			}
+		}
+		if anyPreviewTruncated {
+			fmt.Fprintln(os.Stderr, "Results above are previews (300 chars). Call biggz_mem_get_observation for full content.")
 		}
 		// Append activity nudge if needed
 		if nudge := sessionActivity.NudgeIfNeeded(sessForActivity); nudge != "" && len(entries) > 0 {
@@ -568,7 +853,17 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, "session_id and content are required")
 			return
 		}
-		resolvedProj := resolveProject(getStr(args, "project"))
+		provided := getStr(args, "project")
+		choiceReason := getStr(args, "project_choice_reason")
+		recoveryToken := getStr(args, "recovery_token")
+		sessForRecovery := sessionID
+		if strings.TrimSpace(sessForRecovery) == "" {
+			sessForRecovery = "global"
+		}
+		resolvedProj, ok := resolveProjectWithAmbiguity(id, provided, choiceReason, recoveryToken, sessForRecovery)
+		if !ok {
+			return
+		}
 		_ = ensureImplicitSessionWithCWD(store, sessionID, resolvedProj)
 		s, err := store.SessionEnd(sessionID, summary)
 		if err != nil {
@@ -613,7 +908,17 @@ func handleToolCall(id any, name string, args map[string]any) {
 				writeError(id, "content is required")
 				return
 			}
-			resolvedProj := resolveProject(getStr(args, "project"))
+			provided := getStr(args, "project")
+			choiceReason := getStr(args, "project_choice_reason")
+			recoveryToken := getStr(args, "recovery_token")
+			sessForRecovery := sessionID
+			if strings.TrimSpace(sessForRecovery) == "" {
+				sessForRecovery = "global"
+			}
+			resolvedProj, ok := resolveProjectWithAmbiguity(id, provided, choiceReason, recoveryToken, sessForRecovery)
+			if !ok {
+				return
+			}
 			if strings.TrimSpace(sessionID) == "" {
 				sessionID = resolveFallbackSessionID(store, resolvedProj)
 			}
@@ -859,15 +1164,19 @@ func buildToolList(profile string) []map[string]any {
 	allowlist := ResolveTools(profile)
 	all := []map[string]any{
 		toolDef("mem_save", "Save an observation to persistent memory.", map[string]any{
-			"title":      map[string]any{"type": "string", "description": "Short searchable title"},
-			"content":    map[string]any{"type": "string"},
-			"type":       map[string]any{"type": "string", "description": "decision|architecture|bugfix|discovery|config|preference"},
-			"topic_key":  map[string]any{"type": "string"},
-			"project":    map[string]any{"type": "string"},
-			"scope":      map[string]any{"type": "string"},
-			"session_id": map[string]any{"type": "string"},
-			"tool_name":  map[string]any{"type": "string"},
-			"pinned":     map[string]any{"type": "boolean"},
+			"title":                 map[string]any{"type": "string", "description": "Short searchable title"},
+			"content":               map[string]any{"type": "string"},
+			"observation":           map[string]any{"type": "string", "description": "Backward-compatible alias for content"},
+			"type":                  map[string]any{"type": "string", "description": "decision|architecture|bugfix|discovery|config|preference"},
+			"topic_key":             map[string]any{"type": "string"},
+			"project":               map[string]any{"type": "string", "description": "Optional explicit project (validated)"},
+			"project_choice_reason": map[string]any{"type": "string", "description": "Must be user_selected_after_ambiguous_project when recovering from ambiguous_project"},
+			"recovery_token":        map[string]any{"type": "string", "description": "Short-lived token from ambiguous_project error"},
+			"scope":                 map[string]any{"type": "string"},
+			"session_id":            map[string]any{"type": "string"},
+			"tool_name":             map[string]any{"type": "string"},
+			"capture_prompt":        map[string]any{"type": "boolean", "description": "Capture current prompt (default true)"},
+			"pinned":                map[string]any{"type": "boolean"},
 		}, []string{"title"}),
 		toolDef("mem_search", "Search memory by keywords.", map[string]any{
 			"query":       map[string]any{"type": "string"},
@@ -893,8 +1202,11 @@ func buildToolList(profile string) []map[string]any {
 			"limit": map[string]any{"type": "number"},
 		}, nil),
 		toolDef("mem_session_summary", "End a session with summary.", map[string]any{
-			"session_id": map[string]any{"type": "string"},
-			"content":    map[string]any{"type": "string"},
+			"session_id":            map[string]any{"type": "string"},
+			"content":               map[string]any{"type": "string"},
+			"project":               map[string]any{"type": "string", "description": "Optional explicit project"},
+			"project_choice_reason": map[string]any{"type": "string", "description": "Must be user_selected_after_ambiguous_project when recovering"},
+			"recovery_token":        map[string]any{"type": "string", "description": "Short-lived token from ambiguous_project error"},
 		}, []string{"session_id", "content"}),
 		toolDef("mem_session_start", "Start a new session.", map[string]any{
 			"id": map[string]any{"type": "string"}, "project": map[string]any{"type": "string"},
@@ -903,7 +1215,11 @@ func buildToolList(profile string) []map[string]any {
 			"id": map[string]any{"type": "string"}, "summary": map[string]any{"type": "string"},
 		}, []string{"id"}),
 		toolDef("mem_save_prompt", "Save user prompt for context.", map[string]any{
-			"content": map[string]any{"type": "string"}, "session_id": map[string]any{"type": "string"},
+			"content":               map[string]any{"type": "string"},
+			"session_id":            map[string]any{"type": "string"},
+			"project":               map[string]any{"type": "string", "description": "Optional recovery target only after ambiguous_project"},
+			"project_choice_reason": map[string]any{"type": "string", "description": "Must be user_selected_after_ambiguous_project when recovering"},
+			"recovery_token":        map[string]any{"type": "string", "description": "Short-lived token from ambiguous_project error"},
 		}, []string{"content"}),
 		toolDef("mem_current_project", "Detect current project from working directory.", nil, nil),
 		toolDef("mem_suggest_topic_key", "Suggest a topic key from title/content.", map[string]any{

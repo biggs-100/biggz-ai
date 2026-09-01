@@ -4,6 +4,8 @@
 You have access to BigMem, a persistent memory system that survives across sessions and compactions.
 This protocol is MANDATORY and ALWAYS ACTIVE — not something you activate on demand.
 
+NOTE: Content wrapped in <private>...</private> is redacted to [REDACTED] before storage. Search previews are 300 chars — call biggz_mem_get_observation for full content.
+
 ### PROACTIVE SAVE TRIGGERS (mandatory — do NOT wait for user to ask)
 
 Call `biggz_mem_save` IMMEDIATELY and WITHOUT BEING ASKED after any of these:
@@ -20,7 +22,15 @@ Call `biggz_mem_save` IMMEDIATELY and WITHOUT BEING ASKED after any of these:
 - Pattern established (naming, structure, convention)
 - User preference or constraint learned
 
-Self-check after EVERY task: "Did I make a decision, fix a bug, learn something non-obvious, or establish a convention? If yes, call `biggz_mem_save` NOW."
+### After user confirmation or rejection
+- User confirms a recommendation you made ("go with that", "let's do that", "sounds good", "agreed", "perfect", or the equivalent in the user's language)
+- User rejects an option or approach ("no, better X", "not that one", or the equivalent in the user's language)
+- User expresses a preference ("I prefer X over Y", "always do it this way", or the equivalent in the user's language)
+- User makes a decision after you presented tradeoffs or options
+- A discussion concludes with a clear direction chosen — even if the agent proposed it
+
+Self-check after EVERY task:
+> "Did I or the user just make a decision, confirm a recommendation, express a preference, fix a bug, learn something non-obvious, or establish a convention? If yes, call biggz_mem_save NOW."
 
 ### DELIVERY GUARANTEE — saving is not replying
 
@@ -71,6 +81,8 @@ Also search PROACTIVELY when:
 - User mentions a topic you have no context on
 - User's FIRST message references the project, a feature, or a problem — call `biggz_mem_search` with keywords from their message to check for prior work before responding
 
+Before architecture-sensitive work, call biggz_mem_review with action list; do NOT call mark_reviewed automatically — only after explicit user confirmation. Search results may show state: needs_review and supersedes:/conflicts: annotations.
+
 ### SESSION CLOSE PROTOCOL (mandatory)
 
 Before ending a session or saying "done" / "that's it" (or the equivalent in the user's language), call `biggz_mem_session_summary`:
@@ -114,4 +126,16 @@ If you see a compaction message or "FIRST ACTION REQUIRED":
 3. Only THEN continue working
 
 Do not skip step 1. Without it, everything done before compaction is lost from memory.
+
+## CONFLICT SURFACING
+
+After biggz_mem_save: if judgment_required, iterate candidates[] and call biggz_mem_judge
+once per entry using that entry's judgment_id; never reuse the top-level judgment_id.
+Ask conversationally when confidence < 0.7 OR (relation in
+{supersedes, conflicts_with} AND type in {architecture, policy, decision}); else
+resolve with related | compatible | scoped | not_conflict. Pass evidence from user reply.
+
+## PROJECT PINNING & CURRENT PROJECT
+
+Project is pinned via the nearest .biggz/config.json (or legacy .engram/config.json) inside the enclosing git repo — this file overrides cwd detection and blocks $HOME leakage. Call biggz_mem_current_project first when starting a new session to confirm project_source and project_path before writing; it never errors and surfaces available_projects when ambiguous.
 <!-- /biggz:bigmem-protocol -->

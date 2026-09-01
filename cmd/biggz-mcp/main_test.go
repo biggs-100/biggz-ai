@@ -237,11 +237,11 @@ func TestBuildToolList_AllToolsRegistered(t *testing.T) {
 
 func TestBuildToolList_AgentProfile(t *testing.T) {
 	tools := buildToolList("agent")
-	if len(tools) != 15 {
-		t.Errorf("agent profile: got %d tools, want 15: %v", len(tools), toolNames(tools))
+	if len(tools) != 20 {
+		t.Errorf("agent profile: got %d tools, want 20: %v", len(tools), toolNames(tools))
 	}
-	// Agent must contain core tools
-	for _, want := range []string{"mem_save", "mem_search", "mem_context", "mem_current_project"} {
+	// Agent must contain core tools (including Engram parity additions)
+	for _, want := range []string{"mem_save", "mem_search", "mem_context", "mem_current_project", "mem_judge", "mem_review", "mem_capture_passive", "mem_doctor", "mem_update"} {
 		found := false
 		for _, n := range toolNames(tools) {
 			if n == want {
@@ -253,8 +253,8 @@ func TestBuildToolList_AgentProfile(t *testing.T) {
 			t.Errorf("agent missing core tool %s", want)
 		}
 	}
-	// Agent must NOT contain admin-only tools
-	for _, notWant := range []string{"mem_doctor", "mem_delete"} {
+	// Agent must NOT contain admin-only tools (delete/merge remain admin-only; doctor/judge/review moved to agent)
+	for _, notWant := range []string{"mem_delete", "mem_merge_projects"} {
 		for _, n := range toolNames(tools) {
 			if n == notWant {
 				t.Errorf("agent should not contain admin tool %s", notWant)
@@ -265,8 +265,8 @@ func TestBuildToolList_AgentProfile(t *testing.T) {
 
 func TestBuildToolList_AdminProfile(t *testing.T) {
 	tools := buildToolList("admin")
-	if len(tools) != 4 {
-		t.Errorf("admin profile: got %d tools, want 4: %v", len(tools), toolNames(tools))
+	if len(tools) != 3 {
+		t.Errorf("admin profile: got %d tools, want 3: %v", len(tools), toolNames(tools))
 	}
 }
 
@@ -278,16 +278,16 @@ func TestResolveTools(t *testing.T) {
 		t.Errorf("ResolveTools('') should be nil, got %v", got)
 	}
 	agent := ResolveTools("agent")
-	if len(agent) != 15 {
-		t.Errorf("ResolveTools(agent) len %d want 15", len(agent))
+	if len(agent) != 20 {
+		t.Errorf("ResolveTools(agent) len %d want 20", len(agent))
 	}
 	admin := ResolveTools("admin")
-	if len(admin) != 4 {
-		t.Errorf("ResolveTools(admin) len %d want 4", len(admin))
+	if len(admin) != 3 {
+		t.Errorf("ResolveTools(admin) len %d want 3", len(admin))
 	}
 	combined := ResolveTools("agent,admin")
-	if len(combined) != 19 {
-		t.Errorf("ResolveTools(agent,admin) len %d want 19", len(combined))
+	if len(combined) != 22 {
+		t.Errorf("ResolveTools(agent,admin) len %d want 22", len(combined))
 	}
 	single := ResolveTools("mem_save")
 	if len(single) != 1 || !single["mem_save"] {
