@@ -382,7 +382,12 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 					if len(cmd) == 0 {
 						continue
 					}
-					c := exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+					var c *exec.Cmd
+					if runtime.GOOS == "windows" {
+						c = exec.CommandContext(ctx, "cmd", append([]string{"/c", cmd[0]}, cmd[1:]...)...)
+					} else {
+						c = exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+					}
 					platform.EnsureCommandDir(c)
 					if out, err := c.CombinedOutput(); err != nil {
 						return result, fmt.Errorf("install pi subagents (%s): %w (output: %s)", strings.Join(cmd, " "), err, strings.TrimSpace(string(out)))
@@ -2380,8 +2385,20 @@ func deploySelfToPath(homeDir string) error {
 	if runtime.GOOS != "windows" {
 		return nil
 	}
-	realHome, _ := os.UserHomeDir()
+	// Use USERPROFILE directly to avoid t.Setenv("HOME")/t.Setenv("USERPROFILE")
+	// fooling os.UserHomeDir() during tests. Tests set HOME/USERPROFILE to a temp
+	// dir; os.UserHomeDir() would then return the temp, making homeDir == realHome
+	// and causing temp .biggz dirs to be added to the persistent User PATH.
+	realHome := os.Getenv("USERPROFILE")
+	if realHome == "" {
+		realHome, _ = os.UserHomeDir()
+	}
 	if realHome == "" || !strings.EqualFold(homeDir, realHome) {
+		return nil
+	}
+	// Guard against temp dirs even if HOME override sneaks through (defense in depth).
+	lowHome := strings.ToLower(homeDir)
+	if strings.Contains(lowHome, "\\temp\\") || strings.Contains(lowHome, "/temp/") || strings.Contains(lowHome, "\\tmp\\") || strings.Contains(lowHome, "temp") {
 		return nil
 	}
 	biggzDir := filepath.Join(homeDir, ".biggz")

@@ -18,7 +18,7 @@ Before delegating, read biggz-orchestrator-delegation.md for Work Routing Ladder
 
 ### Post-Delegation Human Checkpoint (MANDATORY — BEFORE question/ask_user_choice/ask_user_question)
 
-Applies ONLY to Post-Delegation Human Checkpoint questions — those presenting `proceed` / `adjust` / `stop` (SDD) or `continue` / `correct` (non-SDD) after a delegated sub-agent. After EVERY delegated sub-agent, when you present this checkpoint, in the SAME assistant turn, FIRST emit markdown synthesis, THEN call ask_user_choice/ask_user_question/question. Never call checkpoint tool without immediately preceding markdown block.
+Applies ONLY to Post-Delegation Human Checkpoint questions — those presenting `proceed` / `adjust` / `stop` (SDD) or `continue` / `correct` (non-SDD) after a delegated sub-agent. After EVERY delegated sub-agent, when you present this checkpoint, in the SAME assistant turn, FIRST emit markdown synthesis, THEN call ask_user_choice/ask_user_question/question. Never call checkpoint tool without immediately preceding markdown block. Synthesize a concise summary in the active conversation language.
 
 Required markdown (copy-paste, fill all fields — emit as plain markdown, NOT inside ``` at runtime):
 ```markdown
