@@ -127,26 +127,63 @@ func decodePath(b []byte) (string, error) {
 	}
 	return s, nil
 }
-func ValidateSymlinkTarget(root, entryPath, target string) error {
-	if target == "" || filepath.IsAbs(target) || strings.Contains(target, "\\") {
-		return fmt.Errorf("candidate_view: symlink unsafe")
-	}
+func symlinkHasUnsafePrefix(target string) bool {
+	return target == "" || filepath.IsAbs(target) || strings.Contains(target, "\\")
+}
+
+func symlinkHasControlChars(target string) bool {
 	for _, r := range target {
 		if r <= 0x1f || r == 0x7f {
-			return fmt.Errorf("candidate_view: symlink unsafe")
+			return true
 		}
 	}
+	return false
+}
+
+func symlinkHasInvalidSegment(target string) bool {
 	for _, seg := range strings.Split(target, "/") {
 		if seg == "" || seg == "." {
-			return fmt.Errorf("candidate_view: symlink unsafe")
+			return true
 		}
 	}
-	if len(target) >= 3 && target[1] == ':' && target[2] == '/' && ((target[0] >= 'A' && target[0] <= 'Z') || (target[0] >= 'a' && target[0] <= 'z')) {
+	return false
+}
+
+func symlinkIsWindowsDrive(target string) bool {
+	if len(target) < 3 {
+		return false
+	}
+	if target[1] != ':' || target[2] != '/' {
+		return false
+	}
+	c := target[0]
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+}
+
+func symlinkResolvedPath(root, entryPath, target string) string {
+	return filepath.Clean(filepath.Join(filepath.Dir(filepath.Join(root, filepath.FromSlash(entryPath))), filepath.FromSlash(target)))
+}
+
+func symlinkEscapesRoot(root, resolved string) bool {
+	meta := filepath.Join(root, ".git")
+	return !isWithin(root, resolved) || resolved == meta || isWithin(meta, resolved)
+}
+
+func ValidateSymlinkTarget(root, entryPath, target string) error {
+	if symlinkHasUnsafePrefix(target) {
 		return fmt.Errorf("candidate_view: symlink unsafe")
 	}
-	resolved := filepath.Clean(filepath.Join(filepath.Dir(filepath.Join(root, filepath.FromSlash(entryPath))), filepath.FromSlash(target)))
-	meta := filepath.Join(root, ".git")
-	if !isWithin(root, resolved) || resolved == meta || isWithin(meta, resolved) {
+	if symlinkHasControlChars(target) {
+		return fmt.Errorf("candidate_view: symlink unsafe")
+	}
+	if symlinkHasInvalidSegment(target) {
+		return fmt.Errorf("candidate_view: symlink unsafe")
+	}
+	if symlinkIsWindowsDrive(target) {
+		return fmt.Errorf("candidate_view: symlink unsafe")
+	}
+	resolved := symlinkResolvedPath(root, entryPath, target)
+	if symlinkEscapesRoot(root, resolved) {
 		return fmt.Errorf("candidate_view: symlink escapes root")
 	}
 	return nil

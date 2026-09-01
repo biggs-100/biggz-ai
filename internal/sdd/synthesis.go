@@ -513,40 +513,69 @@ func chunkTable(rows [][]string, max int) [][][]string {
 	return chunks
 }
 
+func cellBudget(width int) int {
+	b := (width - 6) / 2
+	if b < 5 {
+		b = 5
+	}
+	return b
+}
+
+func truncateCell(s string, budget int) string {
+	if visibleWidth(s) > budget {
+		return truncateToWidth(s, budget)
+	}
+	return s
+}
+
+func renderCell(s string, budget int) string {
+	return truncateCell(s, budget)
+}
+
+func renderRow(cells []string, budget int) string {
+	topic := ""
+	decision := ""
+	if len(cells) > 0 {
+		topic = cells[0]
+	}
+	if len(cells) > 1 {
+		decision = cells[1]
+	}
+	topic = renderCell(topic, budget)
+	decision = renderCell(decision, budget)
+	return "| " + topic + " | " + decision + " |\n"
+}
+
+func renderChunk(chunk [][]string, budget int) string {
+	var b strings.Builder
+	b.WriteString("| Topic | Decision |\n")
+	b.WriteString("|-------|----------|\n")
+	for _, r := range chunk {
+		b.WriteString(renderRow(r, budget))
+	}
+	return b.String()
+}
+
+func chunkRemaining(rows [][]string, idx int) string {
+	remaining := len(rows) - (idx+1)*7
+	if remaining > 0 {
+		return fmt.Sprintf("… +%d more\n", remaining)
+	}
+	return ""
+}
+
 func renderTable(rows [][]string, width int) string {
 	if width <= 0 {
 		width = 80
 	}
-	// chunk
 	chunks := chunkTable(rows, 7)
+	budget := cellBudget(width)
 	var b strings.Builder
 	for idx, chunk := range chunks {
-		b.WriteString("| Topic | Decision |\n")
-		b.WriteString("|-------|----------|\n")
-		for _, r := range chunk {
-			topic := r[0]
-			decision := ""
-			if len(r) > 1 {
-				decision = r[1]
-			}
-			// ensure per-cell visible width <= budget already done in parse, but re-check with width-based budget
-			budget := (width - 6) / 2
-			if budget < 5 {
-				budget = 5
-			}
-			// if our conservative 17 is larger than budget for narrow, need to re-truncate to budget
-			if visibleWidth(topic) > budget {
-				topic = truncateToWidth(topic, budget)
-			}
-			if visibleWidth(decision) > budget {
-				decision = truncateToWidth(decision, budget)
-			}
-			b.WriteString("| " + topic + " | " + decision + " |\n")
-		}
+		b.WriteString(renderChunk(chunk, budget))
 		if idx < len(chunks)-1 {
-			remaining := len(rows) - (idx+1)*7
-			if remaining > 0 {
-				b.WriteString(fmt.Sprintf("… +%d more\n", remaining))
+			if more := chunkRemaining(rows, idx); more != "" {
+				b.WriteString(more)
 			}
 		}
 	}
