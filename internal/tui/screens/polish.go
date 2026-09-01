@@ -3,9 +3,106 @@ package screens
 import (
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 )
+
+// ── Shared spinner ticker (80ms, phase-locked) ────────────────────────────
+//
+// Mirrors oh-my-pi sharedSpinnerTicker: one 80ms timer for N live blocks,
+// sharedSpinnerFrame phase-locked so parallel spinners tick in lockstep.
+// N live blocks cost one timer instead of N unsynchronized per-tool 3s throttles.
+
+const sharedSpinnerInterval = 80 * time.Millisecond
+
+var (
+	sharedSpinnerFrame atomic.Int64
+	sharedSpinnerTicker *time.Ticker
+	sharedSpinnerMu     sync.Mutex
+	sharedSpinnerDone   chan struct{}
+)
+
+func init() {
+	if styles.IsPrettyEnabled() {
+		StartSharedSpinner()
+	}
+}
+
+// StartSharedSpinner arms the single 80ms ticker if not already running.
+// No-op when BIGGZ_PRETTY=0 or PI_SUBAGENT_CHILD=1.
+func StartSharedSpinner() {
+	if !styles.IsPrettyEnabled() {
+		return
+	}
+	sharedSpinnerMu.Lock()
+	defer sharedSpinnerMu.Unlock()
+	if sharedSpinnerTicker != nil {
+		return
+	}
+	sharedSpinnerTicker = time.NewTicker(sharedSpinnerInterval)
+	sharedSpinnerDone = make(chan struct{})
+	done := sharedSpinnerDone
+	ticker := sharedSpinnerTicker
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				sharedSpinnerFrame.Add(1)
+			case <-done:
+				return
+			}
+		}
+	}()
+}
+
+// StopSharedSpinner stops the shared ticker and resets frame. Safe to call multiple times.
+func StopSharedSpinner() {
+	sharedSpinnerMu.Lock()
+	defer sharedSpinnerMu.Unlock()
+	if sharedSpinnerTicker != nil {
+		sharedSpinnerTicker.Stop()
+		sharedSpinnerTicker = nil
+	}
+	if sharedSpinnerDone != nil {
+		close(sharedSpinnerDone)
+		sharedSpinnerDone = nil
+	}
+}
+
+// GetSpinnerFrame returns the current spinner glyph phase-locked across N live blocks.
+// When pretty is disabled (BIGGZ_PRETTY=0 or PI_SUBAGENT_CHILD=1) it returns a static glyph.
+func GetSpinnerFrame() string {
+	if !styles.IsPrettyEnabled() {
+		return "·"
+	}
+	frames := styles.GetSpinnerFrames(styles.SymbolPresetUnicode, styles.SpinnerActivity)
+	if len(frames) == 0 {
+		return "·"
+	}
+	idx := int(sharedSpinnerFrame.Load() % int64(len(frames)))
+	return frames[idx]
+}
+
+// GetSharedSpinnerIndex returns the raw shared frame counter (for tests).
+func GetSharedSpinnerIndex() int { return int(sharedSpinnerFrame.Load()) }
+
+// AdvanceSpinnerFrame manually bumps the frame (for tests/deterministic harness).
+func AdvanceSpinnerFrame() int { return int(sharedSpinnerFrame.Add(1)) }
+
+// IsSpinnerPrettyEnabled reports whether spinner animation is allowed.
+func IsSpinnerPrettyEnabled() bool { return styles.IsPrettyEnabled() }
+
+func isLiveState(state string) bool {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "running", "pending", "streaming", "in_progress", "in-progress", "live":
+		return true
+	default:
+		return false
+	}
+}
 
 // FleetRowInput holds data for a 2-line fleet row.
 type FleetRowInput struct {
@@ -27,8 +124,12 @@ func RenderFleetRow(width int, in FleetRowInput) (string, string, int) {
 	if width <= 0 {
 		width = 80
 	}
-	// Build left part: glyph + agent/model·state
-	left := strings.TrimSpace(in.Glyph + " " + strings.TrimSpace(in.Agent+" "+in.Model) + "·" + strings.TrimSpace(in.State))
+	// Build left part: glyph + agent/model·state — live states use shared spinner frame (phase-locked)
+	effectiveGlyph := in.Glyph
+	if isLiveState(in.State) {
+		effectiveGlyph = GetSpinnerFrame()
+	}
+	left := strings.TrimSpace(effectiveGlyph + " " + strings.TrimSpace(in.Agent+" "+in.Model) + "·" + strings.TrimSpace(in.State))
 	left = strings.Join(strings.Fields(left), " ")
 	if left == "·" || left == "" {
 		left = strings.TrimSpace(in.Glyph + " " + in.State)
@@ -306,6 +407,15 @@ func RenderOutputBlock(opts OutputBlockOptions) []string {
 	tl, tr, bl, br := "╭", "╮", "╰", "╯"
 	capStr := h + h + h
 	label := strings.TrimSpace(opts.Header)
+	// Live blocks show phase-locked spinner instead of static header glyph.
+	if isLiveState(opts.State) {
+		spinner := GetSpinnerFrame()
+		if label != "" {
+			label = spinner + " " + label
+		} else {
+			label = spinner
+		}
+	}
 	if opts.HeaderMeta != "" {
 		if label != "" {
 			label += " · " + opts.HeaderMeta
