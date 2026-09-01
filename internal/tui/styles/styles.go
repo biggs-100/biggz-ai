@@ -77,29 +77,33 @@ var (
 			Bold(true)
 )
 
-// ── Rank1: Status-line colors mirroring oh-my-pi dark.json (~40 tokens) ──
-// Rose Pine remains default dark; these tokens provide statusLineBg etc. for TUI parity.
+// ── Rank3: Theme engine status-line + card tokens (single source via theme.go) ──
+// Rose Pine remains dark default for TitleStyle/PanelStyle; these tokens mirror
+// oh-my-pi dark.json 40-token palette (see theme.go DarkPalette / dark.json).
+// Single source: Go DarkPalette + JSON dark.json + solarized-osaka.json (second built-in).
+// Hex values below match ansi256ToHex(244)=#808080, 70=#5faf00, 178=#d7af00, 39=#00afff, 205=#ff5faf
+// so styles and theme engine stay unified (no divergent palettes).
 var (
-	ColorStatusLineBg      = lipgloss.Color("#121212")
+	ColorStatusLineBg      = lipgloss.Color("#121212") // DarkPalette.StatusLineBg via theme.go (single source)
 	ColorStatusLineFg      = ColorText
-	ColorStatusLineSep     = lipgloss.Color("#6e6a86") // 244 → overlay
+	ColorStatusLineSep     = lipgloss.Color("#808080") // 244 → #808080 via theme.go DarkPalette
 	ColorStatusLineModel   = lipgloss.Color("#d787af")
 	ColorStatusLinePath    = lipgloss.Color("#00afaf")
 	ColorStatusLineGitClean = lipgloss.Color("#5faf5f")
 	ColorStatusLineGitDirty = lipgloss.Color("#d7af5f")
 	ColorStatusLineContext = lipgloss.Color("#8787af")
 	ColorStatusLineSpend   = lipgloss.Color("#5fafaf")
-	ColorStatusLineStaged  = lipgloss.Color("#5faf5f") // 70 → green
-	ColorStatusLineDirty   = lipgloss.Color("#d7af5f") // 178
-	ColorStatusLineUntracked = lipgloss.Color("#945ff9") // 39 alt via violet
-	ColorStatusLineOutput  = lipgloss.Color("#b281d6") // 205
-	ColorStatusLineCost    = lipgloss.Color("#b281d6")
-	ColorStatusLineSubagents = ColorLavender
-	ColorToolPendingBg     = lipgloss.Color("#1d2129")
-	ColorToolSuccessBg     = lipgloss.Color("#161a1f")
-	ColorToolErrorBg       = lipgloss.Color("#291d1d")
+	ColorStatusLineStaged  = lipgloss.Color("#5faf00")   // 70 → #5faf00 via theme.go
+	ColorStatusLineDirty   = lipgloss.Color("#d7af00")   // 178 → #d7af00 via theme.go
+	ColorStatusLineUntracked = lipgloss.Color("#00afff") // 39 → #00afff via theme.go
+	ColorStatusLineOutput  = lipgloss.Color("#ff5faf")   // 205 → #ff5faf via theme.go
+	ColorStatusLineCost    = lipgloss.Color("#ff5faf")   // 205
+	ColorStatusLineSubagents = ColorLavender // accent alias, theme accent is #febc38
+	ColorToolPendingBg     = lipgloss.Color("#1d2129")   // DarkPalette.ToolPendingBg
+	ColorToolSuccessBg     = lipgloss.Color("#161a1f")   // DarkPalette.ToolSuccessBg
+	ColorToolErrorBg       = lipgloss.Color("#291d1d")   // DarkPalette.ToolErrorBg
 	ColorToolTitle         = ColorText
-	ColorAccent            = lipgloss.Color("#febc38") // dark.json accent
+	ColorAccent            = lipgloss.Color("#febc38")   // DarkPalette.Accent
 )
 
 var (
@@ -136,7 +140,15 @@ var (
 )
 
 // GetStatusLineStyle returns preset-aware status-line base style.
+// When BIGGZ_PRETTY=0 or PI_SUBAGENT_CHILD=1, falls back to Rose Pine static style.
+// Otherwise delegates to the active Theme (dark/light auto via COLORFGBG → theme.go).
 func GetStatusLineStyle(preset string) lipgloss.Style {
+	if IsPrettyEnabled() {
+		th := CurrentTheme()
+		if th != nil {
+			return th.GetStatusLineStyle(preset)
+		}
+	}
 	switch preset {
 	case "minimal":
 		return StatusLineStyle.Copy().Foreground(ColorSubtext)
@@ -146,6 +158,12 @@ func GetStatusLineStyle(preset string) lipgloss.Style {
 		return StatusLineStyle
 	}
 }
+
+// GetTheme is a package-level alias for theme.go GetTheme (preset optional).
+// Kept here for single-source ergonomics: styles.GetTheme("dark", styles.SymbolPresetNerd)
+// Previously divergent palettes (Go styles vs pi/themes/solarized-osaka.json) now unified
+// via theme.go loader (GetTheme reads JSON on disk with fallback to DarkPalette/Rose Pine).
+func GetThemeByName(name string) *Theme { return GetTheme(name) }
 
 var (
 	// Legacy aliases — now map to Rose Pine (single source of truth).

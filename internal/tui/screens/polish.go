@@ -3,6 +3,8 @@ package screens
 import (
 	"fmt"
 	"strings"
+
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 )
 
 // FleetRowInput holds data for a 2-line fleet row.
@@ -342,12 +344,15 @@ func RenderOutputBlock(opts OutputBlockOptions) []string {
 }
 
 // CachedOutputBlock caches last render (dedupes visibleWidth computations).
+// Rank3: mirrors oh-my-pi themeEpoch memoization — invalidates when theme changes.
 type CachedOutputBlock struct {
 	lastKey   string
 	lastLines []string
+	lastEpoch int64
 }
 
 func (c *CachedOutputBlock) Render(opts OutputBlockOptions) []string {
+	epoch := styles.GetThemeEpoch()
 	key := fmt.Sprintf("%d|%s|%s|%s|%s|%d", opts.Width, opts.Header, opts.HeaderMeta, opts.State, opts.BorderColor, len(opts.Sections))
 	for _, s := range opts.Sections {
 		key += "|" + s.Label + fmt.Sprint(len(s.Lines))
@@ -355,16 +360,21 @@ func (c *CachedOutputBlock) Render(opts OutputBlockOptions) []string {
 			key += "|" + l
 		}
 	}
-	if c.lastKey == key && c.lastLines != nil {
+	if c.lastKey == key && c.lastEpoch == epoch && c.lastLines != nil {
 		return c.lastLines
 	}
 	lines := RenderOutputBlock(opts)
 	c.lastKey = key
 	c.lastLines = lines
+	c.lastEpoch = epoch
 	return lines
 }
 
 func (c *CachedOutputBlock) Invalidate() {
 	c.lastKey = ""
 	c.lastLines = nil
+	c.lastEpoch = 0
 }
+
+// GetThemeEpoch mirrors styles.GetThemeEpoch for screens that cache output.
+func GetThemeEpoch() int64 { return styles.GetThemeEpoch() }
