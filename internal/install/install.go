@@ -319,6 +319,9 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		} else if n > 0 {
 			_ = n
 		}
+		if !cfg.DryRun {
+			_ = ensurePiTheme(homeDir, "titanium")
+		}
 		if _, err := DeployPiThinkingWrap(homeDir, assets.FS, cfg.DryRun); err != nil {
 			return result, fmt.Errorf("deploy pi thinking wrap: %w", err)
 		}
@@ -2465,6 +2468,34 @@ func writeUserPath(cleaned string) error {
 	return cmd.Run()
 }
 
+// ensurePiTheme sets the pi theme to themeName in ~/.pi/agent/settings.json.
+// It merges into existing settings, preserving other keys, and is a no-op in dry-run.
+func ensurePiTheme(homeDir, themeName string) error {
+	settingsPath := filepath.Join(piadapter.AgentConfigPath(homeDir), "settings.json")
+	var data map[string]any
+	if raw, err := os.ReadFile(settingsPath); err == nil && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &data); err != nil {
+			data = make(map[string]any)
+		}
+	} else {
+		data = make(map[string]any)
+	}
+	if data["theme"] == themeName {
+		return nil
+	}
+	data["theme"] = themeName
+	out, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+		return err
+	}
+	if _, err := filemerge.WriteFileAtomic(settingsPath, append(out, '\n'), 0644); err != nil {
+		return err
+	}
+	return nil
+}
 
 // deploySelfToPath copies the running biggz binary to ~/.biggz/biggz.exe
 // and ensures ~/.biggz/ is on the user PATH (persistent, per-user).
