@@ -49,7 +49,7 @@ internal/
 │   ├── synthesis.go — RenderSynthesis 4+6 markers, ReadLoop >50KB paginated
 │   ├── pending.go   — Pending dual-write BigMem + state.yaml (biggz-ai.pending-question/v1)
 │   ├── question.go  — ValidateQuestionEnvelope 16/60/4/2-4, IsCheckpointEnvelope
-│   └── status_v2.go — biggz-ai.sdd-status/v2 authority-free projection
+│   └── status_v2.go — biggz-ai.sdd-status/v2 authority-free projection (hides edit_authority_missing from blockedReasons/nextRecommended; orchestrator must check raw EditAuthorityBlocked before apply, sdd-apply guard is authoritative)
 ├── sddattempt/      — SDD runtime attempt ledger (acquire/settle, CAS, tokens, grants)
 │   ├── sddattempt.go — Acquire/Settle/Begin/Finish/Grant/Rescope, BlockedError, SettleObligation
 │   └── cas_store.go  — GitCommonDir sdd-runtime/v1/<change>/ record-<sha>.json + HEAD + LOCK

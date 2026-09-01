@@ -213,6 +213,13 @@ func resolveProjectNames(status ChangeStatus) (*string, *string) {
 	return changeName, changeRoot
 }
 
+// filterEditAuthorityReasons intentionally hides edit_authority_missing from the V2
+// projection (blockedReasons/nextRecommended) to keep sdd-status authority-free.
+// See internal/assets/biggz/biggz-orchestrator-workflow.md Native SDD Dispatcher Guard
+// note: orchestrator MUST check raw EditAuthorityBlocked (via non-projected status
+// or sdd-apply guard) before launching apply, or it will waste an acquire token on
+// blocked(edit_authority_missing) then surface consent. The sdd-apply guard is
+// authoritative for edit_authority. Filtering is by design; do not remove.
 func filterEditAuthorityReasons(reasons []string) []string {
 	filtered := make([]string, 0, len(reasons))
 	for _, r := range reasons {

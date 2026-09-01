@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/biggs-100/biggz-ai/internal/pathidentity"
 )
 
 type domainInfo struct {
@@ -193,7 +195,10 @@ func syncApplyDeltas(infos []domainInfo, workspaceRoot string) (SyncResult, stri
 		}
 		absTarget, _ := filepath.Abs(mainPath)
 		absRoot, _ := filepath.Abs(workspaceRoot)
-		if !strings.HasPrefix(absTarget, absRoot) {
+		// Path traversal fix (P1): use inode-aware containment via pathidentity.Contains
+		// instead of lexical strings.HasPrefix (bypass: /tmp/root vs /tmp/root-evil).
+		// Mirrors edit_authority.withinAnyRoot pattern; blocks prefix-only containment.
+		if !pathidentity.Contains(absRoot, absTarget) {
 			return SyncBlocked, fmt.Sprintf("sync blocked: target %s outside allowed edit roots", mainPath), nil
 		}
 		if err := os.WriteFile(mainPath, []byte(newContent), 0644); err != nil {

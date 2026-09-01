@@ -26,6 +26,7 @@ proposal -> specs --> tasks -> apply -> verify -> archive
 Before routing, continuing, applying, verifying, or archiving, determine artifact store from cached Session Preflight (check BigMem via `biggz_mem_search` if not established). The native dispatcher (`biggz sdd-status --json --instructions` and `biggz sdd-continue <change>`) is authoritative for `openspec`, `BigMem`, and `hybrid` via native hybrid merge. Invoke dispatcher for all stores and treat `nextRecommended` + dependency states as single authority. Route only by `nextRecommended` and dependency states; never infer from free text.
 
 - If `blockedReasons` non-empty, do not proceed to apply/archive/terminal work.
+> Note: SDD V2 projection (biggz-ai.sdd-status/v2) intentionally hides edit_authority_missing from blockedReasons/nextRecommended to keep status authority-free. The orchestrator MUST check raw EditAuthorityBlocked (via non-projected status or sdd-apply guard) before launching apply, or will waste an acquire token on blocked(edit_authority_missing) then surface consent. The sdd-apply guard is authoritative for edit_authority.
 - If `nextRecommended` is `verify`, verification/remediation may run only to refresh evidence.
 - If `nextRecommended` is `resolve-blockers`, report `blockedReasons` and stop.
 - If `nextRecommended` is planning token (`propose`, `spec`, `design`, `tasks`), launch that planning phase.
