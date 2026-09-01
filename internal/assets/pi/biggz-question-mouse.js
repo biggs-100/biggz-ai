@@ -177,9 +177,13 @@ export default function biggzQuestionMouse(pi) {
   }
 
   // ── splitPreviewSegments (fence-aware) ───────────────────────────
-  // Mirrors oh-my-pi: splits preview markdown into markdown/code segments
-  // by detecting ``` / ~~~ fences, preserving language. Tested against
-  // oh-my-pi's splitPreviewSegments fence-aware: code fences not leaked.
+  // Mirrors oh-my-pi packages/coding-agent/src/modes/components/ask-dialog.ts
+  // splitPreviewSegments fence-aware: code fences + language + tilde fences.
+  // Splits preview markdown into markdown/code segments by detecting
+  // ``` / ~~~ fences, preserving language. Tested against oh-my-pi's
+  // splitPreviewSegments fence-aware: code fences not leaked, markdown+code
+  // split renders left options list + right preview pane (Markdown + code).
+  // Used by renderPreviewContent and renderRowLabel via renderCachedPreview.
   function splitPreviewSegments(preview) {
     const segments = [];
     const markdownBuffer = [];
