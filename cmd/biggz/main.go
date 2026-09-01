@@ -74,6 +74,8 @@ func main() {
 			os.Exit(sddRemediateRun())
 		case "bigmem":
 			os.Exit(bigmemRun())
+		case "recall":
+			os.Exit(recallRun())
 		case "backup":
 			os.Exit(backupRun())
 		case "help":

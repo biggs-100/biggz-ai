@@ -24,6 +24,8 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "  sdd-continue <change>      Determine next SDD phase")
 	fmt.Fprintln(os.Stderr, "  sdd-new [change-name]      Interactive wizard to create new SDD change")
 	fmt.Fprintln(os.Stderr, "  bigmem save|search|get     Persistent memory")
+	fmt.Fprintln(os.Stderr, "  recall [--type T] [--project P] [--limit N] [--json]  Recent observations by updated_at DESC")
+	fmt.Fprintln(os.Stderr, "  bigmem recent              Alias for recall (same flags, ORDER BY updated_at DESC)")
 	fmt.Fprintln(os.Stderr, "  backup create|list|restore Snapshot/restore state")
 	fmt.Fprintln(os.Stderr, "  codegraph init --cwd <dir> Initialize CodeGraph index for a project")
 	fmt.Fprintln(os.Stderr, "  codegraph report <change> [--cwd <path>] [--json <path>] [--md <path>]")

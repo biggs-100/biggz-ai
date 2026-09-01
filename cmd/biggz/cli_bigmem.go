@@ -17,6 +17,15 @@ import (
 
 // bigmemRun handles the "biggz bigmem" subcommand.
 func bigmemRun() int {
+	// Fast-path for `biggz bigmem recent --help` without opening DB (matches recall help, avoids WAL lock on Windows)
+	if len(os.Args) >= 3 && os.Args[2] == "recent" {
+		for _, a := range os.Args[3:] {
+			if a == "--help" || a == "-h" {
+				recallHelp()
+				return 0
+			}
+		}
+	}
 	// Fast-path for `biggz bigmem sync --help` without opening DB (test isolation and disk-error resilience)
 	if len(os.Args) >= 4 && os.Args[2] == "sync" {
 		for _, a := range os.Args[3:] {
@@ -50,6 +59,9 @@ func bigmemRun() int {
 		fmt.Fprintln(os.Stderr, "    --scope S (project|personal, default project)")
 		fmt.Fprintln(os.Stderr, "    Content >50k truncated with [truncated] marker (see bigmem.go truncateIfNeeded)")
 		fmt.Fprintln(os.Stderr, "  search [<query>|--query Q] [--type T] [--project P] [--scope S] [--limit N] [--all|--all-projects] [--match-mode all|any]")
+		fmt.Fprintln(os.Stderr, "    Note: recency uses empty query ordered by updated_at DESC; use `biggz recall` for latest")
+		fmt.Fprintln(os.Stderr, "  recent [--type T] [--project P] [--scope S] [--limit N] [--json] [--all|--all-projects] [--match-mode all|any]")
+		fmt.Fprintln(os.Stderr, "    Alias for `biggz recall` — recent observations ordered by updated_at DESC")
 		fmt.Fprintln(os.Stderr, "  get <id>                        Get an observation by ID")
 		fmt.Fprintln(os.Stderr, "  delete <id>                     Delete an observation")
 		fmt.Fprintln(os.Stderr, "  update <id> [flags]             Update an observation")
@@ -82,6 +94,13 @@ func bigmemRun() int {
 	}
 
 	switch args[0] {
+	case "recent":
+		// Alias for biggz recall — same handler, same flags, cap 50.
+		if len(args) >= 2 && (args[1] == "--help" || args[1] == "-h") {
+			recallHelp()
+			return 0
+		}
+		return runRecall(args[1:])
 	case "save":
 		if len(args) < 3 {
 			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K]")
@@ -155,6 +174,8 @@ func bigmemRun() int {
 	case "search":
 		if len(args) < 2 || args[1] == "--help" || args[1] == "-h" {
 			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem search [<query>|--query Q] [--type T] [--project P] [--scope S] [--limit N] [--all|--all-projects] [--match-mode all|any]")
+			fmt.Fprintln(os.Stderr, "  Note: recency uses empty query ordered by updated_at DESC; use `biggz recall` for latest")
+			fmt.Fprintln(os.Stderr, "  For recency use bigmem search --query \"\" ORDER BY updated_at DESC or biggz recall; never use FTS term search for 'latest'.")
 			return 1
 		}
 		var query string
