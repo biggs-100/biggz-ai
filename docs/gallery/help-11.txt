@@ -1,0 +1,9 @@
+# Sessions
+
+Browse BigMem sessions. Each session groups observations from a single coding conversation.
+
+## Keys
+- ENTER — Load session list
+- R — Refresh
+- ↑↓ — Navigate sessions
+- ESC — Back to main menu

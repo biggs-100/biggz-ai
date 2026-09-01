@@ -1,0 +1,28 @@
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                            │
+│   Help: Backup & Restore                                                                                                   │
+│                                                                                                                            │
+│                                                                                                                            │
+│  Create snapshots of biggz-ai state and restore them later. Backups include skills, configuration, and persistent memory.  │
+│                                                                                                                            │
+│                                                                                                                            │
+│  Keyboard Shortcuts                                                                                                        │
+│                                                                                                                            │
+│                                                                                                                            │
+│    ENTER  — Create or restore a backup                                                                                     │
+│    ↑↓  — Select backup entry                                                                                               │
+│    R  — Refresh backup list                                                                                                │
+│    ESC  — Back to main menu                                                                                                │
+│                                                                                                                            │
+│                                                                                                                            │
+│  Press ? or ESC to close help                                                                                              │
+│                                                                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- width 80 ---
+╭────────────────────────────────────────────────────────────────╮
+│                                                                │
+│   Help                                                         │
+│                                                                │
+│                                                                │
+│              

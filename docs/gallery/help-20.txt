@@ -1,0 +1,8 @@
+# Plugin Uninstall
+
+Manage installed OpenCode community plugins. Select a plugin to uninstall with confirmation.
+
+## Keys
+- ↑↓ — Navigate
+- ENTER — Uninstall
+- ESC — Back

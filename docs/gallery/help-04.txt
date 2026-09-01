@@ -1,0 +1,9 @@
+# BigMem Memory
+
+Browse persistent memories stored in BigMem. Each entry is a decision, bug fix, discovery, or convention saved automatically by the orchestrator or sub-agents.
+
+## Keys
+- R — Load memories from BigMem
+- ↑↓ — Navigate memory list
+- ENTER — View memory details
+- ESC — Back to list / main menu

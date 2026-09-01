@@ -1,0 +1,27 @@
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                                                                                                                                  │
+│   Help: Model Picker                                                                                                                                                                                                                                             │
+│                                                                                                                                                                                                                                                                  │
+│                                                                                                                                                                                                                                                                  │
+│  Assign AI models to every configurable agent: the orchestrator, SDD phases, Judgment Day agents, and review agents. Driven by the OpenCode model cache; effort levels come from the biggz model-variants plugin cache. Changes are persisted to opencode.json.  │
+│                                                                                                                                                                                                                                                                  │
+│                                                                                                                                                                                                                                                                  │
+│  Keyboard Shortcuts                                                                                                                                                                                                                                              │
+│                                                                                                                                                                                                                                                                  │
+│                                                                                                                                                                                                                                                                  │
+│    ↑↓ / j k  — Navigate agents, providers, models, efforts                                                                                                                                                                                                       │
+│    ENTER  — Select / assign model                                                                                                                                                                                                                                │
+│    ESC  — Back one step / main menu                                                                                                                                                                                                                              │
+│                                                                                                                                                                                                                                                                  │
+│                                                                                                                                                                                                                                                                  │
+│  Press ? or ESC to close help                                                                                                                                                                                                                                    │
+│                                                                                                                                                                                                                                                                  │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- width 100 ---
+╭────────────────────────────────────────────────────────────────╮
+│                                                                │
+│   Help                                                         │
+│                                                                │
+│                                                                │
+│              

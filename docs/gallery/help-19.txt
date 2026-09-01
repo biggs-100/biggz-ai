@@ -1,0 +1,6 @@
+# Update Available
+
+A new version of biggz-ai is available. Dismiss to continue, or run 'biggz update' from the terminal.
+
+## Keys
+- ENTER / ESC — Dismiss

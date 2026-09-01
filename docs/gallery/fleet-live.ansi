@@ -1,0 +1,8 @@
+shared spinner frame: "·" idx=1
+
+· agent-1 claude-sonnet·running [2m  12s[0m [2m  1.2k›800[0m
+[2medit applying patch[0m
+· agent-2 claude-sonnet·running [2m  17s[0m [2m  1.4k›900[0m
+[2medit applying patch[0m
+· agent-3 claude-sonnet·running [2m  22s[0m [2m   1.6k›1k[0m
+[2medit applying patch[0m

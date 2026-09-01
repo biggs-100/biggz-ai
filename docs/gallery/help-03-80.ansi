@@ -1,0 +1,26 @@
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                      │
+│   Help: Status                                                                                                                                       │
+│                                                                                                                                                      │
+│                                                                                                                                                      │
+│  Shows real-time status of RDD (Review-Driven Development), active SDD changes, and system health. Data is fetched from the live system on refresh.  │
+│                                                                                                                                                      │
+│                                                                                                                                                      │
+│  Keyboard Shortcuts                                                                                                                                  │
+│                                                                                                                                                      │
+│                                                                                                                                                      │
+│    R  — Refresh all status data                                                                                                                      │
+│    ESC  — Back to main menu                                                                                                                          │
+│                                                                                                                                                      │
+│                                                                                                                                                      │
+│  Press ? or ESC to close help                                                                                                                        │
+│                                                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- width 80 ---
+╭────────────────────────────────────────────────────────────────╮
+│                                                                │
+│   Help                                                         │
+│                                                                │
+│                                                                │
+│              

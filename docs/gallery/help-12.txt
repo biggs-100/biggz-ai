@@ -1,0 +1,11 @@
+# Welcome / System Menu
+
+Full system management menu. Configure, backup, update, uninstall, and manage biggz-ai settings.
+
+## Keys
+- ↑↓ — Navigate menu items
+- ENTER — Select highlighted item
+- d — Return to dashboard
+- ? — Toggle this help
+- ESC — Back to dashboard
+- CTRL+C — Force quit

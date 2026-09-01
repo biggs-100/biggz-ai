@@ -1,0 +1,9 @@
+# Configuration
+
+Configure model assignments for each SDD phase, choose the agent persona, and set delivery strategy and review budget. All changes are persisted to opencode.json.
+
+## Keys
+- ← → — Switch between tabs (Models / Persona / Delivery / Save)
+- ↑↓ — Navigate items in current tab
+- ENTER — Select / toggle / save
+- ESC — Back to main menu

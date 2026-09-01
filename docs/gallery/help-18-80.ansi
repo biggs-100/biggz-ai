@@ -1,0 +1,27 @@
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                │
+│   Help: Sync Configuration                                                                                                     │
+│                                                                                                                                │
+│                                                                                                                                │
+│  Sync biggz-ai configuration: re-deploy skills, re-apply overlays, re-inject persona. Optionally combined with upgrade check.  │
+│                                                                                                                                │
+│                                                                                                                                │
+│  Keyboard Shortcuts                                                                                                            │
+│                                                                                                                                │
+│                                                                                                                                │
+│    ENTER  — Start sync                                                                                                         │
+│    C  — Toggle combined upgrade                                                                                                │
+│    ESC  — Back                                                                                                                 │
+│                                                                                                                                │
+│                                                                                                                                │
+│  Press ? or ESC to close help                                                                                                  │
+│                                                                                                                                │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- width 80 ---
+╭────────────────────────────────────────────────────────────────╮
+│                                                                │
+│   Help                                                         │
+│                                                                │
+│                                                                │
+│              

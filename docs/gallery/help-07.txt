@@ -1,0 +1,8 @@
+# Update
+
+Check for new versions of biggz-ai on GitHub. When an update is available, you can download and install it directly from this screen.
+
+## Keys
+- ENTER — Check for updates
+- R — Refresh check
+- ESC — Back to main menu

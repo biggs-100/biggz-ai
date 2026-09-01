@@ -1,0 +1,28 @@
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                              │
+│   Help: Review Timeline                                                                                                                                      │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│  Browse review lineages stored in the review transaction store. Each lineage represents a complete review lifecycle with events, findings, and corrections.  │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│  Keyboard Shortcuts                                                                                                                                          │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│    ENTER  — Load lineages / view detail                                                                                                                      │
+│    R  — Refresh lineage list                                                                                                                                 │
+│    ↑↓  — Navigate lineages                                                                                                                                   │
+│    ESC  — Back to list / main menu                                                                                                                           │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│  Press ? or ESC to close help                                                                                                                                │
+│                                                                                                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- width 80 ---
+╭────────────────────────────────────────────────────────────────╮
+│                                                                │
+│   Help                                                         │
+│                                                                │
+│                                                                │
+│              

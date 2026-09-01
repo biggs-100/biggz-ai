@@ -1,0 +1,1 @@
+kitty-sixel harness: ANSI files can be rendered via `kitty +kitten icat` or VHS. PNG output not auto-generated in CI to avoid heavy deps.

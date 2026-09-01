@@ -1,0 +1,8 @@
+# Sync Configuration
+
+Sync biggz-ai configuration: re-deploy skills, re-apply overlays, re-inject persona. Optionally combined with upgrade check.
+
+## Keys
+- ENTER — Start sync
+- C — Toggle combined upgrade
+- ESC — Back

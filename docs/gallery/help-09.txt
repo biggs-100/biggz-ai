@@ -1,0 +1,9 @@
+# Strict TDD
+
+Strict TDD mode requires tests to pass before code can be committed. When enabled, sdd-apply will enforce test passing before accepting changes.
+
+## Keys
+- ENTER — Load state / toggle mode
+- ↑↓ — Toggle enable/disable
+- R — Refresh
+- ESC — Back to main menu

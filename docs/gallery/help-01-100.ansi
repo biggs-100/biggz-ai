@@ -1,0 +1,28 @@
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                            │
+│   Help: Install                                                                                                                                            │
+│                                                                                                                                                            │
+│                                                                                                                                                            │
+│  Installs biggz-ai in your AI coding agent. Detects OpenCode, Claude Code, or Qwen Code. Deploys skills, commands, MCP, persona, and agent configuration.  │
+│                                                                                                                                                            │
+│                                                                                                                                                            │
+│  Keyboard Shortcuts                                                                                                                                        │
+│                                                                                                                                                            │
+│                                                                                                                                                            │
+│    ENTER  — Start installation                                                                                                                             │
+│    ↑↓  — Select agent (if multiple detected)                                                                                                               │
+│    R  — Retry after error / reinstall                                                                                                                      │
+│    ESC  — Back to main menu                                                                                                                                │
+│                                                                                                                                                            │
+│                                                                                                                                                            │
+│  Press ? or ESC to close help                                                                                                                              │
+│                                                                                                                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- width 100 ---
+╭────────────────────────────────────────────────────────────────╮
+│                                                                │
+│   Help                                                         │
+│                                                                │
+│                                                                │
+│              

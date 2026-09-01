@@ -1,0 +1,29 @@
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                                                        │
+│   Help: Uninstall                                                                                                                                                                      │
+│                                                                                                                                                                                        │
+│                                                                                                                                                                                        │
+│  Remove biggz-ai from your system. Deletes ~/.biggz/, removes the biggz-orchestrator agent from opencode.json, and strips the persona from AGENTS.md. gentle-ai data is NOT affected.  │
+│                                                                                                                                                                                        │
+│                                                                                                                                                                                        │
+│  Keyboard Shortcuts                                                                                                                                                                    │
+│                                                                                                                                                                                        │
+│                                                                                                                                                                                        │
+│    ENTER  — Start uninstall                                                                                                                                                            │
+│    Y  — Confirm uninstall                                                                                                                                                              │
+│    N  — Cancel uninstall                                                                                                                                                               │
+│    R  — Retry after error                                                                                                                                                              │
+│    ESC  — Back to main menu                                                                                                                                                            │
+│                                                                                                                                                                                        │
+│                                                                                                                                                                                        │
+│  Press ? or ESC to close help                                                                                                                                                          │
+│                                                                                                                                                                                        │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+--- width 80 ---
+╭────────────────────────────────────────────────────────────────╮
+│                                                                │
+│   Help                                                         │
+│                                                                │
+│                                                                │
+│              

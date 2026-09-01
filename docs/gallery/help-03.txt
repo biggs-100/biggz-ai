@@ -1,0 +1,7 @@
+# Status
+
+Shows real-time status of RDD (Review-Driven Development), active SDD changes, and system health. Data is fetched from the live system on refresh.
+
+## Keys
+- R — Refresh all status data
+- ESC — Back to main menu

@@ -1,0 +1,30 @@
+╭────────────────────────────────────────────────────────────╮
+│                                                            │
+│   biggz-ai                                                 │
+│                                                            │
+│                                                            │
+│  ┌─ Stats ─────────────────────────────────────────────┐   │
+│  │  Loading...                                          │  │
+│  └──────────────────────────────────────────────────────┘  │
+│                                                            │
+│                                                            │
+│  Projects                                                  │
+│                                                            │
+│    (none)                                                  │
+│                                                            │
+│                                                            │
+│  Actions                                                   │
+│                                                            │
+│                                                            │
+│  ▸ [s]  Search memories                                    │
+│    [r]  Recent observations                                │
+│    [e]  Browse sessions                                    │
+│    [i]  Install agent plugin                               │
+│    [h]  Help                                               │
+│    [b]  Backup & Restore                                   │
+│    [q]  Quit                                               │
+│                                                            │
+│                                                            │
+│  ↑↓ navigate · enter select · q quit · ? help              │
+│                                                            │
+╰────────────────────────────────────────────────────────────╯

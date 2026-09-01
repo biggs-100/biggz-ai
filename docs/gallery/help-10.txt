@@ -1,0 +1,9 @@
+# Review Timeline
+
+Browse review lineages stored in the review transaction store. Each lineage represents a complete review lifecycle with events, findings, and corrections.
+
+## Keys
+- ENTER — Load lineages / view detail
+- R — Refresh lineage list
+- ↑↓ — Navigate lineages
+- ESC — Back to list / main menu

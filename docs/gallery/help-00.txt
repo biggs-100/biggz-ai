@@ -1,0 +1,14 @@
+# Dashboard
+
+biggs-ai is a Review-Driven Development harness for AI coding agents. Dashboard shows memory stats, projects, and quick actions.
+
+## Keys
+- ↑↓ — Navigate actions
+- ENTER — Select action
+- s — Search memories
+- r — Recent observations
+- e — Browse sessions
+- i — Install agent plugin
+- ? — Toggle this help
+- q / ESC — Quit
+- CTRL+C — Force quit

@@ -1,0 +1,10 @@
+# Profiles
+
+Save and load named configurations. Profiles store model assignments, delivery strategy, review budget, and persona settings as a complete snapshot of opencode.json.
+
+## Keys
+- R — Refresh profile list
+- S — Save current config as a named profile
+- ENTER — Load selected profile
+- ↑↓ — Navigate profile list
+- ESC — Back to main menu

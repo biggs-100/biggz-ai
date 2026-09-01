@@ -1,0 +1,481 @@
+[
+  {
+    "screenID": 0,
+    "title": "Dashboard",
+    "paragraph": "biggs-ai is a Review-Driven Development harness for AI coding agents. Dashboard shows memory stats, projects, and quick actions.",
+    "keys": [
+      {
+        "Key": "↑↓",
+        "Desc": "Navigate actions"
+      },
+      {
+        "Key": "ENTER",
+        "Desc": "Select action"
+      },
+      {
+        "Key": "s",
+        "Desc": "Search memories"
+      },
+      {
+        "Key": "r",
+        "Desc": "Recent observations"
+      },
+      {
+        "Key": "e",
+        "Desc": "Browse sessions"
+      },
+      {
+        "Key": "i",
+        "Desc": "Install agent plugin"
+      },
+      {
+        "Key": "?",
+        "Desc": "Toggle this help"
+      },
+      {
+        "Key": "q / ESC",
+        "Desc": "Quit"
+      },
+      {
+        "Key": "CTRL+C",
+        "Desc": "Force quit"
+      }
+    ],
+    "width": 80,
+    "preview": "biggs-ai is a Review-Driven Development harness for AI coding agents. Dashboard shows memory stats, projects, and quick …"
+  },
+  {
+    "screenID": 12,
+    "title": "Welcome / System Menu",
+    "paragraph": "Full system management menu. Configure, backup, update, uninstall, and manage biggz-ai settings.",
+    "keys": [
+      {
+        "Key": "↑↓",
+        "Desc": "Navigate menu items"
+      },
+      {
+        "Key": "ENTER",
+        "Desc": "Select highlighted item"
+      },
+      {
+        "Key": "d",
+        "Desc": "Return to dashboard"
+      },
+      {
+        "Key": "?",
+        "Desc": "Toggle this help"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to dashboard"
+      },
+      {
+        "Key": "CTRL+C",
+        "Desc": "Force quit"
+      }
+    ],
+    "width": 80,
+    "preview": "Full system management menu. Configure, backup, update, uninstall, and manage biggz-ai settings."
+  },
+  {
+    "screenID": 1,
+    "title": "Install",
+    "paragraph": "Installs biggz-ai in your AI coding agent. Detects OpenCode, Claude Code, or Qwen Code. Deploys skills, commands, MCP, persona, and agent configuration.",
+    "keys": [
+      {
+        "Key": "ENTER",
+        "Desc": "Start installation"
+      },
+      {
+        "Key": "↑↓",
+        "Desc": "Select agent (if multiple detected)"
+      },
+      {
+        "Key": "R",
+        "Desc": "Retry after error / reinstall"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Installs biggz-ai in your AI coding agent. Detects OpenCode, Claude Code, or Qwen Code. Deploys skills, commands, MCP, p…"
+  },
+  {
+    "screenID": 2,
+    "title": "Configuration",
+    "paragraph": "Configure model assignments for each SDD phase, choose the agent persona, and set delivery strategy and review budget. All changes are persisted to opencode.json.",
+    "keys": [
+      {
+        "Key": "← →",
+        "Desc": "Switch between tabs (Models / Persona / Delivery / Save)"
+      },
+      {
+        "Key": "↑↓",
+        "Desc": "Navigate items in current tab"
+      },
+      {
+        "Key": "ENTER",
+        "Desc": "Select / toggle / save"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Configure model assignments for each SDD phase, choose the agent persona, and set delivery strategy and review budget. A…"
+  },
+  {
+    "screenID": 3,
+    "title": "Status",
+    "paragraph": "Shows real-time status of RDD (Review-Driven Development), active SDD changes, and system health. Data is fetched from the live system on refresh.",
+    "keys": [
+      {
+        "Key": "R",
+        "Desc": "Refresh all status data"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Shows real-time status of RDD (Review-Driven Development), active SDD changes, and system health. Data is fetched from t…"
+  },
+  {
+    "screenID": 4,
+    "title": "BigMem Memory",
+    "paragraph": "Browse persistent memories stored in BigMem. Each entry is a decision, bug fix, discovery, or convention saved automatically by the orchestrator or sub-agents.",
+    "keys": [
+      {
+        "Key": "R",
+        "Desc": "Load memories from BigMem"
+      },
+      {
+        "Key": "↑↓",
+        "Desc": "Navigate memory list"
+      },
+      {
+        "Key": "ENTER",
+        "Desc": "View memory details"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to list / main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Browse persistent memories stored in BigMem. Each entry is a decision, bug fix, discovery, or convention saved automatic…"
+  },
+  {
+    "screenID": 5,
+    "title": "Backup \u0026 Restore",
+    "paragraph": "Create snapshots of biggz-ai state and restore them later. Backups include skills, configuration, and persistent memory.",
+    "keys": [
+      {
+        "Key": "ENTER",
+        "Desc": "Create or restore a backup"
+      },
+      {
+        "Key": "↑↓",
+        "Desc": "Select backup entry"
+      },
+      {
+        "Key": "R",
+        "Desc": "Refresh backup list"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Create snapshots of biggz-ai state and restore them later. Backups include skills, configuration, and persistent memory."
+  },
+  {
+    "screenID": 6,
+    "title": "Profiles",
+    "paragraph": "Save and load named configurations. Profiles store model assignments, delivery strategy, review budget, and persona settings as a complete snapshot of opencode.json.",
+    "keys": [
+      {
+        "Key": "R",
+        "Desc": "Refresh profile list"
+      },
+      {
+        "Key": "S",
+        "Desc": "Save current config as a named profile"
+      },
+      {
+        "Key": "ENTER",
+        "Desc": "Load selected profile"
+      },
+      {
+        "Key": "↑↓",
+        "Desc": "Navigate profile list"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Save and load named configurations. Profiles store model assignments, delivery strategy, review budget, and persona sett…"
+  },
+  {
+    "screenID": 7,
+    "title": "Update",
+    "paragraph": "Check for new versions of biggz-ai on GitHub. When an update is available, you can download and install it directly from this screen.",
+    "keys": [
+      {
+        "Key": "ENTER",
+        "Desc": "Check for updates"
+      },
+      {
+        "Key": "R",
+        "Desc": "Refresh check"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Check for new versions of biggz-ai on GitHub. When an update is available, you can download and install it directly from…"
+  },
+  {
+    "screenID": 8,
+    "title": "Uninstall",
+    "paragraph": "Remove biggz-ai from your system. Deletes ~/.biggz/, removes the biggz-orchestrator agent from opencode.json, and strips the persona from AGENTS.md. gentle-ai data is NOT affected.",
+    "keys": [
+      {
+        "Key": "ENTER",
+        "Desc": "Start uninstall"
+      },
+      {
+        "Key": "Y",
+        "Desc": "Confirm uninstall"
+      },
+      {
+        "Key": "N",
+        "Desc": "Cancel uninstall"
+      },
+      {
+        "Key": "R",
+        "Desc": "Retry after error"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Remove biggz-ai from your system. Deletes ~/.biggz/, removes the biggz-orchestrator agent from opencode.json, and strips…"
+  },
+  {
+    "screenID": 9,
+    "title": "Strict TDD",
+    "paragraph": "Strict TDD mode requires tests to pass before code can be committed. When enabled, sdd-apply will enforce test passing before accepting changes.",
+    "keys": [
+      {
+        "Key": "ENTER",
+        "Desc": "Load state / toggle mode"
+      },
+      {
+        "Key": "↑↓",
+        "Desc": "Toggle enable/disable"
+      },
+      {
+        "Key": "R",
+        "Desc": "Refresh"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Strict TDD mode requires tests to pass before code can be committed. When enabled, sdd-apply will enforce test passing b…"
+  },
+  {
+    "screenID": 10,
+    "title": "Review Timeline",
+    "paragraph": "Browse review lineages stored in the review transaction store. Each lineage represents a complete review lifecycle with events, findings, and corrections.",
+    "keys": [
+      {
+        "Key": "ENTER",
+        "Desc": "Load lineages / view detail"
+      },
+      {
+        "Key": "R",
+        "Desc": "Refresh lineage list"
+      },
+      {
+        "Key": "↑↓",
+        "Desc": "Navigate lineages"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to list / main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Browse review lineages stored in the review transaction store. Each lineage represents a complete review lifecycle with …"
+  },
+  {
+    "screenID": 11,
+    "title": "Sessions",
+    "paragraph": "Browse BigMem sessions. Each session groups observations from a single coding conversation.",
+    "keys": [
+      {
+        "Key": "ENTER",
+        "Desc": "Load session list"
+      },
+      {
+        "Key": "R",
+        "Desc": "Refresh"
+      },
+      {
+        "Key": "↑↓",
+        "Desc": "Navigate sessions"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Browse BigMem sessions. Each session groups observations from a single coding conversation."
+  },
+  {
+    "screenID": 14,
+    "title": "Recovery Trace",
+    "paragraph": "Browse recovery trace ledgers. Each ledger documents file disposition decisions across releases — KEEP, TRANSPLANT, REWRITE, DELETE, REGENERATE, or DEFER — with contributor credit and invariant proof.",
+    "keys": [
+      {
+        "Key": "ENTER",
+        "Desc": "Load ledgers / view detail"
+      },
+      {
+        "Key": "R",
+        "Desc": "Refresh list"
+      },
+      {
+        "Key": "↑↓",
+        "Desc": "Navigate / scroll rows"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back to list / dashboard"
+      }
+    ],
+    "width": 80,
+    "preview": "Browse recovery trace ledgers. Each ledger documents file disposition decisions across releases — KEEP, TRANSPLANT, RE…"
+  },
+  {
+    "screenID": 15,
+    "title": "Model Picker",
+    "paragraph": "Assign AI models to every configurable agent: the orchestrator, SDD phases, Judgment Day agents, and review agents. Driven by the OpenCode model cache; effort levels come from the biggz model-variants plugin cache. Changes are persisted to opencode.json.",
+    "keys": [
+      {
+        "Key": "↑↓ / j k",
+        "Desc": "Navigate agents, providers, models, efforts"
+      },
+      {
+        "Key": "ENTER",
+        "Desc": "Select / assign model"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back one step / main menu"
+      }
+    ],
+    "width": 80,
+    "preview": "Assign AI models to every configurable agent: the orchestrator, SDD phases, Judgment Day agents, and review agents. Driv…"
+  },
+  {
+    "screenID": 16,
+    "title": "Agent Builder",
+    "paragraph": "Create custom sub-agent skills with AI: choose a generation engine, describe the agent, optionally attach it to an SDD phase, preview the generated SKILL.md, then install it to your agents.",
+    "keys": [
+      {
+        "Key": "↑↓ / j k",
+        "Desc": "Navigate options"
+      },
+      {
+        "Key": "ENTER",
+        "Desc": "Select option"
+      },
+      {
+        "Key": "TAB",
+        "Desc": "Continue from prompt (when text is entered)"
+      },
+      {
+        "Key": "↑↓",
+        "Desc": "Scroll SKILL.md preview content"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back one step"
+      }
+    ],
+    "width": 80,
+    "preview": "Create custom sub-agent skills with AI: choose a generation engine, describe the agent, optionally attach it to an SDD p…"
+  },
+  {
+    "screenID": 18,
+    "title": "Sync Configuration",
+    "paragraph": "Sync biggz-ai configuration: re-deploy skills, re-apply overlays, re-inject persona. Optionally combined with upgrade check.",
+    "keys": [
+      {
+        "Key": "ENTER",
+        "Desc": "Start sync"
+      },
+      {
+        "Key": "C",
+        "Desc": "Toggle combined upgrade"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back"
+      }
+    ],
+    "width": 80,
+    "preview": "Sync biggz-ai configuration: re-deploy skills, re-apply overlays, re-inject persona. Optionally combined with upgrade ch…"
+  },
+  {
+    "screenID": 19,
+    "title": "Update Available",
+    "paragraph": "A new version of biggz-ai is available. Dismiss to continue, or run 'biggz update' from the terminal.",
+    "keys": [
+      {
+        "Key": "ENTER / ESC",
+        "Desc": "Dismiss"
+      }
+    ],
+    "width": 80,
+    "preview": "A new version of biggz-ai is available. Dismiss to continue, or run 'biggz update' from the terminal."
+  },
+  {
+    "screenID": 20,
+    "title": "Plugin Uninstall",
+    "paragraph": "Manage installed OpenCode community plugins. Select a plugin to uninstall with confirmation.",
+    "keys": [
+      {
+        "Key": "↑↓",
+        "Desc": "Navigate"
+      },
+      {
+        "Key": "ENTER",
+        "Desc": "Uninstall"
+      },
+      {
+        "Key": "ESC",
+        "Desc": "Back"
+      }
+    ],
+    "width": 80,
+    "preview": "Manage installed OpenCode community plugins. Select a plugin to uninstall with confirmation."
+  }
+]
