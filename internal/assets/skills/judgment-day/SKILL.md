@@ -10,10 +10,11 @@ Load only when the user explicitly requests Judgment Day or equivalent dual/adve
 
 ## Hard Rules
 
+- Two blind read-only judges, zero refuters, at most two fix rounds, findings surviving round two escalate. Sweep budget: one exhaustive sweep, at most two for >400 lines.
 - Resolve matching project skills before starting and pass the same paths to both judges and any fix actor.
 - Build one complete immutable target, then launch two blind read-only judges in parallel with identical scope and criteria.
 - Each judge returns one neutral findings result and terminates. Wait for both; never accept a partial judgment.
-- Never launch `review-refuter`; two-judge agreement is the corroboration mechanism.
+- Never launch `review-refuter`; two-judge agreement is the corroboration mechanism. Judgment Day starts with exactly two blind judges and zero refuters.
 - Only the parent orchestrator merges/persists findings, launches the fix actor, and launches scoped re-judgment.
 - Fix only severe findings confirmed by both judges. WARNING/SUGGESTION rows remain `info`.
 - Permit at most two fix rounds and two scoped re-judgments. Re-judgment sees only the frozen ledger plus fix delta and may record fix-caused defects.

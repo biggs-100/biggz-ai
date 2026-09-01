@@ -101,7 +101,9 @@ Example:
 (other values: `fallback-registry`, `fallback-path`, or `none — no registry found`)
 ```
 
-## E. Review Workload Guard
+## E. Review Workload Guard & Allowed Edit Surfaces
+
+Allowed edit surfaces (MANDATORY): exact repository-relative paths or narrow globs, never '.' and never bare repo root — pre-existing untracked targets listed explicitly, directories where new files authorized when task requires new files, nothing beyond delegated task. If surface cannot be derived, do not launch writer, present candidate as approve/decline (not free-text path question).
 
 SDD must protect reviewer cognitive load, not only generate tasks.
 

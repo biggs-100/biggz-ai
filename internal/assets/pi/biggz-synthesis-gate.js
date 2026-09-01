@@ -1,5 +1,8 @@
 /**
  * biggz-synthesis-gate — Pi extension that enforces Post-Delegation Human Checkpoint.
+ * IsCheckpointAsk tokens (case-insensitive, label/value/id/name/title scan): proceed/continuar/proseguir, adjust/ajustar, stop/detener/parar, continue/continuar, correct/corregir/cerrar. Same-turn invariant: synthesis markdown with 4 markers MUST be emitted FIRST and checkpoint tool called in SAME assistant turn adjacent ≤120s without extra assistant message; otherwise gate blocks isError:true/block:true (Please synthesize before asking).
+ *
+ * biggz-synthesis-gate — Pi extension that enforces Post-Delegation Human Checkpoint.
  *
  * Ensures orchestrator emits synthesis markdown with ## Sub-agent Result + Artifacts/Paths + Risks + Next
  * BEFORE calling ask_user_choice (Pi closed) / ask_user_question (Pi open) / question (OpenCode). Without synthesis the orchestrator would skip to tool call

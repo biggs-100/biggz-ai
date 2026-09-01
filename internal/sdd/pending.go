@@ -1,3 +1,11 @@
+// pending.go — dual-write pending-question persistence (biggz-ai.pending-question/v1)
+//
+// Dual-write: BigMem sdd/{change}/pending-question + openspec/changes/{change}/state.yaml pending_question.
+// VerifyEquality retry once, LoadOnCompaction (BigMem primary, state.yaml fallback), FormatFallback/PendingFallbackMD.
+// Details moved from orchestrator: VerifyEquality, FormatFallback, internal/sdd/pending.go, internal/sdd/synthesis.go, PendingQuestion schema.
+// See also internal/sdd/synthesis.go:PersistPendingForCheckpoint, LoadPendingFallback; internal/sdd/pending.go:SavePendingDualWrite.
+// Orchestrator MUST persist pending-question dual-write before checkpoint; reload via LoadOnCompaction on compaction.
+
 package sdd
 
 import (
