@@ -72,6 +72,7 @@ type SessionActivity struct {
 	threshold      int
 	startedAt      time.Time
 	recoveryTokens map[string]map[string]*ambiguousRecovery // sessionID -> token -> entry
+	prompts        map[string]string                        // pending prompt cache: project+"\x00"+sessionID -> content
 	now            func() time.Time
 }
 
@@ -91,6 +92,7 @@ func NewSessionActivity(threshold int) *SessionActivity {
 		threshold:      threshold,
 		startedAt:      time.Now(),
 		recoveryTokens: make(map[string]map[string]*ambiguousRecovery),
+		prompts:        make(map[string]string),
 		now:            time.Now,
 	}
 }
@@ -134,6 +136,38 @@ func (a *SessionActivity) ActivityScore(sessionID string) string {
 	}
 	c := a.counts[sessionID]
 	return fmt.Sprintf("Activity: %d tool calls (threshold %d)", c, a.threshold)
+}
+
+func (a *SessionActivity) SavePendingPrompt(project, sessionID, content string) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.prompts == nil {
+		a.prompts = make(map[string]string)
+	}
+	key := project + "\x00" + sessionID
+	a.prompts[key] = content
+	a.prompts[sessionID] = content
+}
+
+func (a *SessionActivity) GetPendingPrompt(project, sessionID string) string {
+	if a == nil {
+		return ""
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.prompts == nil {
+		return ""
+	}
+	if v, ok := a.prompts[project+"\x00"+sessionID]; ok && v != "" {
+		return v
+	}
+	if v, ok := a.prompts[sessionID]; ok && v != "" {
+		return v
+	}
+	return ""
 }
 
 func generateRecoveryToken() string {
@@ -596,6 +630,12 @@ func handleToolCall(id any, name string, args map[string]any) {
 			}
 			_ = ensureImplicitSessionWithCWD(store, obs.SessionID, resolvedProject)
 			obs.Project = resolvedProject
+			// Wire capture_prompt (Engram parity): best-effort prompt persistence when enabled (default true).
+			if getBool(args, "capture_prompt", true) {
+				if pending := sessionActivity.GetPendingPrompt(resolvedProject, obs.SessionID); pending != "" {
+					_, _ = store.SavePrompt(pending, obs.SessionID)
+				}
+			}
 			origContent := obs.Content
 			origWasExternalized := bigmem.ShouldExternalize(origContent)
 			if bigmem.ShouldExternalize(obs.Content) {
@@ -929,6 +969,8 @@ func handleToolCall(id any, name string, args map[string]any) {
 				writeError(id, err.Error())
 				return
 			}
+			// Feed SessionActivity so later mem_save with capture_prompt=true can best-effort reuse it.
+			sessionActivity.SavePendingPrompt(resolvedProj, sessionID, content)
 			msg := fmt.Sprintf("Prompt saved: %s", p.ID)
 			if len(origPrompt) > 50000 {
 				msg += fmt.Sprintf(" ⚠️ content truncated from %d to %d bytes", len(origPrompt), 50000)

@@ -26,7 +26,7 @@ internal/
 ├── agentbuilder/    — Custom SDD agent generation (engines, parser, installer, registry)
 ├── assets/          — Embedded skills + configs + OpenCode plugins (opencode plugins + biggz-orchestrator.md + biggz-synthesis-gate.js)
 ├── backup/          — tar.gz snapshot/restore
-├── bigmem/          — Persistent observation store + MCP tools (22 tools, SQLite)
+├── bigmem/          — Persistent observation store + MCP tools (22 agent-facing + 3 internal branching (25 total), SQLite) — Profiles[agent]=20, admin=3
 ├── codegraph/       — CodeGraph index + change-intent report (safe-root validation)
 ├── contracts/       — Wire-envelope formalization engine (test-only validation, draft 2020-12)
 ├── doctor/          — System health checks (BigMem FTS, stale locks, skill registry)
@@ -152,11 +152,11 @@ Transitions are validated by `FSM.Transition(current, target, role, counters)` v
 
 ## BigMem Memory Protocol
 
-22 MCP tools exposed by `biggz-mcp` plus Session Boot Recall hard gate:
+22 agent-facing + 3 internal branching (25 total) MCP tools exposed by `biggz-mcp` plus Session Boot Recall hard gate (Profiles[agent]=20, admin=3):
 
 **Session Boot Recall (HARD GATE):** before SDD Session Preflight the orchestrator MUST run `biggz_mem_context(limit=5)` + `biggz_mem_search(query:"sdd {project}" limit=10)` + `biggz_mem_search(query:"session_summary" limit=5)`, inject a short recap, emit `## Session Recall` markdown, and fallback to `biggz sdd-status --json --instructions` when BigMem is empty. The gate is blocking like preflight (see `internal/assets/biggz/biggz-orchestrator.md` Session Boot Recall). The synthesis gate has a narrow same-turn exception for `## Session Recall` → preflight, but does not weaken the `## Sub-agent Result` block after delegation.
 
-22 MCP tools exposed by `biggz-mcp`:
+22 agent-facing + 3 internal branching (25 total) MCP tools exposed by `biggz-mcp` (Profiles[agent]=20, admin=3):
 
 - **Save**: `mem_save` (with what/why/where/learned format)
 - **Search**: `mem_search` (full-text across title/content/topic_key)

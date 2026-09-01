@@ -45,7 +45,7 @@ func bigmemRun() int {
 		fmt.Fprintln(os.Stderr, "Usage: biggz bigmem <command> [args...]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Commands:")
-		fmt.Fprintln(os.Stderr, "  save <title> <msg> [--type T] [--project P] [--scope S]")
+		fmt.Fprintln(os.Stderr, "  save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K]")
 		fmt.Fprintln(os.Stderr, "  search [<query>|--query Q] [--type T] [--project P] [--scope S] [--limit N] [--all]")
 		fmt.Fprintln(os.Stderr, "  get <id>                        Get an observation by ID")
 		fmt.Fprintln(os.Stderr, "  delete <id>                     Delete an observation")
@@ -81,7 +81,7 @@ func bigmemRun() int {
 	switch args[0] {
 	case "save":
 		if len(args) < 3 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem save <title> <msg> [--type T] [--project P] [--scope S]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K]")
 			return 1
 		}
 		obs := &bigmem.Observation{Title: args[1], Content: args[2], Type: "manual"}
@@ -96,6 +96,11 @@ func bigmemRun() int {
 			case "--scope":
 				obs.Scope = args[i+1]
 				i++
+			case "--topic-key":
+				if i+1 < len(args) {
+					obs.TopicKey = args[i+1]
+					i++
+				}
 			}
 		}
 		// Engram parity: ensure implicit session for CLI saves
