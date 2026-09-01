@@ -1,7 +1,6 @@
 package sdd
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,121 +46,21 @@ var (
 // It detects ## RENAMED presence and legacy-flat (no requirement headings).
 func ParseDeltaSpec(delta string) (ParseResult, error) {
 	var res ParseResult
-	// Detect RENAMED heading only (anchored), not mentions inside scenario text.
-	if regexp.MustCompile(`(?m)^##\s+RENAMED\b`).MatchString(delta) {
-		res.HasRenamed = true
-	}
-	// Detect legacy flat: has content but no Requirement heading and no delta sections
-	hasReq := requirementHeadingRe.MatchString(delta) || requirementAltRe.MatchString(delta)
-	hasDeltaSection := deltaSectionRe.MatchString(delta)
-	trimmed := strings.TrimSpace(delta)
-	if trimmed != "" && !hasReq && !hasDeltaSection {
-		// Could be flat spec with headings but not Requirement: treat as legacy flat if non-empty and no Requirement.
-		// Also if file has no delta sections but has content, it's considered legacy flat for safety.
-		// Only mark IsLegacyFlat when file looks like a spec without Requirement markers.
-		if strings.Contains(delta, "#") {
-			res.IsLegacyFlat = true
-		}
-	}
-	// Also if has delta sections but no Requirement headings inside, still not legacy flat for delta;
-	// legacy flat is mainly for main spec, but we expose it if delta has no requirements at all and HasRenamed false.
-	if !hasReq && trimmed != "" && !res.HasRenamed {
-		// If there are no deltas and HasRenamed false, but file is non-empty, treat as legacy flat when caller expects hint.
-		// We already set above for flat without delta sections; for delta with empty requirement list we keep false to avoid false positives.
-		// Keep as is.
-	}
-
+	res.HasRenamed = deltaHasRenamed(delta)
+	res.IsLegacyFlat = detectLegacyFlat(delta)
 	lines := strings.Split(delta, "\n")
-	var currentKind DeltaKind
-	var currentName string
-	var currentBodyLines []string
-
-	flush := func() {
-		if currentName != "" && currentKind != "" {
-			body := strings.Join(currentBodyLines, "\n")
-			body = strings.TrimSpace(body)
-			// Ensure body starts with heading if not already? currentBodyLines already includes heading line
-			res.Deltas = append(res.Deltas, RequirementDelta{
-				Kind: currentKind,
-				Name: strings.TrimSpace(currentName),
-				Body: body,
-			})
-		}
-		currentName = ""
-		currentBodyLines = nil
-	}
-
+	state := newDeltaParseState(&res)
 	for _, raw := range lines {
 		line := strings.TrimRight(raw, "\r")
-		trimmedLine := strings.TrimSpace(line)
-		// Check for delta section heading
-		if m := deltaSectionExactRe.FindStringSubmatch(line); len(m) == 2 {
-			// flush previous requirement before switching section
-			flush()
-			kindStr := strings.ToUpper(strings.TrimSpace(m[1]))
-			switch kindStr {
-			case "ADDED":
-				currentKind = DeltaAdded
-			case "MODIFIED":
-				currentKind = DeltaModified
-			case "REMOVED":
-				currentKind = DeltaRemoved
-			case "RENAMED":
-				currentKind = ""
-				res.HasRenamed = true
-			}
+		if tryHandleDeltaSection(line, state) {
 			continue
 		}
-		// Also handle generic deltaSectionRe without anchored exact (fallback)
-		// Already covered by exact; keep generic for lines like "## ADDED Requirements" already matched.
-		// Check for requirement heading
-		if m := requirementHeadingRe.FindStringSubmatch(line); len(m) == 2 {
-			// New requirement starts
-			flush()
-			if currentKind == "" {
-				// Requirement outside a delta section: ignore (delta specs must use ## ADDED/MODIFIED/REMOVED sections)
-				currentName = ""
-				currentBodyLines = nil
-				continue
-			}
-			currentName = strings.TrimSpace(m[1])
-			currentBodyLines = []string{line}
+		if tryHandleRequirement(line, state) {
 			continue
 		}
-		if currentName != "" && currentKind != "" {
-			// Check if line starts a new top-level section (## ) which would have been handled above,
-			// but if not matched exact, still treat as section boundary
-			if strings.HasPrefix(trimmedLine, "## ") {
-				// New section heading that is not ADDED/MODIFIED/REMOVED/RENAMED - could be new domain?
-				// Flush current requirement and reset kind?
-				flush()
-				// Try to parse this heading as delta section again (generic)
-				if gm := deltaSectionRe.FindStringSubmatch(line); len(gm) == 2 {
-					kindStr := strings.ToUpper(gm[1])
-					switch kindStr {
-					case "ADDED":
-						currentKind = DeltaAdded
-					case "MODIFIED":
-						currentKind = DeltaModified
-					case "REMOVED":
-						currentKind = DeltaRemoved
-					case "RENAMED":
-						currentKind = ""
-						res.HasRenamed = true
-					default:
-						currentKind = ""
-					}
-				} else {
-					currentKind = ""
-				}
-				continue
-			}
-			// Check for next requirement heading on same level already handled,
-			// otherwise append to body
-			currentBodyLines = append(currentBodyLines, line)
-		}
+		appendDeltaBody(line, state)
 	}
-	flush()
+	state.flush()
 	return res, nil
 }
 
@@ -172,71 +71,13 @@ func ApplyDeltas(main string, deltas []RequirementDelta) (string, error) {
 	if strings.TrimSpace(main) == "" && len(deltas) == 0 {
 		return main, nil
 	}
-	// Parse main into header + ordered blocks
 	header, order, blocks := parseMainSpec(main)
-	// blocks is map[name]blockContent
-	for _, d := range deltas {
-		name := strings.TrimSpace(d.Name)
-		switch d.Kind {
-		case DeltaAdded:
-			if _, exists := blocks[name]; exists {
-				// Idempotent: if already exists with same body, skip
-				if strings.TrimSpace(blocks[name]) == strings.TrimSpace(d.Body) {
-					continue
-				}
-				// If exists with different body, treat as modify (to keep idempotent sync)
-				blocks[name] = d.Body
-				continue
-			}
-			blocks[name] = d.Body
-			order = append(order, name)
-		case DeltaModified:
-			if _, exists := blocks[name]; !exists {
-				return "", fmt.Errorf("MODIFIED requirement %q not found in main spec", name)
-			}
-			blocks[name] = d.Body
-		case DeltaRemoved:
-			if _, exists := blocks[name]; !exists {
-				// Idempotent delete
-				continue
-			}
-			delete(blocks, name)
-			// remove from order
-			newOrder := order[:0]
-			for _, n := range order {
-				if n != name {
-					newOrder = append(newOrder, n)
-				}
-			}
-			order = newOrder
-		default:
-			return "", fmt.Errorf("unknown delta kind %q", d.Kind)
-		}
+	var err error
+	order, err = applyAllDeltas(blocks, order, deltas)
+	if err != nil {
+		return "", err
 	}
-	// Reconstruct
-	var sb strings.Builder
-	if header != "" {
-		sb.WriteString(strings.TrimRight(header, "\n"))
-		sb.WriteString("\n\n")
-	}
-	for i, name := range order {
-		b, ok := blocks[name]
-		if !ok {
-			continue
-		}
-		b = strings.TrimSpace(b)
-		if b == "" {
-			continue
-		}
-		sb.WriteString(b)
-		if i < len(order)-1 {
-			sb.WriteString("\n\n")
-		} else {
-			sb.WriteString("\n")
-		}
-	}
-	result := sb.String()
-	// If header was empty and no blocks, return as is trimmed?
+	result := rebuildSpec(header, order, blocks)
 	if strings.TrimSpace(result) == "" {
 		return "", nil
 	}
