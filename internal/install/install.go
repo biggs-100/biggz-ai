@@ -144,6 +144,10 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		homeDir, _ = os.UserHomeDir()
 	}
 
+	if runtime.GOOS == "windows" {
+		sanitizePath(cfg.DryRun)
+	}
+
 	installed, binaryPath, _, _, err := adapter.Detect(ctx, homeDir)
 	if err != nil || !installed {
 		return &Result{AgentDetected: false}, fmt.Errorf("agent not detected: %w", err)
@@ -384,7 +388,11 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 					}
 					var c *exec.Cmd
 					if runtime.GOOS == "windows" {
-						c = exec.CommandContext(ctx, "cmd", append([]string{"/c", cmd[0]}, cmd[1:]...)...)
+						piPath := cmd[0]
+						if resolved, err := exec.LookPath(cmd[0]); err == nil && resolved != "" {
+							piPath = resolved
+						}
+						c = exec.CommandContext(ctx, "cmd", append([]string{"/c", piPath}, cmd[1:]...)...)
 					} else {
 						c = exec.CommandContext(ctx, cmd[0], cmd[1:]...)
 					}
@@ -2377,6 +2385,86 @@ func DeployPiThemes(homeDir string, ffs fs.FS, dryRun ...bool) (int, error) {
 	}
 	return count, err
 }
+
+// sanitizePath cleans polluted entries from PATH on Windows.
+// It removes entries containing Temp\TestInstall or Temp\biggz-check,
+// dedupes case-insensitively, updates current process PATH, and
+// persists cleaned User PATH via PowerShell when not in dry-run.
+func sanitizePath(dryRun bool) {
+	if runtime.GOOS != "windows" {
+		return
+	}
+	origProcess := os.Getenv("PATH")
+	cleanedProcess := cleanPathEntries(origProcess)
+	if cleanedProcess != origProcess {
+		_ = os.Setenv("PATH", cleanedProcess)
+		if dryRun {
+			fmt.Fprintf(os.Stderr, "sanitizePath (dry-run): would remove polluted entries from process PATH (%d -> %d chars)\n", len(origProcess), len(cleanedProcess))
+		} else {
+			fmt.Fprintf(os.Stderr, "sanitizePath: removed polluted entries from process PATH (%d -> %d chars)\n", len(origProcess), len(cleanedProcess))
+		}
+	}
+	userPath := readUserPath()
+	if userPath == "" {
+		return
+	}
+	cleanedUser := cleanPathEntries(userPath)
+	if cleanedUser != userPath {
+		if dryRun {
+			fmt.Fprintf(os.Stderr, "sanitizePath (dry-run): would clean User PATH (%d -> %d chars)\n", len(userPath), len(cleanedUser))
+			return
+		}
+		if err := writeUserPath(cleanedUser); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: sanitizePath failed to update User PATH: %v\n", err)
+		} else {
+			fmt.Fprintf(os.Stderr, "sanitizePath: cleaned User PATH (%d -> %d chars)\n", len(userPath), len(cleanedUser))
+		}
+	}
+}
+
+func cleanPathEntries(path string) string {
+	if path == "" {
+		return path
+	}
+	dirs := filepath.SplitList(path)
+	seen := make(map[string]bool)
+	var out []string
+	for _, d := range dirs {
+		trimmed := strings.TrimSpace(d)
+		if trimmed == "" {
+			continue
+		}
+		low := strings.ToLower(trimmed)
+		if strings.Contains(low, "temp") && (strings.Contains(low, "testinstall") || strings.Contains(low, "biggz-check")) {
+			continue
+		}
+		key := strings.ToLower(trimmed)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, trimmed)
+	}
+	return strings.Join(out, string(filepath.ListSeparator))
+}
+
+func readUserPath() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command", "[Environment]::GetEnvironmentVariable('Path','User')")
+	out, err := cmd.Output()
+	if err == nil {
+		return strings.TrimSpace(string(out))
+	}
+	return os.Getenv("PATH")
+}
+
+func writeUserPath(cleaned string) error {
+	escaped := strings.ReplaceAll(cleaned, "'", "''")
+	cmd := exec.Command("powershell", "-NoProfile", "-Command", fmt.Sprintf("[Environment]::SetEnvironmentVariable('Path','%s','User')", escaped))
+	return cmd.Run()
+}
+
 
 // deploySelfToPath copies the running biggz binary to ~/.biggz/biggz.exe
 // and ensures ~/.biggz/ is on the user PATH (persistent, per-user).

@@ -12,6 +12,8 @@ import (
 const (
 	// PathCheckID is the check identifier for PATH shadowing.
 	PathCheckID CheckID = "path"
+	// PathSanityCheckID is the check identifier for PATH length and pollution.
+	PathSanityCheckID CheckID = "path_sanity"
 )
 
 // PathCheck scans the PATH environment variable for duplicate biggz or
@@ -52,7 +54,26 @@ func (c *PathCheck) targetNames() []string {
 	return names
 }
 
-// Run scans PATH for duplicate binaries.
+// findPollutedEntries returns PATH entries that look like Temp\TestInstall or Temp\biggz-check pollution.
+func findPollutedEntries(path string) []string {
+	if path == "" {
+		return nil
+	}
+	var polluted []string
+	for _, d := range filepath.SplitList(path) {
+		trimmed := strings.TrimSpace(d)
+		if trimmed == "" {
+			continue
+		}
+		low := strings.ToLower(trimmed)
+		if strings.Contains(low, "temp") && (strings.Contains(low, "testinstall") || strings.Contains(low, "biggz-check")) {
+			polluted = append(polluted, trimmed)
+		}
+	}
+	return polluted
+}
+
+// Run scans PATH for duplicate binaries and also warns on length/pollution for Git Bash robustness.
 func (c *PathCheck) Run(ctx context.Context) *Result {
 	path := c.getenvFn("PATH")
 	if path == "" {
@@ -61,6 +82,26 @@ func (c *PathCheck) Run(ctx context.Context) *Result {
 			Status:   StatusWarn,
 			Message:  "PATH environment variable is empty",
 			Severity: SeverityWarning,
+		}
+	}
+
+	// PATH length check — Windows has ~2047/4095 char limits per variable and ~8191 for cmd; 8000 is a safe threshold for Git Bash.
+	if len(path) > 8000 {
+		return &Result{
+			ID:       PathCheckID,
+			Status:   StatusWarn,
+			Message:  fmt.Sprintf("PATH length %d exceeds 8000 characters, may be truncated on Windows (Git Bash)", len(path)),
+			Severity: SeverityWarning,
+			Error:    fmt.Sprintf("PATH length %d > 8000", len(path)),
+		}
+	}
+	if polluted := findPollutedEntries(path); len(polluted) > 0 {
+		return &Result{
+			ID:       PathCheckID,
+			Status:   StatusWarn,
+			Message:  fmt.Sprintf("PATH contains polluted Temp entries: %s", strings.Join(polluted, ", ")),
+			Severity: SeverityWarning,
+			Error:    strings.Join(polluted, ", "),
 		}
 	}
 
@@ -146,3 +187,66 @@ func (c *PathCheck) Run(ctx context.Context) *Result {
 
 // Remedy returns nil — PATH management is user-controlled.
 func (c *PathCheck) Remedy() *Remedy { return nil }
+
+// PATHSanityCheck warns if PATH length is excessive or contains polluted Temp entries.
+// It is a dedicated Git Bash robustness check for Windows.
+type PATHSanityCheck struct {
+	getenvFn func(string) string
+}
+
+// NewPATHSanityCheck creates a PATHSanityCheck using the default environment.
+func NewPATHSanityCheck() *PATHSanityCheck {
+	return &PATHSanityCheck{
+		getenvFn: os.Getenv,
+	}
+}
+
+// NewPATHSanityCheckWithCustom creates a PATHSanityCheck with injected functions for testing.
+func NewPATHSanityCheckWithCustom(getenvFn func(string) string) *PATHSanityCheck {
+	return &PATHSanityCheck{
+		getenvFn: getenvFn,
+	}
+}
+
+// ID returns the check identifier.
+func (c *PATHSanityCheck) ID() CheckID { return PathSanityCheckID }
+
+// Run checks PATH length and pollution.
+func (c *PATHSanityCheck) Run(ctx context.Context) *Result {
+	path := c.getenvFn("PATH")
+	if path == "" {
+		return &Result{
+			ID:       PathSanityCheckID,
+			Status:   StatusWarn,
+			Message:  "PATH environment variable is empty",
+			Severity: SeverityWarning,
+		}
+	}
+	if len(path) > 8000 {
+		return &Result{
+			ID:       PathSanityCheckID,
+			Status:   StatusWarn,
+			Message:  fmt.Sprintf("PATH length %d exceeds 8000 characters, may be truncated on Windows (Git Bash)", len(path)),
+			Severity: SeverityWarning,
+			Error:    fmt.Sprintf("PATH length %d > 8000", len(path)),
+		}
+	}
+	if polluted := findPollutedEntries(path); len(polluted) > 0 {
+		return &Result{
+			ID:       PathSanityCheckID,
+			Status:   StatusWarn,
+			Message:  fmt.Sprintf("PATH contains polluted Temp entries: %s", strings.Join(polluted, ", ")),
+			Severity: SeverityWarning,
+			Error:    strings.Join(polluted, ", "),
+		}
+	}
+	return &Result{
+		ID:       PathSanityCheckID,
+		Status:   StatusPass,
+		Message:  "PATH sanity OK",
+		Severity: SeverityInfo,
+	}
+}
+
+// Remedy returns nil — PATH management is user-controlled.
+func (c *PATHSanityCheck) Remedy() *Remedy { return nil }
