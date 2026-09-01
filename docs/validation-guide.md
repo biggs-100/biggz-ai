@@ -182,8 +182,9 @@ echo '{"jsonrpc":"2.0","id":"3","method":"tools/call","params":{"name":"mem_sear
 # Expected: Results with the saved observation
 
 # Test via CLI
-biggz bigmem save "Test" "Testing bigmem" --type decision
-biggz bigmem search "Test"
+biggz bigmem save "Test" "Testing bigmem" --type decision  # --type enum: bugfix|decision|architecture|discovery|pattern|config|preference|session_summary|etc; --scope project|personal (default project); content >50k truncated [truncated] (see bigmem.go truncateIfNeeded); --topic-key hierarchy e.g. architecture/auth-model
+biggz bigmem search "Test" --match-mode any --limit 2  # --match-mode all|any (default all), --all|--all-projects alias (canonical --all)
+# search --match-mode invalid should error: biggz bigmem search "Test" --match-mode invalid  -> error "invalid --match-mode"
 biggz bigmem get <id-from-search>
 
 # Verify SQLite store directly (optional)

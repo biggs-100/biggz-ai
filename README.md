@@ -37,7 +37,7 @@ biggz review start --subject subject.json --lineage demo-001
 | `biggz sdd-new [change]` | Interactive SDD change wizard |
 | `biggz sdd-profile list\|apply\|remove` | Manage SDD model profiles (default/balanced/quality/cheap) |
 | `biggz sdd-remediate <change> [--verify-report <path>]` | Validate remediation result for a verify failure |
-| `biggz bigmem save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K]` | Persistent memory core (save/search/get/delete/update/timeline/context/stats/doctor/export/import/rescue-ownership + graph, compare, conflicts, projects, sync, version, help) |
+| `biggz bigmem save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K]` | Persistent memory core (save/search/get/delete/update/timeline/context/stats/doctor/export/import/rescue-ownership + graph, compare, conflicts, projects, sync, version, help) — save --type enum (bugfix\|decision\|architecture\|discovery\|pattern\|config\|preference\|session_summary\|etc), --scope project\|personal (default project), content >50k truncated [truncated] (see bigmem.go truncateIfNeeded), topic-key hierarchy; search --match-mode all\|any (default all), --all canonical alias --all-projects |
 | `biggz bigmem graph [--project P] [--format dot\|ascii\|json] [--limit N] [--scope project\|all]` | Topic hierarchy and relations |
 | `biggz bigmem compare <id-a> <id-b>` | Compare two observations |
 | `biggz bigmem conflicts list\|show\|judge\|scan\|stats\|deferred` | Pending memory conflicts |

@@ -46,7 +46,10 @@ func bigmemRun() int {
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Commands:")
 		fmt.Fprintln(os.Stderr, "  save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K]")
-		fmt.Fprintln(os.Stderr, "  search [<query>|--query Q] [--type T] [--project P] [--scope S] [--limit N] [--all]")
+		fmt.Fprintln(os.Stderr, "    --type T (bugfix|decision|architecture|discovery|pattern|config|preference|session_summary|etc)")
+		fmt.Fprintln(os.Stderr, "    --scope S (project|personal, default project)")
+		fmt.Fprintln(os.Stderr, "    Content >50k truncated with [truncated] marker (see bigmem.go truncateIfNeeded)")
+		fmt.Fprintln(os.Stderr, "  search [<query>|--query Q] [--type T] [--project P] [--scope S] [--limit N] [--all|--all-projects] [--match-mode all|any]")
 		fmt.Fprintln(os.Stderr, "  get <id>                        Get an observation by ID")
 		fmt.Fprintln(os.Stderr, "  delete <id>                     Delete an observation")
 		fmt.Fprintln(os.Stderr, "  update <id> [flags]             Update an observation")
@@ -82,6 +85,9 @@ func bigmemRun() int {
 	case "save":
 		if len(args) < 3 {
 			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K]")
+			fmt.Fprintln(os.Stderr, "  --type T (bugfix|decision|architecture|discovery|pattern|config|preference|session_summary|etc)")
+			fmt.Fprintln(os.Stderr, "  --scope S (project|personal, default project)")
+			fmt.Fprintln(os.Stderr, "  Content >50k truncated with [truncated] marker (see bigmem.go truncateIfNeeded)")
 			return 1
 		}
 		obs := &bigmem.Observation{Title: args[1], Content: args[2], Type: "manual"}
@@ -133,7 +139,7 @@ func bigmemRun() int {
 
 	case "search":
 		if len(args) < 2 || args[1] == "--help" || args[1] == "-h" {
-			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem search [<query>|--query Q] [--type T] [--project P] [--scope S] [--limit N] [--all]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem search [<query>|--query Q] [--type T] [--project P] [--scope S] [--limit N] [--all|--all-projects] [--match-mode all|any]")
 			return 1
 		}
 		var query string
@@ -196,6 +202,18 @@ func bigmemRun() int {
 				i++
 			case "--all", "--all-projects":
 				opts.AllProjects = true
+			case "--match-mode":
+				if i+1 >= len(argsRest) {
+					fmt.Fprintln(os.Stderr, "error: missing value for --match-mode")
+					return 1
+				}
+				mm := argsRest[i+1]
+				if mm != "all" && mm != "any" {
+					fmt.Fprintf(os.Stderr, "error: invalid --match-mode %q: must be \"all\" or \"any\"\n", mm)
+					return 1
+				}
+				opts.MatchMode = mm
+				i++
 			default:
 				if strings.HasPrefix(argsRest[i], "-") {
 					fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", argsRest[i])

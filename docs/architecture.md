@@ -179,6 +179,8 @@ Transitions are validated by `FSM.Transition(current, target, role, counters)` v
 
 Proactive save triggers: architecture decisions, bug fixes, discoveries, config changes, patterns, user preferences.
 
+**CLI notes (biggz bigmem):** save --type enum (bugfix|decision|architecture|discovery|pattern|config|preference|session_summary|etc), --scope project|personal (default project), content >50k truncated [truncated] (see `internal/bigmem/bigmem.go:truncateIfNeeded` → `maxStoredBytes=50000` + `... [truncated]` marker), topic-key hierarchy (`architecture/auth-model`, `decision/api-design`); search --match-mode all|any (default all, MCP validates, CLI forwards to `SearchOptions.MatchMode`), --all canonical alias --all-projects.
+
 ## SGH Graph Execution
 
 The pipeline implements SGH (Structured Graph Harness) principles:
