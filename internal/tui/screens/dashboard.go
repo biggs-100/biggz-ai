@@ -119,7 +119,30 @@ func (m DashboardModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func dashboardCacheKey(m DashboardModel) string {
+	var b strings.Builder
+	if m.stats != nil {
+		b.WriteString(fmt.Sprintf("%d:%d:%d", m.stats.TotalSessions, m.stats.TotalObservations, m.stats.TotalPrompts))
+	}
+	for _, p := range m.projects {
+		b.WriteString(p.Name)
+		b.WriteString(fmt.Sprintf(":%d:%d", p.Observations, p.Sessions))
+	}
+	b.WriteString(hashContent(m.err, m.cursor))
+	if m.loaded {
+		b.WriteString("1")
+	}
+	b.WriteString(LatexToUnicode(RepairOrphanClosingFence(m.err)))
+	b.WriteString(fmt.Sprintf(":%d", m.cursor))
+	return hashContent(b.String(), m.cursor)
+}
+
 func (m DashboardModel) View() string {
+	// LRU cache for dashboard markdown rendering (cap 200, shared with help cache)
+	cacheKey := "dashboard:" + dashboardCacheKey(m)
+	if cached, ok := markdownCacheGet(cacheKey); ok {
+		return cached
+	}
 	var b strings.Builder
 
 	b.WriteString(styles.Title.Render("biggz-ai"))
@@ -173,5 +196,7 @@ func (m DashboardModel) View() string {
 
 	b.WriteString("\n")
 	b.WriteString(styles.Help.Render("↑↓ navigate · enter select · q quit · ? help"))
-	return styles.AppStyle.Render(b.String())
+	rendered := styles.AppStyle.Render(b.String())
+	markdownCacheSet(cacheKey, rendered)
+	return rendered
 }

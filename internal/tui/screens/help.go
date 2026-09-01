@@ -245,7 +245,7 @@ func NewHelpModel() HelpModel {
 	ti.CharLimit = 64
 	ti.Width = 30
 	vp := viewport.New(60, 10)
-	vp.SetContent(buildHelpContent(filterHelp(""), 80))
+	vp.SetContent(buildHelpContentCached(filterHelp(""), 80))
 	return HelpModel{
 		input:    ti,
 		viewport: vp,
@@ -312,7 +312,9 @@ func buildHelpContent(items []HelpContent, width int) string {
 		b.WriteString(styles.Section.Render(title))
 		b.WriteString("\n")
 		if h.Paragraph != "" {
-			para := TruncateToWidth(h.Paragraph, width)
+			// Stable markdown preview: repair orphan fences and normalize latex before wrapping.
+			para := LatexToUnicode(RepairOrphanClosingFence(h.Paragraph))
+			para = TruncateToWidth(para, width)
 			lines := WrapTextWithAnsi(para, width)
 			for _, l := range lines {
 				b.WriteString(l)
@@ -329,6 +331,11 @@ func buildHelpContent(items []HelpContent, width int) string {
 	return b.String()
 }
 
+// buildHelpContentCached is the LRU-cached path (key: content hash + width, cap 200).
+func buildHelpContentCached(items []HelpContent, width int) string {
+	return CachedBuildHelpContent(items, width)
+}
+
 // Update handles input.
 func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -338,7 +345,7 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.Width = max(0, msg.Width-4)
 		m.viewport.Height = max(0, msg.Height-8)
 		m.input.Width = max(10, msg.Width-20)
-		m.viewport.SetContent(buildHelpContent(m.filtered, max(20, m.viewport.Width)))
+		m.viewport.SetContent(buildHelpContentCached(m.filtered, max(20, m.viewport.Width)))
 		return m, nil
 	case tea.KeyMsg:
 		if m.focused {
@@ -350,7 +357,7 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.input.Blur()
 					m.focused = false
 					m.filtered = filterHelp("")
-					m.viewport.SetContent(buildHelpContent(m.filtered, max(20, m.viewport.Width)))
+					m.viewport.SetContent(buildHelpContentCached(m.filtered, max(20, m.viewport.Width)))
 					return m, nil
 				}
 				m.input.Blur()
@@ -367,7 +374,7 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if newFilter != m.filter {
 				m.filter = newFilter
 				m.filtered = filterHelp(m.filter)
-				m.viewport.SetContent(buildHelpContent(m.filtered, max(20, m.viewport.Width)))
+				m.viewport.SetContent(buildHelpContentCached(m.filtered, max(20, m.viewport.Width)))
 				m.viewport.GotoTop()
 			}
 			return m, cmd
@@ -382,7 +389,7 @@ func (m HelpModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.filter = ""
 				m.input.SetValue("")
 				m.filtered = filterHelp("")
-				m.viewport.SetContent(buildHelpContent(m.filtered, max(20, m.viewport.Width)))
+				m.viewport.SetContent(buildHelpContentCached(m.filtered, max(20, m.viewport.Width)))
 				m.viewport.GotoTop()
 				return m, nil
 			}
@@ -408,7 +415,7 @@ func (m HelpModel) View() string {
 	if contentWidth == 20 && m.width > 4 {
 		contentWidth = max(20, m.width-4)
 	}
-	m.viewport.SetContent(buildHelpContent(m.filtered, contentWidth))
+	m.viewport.SetContent(buildHelpContentCached(m.filtered, contentWidth))
 	var b strings.Builder
 	b.WriteString(styles.Title.Render("Help"))
 	b.WriteString("\n\n")
@@ -432,6 +439,8 @@ func (m HelpModel) View() string {
 // HelpOverlay renders the help as a styled string.
 func HelpOverlay(screenID int) string {
 	h := GetHelp(screenID)
+	// Repair orphan fences and normalize latex for overlay stability.
+	h.Paragraph = LatexToUnicode(RepairOrphanClosingFence(h.Paragraph))
 	var b []byte
 	b = append(b, styles.Title.Render("Help: "+h.Title)...)
 	b = append(b, '\n', '\n')
