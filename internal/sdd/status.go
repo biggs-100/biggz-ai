@@ -219,74 +219,88 @@ func StatusWithOptions(openspecRoot string, opts StatusOptions) (active []Change
 	changesDir := filepath.Join(openspecRoot, "changes")
 	archiveDir := filepath.Join(changesDir, "archive")
 
+	active, err = collectActiveChanges(changesDir, workspaceRoot, opts.IncludeInstructions)
+	if err != nil {
+		return nil, nil, err
+	}
+	archived, err = collectArchivedChanges(archiveDir, workspaceRoot, opts.IncludeInstructions)
+	if err != nil {
+		return active, nil, err
+	}
+	return applyStoreRouting(active, archived, workspaceRoot, opts.IncludeInstructions)
+}
+
+func collectActiveChanges(changesDir, workspaceRoot string, includeInstructions bool) ([]ChangeStatus, error) {
 	entries, err := os.ReadDir(changesDir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read changes dir: %w", err)
+		return nil, fmt.Errorf("read changes dir: %w", err)
 	}
-
+	var active []ChangeStatus
 	for _, entry := range entries {
 		if !entry.IsDir() || entry.Name() == "archive" {
 			continue
 		}
-		cs, err := readChange(filepath.Join(changesDir, entry.Name()), entry.Name(), false, workspaceRoot, opts.IncludeInstructions)
+		cs, err := readChange(filepath.Join(changesDir, entry.Name()), entry.Name(), false, workspaceRoot, includeInstructions)
 		if err != nil {
 			continue
 		}
 		active = append(active, cs)
 	}
+	return active, nil
+}
 
-	// Archived
-	archiveEntries, err := os.ReadDir(archiveDir)
+func collectArchivedChanges(archiveDir, workspaceRoot string, includeInstructions bool) ([]ChangeStatus, error) {
+	entries, err := os.ReadDir(archiveDir)
 	if err != nil {
-		if !os.IsNotExist(err) {
-			return active, nil, fmt.Errorf("read archive dir: %w", err)
+		if os.IsNotExist(err) {
+			return nil, nil
 		}
-	} else {
-		// Show last 3 archived
-		for i := len(archiveEntries) - 1; i >= 0 && len(archived) < 3; i-- {
-			entry := archiveEntries[i]
-			if !entry.IsDir() {
-				continue
-			}
-			cs, err := readChange(filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot, opts.IncludeInstructions)
-			if err != nil {
-				continue
-			}
-			archived = append(archived, cs)
-		}
+		return nil, fmt.Errorf("read archive dir: %w", err)
 	}
+	var archived []ChangeStatus
+	for i := len(entries) - 1; i >= 0 && len(archived) < 3; i-- {
+		entry := entries[i]
+		if !entry.IsDir() {
+			continue
+		}
+		cs, err := readChange(filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot, includeInstructions)
+		if err != nil {
+			continue
+		}
+		archived = append(archived, cs)
+	}
+	return archived, nil
+}
 
+func applyStoreRouting(active, archived []ChangeStatus, workspaceRoot string, includeInstructions bool) ([]ChangeStatus, []ChangeStatus, error) {
 	store := declaredArtifactStore(workspaceRoot)
 	if store == "" {
-		for i := range active {
-			active[i].ArtifactPaths = ArtifactPaths{}
-			active[i].ContextFiles = ArtifactPaths{}
-			active[i].ArtifactStore = ArtifactStore("")
-		}
-		for i := range archived {
-			archived[i].ArtifactPaths = ArtifactPaths{}
-			archived[i].ContextFiles = ArtifactPaths{}
-			archived[i].ArtifactStore = ArtifactStore("")
-		}
+		clearArtifactStoreFields(active, archived)
 		return active, archived, nil
 	}
 	if IsEngramStore(store) {
-		if memActive, memArchived, err := collectBigMemChangesWithArchive(workspaceRoot, opts.IncludeInstructions); err == nil {
+		if memActive, memArchived, err := collectBigMemChangesWithArchive(workspaceRoot, includeInstructions); err == nil {
 			return memActive, memArchived, nil
 		}
 		return nil, nil, nil
 	}
-	// Hybrid BigMem merge: the dispatcher is now authoritative for both
-	// openspec and BigMem (filesystem wins on conflict). This ports
-	// gentle-ai's resolveEngramStatus hybrid without breaking
-	// filesystem-only users: when the BigMem DB is absent or has no sdd/
-	// observations, collection returns nil and the filesystem result is
-	// returned unchanged. For declared store openspec or hybrid, filesystem-wins.
-	if memActive, memArchived, err := collectBigMemChangesWithArchive(workspaceRoot, opts.IncludeInstructions); err == nil && len(memActive)+len(memArchived) > 0 {
+	if memActive, memArchived, err := collectBigMemChangesWithArchive(workspaceRoot, includeInstructions); err == nil && len(memActive)+len(memArchived) > 0 {
 		active, archived = mergeFilesystemAndBigMem(active, archived, memActive, memArchived)
 	}
-
 	return active, archived, nil
+}
+
+func clearArtifactStoreFields(active, archived []ChangeStatus) {
+	for i := range active {
+		active[i].ArtifactPaths = ArtifactPaths{}
+		active[i].ContextFiles = ArtifactPaths{}
+		active[i].ArtifactStore = ArtifactStore("")
+	}
+	for i := range archived {
+		archived[i].ArtifactPaths = ArtifactPaths{}
+		archived[i].ContextFiles = ArtifactPaths{}
+		archived[i].ArtifactStore = ArtifactStore("")
+	}
 }
 
 func probeArtifacts(dir, workspaceRoot, name string, cs *ChangeStatus) {
@@ -854,47 +868,12 @@ func artifactDependency(state ArtifactState) DependencyState {
 // routing falls through to the remaining rules (archive / planning /
 // resolve-blockers).
 func resolveNextRecommended(dependencies Dependencies, applyState ApplyState, verifyReportDone bool, remediation RemediationState) string {
-	if dependencies.Apply == DependencyReady {
-		return "apply"
+	if next := nextForImmediateReady(dependencies, applyState, verifyReportDone, remediation); next != "" {
+		return next
 	}
-	if dependencies.Verify == DependencyReady {
-		return "verify"
+	if next := nextForPlanning(dependencies); next != "" {
+		return next
 	}
-	if applyState == ApplyAllDone && verifyReportDone && dependencies.Verify != DependencyAllDone {
-		if remediation.Required {
-			return "remediate"
-		}
-		// biggz divergence: no review authority — skip resolve-review and
-		// fall through to the archive/planning/blocker rules below.
-	}
-	if dependencies.Sync == DependencyReady {
-		return "sync"
-	}
-	if dependencies.Verify == DependencyAllDone && applyState == ApplyAllDone {
-		if dependencies.Sync == DependencyAllDone || dependencies.Sync == "" {
-			return "archive"
-		}
-		if dependencies.Sync == DependencyBlocked {
-			// verify done but sync blocked (e.g. no verify PASS) - fall through to resolve-blockers via blockedReasons
-		}
-	}
-
-	// Route toward the next missing planning artifact in dependency order.
-	// Missing planning artifacts are the expected output of planning phases,
-	// not genuine blockers. Reserve resolve-blockers for genuine anomalies.
-	if dependencies.Proposal != DependencyAllDone {
-		return "propose"
-	}
-	if dependencies.Specs != DependencyAllDone {
-		return "spec"
-	}
-	if dependencies.Design != DependencyAllDone {
-		return "design"
-	}
-	if dependencies.Tasks != DependencyAllDone {
-		return "tasks"
-	}
-
 	return "resolve-blockers"
 }
 
@@ -1422,52 +1401,9 @@ func sddLooksLikeSurfaceEntry(line string) bool {
 	return !sddWhitespaceRe.MatchString(sddReadSurfaceEntry(line))
 }
 func sddReadAllowedEntries(following string) []string {
-	linesRaw := strings.Split(following, "\n")
-	lines := make([]string, len(linesRaw))
-	for i, l := range linesRaw {
-		l = strings.TrimSuffix(l, "\r")
-		lines[i] = strings.TrimSpace(l)
-	}
-	hi := -1
-	for i, l := range lines {
-		if sddHeadingRe.MatchString(l) {
-			hi = i
-			break
-		}
-	}
-	section := lines
-	if hi != -1 {
-		section = lines[:hi]
-	}
-	var entries []string
-	for idx, line := range section {
-		if len(line) == 0 {
-			continue
-		}
-		e := sddReadSurfaceEntry(line)
-		if sddWhitespaceRe.MatchString(e) {
-			hasLater := false
-			for _, c := range section[idx+1:] {
-				if sddLooksLikeSurfaceEntry(c) {
-					hasLater = true
-					break
-				}
-			}
-			if hasLater {
-				var all []string
-				for _, c := range section {
-					if len(c) == 0 {
-						continue
-					}
-					all = append(all, sddReadSurfaceEntry(c))
-				}
-				return all
-			}
-			break
-		}
-		entries = append(entries, e)
-	}
-	return entries
+	lines := normalizeSurfaceLines(following)
+	section := sectionUntilNextHeading(lines)
+	return extractAllowedEntries(section)
 }
 func sddHasTaskScopedAllowedEditSurfaces(values ...string) bool {
 	var exp []string
