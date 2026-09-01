@@ -207,7 +207,11 @@ Kill switch with three persistence scopes (see `internal/review/rdd.go`, `rdd_he
 - **Worktree**: `<gitDir>/biggz/rdd-mode` (private `gen-*.json` CAS, flock + O_EXCL, only when `worktreeDir != commonDir`; no mirror)
 - **Mirror** (read-only fallback): `<gitCommon>/gentle-ai/rdd-mode` (pre-relocation mirror, probed for `ReachMachine` vs `ReachThisBuild`)
 
-**Precedence**: `worktree > clone > global`, any-off-wins. Default `enabled` when no file exists (`decideRDDEffective` returns `enabled` / `SourceDefault`). Any scope `off` disables all gates (`RDDOperationStart`/`Mutate` blocked, `Gate` reports `DeliveryDisabledUnmanaged`). Re-enabling (`biggz rdd enable`) clears clone + worktree generations and writes `enabled` globally; applies to future candidates only. Status is read-only (`biggz rdd status --json` reports `effective_mode`, `source`, `revision`, `reach`, `worktree_count`).
+**Precedence**: `worktree > clone > global`, any-off-wins. Default `enabled` when no file exists (`decideRDDEffective` returns `enabled` / `SourceDefault`). Any scope `off` disables all gates (`RDDOperationStart`/`Mutate` blocked, `Gate` reports `DeliveryDisabledUnmanaged`). Re-enabling (`biggz rdd enable`) clears clone + worktree generations and writes `enabled` globally (atomic `tmp+rename` + `fsync` + `flock` via `~/.biggz/.rdd-mode.lock` for `~/.biggz/rdd-mode.json`); applies to future candidates only. Status is read-only (`biggz rdd status --json` reports `effective_mode`, `source`, `revision`, `reach`, `worktree_count`). Corrupt global mode (`~/.biggz/rdd-mode.json` invalid JSON/unknown mode) surfaces as `RDDModeUnreadableError`/`ErrRDDModeCorrupt` (not disabled); repair with `biggz rdd enable --scope=global` (doctor `review` check reports `WARNING` with that remedy; clone/worktree corrupt uses `biggz rdd disable --scope=clone/worktree`).
+
+**Hooks**: No git hooks required; RDD gates via `biggz review gate` (`pre-pr`/`pre-push`/`post-apply`/`release`) and `sdd-apply` guard, not via `.git/hooks`. GGA discarded — RDD kill switch + native gates cover hooks; no git hooks needed (see `docs/comparison-with-gentle.md`).
+
+**Burn vs RDD**: `BurnEnabled` (`burned.json`, `DeliveryBurned` per-lineage) is orthogonal to the RDD kill-switch (global/clone/worktree mode). One is per-lineage burn (ephemeral receipt after `finalize`); the other is the global/clone/worktree enable/disable mode. `triviallyInert` symbol is absent in biggz-ai.
 
 ### Synthesis Gate (3-layer defense) + Session Recall
 

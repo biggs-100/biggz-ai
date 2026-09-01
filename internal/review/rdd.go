@@ -678,7 +678,49 @@ func writeFile(path string, m RDDMode, recordedAt string) error {
 		Mode:       m,
 		RecordedAt: recordedAt,
 	}, "", "  ")
-	return os.WriteFile(path, data, 0644)
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	// Best-effort flock for the global file to serialize concurrent enable/disable.
+	// Atomic tmp+rename alone prevents half-written JSON; flock adds serialization.
+	fl := NewNamedFileLock(dir, ".rdd-mode.lock")
+	locked := false
+	if err := fl.AcquireWithTimeout(2 * time.Second); err == nil {
+		locked = true
+		defer fl.Release()
+	} else if !IsBusy(err) {
+		// Non-busy lock error: surface it; caller can retry.
+		// Still fall through to atomic write if error is unexpected busy after timeout?
+		// For non-busy errors (e.g. permission) return immediately.
+		if err != nil {
+			return err
+		}
+	}
+	_ = locked
+	tmp, err := os.CreateTemp(dir, ".rdd-mode-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	// Clean up temp file on failure; on success Rename removes it.
+	defer func() {
+		tmp.Close()
+		os.Remove(tmpName)
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return SyncReviewDirectory(dir)
 }
 
 

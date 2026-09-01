@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -68,8 +69,63 @@ var execCommand = func(name string, args ...string) ([]byte, error) {
 // ID returns the check identifier.
 func (c *ReviewCheck) ID() CheckID { return ReviewCheckID }
 
+// checkRDDCorruption probes RDDStatus for unreadable mode files.
+// It returns a low-severity warning (not CRITICAL) when the global or
+// clone/worktree mode file is corrupt, with a repair hint. Nil means no
+// corruption detected.
+func (c *ReviewCheck) checkRDDCorruption(gitDir string) *Result {
+	var worktreeDir, commonDir string
+	if gitDir != "" {
+		worktreeDir = gitDir
+		commonDir = gitDir
+		if c.execFn != nil {
+			if out, err := c.execFn("git", "rev-parse", "--git-common-dir"); err == nil {
+				cd := strings.TrimSpace(string(out))
+				if cd != "" {
+					if !filepath.IsAbs(cd) {
+						if cwd, cwderr := c.getwdFn(); cwderr == nil {
+							cd = filepath.Join(cwd, cd)
+						}
+					}
+					commonDir = filepath.Clean(cd)
+				}
+			}
+			if out, err := c.execFn("git", "rev-parse", "--git-dir"); err == nil {
+				wd := strings.TrimSpace(string(out))
+				if wd != "" {
+					if !filepath.IsAbs(wd) {
+						if cwd, cwderr := c.getwdFn(); cwderr == nil {
+							wd = filepath.Join(cwd, wd)
+						}
+					}
+					worktreeDir = filepath.Clean(wd)
+				}
+			}
+		}
+	}
+	_, err := review.RDDStatus(worktreeDir, commonDir)
+	if err != nil && errors.Is(err, review.ErrRDDModeCorrupt) {
+		remedy := "biggz rdd enable --scope=global"
+		if strings.Contains(err.Error(), "clone") || strings.Contains(err.Error(), "worktree") {
+			remedy = "biggz rdd disable --scope=clone/worktree or biggz rdd enable --scope=global"
+		}
+		return &Result{
+			ID:       ReviewCheckID,
+			Status:   StatusWarn,
+			Message:  fmt.Sprintf("RDD mode file is corrupt — run %s to repair", remedy),
+			Severity: SeverityWarning,
+			Error:    err.Error(),
+		}
+	}
+	return nil
+}
+
 // Run enumerates all review lineages and validates each one.
 func (c *ReviewCheck) Run(ctx context.Context) *Result {
+	// Low-severity RDD corruption probe (global) before git-dependent checks.
+	if r := c.checkRDDCorruption(""); r != nil {
+		return r
+	}
 	gitDir, err := c.resolveGitDir()
 	if err != nil {
 		// If we can't find a git directory, the review store doesn't exist — WARNING.
@@ -84,10 +140,18 @@ func (c *ReviewCheck) Run(ctx context.Context) *Result {
 
 	storeRoot := filepath.Join(gitDir, "biggz", "review-transactions")
 
+	// Probe clone/worktree RDD corruption (low severity) to surface alongside
+	// lineage results; captured here so PASS cases can return the warning.
+	rddCloneWarn := c.checkRDDCorruption(gitDir)
+
 	// Check if the review-transactions directory exists.
 	_, err = c.statFn(storeRoot)
 	if err != nil {
 		if os.IsNotExist(err) {
+			// No review store yet — check RDD warning before claiming empty.
+			if rddCloneWarn != nil {
+				return rddCloneWarn
+			}
 			// No review store yet — not necessarily a problem, but worth noting.
 			return &Result{
 				ID:       ReviewCheckID,
@@ -126,6 +190,9 @@ func (c *ReviewCheck) Run(ctx context.Context) *Result {
 	}
 
 	if len(lineageIDs) == 0 {
+		if rddCloneWarn != nil {
+			return rddCloneWarn
+		}
 		return &Result{
 			ID:       ReviewCheckID,
 			Status:   StatusPass,
@@ -152,6 +219,10 @@ func (c *ReviewCheck) Run(ctx context.Context) *Result {
 			Severity: SeverityCritical,
 			Error:    fmt.Sprintf("lineages with violations: %v", failures),
 		}
+	}
+
+	if rddCloneWarn != nil {
+		return rddCloneWarn
 	}
 
 	return &Result{

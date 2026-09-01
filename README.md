@@ -148,7 +148,11 @@ biggz rdd enable     # re-enable reviews
 
 > `biggz rdd disable` without `--scope` defaults to `--scope=worktree` (narrowest, not global). Use `--scope=global` to disable globally, `--scope=clone` for shared clone, `--scope=worktree` for worktree private. See `biggz rdd status --json` for effective mode (`effective_mode`, `source`, `revision`, `reach`).
 
-Any "off" wins: `worktree > clone > global`; any scope `off` disables all gates.
+Any "off" wins: `worktree > clone > global`; any scope `off` disables all gates. Global writes to `~/.biggz/rdd-mode.json` are atomic (`tmp+rename` + `fsync` + `flock` via `~/.biggz/.rdd-mode.lock`); corrupt files surface as `RDDModeUnreadableError`/`ErrRDDModeCorrupt` (not disabled, noisy) — repair with `biggz rdd enable --scope=global` (or `biggz rdd disable --scope=clone/worktree` for clone/worktree overrides); doctor `review` check reports `WARNING` with that remedy.
+
+No git hooks required; RDD gates via `biggz review gate` (`pre-pr`/`pre-push`/`post-apply`/`release`) and `sdd-apply` guard, not via `.git/hooks`. GGA discarded — RDD kill switch + native gates cover hooks; no git hooks needed (see `docs/comparison-with-gentle.md`).
+
+`BurnEnabled` (`burned.json`, per-lineage `DeliveryBurned`) is orthogonal to the RDD kill-switch (global/clone/worktree mode); `triviallyInert` is not present in biggz-ai.
 
 ## Agent Adapters
 
