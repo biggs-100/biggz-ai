@@ -743,143 +743,41 @@ func rddPublishImmutable(path string, payload []byte) error {
 // but kept for API parity with gentle's SetCloneLocalRDDMode.
 func SetCloneLocalRDDMode(worktreeGitDir, commonGitDir string, mode RDDMode, expectedRevision string) (*RDDModeStatus, error) {
 	_ = worktreeGitDir
-	if commonGitDir == "" {
-		return nil, fmt.Errorf("not in a git repository — cannot use --scope=clone")
+	genDir, mirrorDir, err := validateCloneLocalPreconditions(commonGitDir, mode)
+	if err != nil {
+		return nil, err
 	}
-	if mode == RDDModeEnabled {
-		return nil, ErrRDDModeRepositoryForcedOn
-	}
-	if !plausibleGitDir(commonGitDir) {
-		return nil, fmt.Errorf(
-			"%s is not a git directory (missing HEAD or objects/refs): refusing to write review mode state there; run from inside a repository or use 'biggz rdd disable --scope=global'",
-			commonGitDir)
-	}
-	genDir := filepath.Join(commonGitDir, rddGenerationsDir)
 	if err := os.MkdirAll(genDir, 0755); err != nil {
 		return nil, err
 	}
-	// Mirror is the pre-relocation legacy location: <commonDir>/gentle-ai/rdd-mode
-	// (documented as the previous location before biggz relocation).
-	mirrorDir := filepath.Join(commonGitDir, "gentle-ai", "rdd-mode")
-
 	fl := NewNamedFileLock(genDir, "LOCK")
 	if err := fl.AcquireWithTimeout(5 * time.Second); err != nil {
 		return nil, fmt.Errorf("file lock acquire: %w", err)
 	}
 	defer fl.Release()
 
-	headGen, _, scanErr := scanGenerationHead(genDir)
-	if scanErr != nil {
-		return nil, scanErr
-	}
-	head, headErr := readLatestGeneration(genDir)
-	isCorrupt := headErr != nil && errors.Is(headErr, ErrRDDModeCorrupt)
-	if headErr != nil && !isCorrupt {
-		return nil, headErr
-	}
-
-	// CAS validation (authoritative, under LOCK) — only when caller supplies token.
-	if isCorrupt {
-		if expectedRevision != "" {
-			return nil, fmt.Errorf("%w: expected %q but head is %q", ErrRDDModeRevisionMismatch, expectedRevision, "")
-		}
-	} else if head == nil {
-		if expectedRevision != "" {
-			return nil, fmt.Errorf("%w: expected %q but head is %q", ErrRDDModeRevisionMismatch, expectedRevision, "")
-		}
-	} else {
-		if expectedRevision != "" && expectedRevision != head.Revision {
-			return nil, fmt.Errorf("%w: expected %q but head is %q", ErrRDDModeRevisionMismatch, expectedRevision, head.Revision)
-		}
-	}
-
-	var genNum int64
-	var prevRev string
-	switch {
-	case isCorrupt:
-		if headGen >= 0 {
-			genNum = headGen
-		} else {
-			genNum = 0
-		}
-		prevRev = ""
-	case head != nil:
-		genNum = head.Generation + 1
-		prevRev = head.Revision
-	default:
-		genNum = 0
-		prevRev = ""
-	}
-	if genNum > maxGeneration {
-		return nil, fmt.Errorf("rdd generation exhausted: %d exceeds max %d", genNum, maxGeneration)
-	}
-	if genNum < 0 {
-		genNum = 0
-	}
-
-	gen := rddGeneration{
-		Schema:           rddStatusSchema,
-		Generation:       genNum,
-		PreviousRevision: prevRev,
-		Mode:             mode,
-		RecordedAt:       time.Now().UTC().Format(time.RFC3339Nano),
-	}
-	gen.Revision = computeGenerationRevision(gen)
-	data, err := json.MarshalIndent(gen, "", "  ")
+	headGen, head, isCorrupt, err := readRDDHead(genDir)
 	if err != nil {
 		return nil, err
 	}
-	filename := fmt.Sprintf("gen-%010d.json", genNum)
-	relocatedPath := filepath.Join(genDir, filename)
-	if isCorrupt {
-		if err := os.WriteFile(relocatedPath, data, 0644); err != nil {
-			return nil, err
-		}
-		_ = SyncReviewDirectory(filepath.Dir(relocatedPath))
-	} else {
-		if err := rddPublishImmutable(relocatedPath, data); err != nil {
-			return nil, err
-		}
+	if err := validateRDDCAS(head, isCorrupt, expectedRevision); err != nil {
+		return nil, err
 	}
-
-	// Mirror publish: relocated first, mirror second (#2882 ordering).
-	// Probe mirror reachability best-effort: try to ensure mirror dir exists.
-	reach := ReachThisBuild
-	mirrorReachable := false
-	if info, statErr := os.Stat(mirrorDir); statErr == nil && info.IsDir() {
-		mirrorReachable = true
-	} else {
-		if mkErr := os.MkdirAll(mirrorDir, 0755); mkErr == nil {
-			if info2, err2 := os.Stat(mirrorDir); err2 == nil && info2.IsDir() {
-				mirrorReachable = true
-			}
-		}
+	genNum, prevRev, err := computeNextRDDGeneration(headGen, head, isCorrupt)
+	if err != nil {
+		return nil, err
 	}
-
-	if mirrorReachable {
-		mirrorPath := filepath.Join(mirrorDir, filename)
-		if err := rddPublishImmutable(mirrorPath, data); err != nil {
-			// Mirror reachable but publish failed → partial apply.
-			return &RDDModeStatus{
-				Reach:      ReachThisBuild,
-				Revision:   gen.Revision,
-				Generation: genNum,
-				RecordedAt: gen.RecordedAt,
-			}, &RDDModePartialApplyError{
-				RelocatedPath: relocatedPath,
-				MirrorPath:    mirrorPath,
-				Cause:         err,
-			}
-		}
-		reach = ReachMachine
+	gen, data, filename, err := buildRDDGeneration(genNum, prevRev, mode)
+	if err != nil {
+		return nil, err
 	}
-
-	return &RDDModeStatus{
-		Reach:      reach,
-		Revision:   gen.Revision,
-		Generation: genNum,
-		RecordedAt: gen.RecordedAt,
-	}, nil
+	relocatedPath, err := publishRelocatedGeneration(genDir, filename, data, isCorrupt)
+	if err != nil {
+		return nil, err
+	}
+	// Relocated first, mirror second (#2882 ordering).
+	mirrorReachable := probeMirrorReachable(mirrorDir)
+	return publishCloneMirror(mirrorDir, filename, data, relocatedPath, gen, genNum, mirrorReachable)
 }
 
 // SetWorktreeRDDMode writes a worktree-private override with CAS and LOCK.
