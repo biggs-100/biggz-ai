@@ -5,7 +5,7 @@ that biggz-ai is fully functional. Run these tests in order.
 
 ## Prerequisites
 
-- Go 1.22+ installed
+- Go 1.25+ installed (`go version` — module requires `go 1.25` per `go.mod`)
 - biggz-ai cloned at C:\Users\USER\Desktop\biggz-ai
 - biggz binary built (`go build -o biggz.exe .\cmd\biggz\`)
 - biggz-mcp binary built (`go build -o biggz-mcp.exe .\cmd\biggz-mcp\`)
@@ -50,7 +50,7 @@ biggz install --agent opencode --home C:\temp\biggz-test
 
 # Verify skills were written
 dir C:\temp\biggz-test\.config\opencode\skills\
-# Should show 35 skill directories
+# Should show ~35 skill directories (count varies — run `dir` and verify >30)
 
 # Verify config was merged
 type C:\temp\biggz-test\.config\opencode\opencode.jsonc
@@ -82,10 +82,10 @@ git add -A
 # Content-addressed review flow (no stdin pipe)
 biggz review start --subject subject.json --lineage test-lineage-001
 # Expected: genesis appended under .git/biggz/review-transactions/test-lineage-001/v1/events/<sha256>, HEAD set
-biggz review capture-result --lineage test-lineage-001 --lens risk --order 0 --expected-revision <genesis-sha> --input reviewer-risk.json
-biggz review capture-result --lineage test-lineage-001 --lens readability --order 1 --expected-revision <prev-sha> --input reviewer-readability.json
-biggz review capture-result --lineage test-lineage-001 --lens reliability --order 2 --expected-revision <prev-sha> --input reviewer-reliability.json
-biggz review capture-result --lineage test-lineage-001 --lens resilience --order 3 --expected-revision <prev-sha> --input reviewer-resilience.json
+biggz review capture-result --lineage test-lineage-001 --target <subject-id> --lens risk --order 0 --expected-revision <genesis-sha> --input reviewer-risk.json
+biggz review capture-result --lineage test-lineage-001 --target <subject-id> --lens readability --order 1 --expected-revision <prev-sha> --input reviewer-readability.json
+biggz review capture-result --lineage test-lineage-001 --target <subject-id> --lens reliability --order 2 --expected-revision <prev-sha> --input reviewer-reliability.json
+biggz review capture-result --lineage test-lineage-001 --target <subject-id> --lens resilience --order 3 --expected-revision <prev-sha> --input reviewer-resilience.json
 biggz review finalize test-lineage-001
 # Expected: receipts/<sha256>.json via publishImmutable (or burned.json when BurnEnabled), complete_review appended
 biggz review gate pre-pr test-lineage-001 --json
@@ -100,8 +100,8 @@ biggz review gate pre-pr test-lineage-001 --json
 The review captures each lens slot independently (replaces legacy stdin | biggz DAG). Verify every slot binds the frozen manifest:
 
 ```bash
-biggz review capture-result --lineage test-lineage-001 --lens risk --order 0 --expected-revision <genesis-sha> --input reviewer-risk.json
-biggz review capture-result --lineage test-lineage-001 --lens reliability --order 2 --expected-revision <prev> --input reviewer-reliability.json
+biggz review capture-result --lineage test-lineage-001 --target <subject-id> --lens risk --order 0 --expected-revision <genesis-sha> --input reviewer-risk.json
+biggz review capture-result --lineage test-lineage-001 --target <subject-id> --lens reliability --order 2 --expected-revision <prev> --input reviewer-reliability.json
 # Each capture validates subjectHash echo + full-manifest inspection + canonical findings
 biggz review finalize test-lineage-001 --json > finalize.json
 type finalize.json | findstr "receipt_hash"
@@ -157,7 +157,7 @@ echo '{"jsonrpc":"2.0","id":"3","method":"tools/call","params":{"name":"mem_sear
 # Expected: Results with the saved observation
 
 # Test via CLI
-biggz bigmem save "Test" "decision" "Testing bigmem"
+biggz bigmem save "Test" "Testing bigmem" --type decision
 biggz bigmem search "Test"
 biggz bigmem get <id-from-search>
 
@@ -286,7 +286,7 @@ if ($LASTEXITCODE -eq 0) { echo "BUILD OK" } else { echo "BUILD FAILED" }
 
 # Mark tasks as done — acquire/settle (acquire/settle replace begin/finish)
 # acquire mints a token that settle must present to close that exact attempt
-$acquireOut = biggz sdd-attempt acquire --cwd . --change first-feature --request-id req-001 --work-unit impl --evidence-goal "impl http server" --max-attempts 1 --max-changed-lines 400 | ConvertFrom-Json
+$acquireOut = biggz sdd-attempt acquire --cwd . --change first-feature --request-id req-001 --work-unit impl --evidence-goal "impl http server" --max-attempts 1 --max-lines 400 | ConvertFrom-Json
 $token = $acquireOut.token
 # Write apply-progress
 @"
@@ -307,8 +307,8 @@ git commit -m "feat: add HTTP server with health endpoint"
 # Run the full content-addressed review on this commit (replaces echo ... | biggz)
 mkdir subject -Force | Out-Null; '{"repository":"C:/temp/biggz-full-test","commit_sha":"HEAD"}' | Out-File -FilePath subject.json -Encoding utf8
 biggz review start --subject subject.json --lineage fulltest-001
-biggz review capture-result --lineage fulltest-001 --lens risk --order 0 --expected-revision <genesis-sha> --input reviewer-risk.json
-biggz review capture-result --lineage fulltest-001 --lens reliability --order 1 --expected-revision <prev> --input reviewer-reliability.json
+biggz review capture-result --lineage fulltest-001 --target <subject-id> --lens risk --order 0 --expected-revision <genesis-sha> --input reviewer-risk.json
+biggz review capture-result --lineage fulltest-001 --target <subject-id> --lens reliability --order 1 --expected-revision <prev> --input reviewer-reliability.json
 biggz review finalize fulltest-001
 biggz review gate pre-pr fulltest-001 --json
 # Expected: JSON gate output with chainValid:true, receipt binding via domainHash+FixDelta, DeliveryBurned handling
@@ -366,7 +366,7 @@ biggz skill-registry refresh
 
 # Verify the registry
 type .atl\skill-registry.md
-# Expected: lists skills with relative paths, not C:\Users\...
+# Expected: lists skills with relative paths, not C:\Users\... (registry auto-generated by `biggz skill-registry refresh`)
 ```
 
 ## Test 11: Release
@@ -460,7 +460,7 @@ Before marking any SDD/review change green, run the three synthesis/review gate 
 
 ```bash
 go vet ./...
-go test ./...
+go test ./... -count=1 -timeout 180s
 node --test internal/assets/pi/biggz-synthesis-gate.test.mjs
 ```
 
