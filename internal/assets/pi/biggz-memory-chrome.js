@@ -3,6 +3,7 @@
  *
  * Port of engram's plugin/pi/memory-tool-chrome.js (164 LOC) with
  * adaptations for biggz-ai's 22-tool BigMem surface and biggz_mem_* prefix.
+ * Rank4/5 port: uses capPreviewLines + framedBlock (state→borderColor) + renderStatusLine.
  *
  * Pi's MCP renderer collapses tool calls to a single line (Ctrl+O expands).
  * Without chrome the collapsed line shows only "biggz_mem_save" + hidden JSON.
@@ -13,6 +14,52 @@
  * Pure UI — no DB semantics. Handles both textResult and jsonResult via
  * firstTextContent + resultData duality.
  */
+
+// ── Rank5: unified truncation + preview budgets (mirrors render-utils.ts) ──
+export const TRUNCATE_LENGTHS = Object.freeze({ TITLE: 60, PREVIEW: 120, CONTENT: 80, LONG: 100, LINE: 110, SHORT: 40 });
+export const PREVIEW_LIMITS = Object.freeze({ COLLAPSED_LINES: 3, COLLAPSED_ITEMS: 8, EXPANDED_LINES: 12, OUTPUT_COLLAPSED: 3, OUTPUT_EXPANDED: 10 });
+
+export function previewWindowRows() {
+	const rows = (typeof process !== "undefined" && process.stdout && process.stdout.rows) || 30;
+	return Math.max(6, rows - 20);
+}
+
+export function capPreviewLines(lines, opts = {}) {
+	if (!Array.isArray(lines)) return [];
+	if (opts.expanded) return lines;
+	const max = opts.maxRows ?? opts.max ?? PREVIEW_LIMITS.COLLAPSED_LINES;
+	if (lines.length <= max) return lines;
+	const visible = max <= 1 ? [] : lines.slice(lines.length - (max - 1));
+	const hidden = lines.length - visible.length;
+	const marker = `… ${hidden} earlier ${hidden === 1 ? "line" : "lines"}`;
+	return [marker, ...visible];
+}
+
+// ── Rank4: renderStatusLine + framedBlock emulation (string templates) ──
+const themeSepDot = " · ";
+
+export function renderStatusLine({ title, description, badge, meta, icon } = {}) {
+	let line = "";
+	if (icon) line += `${icon} `;
+	line += title || "";
+	if (description) line += `: ${description}`;
+	if (badge) line += ` [${badge}]`;
+	if (meta && meta.length) line += ` ${meta.join(themeSepDot)}`;
+	return line;
+}
+
+export function framedBlock({ header, headerMeta, state, lines = [], width = 80 } = {}) {
+	const borderColor = state === "error" ? "error" : state === "warning" ? "warning" : state === "running" || state === "pending" ? "accent" : "dim";
+	const h = "─", v = "│", tl = "╭", tr = "╮", bl = "╰", br = "╯", teeL = "├", teeR = "┤";
+	const cap = h.repeat(3);
+	const label = [header, headerMeta].filter(Boolean).join(themeSepDot);
+	const topLabel = label ? ` ${label} ` : "";
+	// state→borderColor mapping kept as metadata (dim/accent) for test parity; actual ANSI via theme.fg upstream
+	const top = `${tl}${cap}${topLabel}${h.repeat(Math.max(0, width - (cap.length + topLabel.length + 2)))}${tr} [${borderColor}]`;
+	const body = lines.map((l) => `${v} ${l}${" ".repeat(Math.max(0, width - 2 - 1 - String(l).replace(/\x1b\[[0-9;]*m/g, "").length))}${v}`);
+	const bottom = `${bl}${cap}${h.repeat(Math.max(0, width - cap.length - 2))}${br}`;
+	return [top, ...body, bottom].join("\n");
+}
 
 const TOOL_LABELS = {
   mem_save: "save",
@@ -83,14 +130,14 @@ export function humanToolName(toolName) {
   return TOOL_LABELS[base] ?? base.replace(/^mem_/, "").replace(/_/g, " ");
 }
 
-export function truncateText(value, max = 48) {
+export function truncateText(value, max = TRUNCATE_LENGTHS.TITLE) {
   const text = String(value ?? "").replace(/\s+/g, " ").trim();
   if (text.length <= max) return text;
   return `${text.slice(0, Math.max(0, max - 1))}…`;
 }
 
 function quote(value) {
-  const text = truncateText(value);
+  const text = truncateText(value, TRUNCATE_LENGTHS.TITLE);
   return text ? `“${text}”` : "";
 }
 
@@ -141,7 +188,7 @@ export function compactResultStatus(toolName, result, options = {}) {
   const base = normalizeToolName(toolName);
   if (options.isPartial) return `${humanToolName(toolName)}…`;
   if (options.isError || result?.isError) {
-    const text = truncateText(firstTextContent(result) || result?.details?.error || "error", 64);
+    const text = truncateText(firstTextContent(result) || result?.details?.error || "error", TRUNCATE_LENGTHS.PREVIEW);
     return `✗ ${text}`;
   }
   const data = resultData(result);
@@ -151,11 +198,11 @@ export function compactResultStatus(toolName, result, options = {}) {
   if (base === "mem_stats") return "✓ loaded";
   if (base === "mem_timeline") return `✓ ${count ?? "timeline"}`;
   if (base === "mem_get_observation" || base === "mem_get") return data?.id ? `✓ observation #${data.id}` : "✓ loaded";
-  if (base === "mem_save" || base === "mem_session_summary") return data?.id ? `✓ saved #${data.id}` : firstTextContent(result)?.startsWith("Saved:") ? `✓ ${truncateText(firstTextContent(result), 32)}` : "✓ saved";
-  if (base === "mem_update") return data?.id ? `✓ updated #${data.id}` : firstTextContent(result)?.startsWith("Updated:") ? `✓ ${truncateText(firstTextContent(result), 32)}` : "✓ updated";
+  if (base === "mem_save" || base === "mem_session_summary") return data?.id ? `✓ saved #${data.id}` : firstTextContent(result)?.startsWith("Saved:") ? `✓ ${truncateText(firstTextContent(result), TRUNCATE_LENGTHS.TITLE)}` : "✓ saved";
+  if (base === "mem_update") return data?.id ? `✓ updated #${data.id}` : firstTextContent(result)?.startsWith("Updated:") ? `✓ ${truncateText(firstTextContent(result), TRUNCATE_LENGTHS.TITLE)}` : "✓ updated";
   if (base === "mem_delete") return data?.id ? `✓ deleted #${data.id}` : "✓ deleted";
-  if (base === "mem_suggest_topic_key") return data?.topic_key ? `✓ ${data.topic_key}` : firstTextContent(result) ? `✓ ${truncateText(firstTextContent(result), 32)}` : "✓ suggested";
-  if (base === "mem_save_prompt") return data?.id ? `✓ prompt #${data.id}` : firstTextContent(result) ? `✓ ${truncateText(firstTextContent(result), 32)}` : "✓ prompt saved";
+  if (base === "mem_suggest_topic_key") return data?.topic_key ? `✓ ${data.topic_key}` : firstTextContent(result) ? `✓ ${truncateText(firstTextContent(result), TRUNCATE_LENGTHS.TITLE)}` : "✓ suggested";
+  if (base === "mem_save_prompt") return data?.id ? `✓ prompt #${data.id}` : firstTextContent(result) ? `✓ ${truncateText(firstTextContent(result), TRUNCATE_LENGTHS.TITLE)}` : "✓ prompt saved";
   if (base === "mem_session_start") return "✓ started";
   if (base === "mem_session_end") return "✓ ended";
   if (base === "mem_current_project") return data?.project ? `✓ ${data.project}` : "✓ detected";
@@ -163,7 +210,7 @@ export function compactResultStatus(toolName, result, options = {}) {
   if (base === "mem_capture_passive") return `✓ captured ${data?.saved ?? count ?? 0}`;
   if (base === "mem_judge") return data?.relation?.sync_id ? `✓ judged ${data.relation.sync_id}` : data?.sync_id ? `✓ judged ${data.sync_id}` : "✓ judged";
   if (base === "mem_compare") return data?.sync_id ? `✓ ${data.sync_id}` : "✓ compared";
-  if (base === "mem_merge_projects") return firstTextContent(result)?.startsWith("Merged") ? `✓ ${truncateText(firstTextContent(result), 40)}` : "✓ merged";
+  if (base === "mem_merge_projects") return firstTextContent(result)?.startsWith("Merged") ? `✓ ${truncateText(firstTextContent(result), TRUNCATE_LENGTHS.PREVIEW)}` : "✓ merged";
   if (base === "mem_pin") return "✓ pinned";
   if (base === "mem_unpin") return "✓ unpinned";
   if (base === "mem_review") {
@@ -176,20 +223,30 @@ export function compactResultStatus(toolName, result, options = {}) {
 
 export function renderCallText(toolName, args = {}) {
   const arg = compactToolArg(toolName, args);
-  return `🧠 ${humanToolName(toolName)}${arg ? ` ${arg}` : ""} …`;
+  const header = renderStatusLine({ title: `🧠 ${humanToolName(toolName)}`, description: arg || undefined });
+  // collapsed preview: cap to budget height
+  return capPreviewLines([header], { maxRows: PREVIEW_LIMITS.COLLAPSED_LINES })[0] || header;
 }
 
 export function renderResultText(toolName, result, options = {}) {
   const status = compactResultStatus(toolName, result, options);
   if (!options.expanded || options.isPartial) return `↳ ${status}`;
   const text = firstTextContent(result);
-  if (text) return `↳ ${status}\n\n${text}`;
+  if (text) {
+    const lines = text.split("\n");
+    const capped = capPreviewLines(lines, { maxRows: options.maxRows ?? previewWindowRows(), expanded: options.expanded });
+    const body = capped.join("\n");
+    // framed card emulation for expanded view
+    const card = framedBlock({ header: `🧠 ${humanToolName(toolName)}`, headerMeta: status, state: result?.isError ? "error" : "success", lines: body.split("\n"), width: 80 });
+    return `↳ ${status}\n\n${card}`;
+  }
   const data = resultData(result);
-  // For json results (search etc.), show JSON when expanded
   const json = (() => {
     try { return JSON.stringify(data, null, 2); } catch { return String(data); }
   })();
-  return `↳ ${status}\n\n${truncateText(json, 2000)}`;
+  const lines = json.split("\n");
+  const capped = capPreviewLines(lines, { maxRows: previewWindowRows(), expanded: options.expanded });
+  return `↳ ${status}\n\n${capped.join("\n")}`;
 }
 
 // Pi extension wrapper — lightweight, mirrors biggz-thinking-wrap pattern.
@@ -199,6 +256,7 @@ export function renderResultText(toolName, result, options = {}) {
 /** @type {import("@earendil-works/pi-coding-agent").ExtensionAPI} */
 export default function biggzMemoryChrome(pi) {
   if (process.env.PI_SUBAGENT_CHILD === "1") return;
+  if (process.env.BIGGZ_PRETTY === "0") return;
   // Normalize check for MCP prefix: pi may emit "biggz_mem_save" or "mem_save"
   const isMemoryTool = (name) => {
     const base = normalizeToolName(name);
