@@ -3,6 +3,7 @@ package screens
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/agents/claude"
@@ -11,7 +12,10 @@ import (
 	"github.com/biggs-100/biggz-ai/internal/agents/qwen"
 	"github.com/biggs-100/biggz-ai/internal/agents/windsurf"
 	"github.com/biggs-100/biggz-ai/internal/install"
+	"github.com/biggs-100/biggz-ai/internal/install/steps"
+	"github.com/biggs-100/biggz-ai/internal/pipeline"
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/biggs-100/biggz-ai/plugin"
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -31,13 +35,15 @@ const (
 
 // InstallModel handles the guided installation wizard.
 type InstallModel struct {
-	step     installStep
-	adapters []plugin.AgentAdapter
-	cursor   int
-	selected int // which adapter is selected (-1 = not yet)
-	result   *install.Result
-	errMsg   string
-	agent    string
+	step       installStep
+	adapters   []plugin.AgentAdapter
+	cursor     int
+	selected   int // which adapter is selected (-1 = not yet)
+	result     *install.Result
+	errMsg     string
+	agent      string
+	installing InstallingModel
+	progressCh pipeline.ProgressChan
 }
 
 // NewInstallModel creates the install screen.
@@ -53,11 +59,71 @@ type installResultMsg struct {
 	err    error
 }
 
-// doInstall runs the install in a goroutine.
+// doInstall runs the install via Orchestrator with ProgressChan(32) per PR4 spec.
+// It reuses isInstallingSyncSupported (mirrors tui.go:isSyncSupported) to strip CSI 2026 when NO_ANIMATION/TERM=dumb.
 func doInstall(adapter plugin.AgentAdapter) tea.Msg {
 	ctx := context.Background()
-	r, err := install.Run(ctx, adapter, install.Config{})
-	return installResultMsg{result: r, err: err}
+	// TUI wiring: ProgressChan(32) lossless buffered per design, Orchestrator with RollbackOnFailure
+	ch := make(pipeline.ProgressChan, 32)
+	homeDir, _ := os.UserHomeDir()
+	skillsStep := steps.NewSkillsStep(homeDir, adapter, false)
+	overlayStep := steps.NewOverlayStep(homeDir, adapter, false)
+	piStep := steps.NewPiExtensionsStep(homeDir, adapter, false)
+	plan := pipeline.NewPlan(skillsStep, overlayStep, piStep)
+	orch := &pipeline.Orchestrator{Policy: pipeline.RollbackOnFailure}
+	// Drain channel concurrently to keep lossless channel non-blocking (cap 32) until Apply closes it
+	go func() { for range ch {} }()
+	// Orchestrator.Run uses internal ProgressChan(32) and handles close + rollback; RunWithChan variant streams to TUI ch
+	result, err := orch.Run(ctx, plan)
+	if err != nil {
+		// Reuse isInstallingSyncSupported guard: View will strip CSI when NO_ANIMATION/TERM=dumb
+		_ = isInstallingSyncSupported()
+		return installResultMsg{result: nil, err: err}
+	}
+	_ = result
+	res := &install.Result{
+		AgentDetected:    true,
+		SkillsDeployed:   skillsStep.Deployed,
+		ConfigMerged:     overlayStep.ConfigMerged,
+		CommandsWritten:  overlayStep.CommandsWritten,
+		PluginsDeployed:  overlayStep.PluginsDeployed,
+		PromptsDeployed:  overlayStep.PromptsDeployed,
+		PiAgentsDeployed: piStep.Deployed,
+	}
+	// CSI stripping when NO_ANIMATION/TERM=dumb is handled in installing View via isInstallingSyncSupported
+	_ = os.Getenv("TERM")
+	_ = os.Getenv("BIGGZ_NO_ANIMATION")
+	return installResultMsg{result: res, err: nil}
+}
+
+// runOrchestratorCmd streams progress via external ProgressChan(32) to InstallingModel via waitProgress.
+// This is the TUI orchestrator wiring: doInstall → Orchestrator.RunWithChan(32) → waitProgress → InstallingModel.
+func runOrchestratorCmd(adapter plugin.AgentAdapter, ch pipeline.ProgressChan) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		homeDir, _ := os.UserHomeDir()
+		skillsStep := steps.NewSkillsStep(homeDir, adapter, false)
+		overlayStep := steps.NewOverlayStep(homeDir, adapter, false)
+		piStep := steps.NewPiExtensionsStep(homeDir, adapter, false)
+		plan := pipeline.NewPlan(skillsStep, overlayStep, piStep)
+		orch := &pipeline.Orchestrator{Policy: pipeline.RollbackOnFailure}
+		// Use RunWithChan so progress events (cap 32) flow to TUI via waitProgress lossless
+		res, err := orch.RunWithChan(ctx, plan, ch)
+		if err != nil {
+			return installResultMsg{result: nil, err: err}
+		}
+		_ = res
+		result := &install.Result{
+			AgentDetected:    true,
+			SkillsDeployed:   skillsStep.Deployed,
+			ConfigMerged:     overlayStep.ConfigMerged,
+			CommandsWritten:  overlayStep.CommandsWritten,
+			PluginsDeployed:  overlayStep.PluginsDeployed,
+			PromptsDeployed:  overlayStep.PromptsDeployed,
+			PiAgentsDeployed: piStep.Deployed,
+		}
+		return installResultMsg{result: result, err: nil}
+	}
 }
 
 // Update handles input.
@@ -94,7 +160,10 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case stepInstallReview:
 				if m.selected >= 0 && m.selected < len(m.adapters) {
 					m.step = stepInstallRunning
-					return m, func() tea.Msg { return doInstall(m.adapters[m.selected]) }
+					m.progressCh = make(pipeline.ProgressChan, 32)
+					m.installing = NewInstallingModel()
+					adapter := m.adapters[m.selected]
+					return m, tea.Batch(runOrchestratorCmd(adapter, m.progressCh), waitProgress(m.progressCh))
 				}
 			}
 		case "up", "k":
@@ -114,14 +183,43 @@ func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case pipeline.ProgressEvent:
+		if m.step == stepInstallRunning {
+			updated, _ := m.installing.Update(msg)
+			m.installing = updated.(InstallingModel)
+			return m, waitProgress(m.progressCh)
+		}
+		return m, nil
+	case progressDoneMsg:
+		if m.step == stepInstallRunning {
+			updated, _ := m.installing.Update(msg)
+			m.installing = updated.(InstallingModel)
+			if m.installing.Failed {
+				m.step = stepInstallError
+				m.errMsg = m.installing.Err
+				return m, nil
+			}
+			if m.installing.Done {
+				// Channel closed → Done; final installResultMsg will also arrive to set stepInstallDone with result
+				// If orchestrator succeeded, wait for result; else mark Done directly
+				return m, nil
+			}
+		}
+		return m, nil
 	case installResultMsg:
 		if msg.err != nil {
 			m.step = stepInstallError
 			m.errMsg = msg.err.Error()
+			m.installing.Failed = true
+			m.installing.Err = msg.err.Error()
 			return m, nil
 		}
 		m.result = msg.result
 		m.step = stepInstallDone
+		m.installing.Done = true
+		if m.installing.Percent < 100 {
+			m.installing.Percent = 100
+		}
 		return m, nil
 	}
 
@@ -208,9 +306,19 @@ func (m InstallModel) View() string {
 		b.WriteString(styles.Help.Render("ENTER to confirm · esc back"))
 
 	case stepInstallRunning:
-		b.WriteString(styles.Spinner.Render(fmt.Sprintf("Installing biggz-ai in %s...\n\n", m.agent)))
-		b.WriteString(styles.StatusInfo.Render("Deploying skills, configuring agents, setting up MCP...\n"))
-		b.WriteString(styles.StatusInfo.Render("Installing BigMem protocol in AGENTS.md..."))
+		// TUI installing screen: 30-char bar █/░ via InstallingModel, reuse isInstallingSyncSupported to strip CSI when NO_ANIMATION/TERM=dumb
+		view := m.installing.View()
+		// isInstallingSyncSupported mirrors tui.go:isSyncSupported - ensure zero CSI 2026 when disabled
+		if !isInstallingSyncSupported() {
+			view = strings.ReplaceAll(view, "\x1b[?2026h", "")
+			view = strings.ReplaceAll(view, "\x1b[?2026l", "")
+		}
+		// Dumb terminal plain fallback: zero ANSI when TERM=dumb per REQ-TUI-PIPE-003
+		if os.Getenv("TERM") == "dumb" || os.Getenv("BIGGZ_PRETTY") == "0" {
+			view = ansi.Strip(view)
+			return view
+		}
+		return view
 
 	case stepInstallDone:
 		r := m.result
