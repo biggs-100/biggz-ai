@@ -22,6 +22,8 @@ import (
 	piadapter "github.com/biggs-100/biggz-ai/internal/agents/pi"
 	"github.com/biggs-100/biggz-ai/internal/assets"
 	"github.com/biggs-100/biggz-ai/internal/filemerge"
+	"github.com/biggs-100/biggz-ai/internal/install/steps"
+	"github.com/biggs-100/biggz-ai/internal/pipeline"
 	"github.com/biggs-100/biggz-ai/internal/platform"
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/model"
@@ -143,307 +145,121 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	if homeDir == "" {
 		homeDir, _ = os.UserHomeDir()
 	}
-
 	if runtime.GOOS == "windows" {
 		sanitizePath(cfg.DryRun)
 	}
-
 	installed, binaryPath, _, _, err := adapter.Detect(ctx, homeDir)
 	if err != nil || !installed {
 		return &Result{AgentDetected: false}, fmt.Errorf("agent not detected: %w", err)
 	}
-
 	result := &Result{
 		AgentDetected: true,
 		BinaryPath:    binaryPath,
 		DryRun:        cfg.DryRun,
 	}
-
-	// Deploy skills to ~/.biggz/skills/ (canonical source — no gentle-ai conflict)
-	deployed, err := DeploySkillsToBiggzDir(homeDir, assets.FS, cfg.DryRun)
+	// Build pipeline steps via StagePlan; includes state merge for --agent per REQ-STATE-PIPE.
+	skillsStep := steps.NewSkillsStep(homeDir, adapter, cfg.DryRun)
+	overlayStep := steps.NewOverlayStep(homeDir, adapter, cfg.DryRun)
+	stateStep := steps.NewStateStep(homeDir, adapter, cfg.DryRun)
+	piStep := steps.NewPiExtensionsStep(homeDir, adapter, cfg.DryRun)
+	plan := pipeline.NewPlan(skillsStep, overlayStep, stateStep, piStep)
+	orch := &pipeline.Orchestrator{Policy: pipeline.RollbackOnFailure}
+	ch := make(pipeline.ProgressChan, 32)
+	execResult, err := orch.RunWithChan(ctx, plan, ch)
 	if err != nil {
-		return result, fmt.Errorf("deploy skills: %w", err)
+		return result, err
 	}
-	result.SkillsDeployed = deployed
-
-	// Also copy skills to the agent's skills directory so the agent's native
-	// skill discovery can find them (opencode: ~/.config/opencode/skills, pi: ~/.pi/agent/skills).
-	// Pi now has parity with opencode via SupportsSkills=true and SkillsDir=~/.pi/agent/skills
-	// (per pi docs packages/coding-agent/docs/skills.md).
-	skillsDir := adapter.SkillsDir(homeDir)
-	if skillsDir == "" {
-		// skip when agent has no skills dir
-	} else if _, err := DeploySkillsToAgentDir(skillsDir, assets.FS, cfg.DryRun); err != nil {
-		return result, fmt.Errorf("deploy skills to agent: %w", err)
+	if execResult != nil && !execResult.Success {
+		if execResult.Error != nil {
+			return result, execResult.Error
+		}
+		return result, fmt.Errorf("install pipeline failed")
 	}
-	// Self-heal: remove legacy _shared skill that had invalid name `_shared` (pi strict validation).
-	// It was previously deployed before the frontmatter fix and now correctly skipped.
+	// Propagate step results.
+	result.SkillsDeployed = skillsStep.Deployed
+	result.ConfigMerged = overlayStep.ConfigMerged
+	result.CommandsWritten = overlayStep.CommandsWritten
+	result.PluginsDeployed = overlayStep.PluginsDeployed
+	result.PromptsDeployed = overlayStep.PromptsDeployed
+	result.PiAgentsDeployed = piStep.Deployed
+	// MCP binary + config (post-pipeline, not yet in steps).
 	if !cfg.DryRun {
-		_ = os.RemoveAll(filepath.Join(homeDir, ".pi", "agent", "skills", "_shared"))
-		_ = os.RemoveAll(filepath.Join(homeDir, ".biggz", "skills", "_shared"))
-		// Also clean project-local legacy copy if present
-		if cwd, err := os.Getwd(); err == nil {
-			_ = os.RemoveAll(filepath.Join(cwd, "skills", "_shared"))
-		}
-	}
-
-	// Deploy SDD prompts (used by OpenCode to delegate to sub-agents)
-	// Pi uses native agents (~/.pi/agent/agents/), not prompts — skip for pi.
-	if adapter.ID() == agents.AgentPi {
-		result.PromptsDeployed = 0
-	} else {
-		promptsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "prompts", "sdd")
-		if err := DeployPrompts(promptsDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy prompts: %w", err)
-		}
-		fs.WalkDir(assets.FS, "prompts/sdd", func(path string, d fs.DirEntry, err error) error {
-			if err == nil && !d.IsDir() {
-				result.PromptsDeployed++
-			}
-			return nil
-		})
-	}
-
-	// Deploy config overlay with absolute paths to ~/.biggz/
-	merged, err := DeployBiggzConfig(adapter, homeDir, assets.FS, cfg.DryRun)
-	if err != nil {
-		return result, fmt.Errorf("deploy config: %w", err)
-	}
-	result.ConfigMerged = merged
-
-	// For pi, sync defaultModel/defaultProvider from last session so new
-	// sessions start with the last used model, not the hardcoded kimi-k2.6.
-	// This complements the biggz-last-model.js extension which does the same
-	// at TUI startup; the Go sync ensures the very first install after a
-	// model switch is already correct and also populates last-model.json.
-	if adapter.ID() == agents.AgentPi && !cfg.DryRun {
-		_ = syncPiLastModel(homeDir)
-	}
-
-	// Pi has SupportsSlashCommands=false — skip commands (0 files).
-	if adapter.ID() == agents.AgentPi && !adapter.SupportsSlashCommands() {
-		result.CommandsWritten = 0
-	} else {
-		commandsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "commands")
-		written, err := DeployCommands(commandsDir, assets.FS, cfg.DryRun)
+		mcpBinPath, err := DeployMCPBinaryToHomeDir(homeDir, cfg.DryRun)
 		if err != nil {
-			return result, fmt.Errorf("write commands: %w", err)
+			return result, fmt.Errorf("deploy mcp binary: %w", err)
 		}
-		result.CommandsWritten = written
-	}
-
-	// Deploy OpenCode plugins to the agent's plugin directory
-	// (~/.config/opencode/plugins/ for OpenCode). Pi uses extensions (~/.pi/agent/extensions/) — skip for pi.
-	if adapter.ID() == agents.AgentPi {
-		result.PluginsDeployed = 0
-	} else {
-		pluginsDir := filepath.Join(adapter.GlobalConfigDir(homeDir), "plugins")
-		pluginsDeployed, err := DeployPlugins(pluginsDir, assets.FS, cfg.DryRun)
-		if err != nil {
-			return result, fmt.Errorf("deploy plugins: %w", err)
-		}
-		result.PluginsDeployed = pluginsDeployed
-	}
-
-	// Inject persona into system prompt file (AGENTS.md or equivalent)
-	if err := DeployPersona(adapter, homeDir, cfg.DryRun); err != nil {
-		return result, fmt.Errorf("deploy persona: %w", err)
-	}
-
-	// Inject BigMem protocol into system prompt file (AGENTS.md or equivalent)
-	// Making BigMem instructions available to ALL agents (including sub-agents)
-	// without depending on the orchestrator to forward them at delegation time.
-	// Runs after persona so that on upgrades from buggy duplicate-marker files,
-	// the BigMem block is re-added after persona's stripOrphanMarkers truncates
-	// the tail (see stripOrphanMarkers). Both functions handle missing file via
-	// MkdirAll + InjectByMarker on empty content.
-	if err := DeployBigMemProtocol(adapter, homeDir, cfg.DryRun); err != nil {
-		return result, fmt.Errorf("deploy bigmem protocol: %w", err)
-	}
-
-	// Deploy MCP binary to ~/.biggz/
-	mcpBinPath, err := DeployMCPBinaryToHomeDir(homeDir, cfg.DryRun)
-	if err != nil {
-		return result, fmt.Errorf("deploy mcp binary: %w", err)
-	}
-
-	// Write MCP config entry using the adapter's strategy — always, with fallback
-	// when the binary is not next to the exe (dev `go run`).
-	mcpPathForConfig := mcpBinPath
-	if mcpPathForConfig == "" {
-		// Fallback via pi adapter's exported resolver if available, else ~/.biggz/biggz-mcp fallback.
-		if fallbacker, ok := adapter.(interface{ BiggzMCPPath() string }); ok {
-			mcpPathForConfig = fallbacker.BiggzMCPPath()
-		} else {
-			// generic fallback: ~/.biggz/biggz-mcp(.exe) or bare name
-			binName := "biggz-mcp"
-			if runtime.GOOS == "windows" {
-				binName = "biggz-mcp.exe"
-			}
-			cand := filepath.Join(homeDir, ".biggz", binName)
-			if _, err := os.Stat(cand); err == nil {
-				mcpPathForConfig = cand
+		mcpPathForConfig := mcpBinPath
+		if mcpPathForConfig == "" {
+			if fallbacker, ok := adapter.(interface{ BiggzMCPPath() string }); ok {
+				mcpPathForConfig = fallbacker.BiggzMCPPath()
 			} else {
-				mcpPathForConfig = binName
+				binName := "biggz-mcp"
+				if runtime.GOOS == "windows" {
+					binName = "biggz-mcp.exe"
+				}
+				cand := filepath.Join(homeDir, ".biggz", binName)
+				if _, err := os.Stat(cand); err == nil {
+					mcpPathForConfig = cand
+				} else {
+					mcpPathForConfig = binName
+				}
 			}
 		}
-	}
-	if err := DeployMCPConfig(adapter, homeDir, mcpPathForConfig, cfg.DryRun); err != nil {
-		return result, fmt.Errorf("deploy mcp config: %w", err)
-	}
-	result.MCPDeployed = true
-
-	// For pi, unify via ProvisionBigMemMCP which writes both settings.json and mcp.json
-	// atomically with type:local and cleans legacy pi-subagents* entries.
-	if adapter.ID() == agents.AgentPi {
-		if provisioner, ok := adapter.(interface {
-			ProvisionBigMemMCP(string) (bool, []string, error)
-		}); ok {
-			if !cfg.DryRun {
+		if err := DeployMCPConfig(adapter, homeDir, mcpPathForConfig, cfg.DryRun); err != nil {
+			return result, fmt.Errorf("deploy mcp config: %w", err)
+		}
+		result.MCPDeployed = true
+		if adapter.ID() == agents.AgentPi {
+			if provisioner, ok := adapter.(interface{ ProvisionBigMemMCP(string) (bool, []string, error) }); ok {
 				if _, _, err := provisioner.ProvisionBigMemMCP(homeDir); err != nil {
 					return result, fmt.Errorf("provision bigmem mcp: %w", err)
 				}
 			}
 		}
-	}
-
-	// Deploy pi-native SDD agents (like gentle-pi's npm:gentle-pi subagents).
-	// Pi lists sdd-apply, sdd-research, sdd-spec, etc. as native agents via
-	// ~/.pi/agent/agents/*.md and /agents. This is biggz's equivalent of
-	// gentle-pi's `~/.pi/agent/node_modules/gentle-pi/subagents/*` overlay
-	// to `~/.pi/agent/agents/` or `~/.pi/agent/subagents/`.
-	if adapter.ID() == agents.AgentPi {
-		if n, err := DeployPiSubAgents(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi agents: %w", err)
-		} else {
-			result.PiAgentsDeployed = n
-		}
-		if n, err := DeployPiThemes(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi themes: %w", err)
-		} else if n > 0 {
-			_ = n
-		}
-		if !cfg.DryRun {
+		if adapter.ID() == agents.AgentPi {
+			_ = syncPiLastModel(homeDir)
 			_ = ensurePiTheme(homeDir, "titanium")
 		}
-		if _, err := DeployPiThinkingWrap(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi thinking wrap: %w", err)
-		}
-		if _, err := DeployPiMemoryChrome(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi memory chrome: %w", err)
-		}
-		if _, err := DeployPiToolInterception(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi tool interception: %w", err)
-		}
-		if _, err := DeployPiExtensionAPI(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi extension api: %w", err)
-		}
-		if _, err := DeployPiLastModel(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi last model: %w", err)
-		}
-		if _, err := DeployPiSubagentConfig(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi subagent config: %w", err)
-		}
-		if _, err := DeployPiSynthesisGate(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi synthesis gate: %w", err)
-		}
-		if _, err := DeployPiWaitPretty(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi wait pretty: %w", err)
-		}
-		if _, err := DeployPiFooter(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi footer: %w", err)
-		}
-		if _, err := DeployPiToolPills(homeDir, assets.FS, cfg.DryRun); err != nil {
-			return result, fmt.Errorf("deploy pi tool pills: %w", err)
-		}
-		if cfg.DryRun {
-			result.PiWebSearch = true
-		} else if res, err := DeployPiWebSearch(ctx, homeDir); err != nil {
-			return result, fmt.Errorf("deploy pi web search: %w", err)
-		} else {
-			result.PiWebSearch = res.Created || res.Changed || true
-			_ = res
-		}
-		if cfg.DryRun {
-			result.PiQuestionMouse = true
-		} else if res, err := DeployPiQuestionMouse(ctx, homeDir); err != nil {
-			return result, fmt.Errorf("deploy pi question mouse: %w", err)
-		} else {
-			result.PiQuestionMouse = res.Created || res.Changed || true
-			_ = res
-		}
-		// pi-pretty is auto-loaded via its package `pi.extensions` (npm:pi-pretty/dist/index.js).
-		// Do NOT deploy a custom wrapper — it would duplicate tool registrations (read/bash/find/grep)
-		// and cause "Tool conflicts" on pi startup. The FleetView itself comes from pi-subagents,
-		// not pi-pretty, so pretty rendering works without a wrapper.
-		// Self-heal: remove legacy conflicting wrapper left by installs before e54da84.
-		if !cfg.DryRun {
-			legacyWrapper := filepath.Join(piExtensionsDir(homeDir), "biggz-pi-pretty.js")
-			_ = os.Remove(legacyWrapper)
-		}
 	}
-
-	// Auto-install pi subagent dispatcher when pi is the target.
-	// Ensures `biggz install --agent pi` provisions pi-subagents
-	// (nicobailon/pi-subagents) so pi has delegate tool, not just
-	// read/bash/edit/write. Without it pi cannot launch sub-agents.
-	// Gentle's 9-step pi install includes pi-subagents-j0k3r; biggz uses
-	// the 2-package npm install (idempotent) plus BigMem MCP separately.
-	// Mouse parity for ask_user_question (biggz-question-mouse.js) is not
-	// installed via `pi install`; it is deployed via file copy to
-	// ~/.pi/agent/extensions/ (DeployPiQuestionMouse) so clicks select options.
-	if adapter.ID() == agents.AgentPi {
+	if adapter.ID() == agents.AgentPi && !cfg.DryRun {
 		if cmds, err := adapter.InstallCommand(nil); err == nil && len(cmds) > 0 {
-			if !cfg.DryRun {
-				for _, cmd := range cmds {
-					if len(cmd) == 0 {
-						continue
+			for _, cmd := range cmds {
+				if len(cmd) == 0 {
+					continue
+				}
+				var c *exec.Cmd
+				if runtime.GOOS == "windows" {
+					piPath := cmd[0]
+					if resolved, err := exec.LookPath(cmd[0]); err == nil && resolved != "" {
+						piPath = resolved
 					}
-					var c *exec.Cmd
-					if runtime.GOOS == "windows" {
-						piPath := cmd[0]
-						if resolved, err := exec.LookPath(cmd[0]); err == nil && resolved != "" {
-							piPath = resolved
-						}
-						c = exec.CommandContext(ctx, "cmd", append([]string{"/c", piPath}, cmd[1:]...)...)
-					} else {
-						c = exec.CommandContext(ctx, cmd[0], cmd[1:]...)
-					}
-					platform.EnsureCommandDir(c)
-					if out, err := c.CombinedOutput(); err != nil {
-						return result, fmt.Errorf("install pi subagents (%s): %w (output: %s)", strings.Join(cmd, " "), err, strings.TrimSpace(string(out)))
-					}
+					c = exec.CommandContext(ctx, "cmd", append([]string{"/c", piPath}, cmd[1:]...)...)
+				} else {
+					c = exec.CommandContext(ctx, cmd[0], cmd[1:]...)
+				}
+				platform.EnsureCommandDir(c)
+				if out, err := c.CombinedOutput(); err != nil {
+					return result, fmt.Errorf("install pi subagents (%s): %w (output: %s)", strings.Join(cmd, " "), err, strings.TrimSpace(string(out)))
 				}
 			}
 		}
 	}
-
-	// Ensure biggz binary is on PATH for terminal use
 	if !cfg.DryRun {
 		if err := deploySelfToPath(homeDir); err != nil {
 			return result, fmt.Errorf("deploy to path: %w", err)
 		}
 	}
-
-	// Verify orchestrator checkpoint deployment (MANDATORY checkpoint must be present + permissions).
-	// This guards the post-delegation summary preset that the model must emit before ask_user_question.
 	if !cfg.DryRun {
 		if err := verifyOrchestratorDeployment(homeDir, adapter); err != nil {
 			return result, fmt.Errorf("orchestrator checkpoint missing — reinstall failed: %w", err)
 		}
 	}
-
-	// Guarantee RDD enabled by default and clear any stale clone/worktree disables.
-	// Fresh installs must come up trusted without manual `biggz rdd enable`.
-	// This is idempotent and never fails the install (logs warning on error).
 	if !cfg.DryRun {
 		ensureRDDEnabled(homeDir)
 	}
-
 	return result, nil
 }
 
-// verifyCheckpointContent checks that data contains all required substrings.
 func verifyCheckpointContent(data []byte, required []string) error {
 	content := string(data)
 	for _, want := range required {
