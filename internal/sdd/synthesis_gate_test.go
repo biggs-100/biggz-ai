@@ -136,6 +136,42 @@ func TestShouldBlock(t *testing.T) {
 	}
 }
 
+func TestShouldBlock_CheckpointWithoutSynthesisEvenWhenHistoryEmpty(t *testing.T) {
+	t.Setenv("PI_SUBAGENT_CHILD", "0")
+	// Bug regression: checkpoint without synthesis in current turn must block even when
+	// there is no synthesis anywhere in history (anySynthesis empty). The old JS gate
+	// confused empty history with preflight allowance and let checkpoint pass.
+	// Go canonical never had that allowance — verify it blocks strictly.
+	SetCurrentTurnMarkdown(mustSynthesisMD("full-prose"))
+	// missing synthesis, empty history analogue (md parameter empty)
+	if !ShouldBlock("proceed", "", time.Now()) {
+		t.Fatalf("ShouldBlock should be true for checkpoint 'proceed' with empty md even when history empty")
+	}
+	if !ShouldBlock("continuar", "", time.Now()) {
+		t.Fatalf("ShouldBlock should be true for checkpoint 'continuar' with empty md even when history empty")
+	}
+	if !ShouldBlock("proceed", "no markers at all", time.Now()) {
+		t.Fatalf("ShouldBlock should be true for checkpoint with no markers even when history empty")
+	}
+	// Preflight non-checkpoint (Pace/Artifacts/PRs/Review) must still be allowed without synthesis
+	// IsCheckpointAsk=false -> gate never blocks, regardless of md
+	if ShouldBlock("Pace", "", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for preflight non-checkpoint 'Pace' even without synthesis")
+	}
+	if ShouldBlock("Artifacts", "no markers", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for preflight non-checkpoint 'Artifacts' even without synthesis")
+	}
+	if ShouldBlock("PRs", "", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for preflight non-checkpoint 'PRs' even without synthesis")
+	}
+	if ShouldBlock("Review", "", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for preflight non-checkpoint 'Review' even without synthesis")
+	}
+	if ShouldBlock("¿por dónde empezamos?", "", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for general non-checkpoint even without synthesis and empty history")
+	}
+}
+
 func TestShouldBlock_SessionRecallBypass(t *testing.T) {
 	t.Setenv("PI_SUBAGENT_CHILD", "0")
 	recallMD := "## Session Recall\nsome previous context\n"
