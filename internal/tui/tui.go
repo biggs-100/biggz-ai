@@ -18,6 +18,7 @@ import (
 
 	"github.com/biggs-100/biggz-ai/internal/tui/screens"
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
+	"github.com/charmbracelet/x/ansi"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -171,6 +172,12 @@ type TickMsg time.Time
 
 func tickCmd() tea.Cmd {
 	if tuiAnimationsDisabled() {
+		return nil
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return nil
+	}
+	if os.Getenv("BIGGZ_PRETTY") == "0" {
 		return nil
 	}
 	return tea.Tick(100*time.Millisecond, func(t time.Time) tea.Msg {
@@ -568,11 +575,17 @@ func (m Model) View() string {
 	var frame string
 	if m.err != nil {
 		frame = styles.ErrorBox.Render(fmt.Sprintf("Error: %v\n\nPress esc to quit.", m.err))
+		if os.Getenv("TERM") == "dumb" {
+			return ansi.Strip(syncOutput(frame))
+		}
 		return syncOutput(frame)
 	}
 
 	if m.showHelp {
 		frame = screens.HelpOverlay(m.currentScreen)
+		if os.Getenv("TERM") == "dumb" {
+			return ansi.Strip(syncOutput(frame))
+		}
 		return syncOutput(frame)
 	}
 
@@ -621,6 +634,9 @@ func (m Model) View() string {
 		frame = m.pluginUninstall.View()
 	default:
 		frame = ""
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return ansi.Strip(syncOutput(frame))
 	}
 	return syncOutput(frame)
 }

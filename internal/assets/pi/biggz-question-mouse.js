@@ -31,7 +31,15 @@ export default function biggzQuestionMouse(pi) {
   if (process.env.PI_SUBAGENT_CHILD === "1") return;
   if (process.env.BIGGZ_PRETTY === "0") return;
 
-  const BIGGZ_MOUSE = process.env.BIGGZ_MOUSE === "1";
+  function isMouseAllowed(){
+    if(process.env.PI_SUBAGENT_CHILD==="1")return false;
+    if(process.env.BIGGZ_PRETTY==="0")return false;
+    if(process.env.TERM==="dumb")return false;
+    if(process.env.BIGGZ_NO_ANIMATION==="1")return false;
+    if(process.env.GENTLE_AI_NO_ANIMATION==="1")return false;
+    return process.env.BIGGZ_MOUSE==="1";
+  }
+  const BIGGZ_MOUSE = isMouseAllowed();
 
   // ── Spec constants ──────────────────────────────────────────────
   const DIALOG_HEIGHT_RATIO = 0.7;
@@ -1367,6 +1375,7 @@ export default function biggzQuestionMouse(pi) {
     } catch { return 5; }
   }
   function enableMouse(ctx) {
+    if(!isMouseAllowed()) return;
     try { process.stdout.write(MOUSE_ENABLE); } catch {}
     try { if (process.stderr && typeof process.stderr.write === "function") process.stderr.write(MOUSE_ENABLE); } catch {}
   }
@@ -1429,7 +1438,7 @@ export default function biggzQuestionMouse(pi) {
     } catch {}
   }
   // Prototype patch for push when BIGGZ_MOUSE enabled
-  if (BIGGZ_MOUSE) {
+  if (isMouseAllowed()) {
     (async () => {
       try {
         let mod = null;
@@ -1512,7 +1521,7 @@ export default function biggzQuestionMouse(pi) {
               if (maybeParams && typeof maybeParams === "object") capturedParams = maybeParams;
 
               // ── BIGGZ_MOUSE fallback path ────────────────────────
-              if (BIGGZ_MOUSE) {
+              if (isMouseAllowed()) {
                 const typedForWrapper = capturedParams;
                 const dialogState = {
                   component: null,
@@ -1836,7 +1845,7 @@ export default function biggzQuestionMouse(pi) {
   } catch {}
 
   // ── QuestionnaireSession prototype dispatch patch (mouse fallback only) ──
-  if (BIGGZ_MOUSE) {
+  if (isMouseAllowed()) {
     (async () => {
       try {
         const candidates = [

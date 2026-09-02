@@ -127,7 +127,7 @@ func (m AgentBuilderScreen) Init() tea.Cmd { return nil }
 func (m AgentBuilderScreen) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case abTickMsg:
-		if tuiAnimationsDisabled() {
+		if tuiAnimationsDisabled() || os.Getenv("TERM") == "dumb" || os.Getenv("BIGGZ_PRETTY") == "0" {
 			return m, nil
 		}
 		if m.generating || m.installing {
@@ -365,6 +365,12 @@ func backToDashboard() tea.Cmd {
 
 func tickCmd() tea.Cmd {
 	if tuiAnimationsDisabled() {
+		return nil
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return nil
+	}
+	if os.Getenv("BIGGZ_PRETTY") == "0" {
 		return nil
 	}
 	return func() tea.Msg { return abTickMsg{} }
