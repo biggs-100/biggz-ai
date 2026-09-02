@@ -123,6 +123,22 @@ Before ending a session or saying "done" / "that's it" (or the equivalent in the
 
 This is NOT optional. If you skip this, the next session starts blind.
 
+### SESSION CLOSE VERIFICATION (REQ-SD-B1/B3/S1/S3 — PR2)
+
+Before `done` or closing any `apply` batch, the gate `internal/sdd/session_guard.go` MUST verify `session_summary`:
+
+| Layer | Command / Check | Ordered by | Satisfies gate | On miss |
+|-------|-----------------|------------|----------------|---------|
+| Gate | `HasSessionSummary` blocks `done`/`apply` close with `blocked(session_summary_missing)` + `needs_decision` until `session_summary` verified | — | `session_summary` via MCP `biggz_mem_session_summary` OR `biggz bigmem save --type session_summary` via bash | `resolve-blockers` |
+| Bash fallback | `biggz bigmem save --type session_summary` when `available_tools` lacks `biggz_mem_*` (mandatory) — uses `PutBlob >100k`/`data:image/` via `blob:sha256:` and 5-case `DetectProjectFull` | — | Yes (`blob:sha256:` or raw) | Retry once → fallback file |
+| Verify recency | `biggz_mem_context(5)` + `biggz bigmem search --query ""` / `Search("", opts)` `ORDER BY updated_at DESC` (not FTS `rank` @1844) must list `session_summary` | `o.updated_at DESC` @1801 | Yes | Retry once |
+| Empty-DB fallback | `git log --oneline -15` + `biggz sdd-status --json --instructions` anchored to `workspaceRoot` when BigMem `context(5)`/`search --query ""` empty | — | No (observability only) | Keep blocked |
+| Degraded | Retry once → write `openspec/changes/{change}/session-fallback.md` + note `BigMem unavailable — fallback persisted` + deliver answer (saving≠replying), retry next session | — | Fallback file satisfies next-session gate | Scheduled retry |
+
+_Complementary:_ per-task `biggz_mem_save` (dedup 15m, 10m SessionActivity nudge, `PutBlob>100k`, 5-case `DetectProjectFull`, `capture_prompt`) PLUS `session_summary` on close — per-task alone does NOT satisfy `blocked(session_summary_missing)`.
+
+_Fallback path_: `internal/sdd/session_guard.go:SaveSessionSummaryWithFallback` → MCP if `hasMCP` else `saveViaBash`; `VerifySessionSummary` → `SessionContext(5)` + `Search("")` DESC; `IsSessionSummaryBlocked` + `FallbackPath` gate. Empty `$HOME` does NOT fallback to `XDG_RUNTIME_DIR` — `defaultBigmemRoot` returns `""` and `BlobRoot` `""` → `PutBlob` error → raw fallback.
+
 ### PASSIVE CAPTURE — automatic learning extraction
 
 When completing a task or subtask, include a "## Key Learnings:" section at the end of your response with numbered items. BigMem will automatically extract and save these via `biggz_mem_capture_passive`.

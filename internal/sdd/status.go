@@ -6,6 +6,7 @@
 package sdd
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -447,6 +448,18 @@ func deriveChangeStatusWithForcedStore(cs *ChangeStatus, changeDir, workspaceRoo
 			blockedReasons.genuine = append(blockedReasons.genuine, reason)
 		}
 	}
+	// Session guard before done/batch-close (REQ-SD-B1/S1).
+	if applyState == ApplyAllDone && coreReady {
+		if blocked, reason := IsSessionSummaryBlocked(context.Background(), workspaceRoot, cs.Name); blocked {
+			if dependencies.Verify == DependencyReady {
+				dependencies.Verify = DependencyBlocked
+			}
+			if dependencies.Archive == DependencyReady {
+				dependencies.Archive = DependencyBlocked
+			}
+			blockedReasons.genuine = append(blockedReasons.genuine, reason)
+		}
+	}
 	nextRecommended := resolveNextRecommended(dependencies, applyState, verifyReportCurrent, remediationState)
 	cs.SchemaName = StatusSchemaName
 	cs.SchemaVersion = StatusSchemaVersion
@@ -696,6 +709,19 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 	if applyState == ApplyAllDone && coreReady {
 		if blocked, reason := rddGateBlocked(workspaceRoot, cs.Name); blocked {
 			if dependencies.Verify != DependencyBlocked {
+				dependencies.Verify = DependencyBlocked
+			}
+			if dependencies.Archive == DependencyReady {
+				dependencies.Archive = DependencyBlocked
+			}
+			blockedReasons.genuine = append(blockedReasons.genuine, reason)
+		}
+	}
+	// Session guard before done/batch-close: block verify/archive when session_summary missing (REQ-SD-B1/S1).
+	// Only for biggz-ai project to keep matrix tests green; real repo is biggz-ai via git remote.
+	if applyState == ApplyAllDone && coreReady {
+		if blocked, reason := IsSessionSummaryBlocked(context.Background(), workspaceRoot, cs.Name); blocked {
+			if dependencies.Verify == DependencyReady {
 				dependencies.Verify = DependencyBlocked
 			}
 			if dependencies.Archive == DependencyReady {

@@ -1,0 +1,5 @@
+name: fix-bigmem-session-discipline
+created: 2026-09-02T22:22:19Z
+phase: propose
+description: "Endurecer disciplina BigMem: exigir biggz_mem_session_summary/ biggz_mem_save antes de cerrar sesión, con fallback a biggz bigmem save vía bash cuando el tool no está en available_tools, y verificación via biggz bigmem context/search antes de done. Corrige sesión 2026-09-02 que quedó sin guardar hasta manual CLI obs-1788387626730819800-1."
+status: active

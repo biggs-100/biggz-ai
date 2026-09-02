@@ -199,6 +199,8 @@ Proactive save triggers: architecture decisions, bug fixes, discoveries, config 
 
 **File map (P2-8, verifiable without rg):** `internal/bigmem/*.go` — `bigmem.go` (core Store/Search/Save+FTS5/dedup), `full.go` (sessions/prompts/timeline/stats/doctor), `graph.go` (BuildGraph/Render*), `blobstore.go` (PutBlob/GetBlob), `sync.go` (FileTransport/export), `sync_journal.go` (journal/lease), `engram_import.go` (compat) + `*_test.go` for audit.
 
+**Session discipline (PR2 — `internal/sdd/session_guard.go`):** `session_guard.go` enforces `session_summary before done` — `HasSessionSummary`/`VerifySessionSummary` via `SessionContext(5)` + `Search("")` `ORDER BY updated_at DESC` (not FTS `rank`), mandatory bash `biggz bigmem save --type session_summary` when `available_tools` lacks `biggz_mem_*`, retry-once + `session-fallback.md` + `BigMem unavailable — fallback persisted` + git-log `git log --oneline -15`/`sdd-status --json` fallback when BigMem empty (anchored to `workspaceRoot`). Complementary per-task `biggz_mem_save` (dedup 15m, `PutBlob>100k` → `blob:sha256:`) + `session_summary`; gate `blocked(session_summary_missing)` in `status.go` (`deriveChangeStatus`/`deriveChangeStatusWithForcedStore`) after RDD gate. Empty `$HOME` does NOT fallback to `XDG_RUNTIME_DIR` — `BlobRoot`/`defaultBigmemRoot` return `""` and `PutBlob` errors, raw stored until `DoctorFixBlobs`. See `internal/assets/biggz/bigmem-protocol.md` SESSION CLOSE VERIFICATION and `internal/assets/biggz/biggz-orchestrator-workflow.md` Pre-Done Session Summary Hook.
+
 ## SGH Graph Execution
 
 The pipeline implements SGH (Structured Graph Harness) principles:

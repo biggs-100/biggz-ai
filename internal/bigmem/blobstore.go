@@ -24,8 +24,13 @@ var ErrBlobNotFound = errors.New("blob not found")
 
 // BlobRoot returns the blob directory: sibling to bigmem DB (~/.biggz/blobs).
 // Mirrors oh-my-pi BlobStore but isolated at ~/.biggz (not ~/.omp).
+// Empty $HOME returns "" without XDG_RUNTIME_DIR fallback (REQ-SD-B5/O3).
 func BlobRoot() string {
-	return filepath.Join(filepath.Dir(defaultBigmemRoot()), "blobs")
+	root := defaultBigmemRoot()
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(root), "blobs")
 }
 
 // IsBlobAddr reports whether s matches blob:sha256:<64hex>.
@@ -57,6 +62,9 @@ func PutBlob(b []byte) (string, error) {
 	hex := fmt.Sprintf("%x", h)
 	addr := BlobPrefix + hex
 	root := BlobRoot()
+	if root == "" {
+		return "", fmt.Errorf("home dir: not found — blob unavailable")
+	}
 	if err := os.MkdirAll(root, 0755); err != nil {
 		return "", err
 	}
