@@ -27,8 +27,16 @@ export function getToolPill(toolName) {
 
 export function isPrettyEnabled(){return process.env.BIGGZ_PRETTY!=="0"&&process.env.PI_SUBAGENT_CHILD!=="1"}
 export function isDumbTerm(){return process.env.TERM==="dumb"}
+export function isSubagentChild(){return process.env.PI_SUBAGENT_CHILD==="1"}
 export function isAnimationEnabled(){return isPrettyEnabled()&&!isDumbTerm()&&process.env.BIGGZ_NO_ANIMATION!=="1"&&process.env.GENTLE_AI_NO_ANIMATION!=="1"}
+export function isSyncSupported(){return isPrettyEnabled()&&isAnimationEnabled()&&!isDumbTerm()}
 export function stripAnsi(s){try{return String(s??"").replace(/\x1b\[[0-9;]*[A-Za-z]/g,"").replace(/\x1b\][^\x07]*\x07/g,"")}catch{return String(s??"")}}
+// 16ms trailing coalesce for pill streaming via extension-api (stacked PR3 integration)
+let _pillPending=null; let _pillTimer=null;
+export function schedulePillUpdate(pills, flushFn){ if(!isSyncSupported()||isSubagentChild()) return; _pillPending=pills; if(_pillTimer) return; _pillTimer=setTimeout(()=>{ const toFlush=_pillPending; _pillPending=null; _pillTimer=null; try{ flushFn?.(toFlush); }catch{} },16); }
+export function flushPillQueue(flushFn){ if(_pillTimer){clearTimeout(_pillTimer);_pillTimer=null;} const p=_pillPending; _pillPending=null; if(p&&flushFn) try{flushFn(p);}catch{} return p; }
+export function _resetPillThrottleForTest(){ if(_pillTimer){clearTimeout(_pillTimer);_pillTimer=null;} _pillPending=null; }
+export function isPillThrottled(){ return !!_pillTimer; }
 export const PILL_STATE_STYLES=Object.freeze({running:{icon:"⠋",bg:"toolPendingBg",fg:"accent",spinner:true},queued:{icon:"◷",bg:"toolPendingBg",fg:"muted"},complete:{icon:"✓",bg:"toolSuccessBg",fg:"success"},failed:{icon:"✗",bg:"toolErrorBg",fg:"error"},pending:{icon:"⠋",bg:"toolPendingBg",fg:"accent",spinner:true},success:{icon:"✓",bg:"toolSuccessBg",fg:"success"},error:{icon:"✗",bg:"toolErrorBg",fg:"error"}});
 export const SPINNER_FRAMES=Object.freeze(["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]);
 function getSpinnerFrame(){return isAnimationEnabled()?SPINNER_FRAMES[0]:"·"}
@@ -57,8 +65,8 @@ export function syntaxHighlight(text){if(typeof text!=="string")return text; if(
 
 export default function biggzToolPills(pi) {
 	try {
-		const api={TOOL_PILL_MAP,PILL_STATE_STYLES,SPINNER_FRAMES,getToolPill,ansiPill,collapseOutput,collapsePills,renderPills,renderPill,syntaxHighlight,isPrettyEnabled,isAnimationEnabled,isDumbTerm,stripAnsi,getSpinnerFrame};
-		if(pi){pi._biggzToolPills=api; if(pi._biggzExtension)pi._biggzExtension.getToolPill=getToolPill}
+		const api={TOOL_PILL_MAP,PILL_STATE_STYLES,SPINNER_FRAMES,getToolPill,ansiPill,collapseOutput,collapsePills,renderPills,renderPill,syntaxHighlight,isPrettyEnabled,isAnimationEnabled,isDumbTerm,isSubagentChild,isSyncSupported,stripAnsi,getSpinnerFrame,schedulePillUpdate,flushPillQueue,_resetPillThrottleForTest,isPillThrottled};
+		if(pi){pi._biggzToolPills=api; if(pi._biggzExtension){pi._biggzExtension.getToolPill=getToolPill; pi._biggzExtension.schedulePillUpdatePills=schedulePillUpdate;}}
 		if(typeof globalThis!=="undefined")globalThis._biggzToolPills=api;
 	} catch {}
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;

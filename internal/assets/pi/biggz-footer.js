@@ -106,6 +106,35 @@ export const FOOTER_ICONS = Object.freeze({
 	sepPipe: "│",
 });
 
+// ── Guards + Nerd detection (mirrors biggz-extension-api isPretty/isDumb + NerdFont fallback) ──
+export function isPrettyEnabled(){ return typeof process!=="undefined"? process.env.BIGGZ_PRETTY!=="0"&&process.env.PI_SUBAGENT_CHILD!=="1" : true; }
+export function isDumbTerm(){ return typeof process!=="undefined"? process.env.TERM==="dumb" : false; }
+export function isSubagentChild(){ return typeof process!=="undefined"? process.env.PI_SUBAGENT_CHILD==="1" : false; }
+export function isAnimationEnabled(){ return isPrettyEnabled()&&!isDumbTerm()&&typeof process!=="undefined" && process.env.BIGGZ_NO_ANIMATION!=="1"&&process.env.GENTLE_AI_NO_ANIMATION!=="1"; }
+export function hasNerdFont(theme, ctx){
+	if(isDumbTerm()||!isPrettyEnabled()) return false;
+	if(typeof process!=="undefined" && process.env.BIGGZ_NERDFONT==="0") return false;
+	if(typeof process!=="undefined" && process.env.BIGGZ_NERDFONT==="1") return true;
+	if(theme && theme.symbolPreset==="nerd") return true;
+	if(ctx && ctx.hasNerdFont===true) return true;
+	if(ctx && ctx.hasNerdFont===false) return false;
+	if(ctx && ctx.symbolPreset==="nerd") return true;
+	return false;
+}
+export const NERD_GLYPHS = Object.freeze({ powerline: "\uE0B0", powerlineRight: "\uE0B2", thin: "›", fallback: "▕", slashFallback: " / " });
+export function getNerdAwareSeparator(style, theme, ctx){
+	const base = getSep(style);
+	const rawLeft = base && base.left ? String(base.left).trim() : "";
+	if(isDumbTerm()||!isPrettyEnabled()) return { left: "▕", right: "▕" };
+	if(!hasNerdFont(theme, ctx)){
+		if(style==="slash") return { left: " / ", right: " / " };
+		if(rawLeft==="›"||rawLeft==="\uE0B0"||rawLeft==="\uE0B1"||rawLeft==="▶"||rawLeft==="▌"||base.nerdLeft) return { left: "▕", right: "▕" };
+		return { left: "▕", right: "▕" };
+	}
+	if(base.nerdLeft) return { left: base.nerdLeft, right: base.nerdRight||base.nerdLeft };
+	return base;
+}
+
 // ── Thinking roles → theme color token (mirrors tomsej/shared/thinking-colors + rokiy) ──
 export const THINKING_ROLES = Object.freeze({
 	off: "dim",
@@ -335,134 +364,169 @@ export function renderModelInfo(modelName, provider, thinking, theme) {
 
 // ── Footer segments (theme colors via statusLine* tokens) ──
 export function buildFooterSegments(theme, footerData, ctx, pi, usage) {
-	const gitBranch = (() => {
-		try {
-			return footerData?.getGitBranch?.() || ctx?.git?.branch || ctx?.cwdBranch || null;
-		} catch {
-			return ctx?.git?.branch || null;
-		}
-	})();
-
+	// New contract: branch|change|lineage|lens 1/4|budget 1/1 — detect if new data present else legacy path|branch|tokens|cost|context|model
+	const rawBranch = (()=>{ try{ return footerData?.getGitBranch?.() || ctx?.branch || ctx?.git?.branch || ctx?.cwdBranch || null; }catch{ return ctx?.branch||ctx?.git?.branch||null; }})();
+	const rawChange = ctx?.change || ctx?.changeName || ctx?.sddChange || ctx?.changeId || footerData?.change || footerData?.changeName || null;
+	const rawLineage = ctx?.lineage ?? ctx?.lineageId ?? footerData?.lineage ?? footerData?.lineageId ?? null;
+	const rawLens = ctx?.lens ?? ctx?.lensProgress ?? ctx?.lensLabel ?? footerData?.lens ?? footerData?.lensProgress ?? null;
+	const rawBudget = ctx?.budget ?? ctx?.budgetLabel ?? ctx?.budgetProgress ?? footerData?.budget ?? footerData?.budgetProgress ?? null;
+	const hasNew = rawChange!=null || rawLineage!=null || rawLens!=null || rawBudget!=null;
+	const col = (raw, token)=>{
+		if(!isPrettyEnabled()||isDumbTerm()||!theme||typeof theme.fg!=="function") return raw;
+		try{ return theme.fg(token, raw); }catch{ return raw; }
+	};
+	if(hasNew){
+		const branchRaw = rawBranch ? String(rawBranch) : "";
+		const changeRaw = rawChange ? String(rawChange) : "";
+		const lineageRaw = rawLineage!=null ? `lineage ${String(rawLineage)}` : "";
+		const lensRaw = (()=>{
+			if(rawLens==null) return "";
+			if(typeof rawLens==="string") return rawLens.includes("lens")? rawLens : `lens ${rawLens}`;
+			if(typeof rawLens==="object"){
+				if(rawLens.current!=null&&rawLens.total!=null) return `lens ${rawLens.current}/${rawLens.total}`;
+				if(rawLens.label) return `lens ${rawLens.label}`;
+				if(rawLens.value) return `lens ${rawLens.value}`;
+			}
+			return `lens ${String(rawLens)}`;
+		})();
+		const budgetRaw = (()=>{
+			if(rawBudget==null) return "";
+			if(typeof rawBudget==="string") return rawBudget.includes("budget")? rawBudget : `budget ${rawBudget}`;
+			if(typeof rawBudget==="object"){
+				if(rawBudget.current!=null&&rawBudget.total!=null) return `budget ${rawBudget.current}/${rawBudget.total}`;
+				if(rawBudget.label) return `budget ${rawBudget.label}`;
+				if(rawBudget.value) return `budget ${rawBudget.value}`;
+			}
+			return `budget ${String(rawBudget)}`;
+		})();
+		const branchSeg = branchRaw ? col(branchRaw, "statusLineGitClean") : "";
+		const changeSeg = changeRaw ? col(changeRaw, "statusLinePath") : "";
+		const lineageSeg = lineageRaw ? col(lineageRaw, "statusLineContext") : "";
+		const lensSeg = lensRaw ? col(lensRaw, "statusLineSpend") : "";
+		const budgetSeg = budgetRaw ? col(budgetRaw, "statusLineCost") : "";
+		const segments = [branchSeg, changeSeg, lineageSeg, lensSeg, budgetSeg].filter(Boolean);
+		const rawsOrdered = [branchRaw, changeRaw, lineageRaw, lensRaw, budgetRaw].filter(Boolean);
+		return {
+			segments, rawsOrdered,
+			raw: { branch: branchRaw, change: changeRaw, lineage: lineageRaw, lens: lensRaw, budget: budgetRaw },
+			widths: { branch: visibleWidth(branchRaw), change: visibleWidth(changeRaw), lineage: visibleWidth(lineageRaw), lens: visibleWidth(lensRaw), budget: visibleWidth(budgetRaw) },
+			allColored: segments,
+			pathRaw: changeRaw || branchRaw || "",
+			branchSeg, changeSeg, lineageSeg, lensSeg, budgetSeg,
+			tokensSeg: lensSeg, costSeg: budgetSeg, contextSeg: lineageSeg, modelSeg: "",
+			rawLegacy: { path: changeRaw, branch: branchRaw, tokens: lensRaw, cost: budgetRaw, context: lineageRaw, model: "" },
+		};
+	}
+	// legacy fallback: path|branch|tokens|cost|context|model
+	const gitBranch = rawBranch;
 	const cwd = ctx?.cwd || (typeof process !== "undefined" ? process.cwd() : ".");
 	const pathRawFull = buildPathString(cwd, null);
-
-	// Context
-	let pct = null;
-	let win = 0;
-	try {
-		const u = ctx?.getContextUsage?.();
-		if (u) {
-			if (typeof u.percent === "number") pct = u.percent;
-			else if (typeof u.fraction === "number") pct = u.fraction * 100;
-			else if (typeof u.used === "number" && typeof u.limit === "number" && u.limit > 0) pct = (u.used / u.limit) * 100;
-			win = Number(u.contextWindow ?? u.limit ?? ctx?.model?.contextWindow ?? 0) || 0;
-		}
-	} catch {}
-	if (pct == null) {
-		const lab = getContextLabel(ctx);
-		pct = lab === "-" ? 0 : parseFloat(lab) || 0;
-	}
-
+	let pct = null; let win = 0;
+	try{ const u = ctx?.getContextUsage?.(); if(u){ if(typeof u.percent==="number") pct=u.percent; else if(typeof u.fraction==="number") pct=u.fraction*100; else if(typeof u.used==="number"&&typeof u.limit==="number"&&u.limit>0) pct=(u.used/u.limit)*100; win=Number(u.contextWindow??u.limit??ctx?.model?.contextWindow??0)||0; } }catch{}
+	if(pct==null){ const lab=getContextLabel(ctx); pct=lab==="-"?0:parseFloat(lab)||0; }
 	const usageTotals = usage || collectUsage(ctx);
-	const costVal = Number(usageTotals?.cost ?? ctx?.cost ?? ctx?.usageStats?.cost ?? 0) || 0;
-
-	const ctxLabelRaw = pct != null ? (win ? `${Number(pct).toFixed(0)}%/${fmtTokens(win)}` : `${Number(pct).toFixed(0)}%`) : "-";
-	const tokensRaw = getUsageLabel(usageTotals);
-	const costRaw = getCostLabel(costVal);
-
-	// Colored segments
-	const pathSegRaw = pathRawFull; // will be budgeted later
-	const branchSeg = gitBranch
-		? theme && typeof theme.fg === "function"
-			? theme.fg("statusLineGitClean", `${FOOTER_ICONS.branch} ${gitBranch}`)
-			: `${FOOTER_ICONS.branch} ${gitBranch}`
-		: "";
-
-	const tokensSeg = tokensRaw === "-"
-		? ""
-		: theme && typeof theme.fg === "function"
-			? theme.fg("statusLineSpend", tokensRaw)
-			: tokensRaw;
-
-	const costSeg = costRaw === "-"
-		? ""
-		: theme && typeof theme.fg === "function"
-			? theme.fg("statusLineCost", costRaw)
-			: costRaw;
-
-	const contextSeg = (() => {
-		if (ctxLabelRaw === "-" || pct == null) return "";
-		// use colored renderContextUsage for pct thresholds
-		return renderContextUsage(Number(pct) || 0, win, theme);
-	})();
-
-	const modelName = getModelLabel(ctx).split("/").pop() || getModelLabel(ctx);
-	const provider = ctx?.model?.provider || "";
-	const thinking = getThinkingLabel(pi);
-	const modelInfo = renderModelInfo(modelName, provider, thinking, theme);
-	const modelSeg = modelInfo.text;
-
+	const costVal = Number(usageTotals?.cost ?? ctx?.cost ?? ctx?.usageStats?.cost ?? 0)||0;
+	const ctxLabelRaw = pct!=null ? (win? `${Number(pct).toFixed(0)}%/${fmtTokens(win)}`:`${Number(pct).toFixed(0)}%`):"-";
+	const tokensRaw=getUsageLabel(usageTotals); const costRaw=getCostLabel(costVal);
+	const branchSeg = gitBranch ? col(`${FOOTER_ICONS.branch} ${gitBranch}`, "statusLineGitClean") : "";
+	const tokensSeg = tokensRaw==="-"?"":col(tokensRaw,"statusLineSpend");
+	const costSeg = costRaw==="-"?"":col(costRaw,"statusLineCost");
+	const contextSeg = (ctxLabelRaw==="-"||pct==null)?"":renderContextUsage(Number(pct)||0, win, theme);
+	const modelName=getModelLabel(ctx).split("/").pop()||getModelLabel(ctx); const provider=ctx?.model?.provider||""; const thinking=getThinkingLabel(pi); const modelInfo=renderModelInfo(modelName,provider,thinking,theme); const modelSeg=modelInfo.text;
 	return {
-		pathRaw: pathRawFull,
-		branchSeg,
-		tokensSeg,
-		costSeg,
-		contextSeg,
-		modelSeg,
-		raw: {
-			path: pathRawFull,
-			branch: gitBranch ? `${FOOTER_ICONS.branch} ${gitBranch}` : "",
-			tokens: tokensRaw,
-			cost: costRaw,
-			context: ctxLabelRaw,
-			model: modelInfo.raw,
-		},
-		widths: {
-			branch: visibleWidth(gitBranch ? `${FOOTER_ICONS.branch} ${gitBranch}` : ""),
-			tokens: visibleWidth(tokensRaw === "-" ? "" : tokensRaw),
-			cost: visibleWidth(costRaw === "-" ? "" : costRaw),
-			context: visibleWidth(ctxLabelRaw === "-" ? "" : ctxLabelRaw),
-			model: modelInfo.rawWidth,
-			path: visibleWidth(pathRawFull),
-		},
+		pathRaw: pathRawFull, branchSeg, tokensSeg, costSeg, contextSeg, modelSeg,
+		raw: { path: pathRawFull, branch: gitBranch?`${FOOTER_ICONS.branch} ${gitBranch}`:"", tokens: tokensRaw, cost: costRaw, context: ctxLabelRaw, model: modelInfo.raw },
+		widths: { branch: visibleWidth(gitBranch?`${FOOTER_ICONS.branch} ${gitBranch}`:""), tokens: visibleWidth(tokensRaw==="-"?"":tokensRaw), cost: visibleWidth(costRaw==="-"?"":costRaw), context: visibleWidth(ctxLabelRaw==="-"?"":ctxLabelRaw), model: modelInfo.rawWidth, path: visibleWidth(pathRawFull) },
 		allColored: [pathRawFull, branchSeg, tokensSeg, costSeg, contextSeg, modelSeg],
 	};
 }
 
-function themeSpacer(theme) {
-	// Single space between segments; separator provides visual pipe
-	return " ";
-}
+function themeSpacer(theme) { return " "; }
 
-function sepStr(theme) {
+function sepStr(theme, ctx) {
+	if(!isPrettyEnabled()||isDumbTerm()){
+		const raw=" ▕ ";
+		if(theme && typeof theme.fg==="function" && !isDumbTerm() && isPrettyEnabled()){ try{ return theme.fg("statusLineSep", raw); }catch{ try{return theme.fg("dim", raw);}catch{return raw;}} }
+		return raw;
+	}
 	const presetSep = PRESETS.default.separator || "powerline-thin";
-	const def = getSep(presetSep);
-	// SEPARATORS powerline-thin left is "›"; fallback to powerline "▕" for visible glyph
+	let def;
+	try{ def = getNerdAwareSeparator(presetSep, theme, ctx); }catch{ def = getSep(presetSep); }
 	let glyph = (def && def.left && String(def.left).trim()) || FOOTER_ICONS.sepPowerline;
-	// Normalize: if glyph is "›", keep it (thin powerline); if user prefers block, "▌" etc — keep as is
-	// Ensure surrounding spaces are handled by caller; here return colored separator with spaces
-	const raw = ` ${glyph} `;
-	if (theme && typeof theme.fg === "function") {
-		// statusLineSep follows theme (dark #808080, titanium subtleGray etc.)
-		try {
-			return theme.fg("statusLineSep", raw);
-		} catch {
-			return theme.fg("dim", raw);
+	if(!hasNerdFont(theme, ctx)){
+		if(glyph==="›"||glyph==="\uE0B0"||glyph==="\uE0B1"||glyph==="▶"||glyph==="▌") glyph="▕";
+		if(glyph.includes("/") && glyph.trim()!=="▕") glyph="/";
+		else if(glyph.trim()===""|| (glyph!=="▕"&&glyph!=="/")){
+			if(glyph!=="▕"&&glyph!=="/") glyph="▕";
 		}
+	} else {
+		if(glyph==="▕") glyph="›";
+	}
+	const raw=` ${glyph} `;
+	if(theme && typeof theme.fg==="function" && !isDumbTerm() && isPrettyEnabled()){
+		try{ return theme.fg("statusLineSep", raw); }catch{ try{return theme.fg("dim", raw);}catch{return raw;}}
 	}
 	return raw;
 }
 
-export function joinFooterSections(sections, theme) {
-	const s = sepStr(theme);
+export function joinFooterSections(sections, theme, ctx) {
+	const s = sepStr(theme, ctx);
 	return sections.filter(Boolean).join(s);
 }
 
-export function renderFooterLine(width, theme, segments) {
-	const s = sepStr(theme);
+export function renderFooterLine(width, theme, segments, ctxArg) {
+	const ctx = ctxArg || segments?.ctx || null;
+	const s = sepStr(theme, ctx);
 	const sepW = visibleWidth(s);
 
-	// Build attempts like rokiy: try full, then drop least critical (cost) etc., always keep path+branch+model minimal
+	// New contract branch|change|lineage|lens|budget — budgeted width with order preservation + nerd fallback
+	const hasNew = segments && (segments.rawOrdered || (segments.raw && (segments.raw.change!=null || segments.raw.lineage!=null || segments.raw.lens!=null || segments.raw.budget!=null)));
+	if(hasNew){
+		// Resolve ordered raws and colored segs for new contract
+		const rawOrdered = segments.rawOrdered || [segments.raw.branch, segments.raw.change, segments.raw.lineage, segments.raw.lens, segments.raw.budget].filter(Boolean);
+		const segMap = {};
+		try{
+			segMap.branch = segments.branchSeg || "";
+			segMap.change = segments.changeSeg || "";
+			segMap.lineage = segments.lineageSeg || "";
+			segMap.lens = segments.lensSeg || "";
+			segMap.budget = segments.budgetSeg || "";
+			// fallback to segments array order if named segs missing
+			if(!segMap.branch && !segMap.change && segments.segments){
+				const keys=["branch","change","lineage","lens","budget"];
+				const rawKeys=[segments.raw.branch,segments.raw.change,segments.raw.lineage,segments.raw.lens,segments.raw.budget].filter(Boolean);
+				segments.segments.forEach((c,i)=>{ const k=keys[rawKeys.indexOf(segments.raw[keys[i]])]; if(k&&!segMap[k]) segMap[k]=c; });
+			}
+		}catch{}
+		const orderedKeys=["branch","change","lineage","lens","budget"];
+		const attemptsNew=[
+			["branch","change","lineage","lens","budget"],
+			["branch","change","lineage","lens"],
+			["branch","change","lineage"],
+			["branch","change"],
+			["branch"],
+			["change"],
+		];
+		for(const attempt of attemptsNew){
+			const coloreds=[]; const raws=[];
+			for(const k of attempt){ if(segments.raw[k] && String(segments.raw[k]).length){ const c=segMap[k]; if(c) coloreds.push(c); raws.push(segments.raw[k]); } }
+			if(coloreds.length===0) continue;
+			const totalRawW = raws.reduce((a,v)=>a+visibleWidth(v),0);
+			const sepCount = Math.max(0, coloreds.length-1);
+			const totalW = totalRawW + sepCount*sepW;
+			if(totalW<=width){
+				const rendered = joinFooterSections(coloreds, theme, ctx);
+				if(visibleWidth(rendered)<=width) return rendered;
+			}
+			// if width extremely narrow, try next smaller attempt
+		}
+		// fallback: render whatever fits truncated
+		const allColored = segments.segments || Object.values(segMap).filter(Boolean);
+		const renderedAll = joinFooterSections(allColored, theme, ctx);
+		if(visibleWidth(renderedAll)<=width) return renderedAll;
+		return truncateToWidth(stripAnsi(renderedAll), width);
+	}
+	// Legacy Build attempts like rokiy: try full, then drop least critical (cost) etc., always keep path+branch+model minimal
 	const { pathRaw, branchSeg, tokensSeg, costSeg, contextSeg, modelSeg, raw, widths } = segments;
 
 	// Helper to compute colored segment for path with budget
@@ -543,8 +607,16 @@ export function renderFooterLine(width, theme, segments) {
 }
 
 export function renderFooter(width, theme, footerData, ctx, pi) {
+	if(!isPrettyEnabled()||isSubagentChild()) return [""];
+	if(isDumbTerm()){
+		const segs = buildFooterSegments(theme, footerData, ctx, pi);
+		const line = stripAnsi(renderFooterLine(width, {fg:(_,t)=>t}, segs, ctx));
+		return [stripAnsi(line)];
+	}
 	const segs = buildFooterSegments(theme, footerData, ctx, pi);
-	const line = renderFooterLine(width, theme, segs);
+	segs.ctx = ctx;
+	const line = renderFooterLine(width, theme, segs, ctx);
+	if(isDumbTerm()) return [stripAnsi(line)];
 	return [line];
 }
 
@@ -581,6 +653,14 @@ export default function biggzFooter(pi) {
 			renderFooterLine,
 			renderFooter,
 			stripAnsi,
+			isPrettyEnabled,
+			isDumbTerm,
+			isSubagentChild,
+			isAnimationEnabled,
+			hasNerdFont,
+			NERD_GLYPHS,
+			getNerdAwareSeparator,
+			sepStr,
 		};
 		if (pi._biggzExtension) {
 			pi._biggzExtension.footer = pi._biggzFooter;

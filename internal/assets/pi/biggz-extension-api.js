@@ -47,17 +47,71 @@ export function getPreset(name) {
 
 // ── Separators (mirrors separators.ts + symbols.ts sep.*) ──
 export const SEPARATORS = Object.freeze({
-	"powerline-thin": { left: "›", right: "‹", endCaps: { left: "◀", right: "▶", useBgAsFg: true } },
+	"powerline-thin": { left: "›", right: "‹", endCaps: { left: "◀", right: "▶", useBgAsFg: true }, nerdLeft: "\uE0B1", nerdRight: "\uE0B3" },
 	slash: { left: " / ", right: " / " },
 	pipe: { left: " │ ", right: " │ " },
 	ascii: { left: " > ", right: " < " },
-	powerline: { left: "▶", right: "◀", endCaps: { left: "◀", right: "▶", useBgAsFg: true } },
+	powerline: { left: "\uE0B0", right: "\uE0B2", asciiFallback: "▕", endCaps: { left: "◀", right: "▶", useBgAsFg: true } },
 	block: { left: "▌", right: "▌" },
 	none: { left: " ", right: " " },
 });
 
-export function getSeparator(style) {
-	return SEPARATORS[style] ?? SEPARATORS["powerline-thin"];
+export function isPrettyEnabled(){ return process.env.BIGGZ_PRETTY!=="0"&&process.env.PI_SUBAGENT_CHILD!=="1"; }
+export function isDumbTerm(){ return process.env.TERM==="dumb"; }
+export function isAnimationEnabled(){ return isPrettyEnabled()&&!isDumbTerm()&&process.env.BIGGZ_NO_ANIMATION!=="1"&&process.env.GENTLE_AI_NO_ANIMATION!=="1"; }
+export function isSyncSupported(){ return isPrettyEnabled()&&isAnimationEnabled()&&!isDumbTerm(); }
+export function isSubagentChild(){ return process.env.PI_SUBAGENT_CHILD==="1"; }
+export function hasNerdFont(opts={}){
+	if(isDumbTerm()||!isPrettyEnabled()) return false;
+	if(process.env.BIGGZ_NERDFONT==="0") return false;
+	if(process.env.BIGGZ_NERDFONT==="1") return true;
+	if(opts.hasNerdFont!=null) return !!opts.hasNerdFont;
+	if(opts.theme&&opts.theme.symbolPreset==="nerd") return true;
+	if(opts.ctx&&opts.ctx.hasNerdFont===true) return true;
+	if(opts.ctx&&opts.ctx.hasNerdFont===false) return false;
+	if(opts.ctx&&opts.ctx.symbolPreset==="nerd") return true;
+	return false;
+}
+export function getSeparator(style, opts){
+	const base = SEPARATORS[style] ?? SEPARATORS["powerline-thin"];
+	if(isDumbTerm()||!isPrettyEnabled()){
+		if(style==="slash") return { left: " / ", right: " / " };
+		return { left: "▕", right: "▕" };
+	}
+	const useNerd = hasNerdFont(opts);
+	if(!useNerd){
+		if(style==="powerline"||style==="powerline-thin") return { left: "▕", right: "▕", asciiFallback: "▕" };
+		if(base.nerdLeft) return { left: "▕", right: "▕" };
+	}
+	if(useNerd && base.nerdLeft) return { left: base.nerdLeft, right: base.nerdRight||base.nerdLeft };
+	return base;
+}
+
+// 16ms trailing coalesce for pill streaming (mirrors tui 60fps sync)
+let _pillPending=null; let _pillTimer=null;
+export function schedulePillUpdate(pills, flushFn){
+	if(!isSyncSupported()||isSubagentChild()) return;
+	_pillPending=pills;
+	if(_pillTimer) return;
+	_pillTimer=setTimeout(()=>{ const toFlush=_pillPending; _pillPending=null; _pillTimer=null; try{ flushFn?.(toFlush); }catch{} },16);
+}
+export function flushPillQueue(flushFn){
+	if(_pillTimer){ clearTimeout(_pillTimer); _pillTimer=null; }
+	const p=_pillPending; _pillPending=null;
+	if(p&&flushFn) try{ flushFn(p); }catch{}
+	return p;
+}
+export function _resetPillThrottleForTest(){ if(_pillTimer){clearTimeout(_pillTimer);_pillTimer=null;} _pillPending=null; }
+export function isPillThrottled(){ return !!_pillTimer; }
+// Pill collapse for streaming (order-preserving, >3 → … +N hidden)
+export function collapsePillsForStream(pills, limit=3){ if(!Array.isArray(pills)) return {visible:[],hidden:0,suffix:""}; if(pills.length<=limit) return {visible:pills.slice(),hidden:0,suffix:""}; return {visible:pills.slice(0,limit),hidden:pills.length-limit,suffix:`… +${pills.length-limit} hidden`}; }
+export function renderPillsForStream(pills, limit=3){
+	if(!isSyncSupported()||isSubagentChild()) return "";
+	const {visible,suffix}=collapsePillsForStream(pills,limit);
+	let s=visible.map(p=> typeof p==="string"?p:String(p.label??p.name??p.tool??p)).filter(Boolean).join(" ");
+	if(suffix) s+=(s?" ":"")+suffix;
+	if(isDumbTerm()||!isPrettyEnabled()) return s.replace(/\x1b\[[0-9;]*[A-Za-z]/g,"");
+	return s;
 }
 
 // ── Context-usage memo (mirrors component.ts messageFingerprint) ──
@@ -356,6 +410,18 @@ export default function biggzExtensionAPI(pi) {
 			SafeToolRenderer,
 			SafeToolRendererComponent,
 			renderPR,
+			isPrettyEnabled,
+			isDumbTerm,
+			isAnimationEnabled,
+			isSyncSupported,
+			isSubagentChild,
+			hasNerdFont,
+			schedulePillUpdate,
+			flushPillQueue,
+			_resetPillThrottleForTest,
+			isPillThrottled,
+			collapsePillsForStream,
+			renderPillsForStream,
 		};
 	} catch {}
 	try {
