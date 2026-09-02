@@ -18,6 +18,7 @@ require (
 	github.com/mattn/go-runewidth v0.0.19
 	github.com/refraction-networking/utls v1.8.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+	github.com/sergi/go-diff v1.3.1
 	github.com/uudashr/gocognit v1.2.1
 	golang.org/x/sys v0.45.0
 	golang.org/x/tools v0.44.0

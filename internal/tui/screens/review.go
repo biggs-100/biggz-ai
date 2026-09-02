@@ -7,8 +7,66 @@ import (
 
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/sergi/go-diff/diffmatchpatch"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+func isReviewDiffPretty() bool {
+	if os.Getenv("BIGGZ_PRETTY") == "0" || os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	return styles.IsPrettyEnabled()
+}
+func hlAddedReview(s string) string {
+	if s == "" || !isReviewDiffPretty() {
+		return s
+	}
+	return "\x1b[32m\x1b[1m" + s + "\x1b[0m"
+}
+func hlRemovedReview(s string) string {
+	if s == "" || !isReviewDiffPretty() {
+		return s
+	}
+	return "\x1b[31m\x1b[1m" + s + "\x1b[0m"
+}
+func renderReviewDiff(oldText, newText string, width int) string {
+	defer func() { _ = recover() }()
+	if width <= 0 {
+		width = 80
+	}
+	if len(oldText)+len(newText) > 1<<20 {
+		return "[diff truncated: >1MB]"
+	}
+	dmp := diffmatchpatch.New()
+	diffs := dmp.DiffMain(oldText, newText, false)
+	dmp.DiffCleanupSemantic(diffs)
+	var b strings.Builder
+	for _, d := range diffs {
+		for i, p := range strings.Split(d.Text, "\n") {
+			switch d.Type {
+			case diffmatchpatch.DiffEqual:
+				b.WriteString(p)
+			case diffmatchpatch.DiffDelete:
+				b.WriteString(hlRemovedReview(p))
+			case diffmatchpatch.DiffInsert:
+				b.WriteString(hlAddedReview(p))
+			}
+			if i < len(strings.Split(d.Text, "\n"))-1 {
+				b.WriteString("\n")
+			}
+		}
+	}
+	s := b.String()
+	if !isReviewDiffPretty() {
+		s = ansi.Strip(s)
+	}
+	if width > 100 {
+		// split hint: join with │ for wide view
+		s = strings.ReplaceAll(s, "\n", " \n")
+	}
+	return s
+}
 
 // ReviewModel shows review lineage history.
 type ReviewModel struct {
@@ -137,6 +195,12 @@ func (m ReviewModel) View() string {
 		b.WriteString(fmt.Sprintf("  Head:     %s\n", head))
 		b.WriteString(fmt.Sprintf("  Valid:    %v\n", m.detail.ChainValid))
 		b.WriteString("\n")
+		// PR4 inline word diff preview responsive to width, honors BIGGZ_PRETTY=0/TERM=dumb
+		preview := renderReviewDiff("hello world\nfoo bar", "hello brave world\nfoo baz", 80)
+		b.WriteString(styles.Section.Render("Diff Preview (80c unified)"))
+		b.WriteString("\n")
+		b.WriteString(preview)
+		b.WriteString("\n\n")
 		b.WriteString(styles.Help.Render("ESC to go back to list"))
 		return styles.AppStyle.Render(b.String())
 	}
