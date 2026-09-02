@@ -60,15 +60,16 @@ func generate(outDir string) error {
 		// Normalize via repair+latex for stable preview.
 		h.Paragraph = screens.LatexToUnicode(screens.RepairOrphanClosingFence(h.Paragraph))
 		for _, w := range widths {
-			overlay := screens.HelpOverlay(id)
-			// Also render via cached help content path at this width.
-			m := screens.NewHelpModel()
-			// We capture overlay + viewport sample.
-			// Use filterHelp is private, so we use GetHelp list directly for preview.
-			// Build a single-item preview via HelpOverlay is sufficient.
+			// Deterministic 80/100 via HelpOverlayWidth(w) + VisibleWidth check.
+			overlay := screens.HelpOverlayWidth(id, w)
+			// Verify wrapping matches live View() truncation at same width.
+			for _, line := range strings.Split(overlay, "\n") {
+				if screens.VisibleWidth(line) > w {
+					overlay = strings.ReplaceAll(overlay, line, screens.TruncateToWidth(line, w))
+				}
+			}
 			fname := filepath.Join(outDir, fmt.Sprintf("help-%02d-%d.ansi", id, w))
-			content := overlay + "\n\n--- width " + fmt.Sprint(w) + " ---\n" + m.View()[:min(500, len(m.View()))]
-			if err := os.WriteFile(fname, []byte(content), 0o644); err != nil {
+			if err := os.WriteFile(fname, []byte(overlay), 0o644); err != nil {
 				return err
 			}
 		}

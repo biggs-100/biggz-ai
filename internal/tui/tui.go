@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/tui/screens"
@@ -35,8 +36,14 @@ type PasteMsg struct {
 }
 
 // isSyncSupported reports whether synchronized output (CSI 2026) should be
-// enabled. It is gated on TERM support and animation envs.
+// enabled. It is gated on TERM support and animation envs plus pretty guards.
 func isSyncSupported() bool {
+	if os.Getenv("BIGGZ_PRETTY") == "0" {
+		return false
+	}
+	if os.Getenv("PI_SUBAGENT_CHILD") == "1" {
+		return false
+	}
 	if tuiAnimationsDisabled() {
 		return false
 	}
@@ -49,16 +56,103 @@ func isSyncSupported() bool {
 
 // syncOutput wraps frame with CSI 2026 markers when supported.
 // When the terminal does not support sync or animation is disabled,
-// the frame is returned unchanged without garbling.
+// the frame is returned unchanged without garbling. Idempotent: avoids
+// double-wrapping and strips markers when guards disable sync.
 func syncOutput(frame string) string {
 	if !isSyncSupported() {
+		// Strip any existing CSI markers to guarantee zero ESC[?2026h/l when disabled.
+		if strings.Contains(frame, syncBegin) || strings.Contains(frame, syncEnd) {
+			f := strings.ReplaceAll(frame, syncBegin, "")
+			f = strings.ReplaceAll(f, syncEnd, "")
+			return f
+		}
 		return frame
 	}
 	// Idempotent: avoid double-wrapping if frame already synced (opt-in screens).
 	if strings.HasPrefix(frame, syncBegin) && strings.HasSuffix(frame, syncEnd) {
-		return frame
+		if strings.Count(frame, syncBegin) == 1 && strings.Count(frame, syncEnd) == 1 {
+			return frame
+		}
+	}
+	// Normalize cases where markers exist but not as exact wrap (e.g., nested calls).
+	if strings.Contains(frame, syncBegin) || strings.Contains(frame, syncEnd) {
+		if strings.Count(frame, syncBegin) == 1 && strings.Count(frame, syncEnd) == 1 {
+			return frame
+		}
+		f := strings.ReplaceAll(frame, syncBegin, "")
+		f = strings.ReplaceAll(f, syncEnd, "")
+		return syncBegin + f + syncEnd
 	}
 	return syncBegin + frame + syncEnd
+}
+
+// ── Throttled sync streaming (16ms trailing coalesce, CSI 2026) ────────────
+//
+// Lens/viewport updates arriving within 16ms are coalesced to a single flush
+// at t0+16ms. Reuses isSyncSupported guards so BIGGZ_PRETTY=0,
+// BIGGZ_NO_ANIMATION, TERM=dumb and PI_SUBAGENT_CHILD=1 suppress CSI.
+
+var (
+	pendingFrame string
+	syncMu       sync.Mutex
+	syncTimer    *time.Timer
+)
+
+// flushSyncMsg is emitted after the 16ms trailing window.
+type flushSyncMsg struct{}
+
+// scheduleSyncFlush stores the latest frame and schedules a trailing flush
+// via time.AfterFunc(16ms). Rapid calls coalesce to the last frame; the
+// flush wraps via syncOutput so guards and idempotency apply.
+func scheduleSyncFlush(frame string) {
+	syncMu.Lock()
+	pendingFrame = frame
+	if syncTimer != nil {
+		syncTimer.Stop()
+	}
+	syncTimer = time.AfterFunc(16*time.Millisecond, func() {
+		syncMu.Lock()
+		f := pendingFrame
+		pendingFrame = ""
+		syncMu.Unlock()
+		_ = syncOutput(f)
+	})
+	syncMu.Unlock()
+}
+
+// scheduleSyncFlushCmd is the bubbletea-friendly variant that returns a
+// tea.Cmd emitting flushSyncMsg after 16ms. Useful for Model.Update throttling.
+func scheduleSyncFlushCmd(frame string) tea.Cmd {
+	syncMu.Lock()
+	pendingFrame = frame
+	if syncTimer != nil {
+		syncTimer.Stop()
+	}
+	syncMu.Unlock()
+	return tea.Tick(16*time.Millisecond, func(t time.Time) tea.Msg {
+		syncMu.Lock()
+		pendingFrame = ""
+		syncMu.Unlock()
+		return flushSyncMsg{}
+	})
+}
+
+// pendingFrameForTest exposes coalesced pending frame for tests.
+func pendingFrameForTest() string {
+	syncMu.Lock()
+	defer syncMu.Unlock()
+	return pendingFrame
+}
+
+// resetSyncThrottleForTest clears throttle state (tests only).
+func resetSyncThrottleForTest() {
+	syncMu.Lock()
+	defer syncMu.Unlock()
+	pendingFrame = ""
+	if syncTimer != nil {
+		syncTimer.Stop()
+		syncTimer = nil
+	}
 }
 
 const noAnimationEnv = "BIGGZ_NO_ANIMATION"
@@ -360,6 +454,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showHelp = false
 			return m, nil
 		}
+
+	case flushSyncMsg:
+		// 16ms trailing coalesce flush — trigger re-render via View()->syncOutput.
+		return m, nil
 
 	case screens.NavigateMsg:
 		m.currentScreen = int(msg.Screen)

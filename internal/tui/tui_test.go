@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/tui/screens"
 	tea "github.com/charmbracelet/bubbletea"
@@ -94,9 +95,13 @@ func TestSyncOutput_MarkersPresent(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("BIGGZ_NO_ANIMATION", "")
 	t.Setenv("GENTLE_AI_NO_ANIMATION", "")
+	t.Setenv("BIGGZ_PRETTY", "")
+	t.Setenv("PI_SUBAGENT_CHILD", "")
 	// Ensure env is clean via unset for the exact "1" check.
 	_ = os.Unsetenv("BIGGZ_NO_ANIMATION")
 	_ = os.Unsetenv("GENTLE_AI_NO_ANIMATION")
+	_ = os.Unsetenv("BIGGZ_PRETTY")
+	_ = os.Unsetenv("PI_SUBAGENT_CHILD")
 	t.Setenv("TERM", "xterm-256color")
 	if !isSyncSupported() {
 		t.Fatal("expected sync supported with TERM=xterm-256color and no animation env")
@@ -118,6 +123,8 @@ func TestSyncOutput_Fallback_TermDumb(t *testing.T) {
 	t.Setenv("TERM", "dumb")
 	_ = os.Unsetenv("BIGGZ_NO_ANIMATION")
 	_ = os.Unsetenv("GENTLE_AI_NO_ANIMATION")
+	_ = os.Unsetenv("BIGGZ_PRETTY")
+	_ = os.Unsetenv("PI_SUBAGENT_CHILD")
 	if isSyncSupported() {
 		t.Fatal("expected sync NOT supported with TERM=dumb")
 	}
@@ -135,6 +142,8 @@ func TestSyncOutput_Fallback_NoAnimation(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	t.Setenv("BIGGZ_NO_ANIMATION", "1")
 	_ = os.Unsetenv("GENTLE_AI_NO_ANIMATION")
+	_ = os.Unsetenv("BIGGZ_PRETTY")
+	_ = os.Unsetenv("PI_SUBAGENT_CHILD")
 	if isSyncSupported() {
 		t.Fatal("expected sync NOT supported with BIGGZ_NO_ANIMATION=1")
 	}
@@ -149,6 +158,8 @@ func TestSyncOutput_Fallback_GentleAnimation(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	_ = os.Unsetenv("BIGGZ_NO_ANIMATION")
 	t.Setenv("GENTLE_AI_NO_ANIMATION", "1")
+	_ = os.Unsetenv("BIGGZ_PRETTY")
+	_ = os.Unsetenv("PI_SUBAGENT_CHILD")
 	if isSyncSupported() {
 		t.Fatal("expected sync NOT supported with GENTLE_AI_NO_ANIMATION=1")
 	}
@@ -163,6 +174,10 @@ func TestSyncOutput_Idempotent(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	_ = os.Unsetenv("BIGGZ_NO_ANIMATION")
 	_ = os.Unsetenv("GENTLE_AI_NO_ANIMATION")
+	_ = os.Unsetenv("BIGGZ_PRETTY")
+	_ = os.Unsetenv("PI_SUBAGENT_CHILD")
+	t.Setenv("BIGGZ_PRETTY", "")
+	t.Setenv("PI_SUBAGENT_CHILD", "")
 	frame := "idempotent"
 	first := syncOutput(frame)
 	second := syncOutput(first)
@@ -178,6 +193,10 @@ func TestSyncOutput_ViewWraps(t *testing.T) {
 	t.Setenv("TERM", "xterm-256color")
 	_ = os.Unsetenv("BIGGZ_NO_ANIMATION")
 	_ = os.Unsetenv("GENTLE_AI_NO_ANIMATION")
+	_ = os.Unsetenv("BIGGZ_PRETTY")
+	_ = os.Unsetenv("PI_SUBAGENT_CHILD")
+	t.Setenv("BIGGZ_PRETTY", "")
+	t.Setenv("PI_SUBAGENT_CHILD", "")
 	m := New()
 	view := m.View()
 	if !strings.HasPrefix(view, syncBegin) || !strings.HasSuffix(view, syncEnd) {
@@ -189,11 +208,126 @@ func TestSyncOutput_ViewFallback(t *testing.T) {
 	t.Setenv("TERM", "dumb")
 	_ = os.Unsetenv("BIGGZ_NO_ANIMATION")
 	_ = os.Unsetenv("GENTLE_AI_NO_ANIMATION")
+	_ = os.Unsetenv("BIGGZ_PRETTY")
+	_ = os.Unsetenv("PI_SUBAGENT_CHILD")
 	m := New()
 	view := m.View()
 	if strings.Contains(view, syncBegin) || strings.Contains(view, syncEnd) {
 		t.Error("expected View without sync markers when TERM=dumb")
 	}
+}
+
+func TestSyncOutput_GuardPrettyOff(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	_ = os.Unsetenv("BIGGZ_NO_ANIMATION")
+	_ = os.Unsetenv("GENTLE_AI_NO_ANIMATION")
+	t.Setenv("BIGGZ_PRETTY", "0")
+	t.Setenv("PI_SUBAGENT_CHILD", "")
+	if isSyncSupported() {
+		t.Fatal("expected sync NOT supported with BIGGZ_PRETTY=0")
+	}
+	out := syncOutput("guard-pretty")
+	if strings.Contains(out, syncBegin) || strings.Contains(out, syncEnd) {
+		t.Errorf("expected zero CSI with BIGGZ_PRETTY=0, got %q", out)
+	}
+	t.Setenv("BIGGZ_PRETTY", "")
+	// Also verify wrapped frame gets stripped when guard active
+	wrapped := syncBegin + "already" + syncEnd
+	t.Setenv("BIGGZ_PRETTY", "0")
+	stripped := syncOutput(wrapped)
+	if strings.Contains(stripped, syncBegin) || strings.Contains(stripped, syncEnd) {
+		t.Errorf("expected stripped plain when guard disables sync, got %q", stripped)
+	}
+	t.Setenv("BIGGZ_PRETTY", "")
+}
+
+func TestSyncOutput_GuardPiSubagent(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	_ = os.Unsetenv("BIGGZ_NO_ANIMATION")
+	_ = os.Unsetenv("GENTLE_AI_NO_ANIMATION")
+	t.Setenv("PI_SUBAGENT_CHILD", "1")
+	t.Setenv("BIGGZ_PRETTY", "")
+	if isSyncSupported() {
+		t.Fatal("expected sync NOT supported with PI_SUBAGENT_CHILD=1")
+	}
+	out := syncOutput("subagent-frame")
+	if strings.Contains(out, syncBegin) || strings.Contains(out, syncEnd) {
+		t.Errorf("expected zero CSI with PI_SUBAGENT_CHILD=1, got %q", out)
+	}
+	t.Setenv("PI_SUBAGENT_CHILD", "")
+}
+
+func TestSyncOutput_IdempotentDoubleWrap(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	_ = os.Unsetenv("BIGGZ_NO_ANIMATION")
+	_ = os.Unsetenv("GENTLE_AI_NO_ANIMATION")
+	t.Setenv("BIGGZ_PRETTY", "")
+	t.Setenv("PI_SUBAGENT_CHILD", "")
+	frame := "inner"
+	first := syncOutput(frame)
+	second := syncOutput(first)
+	third := syncOutput(second)
+	if first != second || second != third {
+		t.Errorf("expected idempotent, got %q %q %q", first, second, third)
+	}
+	if strings.Count(first, syncBegin) != 1 || strings.Count(first, syncEnd) != 1 {
+		t.Errorf("expected exactly one pair, counts %d %d", strings.Count(first, syncBegin), strings.Count(first, syncEnd))
+	}
+	// Nested triple-wrap input should normalize to single pair
+	nested := syncBegin + syncBegin + frame + syncEnd + syncEnd
+	norm := syncOutput(nested)
+	if strings.Count(norm, syncBegin) != 1 || strings.Count(norm, syncEnd) != 1 {
+		t.Errorf("expected normalized single pair for nested input, got %q", norm)
+	}
+}
+
+func TestSyncOutput_ThrottleCoalesceBurst(t *testing.T) {
+	t.Setenv("TERM", "xterm-256color")
+	_ = os.Unsetenv("BIGGZ_NO_ANIMATION")
+	_ = os.Unsetenv("GENTLE_AI_NO_ANIMATION")
+	t.Setenv("BIGGZ_PRETTY", "")
+	t.Setenv("PI_SUBAGENT_CHILD", "")
+	resetSyncThrottleForTest()
+	// Simulate 3 lens updates at t0, t0+5ms, t0+10ms coalesced to one flush at t0+16ms
+	scheduleSyncFlush("frame-a")
+	time.Sleep(5 * time.Millisecond)
+	scheduleSyncFlush("frame-b")
+	time.Sleep(5 * time.Millisecond)
+	scheduleSyncFlush("frame-c")
+	// Pending should be last frame
+	if got := pendingFrameForTest(); got != "frame-c" {
+		t.Fatalf("expected pendingFrame frame-c, got %q", got)
+	}
+	// Wait for trailing flush (16ms after last schedule)
+	time.Sleep(25 * time.Millisecond)
+	if got := pendingFrameForTest(); got != "" {
+		t.Errorf("expected pendingFrame cleared after flush, got %q", got)
+	}
+	// Verify flush produced single CSI pair with last frame (via syncOutput behavior)
+	wrapped := syncOutput("frame-c")
+	if strings.Count(wrapped, syncBegin) != 1 || strings.Count(wrapped, syncEnd) != 1 {
+		t.Errorf("expected single CSI pair after throttle, got %q", wrapped)
+	}
+	if !strings.Contains(wrapped, "frame-c") {
+		t.Error("expected flushed frame to contain last frame content")
+	}
+	resetSyncThrottleForTest()
+}
+
+func TestSyncOutput_ThrottleGuardZeroCSI(t *testing.T) {
+	t.Setenv("BIGGZ_PRETTY", "0")
+	t.Setenv("TERM", "xterm-256color")
+	_ = os.Unsetenv("BIGGZ_NO_ANIMATION")
+	resetSyncThrottleForTest()
+	scheduleSyncFlush("guarded-frame")
+	time.Sleep(25 * time.Millisecond)
+	// When guard disables sync, pending flush should still clear but produce zero CSI
+	plain := syncOutput("guarded-frame")
+	if strings.Contains(plain, syncBegin) || strings.Contains(plain, syncEnd) {
+		t.Errorf("expected zero CSI when BIGGZ_PRETTY=0, got %q", plain)
+	}
+	t.Setenv("BIGGZ_PRETTY", "")
+	resetSyncThrottleForTest()
 }
 
 func min(a, b int) int {

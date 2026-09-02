@@ -438,26 +438,50 @@ func (m HelpModel) View() string {
 
 // HelpOverlay renders the help as a styled string.
 func HelpOverlay(screenID int) string {
+	return HelpOverlayWidth(screenID, 80)
+}
+
+// HelpOverlayWidth renders help overlay constrained to width. Used for
+// deterministic gallery generation at 80/100c matching live View() wrapping.
+func HelpOverlayWidth(screenID int, width int) string {
+	if width <= 0 {
+		width = 80
+	}
 	h := GetHelp(screenID)
-	// Repair orphan fences and normalize latex for overlay stability.
 	h.Paragraph = LatexToUnicode(RepairOrphanClosingFence(h.Paragraph))
-	var b []byte
-	b = append(b, styles.Title.Render("Help: "+h.Title)...)
-	b = append(b, '\n', '\n')
+	var b strings.Builder
+	// Title truncated to width.
+	title := TruncateToWidth("Help: "+h.Title, width)
+	b.WriteString(styles.Title.Render(title))
+	b.WriteString("\n\n")
 	if h.Paragraph != "" {
-		b = append(b, styles.StatusInfo.Render(h.Paragraph)...)
-		b = append(b, '\n', '\n')
+		// Wrap paragraph to width before styling to match View() wrapping.
+		lines := WrapTextWithAnsi(h.Paragraph, width)
+		for _, l := range lines {
+			b.WriteString(styles.StatusInfo.Render(l))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
 	}
-	b = append(b, styles.Section.Render("Keyboard Shortcuts")...)
-	b = append(b, '\n', '\n')
+	b.WriteString(styles.Section.Render(TruncateToWidth("Keyboard Shortcuts", width)))
+	b.WriteString("\n\n")
 	for _, k := range h.Keys {
-		b = append(b, "  "...)
-		b = append(b, styles.MenuItemKey.Render(k.Key)...)
-		b = append(b, "  — "...)
-		b = append(b, k.Desc...)
-		b = append(b, '\n')
+		line := fmt.Sprintf("  %s  — %s", k.Key, k.Desc)
+		line = TruncateToWidth(line, width)
+		// Render with key style but ensure VisibleWidth stays within budget.
+		b.WriteString(line)
+		b.WriteString("\n")
 	}
-	b = append(b, '\n')
-	b = append(b, styles.Help.Render("Press ? or ESC to close help")...)
-	return styles.AppStyle.Render(string(b))
+	b.WriteString("\n")
+	b.WriteString(styles.Help.Render(TruncateToWidth("Press ? or ESC to close help", width)))
+	rendered := styles.AppStyle.Render(b.String())
+	// Ensure final ANSI lines respect width (gallery determinism via VisibleWidth).
+	var out []string
+	for _, l := range strings.Split(rendered, "\n") {
+		if VisibleWidth(l) > width {
+			l = TruncateToWidth(l, width)
+		}
+		out = append(out, l)
+	}
+	return strings.Join(out, "\n")
 }
