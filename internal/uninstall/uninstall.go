@@ -427,6 +427,10 @@ func (s *sharedOps) run(res *Result) {
 	// so plain uninstall doesn't leave orphaned state; purge also clears them.
 	removeAllIfExists(filepath.Join(biggzDir, "rdd-mode.json"), "remove ~/.biggz/rdd-mode.json")
 	removeAllIfExists(filepath.Join(biggzDir, "cache"), "remove ~/.biggz/cache")
+	removeAllIfExists(filepath.Join(biggzDir, "state.json"), "remove ~/.biggz/state.json")
+	// New canonical state path introduced by tui-installer-pipeline (~/.biggz-ai/state.json) + legacy compat.
+	removeAllIfExists(filepath.Join(s.home, ".biggz-ai", "state.json"), "remove ~/.biggz-ai/state.json")
+	removeAllIfExists(filepath.Join(s.home, ".biggz-ai", "cache"), "remove ~/.biggz-ai/cache")
 
 	// --purge: also delete the user-created bigmem store and backups.
 	if s.cfg.Purge {
@@ -438,6 +442,7 @@ func (s *sharedOps) run(res *Result) {
 	// Remove ~/.biggz itself only when empty — bigmem, backups and
 	// config.json (kept unless --purge) make it non-empty and it survives.
 	removeIfEmptyDir(biggzDir)
+	removeIfEmptyDir(filepath.Join(s.home, ".biggz-ai"))
 
 	// Windows: remove the ~/.biggz entry from the persistent User PATH,
 	// mirroring install's deploySelfToPath exactly in reverse.
