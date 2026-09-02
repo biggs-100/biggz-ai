@@ -15,6 +15,7 @@ proposal -> specs --> tasks -> apply -> verify -> archive
 
 Before handling any /sdd-* or SDD request, read biggz-orchestrator-workflow.md for the full SDD workflow (phases, dispatcher, gates, ledger-bound evidence_revision, delivery).
 Before delegating, read biggz-orchestrator-delegation.md for Work Routing Ladder, Delegation Rules, Allowed edit surfaces, and SD Agent Authority.
+Reads MUST be via file read and evidenced in launch prompt; skipped/unreadable MUST fail-closed and block routing (see Mandatory Pre-Delegation Reads in workflow).
 
 ### Post-Delegation Human Checkpoint (MANDATORY — After EVERY Delegated Sub-agent & BEFORE question)
 

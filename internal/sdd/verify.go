@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/fzipp/gocyclo"
 	"github.com/uudashr/gocognit"
 )
@@ -860,4 +861,63 @@ func ComplexityDebtMarkdown() (string, error) {
 		writeDebtPackageSection(&sb, reports[root])
 	}
 	return sb.String(), nil
+}
+
+// ---------------------------------------------------------------------------
+// RDD Gate Before Verify (PR3)
+// ---------------------------------------------------------------------------
+
+// VerifyPreflight enforces the RDD gate before verify. When RDD is disabled
+// it passes regardless of receipt. When enabled it requires a valid review
+// lineage and persisted receipt (biggz review gate). Missing receipt maps to
+// rdd_receipt_missing, invalid/tampered maps to rdd_unmanaged.
+func VerifyPreflight(change string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("rdd_receipt_missing: cannot determine workspace: %w", err)
+	}
+	return verifyPreflightAt(cwd, change)
+}
+
+// VerifyPreflightAt is the workspace-aware variant used by status derivation.
+func VerifyPreflightAt(workspaceRoot, change string) error {
+	return verifyPreflightAt(workspaceRoot, change)
+}
+
+func verifyPreflightAt(workspaceRoot, change string) error {
+	if workspaceRoot == "" {
+		var err error
+		workspaceRoot, err = os.Getwd()
+		if err != nil {
+			return fmt.Errorf("rdd_receipt_missing: cannot determine workspace: %w", err)
+		}
+	}
+	if !isRDDEnabled(workspaceRoot) {
+		return nil
+	}
+	result, err := review.EvaluateGate(review.GatePostApply, workspaceRoot, change, review.GateOptions{})
+	if err != nil {
+		return fmt.Errorf("rdd_receipt_missing: lineage %q unavailable: %w; hint: run `biggz review start --lineage %s` and `biggz review finalize %s`", change, err, change, change)
+	}
+	if result.Delivery == review.DeliveryDisabledUnmanaged || result.Delivery == review.DeliveryBurned {
+		return nil
+	}
+	if result.Allowed {
+		return nil
+	}
+	reason := result.Reason
+	if len(result.Reasons) > 0 {
+		reason = strings.Join(result.Reasons, "; ")
+	}
+	lower := strings.ToLower(reason)
+	if strings.Contains(lower, "missing persisted") || strings.Contains(lower, "no events") || strings.Contains(lower, "empty") || strings.Contains(lower, "no receipt") || strings.Contains(lower, "missing") && strings.Contains(lower, "receipt") {
+		return fmt.Errorf("rdd_receipt_missing: %s; hint: run `biggz review` and receipt flow", reason)
+	}
+	if strings.Contains(lower, "unmanaged") || strings.Contains(lower, "receipt binding") || strings.Contains(lower, "hash does not match") || strings.Contains(lower, "invalid") || strings.Contains(lower, "binding") {
+		return fmt.Errorf("rdd_unmanaged: %s", reason)
+	}
+	if strings.Contains(lower, "chain is invalid") || strings.Contains(lower, "integrity") {
+		return fmt.Errorf("rdd_unmanaged: %s", reason)
+	}
+	return fmt.Errorf("rdd_receipt_missing: %s", reason)
 }

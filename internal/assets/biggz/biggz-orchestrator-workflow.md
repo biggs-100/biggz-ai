@@ -32,6 +32,10 @@ Before routing, continuing, applying, verifying, or archiving, determine artifac
 - If `nextRecommended` is planning token (`propose`, `spec`, `design`, `tasks`), launch that planning phase.
 - If binary unavailable, fall back to manual BigMem schema (`biggz_mem_search` + `biggz_mem_get_observation` on `sdd/{change}/...` topic keys).
 
+## Mandatory Pre-Delegation Reads (HARD GATE)
+
+Before routing, continuing, or delegating ANY SDD request, orchestrator MUST read `biggz-orchestrator-workflow.md` (workflow, graph, dispatcher, gates, ledger, recall) and `biggz-orchestrator-delegation.md` (ladder, rules, authority, surfaces) via file read and evidence reads in the launch prompt (`## Skills to load before work` + workflow/delegation context). Skipped, unreadable, or unevidenced reads MUST fail-closed and block routing/delegation — do not infer SDD intent from free text and do not launch `sdd-*` without both docs evidenced. This gate is fail-closed and precedes Work Routing Ladder evaluation.
+
 ## Session Boot Recall (HARD GATE)
 
 Before SDD Session Preflight, perform Session Recall to restore context. This gate is BLOCKING.

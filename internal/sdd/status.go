@@ -433,6 +433,20 @@ func deriveChangeStatusWithForcedStore(cs *ChangeStatus, changeDir, workspaceRoo
 		blockedReasons.genuine = append(blockedReasons.genuine, r)
 	}
 	dependencies = applyStaleDecisionRouting(dependencies, staleDecision)
+	// RDD gate before verify: when enabled, block verify without valid receipt.
+	// Only when the change is past planning (coreReady && applyState==all_done) and verify is the next phase.
+	// Planning routes (propose/spec/design/tasks) must not be blocked by RDD.
+	if applyState == ApplyAllDone && coreReady {
+		if blocked, reason := rddGateBlocked(workspaceRoot, cs.Name); blocked {
+			if dependencies.Verify != DependencyBlocked {
+				dependencies.Verify = DependencyBlocked
+			}
+			if dependencies.Archive == DependencyReady {
+				dependencies.Archive = DependencyBlocked
+			}
+			blockedReasons.genuine = append(blockedReasons.genuine, reason)
+		}
+	}
 	nextRecommended := resolveNextRecommended(dependencies, applyState, verifyReportCurrent, remediationState)
 	cs.SchemaName = StatusSchemaName
 	cs.SchemaVersion = StatusSchemaVersion
@@ -676,6 +690,20 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 	// Apply the stale-decision native routing to dependencies: free
 	// verify/archive when the probe says the decision block is stale.
 	dependencies = applyStaleDecisionRouting(dependencies, staleDecision)
+	// RDD gate before verify: when enabled, block verify without valid receipt.
+	// Only when the change is past planning (coreReady && applyState==all_done) and verify is the next phase.
+	// Planning routes (propose/spec/design/tasks) must not be blocked by RDD.
+	if applyState == ApplyAllDone && coreReady {
+		if blocked, reason := rddGateBlocked(workspaceRoot, cs.Name); blocked {
+			if dependencies.Verify != DependencyBlocked {
+				dependencies.Verify = DependencyBlocked
+			}
+			if dependencies.Archive == DependencyReady {
+				dependencies.Archive = DependencyBlocked
+			}
+			blockedReasons.genuine = append(blockedReasons.genuine, reason)
+		}
+	}
 	nextRecommended := resolveNextRecommended(dependencies, applyState, verifyReportCurrent, remediationState)
 
 	cs.SchemaName = StatusSchemaName
@@ -762,6 +790,20 @@ func isRDDEnabled(workspaceRoot string) bool {
 		return true
 	}
 	return status.EffectiveMode == review.RDDModeEnabled
+}
+
+// rddGateBlocked reports whether the RDD gate blocks verify for the change.
+// When RDD is disabled it never blocks. When enabled it delegates to
+// verifyPreflightAt which uses biggz review gate as source of truth and
+// returns rdd_receipt_missing / rdd_unmanaged errors.
+func rddGateBlocked(workspaceRoot, change string) (bool, string) {
+	if !isRDDEnabled(workspaceRoot) {
+		return false, ""
+	}
+	if err := verifyPreflightAt(workspaceRoot, change); err != nil {
+		return true, err.Error()
+	}
+	return false, ""
 }
 
 func shortSHAForWorkspace(workspaceRoot string) string {

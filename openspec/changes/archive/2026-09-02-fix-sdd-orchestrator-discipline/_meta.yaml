@@ -1,0 +1,6 @@
+name: fix-sdd-orchestrator-discipline
+created: 2026-09-02T19:46:33Z
+created_at: 2026-09-02T19:46:33Z
+phase: propose
+description: "Endurecer disciplina SDD del orquestador: exigir síntesis humana tras cada sub-agente con gate bloqueante, validar SD Agent Authority (fases SDD solo via sdd-* agents), exigir lectura de biggz-orchestrator-workflow.md y biggz-orchestrator-delegation.md antes de delegar, y exigir RDD review gate (biggz review + receipt) antes de verify. Corrige fast-forward inline y auto-continue sin proceed/adjust/stop."
+status: active

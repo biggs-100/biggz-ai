@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
 )
 
@@ -80,6 +81,12 @@ func recordPassedRemediation(t *testing.T, workspace, change, remediatesEvidence
 // --remediates-evidence-revision matches the failed evidence revision clears
 // the remediation state and routes verify → ready, next → verify.
 func TestRemediationCompleteLedgerMatching(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if _, err := review.RDDDisable("", "", "global"); err != nil {
+		t.Fatalf("RDDDisable: %v", err)
+	}
 	workspace := t.TempDir()
 	gitInitTemp(t, workspace)
 	changeRoot := seedFailingVerifyChange(t, workspace, "remed-complete")

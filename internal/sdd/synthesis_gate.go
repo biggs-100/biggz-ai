@@ -79,6 +79,7 @@ func IsCheckpointAsk(question string) bool {
 // ShouldBlock is checkpoint-only: only blocks when IsCheckpointAsk is true.
 // Non-checkpoint continuations (general without proceed/adjust/stop/continue/correct) are allowed
 // by the gate; synthesis after EVERY delegated sub-agent is still required via orchestrator prompt (gentle-pi parity).
+// Strict same-turn 120s: missing or expired MUST block. Go is canonical for JS mirror.
 func ShouldBlock(question string, md string, now time.Time) bool {
 	if IsChildBypass() {
 		return false
@@ -89,10 +90,13 @@ func ShouldBlock(question string, md string, now time.Time) bool {
 	if !IsCheckpointAsk(question) {
 		return false
 	}
-	if now.Sub(currentTurnTime) > 120*time.Second {
-		return false
+	if !HasSynthesis(md) {
+		return true
 	}
-	return !HasSynthesis(md)
+	if now.Sub(currentTurnTime) > 120*time.Second {
+		return true
+	}
+	return false
 }
 
 func CheckSynthesisPrecondition(question string, md string) (bool, string) {

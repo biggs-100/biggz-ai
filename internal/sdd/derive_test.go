@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
 // seedChange writes the given artifact files (relative path → content) into a
@@ -44,6 +46,12 @@ func failingReport(requirements, scenarios string) string {
 // states. Each row asserts the derived nextRecommended, applyState,
 // dependency states, taskProgress, artifact states, and blocked reasons.
 func TestDeriveChangeStatusMatrix(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if _, err := review.RDDDisable("", "", "global"); err != nil {
+		t.Fatalf("RDDDisable: %v", err)
+	}
 	tests := []struct {
 		name       string
 		files      map[string]string
@@ -187,6 +195,12 @@ func TestDeriveChangeStatusMatrix(t *testing.T) {
 // empty-file row of the matrix: every empty artifact is partial, and the
 // specs entry is partial when the directory holds only empty spec.md files.
 func TestDerivePartialArtifacts(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if _, err := review.RDDDisable("", "", "global"); err != nil {
+		t.Fatalf("RDDDisable: %v", err)
+	}
 	workspace := t.TempDir()
 	changeRoot := seedDeriveChange(t, workspace, "partial-change", map[string]string{
 		"proposal.md":        "",
@@ -217,6 +231,12 @@ func TestDerivePartialArtifacts(t *testing.T) {
 // TestDeriveSpecsPartialWhenSomeSpecEmpty asserts the specs rule: all found
 // spec.md files must have content for specs to be done.
 func TestDeriveSpecsPartialWhenSomeSpecEmpty(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if _, err := review.RDDDisable("", "", "global"); err != nil {
+		t.Fatalf("RDDDisable: %v", err)
+	}
 	workspace := t.TempDir()
 	changeRoot := seedDeriveChange(t, workspace, "specs-partial", map[string]string{
 		"proposal.md":        "# Proposal\n",
@@ -242,6 +262,12 @@ func TestDeriveSpecsPartialWhenSomeSpecEmpty(t *testing.T) {
 // finalize rule: planning routes emit only genuine reasons, so a change
 // missing its specs carries an empty blockedReasons list.
 func TestDeriveExpectedPlanningReasonsHiddenForPlanningRoutes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if _, err := review.RDDDisable("", "", "global"); err != nil {
+		t.Fatalf("RDDDisable: %v", err)
+	}
 	workspace := t.TempDir()
 	changeRoot := seedDeriveChange(t, workspace, "planning-change", map[string]string{
 		"proposal.md": "# Proposal\n",
@@ -284,6 +310,12 @@ func TestBlockerReasonsFinalizeRule(t *testing.T) {
 // TestDeriveSchemaAndActionContext asserts the stable identity fields every
 // derived status carries.
 func TestDeriveSchemaAndActionContext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if _, err := review.RDDDisable("", "", "global"); err != nil {
+		t.Fatalf("RDDDisable: %v", err)
+	}
 	workspace := t.TempDir()
 	changeRoot := seedDeriveChange(t, workspace, "identity-change", map[string]string{
 		"proposal.md": "# Proposal\n",

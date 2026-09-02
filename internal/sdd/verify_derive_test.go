@@ -3,6 +3,8 @@ package sdd
 import (
 	"strings"
 	"testing"
+
+	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
 // verifyEnvelope builds a biggz-native verify report envelope with the
@@ -150,6 +152,12 @@ func TestCountSpecRequirementsAndScenariosUsesActualArtifacts(t *testing.T) {
 // derivation end to end: a verify report whose totals match the actual specs
 // passes; one whose totals drift fails with the named counts.
 func TestDeriveSpecCountsFeedVerifyEvaluation(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	if _, err := review.RDDDisable("", "", "global"); err != nil {
+		t.Fatalf("RDDDisable: %v", err)
+	}
 	workspace := t.TempDir()
 	specs := "### Requirement: A\n#### Scenario: A1\n#### Scenario: A2\n### Requirement: B\n#### Scenario: B1\n"
 	changeRoot := seedDeriveChange(t, workspace, "counts-change", map[string]string{

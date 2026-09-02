@@ -175,6 +175,15 @@ func equalSorted(a, b []string) bool {
 	return true
 }
 
+// GuardSDAgentDispatch wires SD Agent Authority into orchestrator surfaces.
+// SDD phases must use sdd-* agents only; general/explore for SDD is rejected fail-closed.
+func GuardSDAgentDispatch(phase, agent string) *Rejection {
+	if err := GuardSDAgentAuthority(phase, agent); err != nil {
+		return &Rejection{Block: true, Reason: err.Error()}
+	}
+	return nil
+}
+
 type Rejection struct {
 	Block  bool
 	Reason string

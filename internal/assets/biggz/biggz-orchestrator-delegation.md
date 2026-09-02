@@ -10,6 +10,8 @@ Route work through the smallest harness that is safe. Three tiers (verbatim):
 2. **Simple Delegation** — generic non-SDD exploration → `explore` scout; bounded implementation → `general` worker; command-running verification → `general` verify. Use narrow mapping/verification constraints and report fallback. SDD roles stay inside SDD.
 3. **SDD (optional)** — selected only by explicit request (`biggz sdd-new`/`sdd-continue` or direct ask) or accepted proposal; size, file count, or risk alone never selects SDD. Suggest organically when durable proposal/spec/design/tasks would materially reduce substantial ambiguity. Once selected, do not jump to implementation; create artifacts and gate for approval.
 
+> **Fail-closed heuristic (12-file rule):** Given 12 files, 800 lines, no explicit SDD request → MUST NOT launch `sdd-propose`; select **Simple Delegation** (MAY suggest SDD but never auto-select). File count/size/risk alone never selects SDD — only explicit intent via `biggz sdd-new`/`sdd-continue`/direct ask or accepted proposal does.
+
 ### Delegation Rules
 
 These rules select execution topology, not implementation method. Crossing threshold selects **delegated direct** work; it never selects SDD, creates SDD state, or invokes `sdd-*` phase. Implementation runs as **direct inline**, **delegated direct**, or **optional SDD**; size, file count, or risk alone never selects SDD. SDD phase workers reserved for explicit SDD request or accepted proposal.
@@ -130,7 +132,9 @@ Use `sdd-explore` and `sdd-verify` only inside SDD.
 
 #### 3. SDD (optional)
 
-SDD never selected by size/file count/risk alone. Suggest organically when durable proposal/spec/design/tasks would materially reduce substantial ambiguity (unclear requirements/acceptance criteria, architectural/product decisions, cross-cutting behavior), and let user decide. Select only when user explicitly asks (`/sdd-new`/`/sdd-continue`/natural language ask) or accepts SDD proposal. Once selected, do not jump to implementation; calibrate context, create artifacts, gate for approval.
+SDD never selected by size/file count/risk alone — fail-closed. Suggest organically when durable proposal/spec/design/tasks would materially reduce substantial ambiguity (unclear requirements/acceptance criteria, architectural/product decisions, cross-cutting behavior), and let user decide. Select only when user explicitly asks (`/sdd-new`/`sdd-continue`/natural language ask) or accepts SDD proposal. Once selected, do not jump to implementation; calibrate context, create artifacts, gate for approval.
+
+**Heuristic example (must stay Simple Delegation):** 12 files, 800 lines, no explicit SDD request → Simple Delegation (MAY suggest SDD) — not `sdd-propose`. Explicit SDD request (`use SDD for this feature`) → SDD via preflight/init guards.
 
 ### Pi Delegation Bindings & Cost/Context Balance
 
