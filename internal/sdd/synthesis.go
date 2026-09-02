@@ -142,25 +142,50 @@ func VisibleWorkflowRowsStrings(rows []string, limit int) ([]string, string) {
 	return vis, fmt.Sprintf("\u2026 +%d hidden", hidden)
 }
 
-func RenderSynthesis(r SubAgentResult) string {
+func localizeStatus(status, lang string) string {
+	if strings.ToLower(strings.TrimSpace(lang)) != "es" {
+		return status
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "success", "pass", "done", "ok":
+		return "éxito"
+	case "warning", "warn", "pending", "partial":
+		return "atención"
+	case "error", "fail", "failed", "blocked", "missing":
+		return "error"
+	default:
+		return status
+	}
+}
+
+func noneLabel(lang string) string {
+	if strings.ToLower(strings.TrimSpace(lang)) == "es" {
+		return "Ninguno"
+	}
+	return "None"
+}
+
+func renderSynthesisWithLang(r SubAgentResult, lang string) string {
 	phase := strings.TrimSpace(r.Phase)
 	if phase == "" {
 		phase = "phase/agent"
 	}
+	none := noneLabel(lang)
 	arts := strings.TrimSpace(r.ArtifactsPaths)
 	if arts == "" {
-		arts = "None"
+		arts = none
 	}
 	risks := strings.TrimSpace(r.Risks)
 	if risks == "" {
-		risks = "None"
+		risks = none
 	}
 	next := strings.TrimSpace(r.NextRecommended)
 	if next == "" {
-		next = "None"
+		next = none
 	}
 	// derive lifecycle status
 	status := deriveLifecycleStatus(r)
+	status = localizeStatus(status, lang)
 	lifecycle := renderLifecycle(phase, status, next)
 
 	var b strings.Builder
@@ -170,7 +195,7 @@ func RenderSynthesis(r SubAgentResult) string {
 	rows, checklist := parseWhatDoneRows(r.WhatDone)
 	// Ensure at least header present
 	if len(rows) == 0 {
-		rows = [][]string{{"None", "None"}}
+		rows = [][]string{{none, none}}
 	}
 	// Render table chunked
 	tableMD := renderTable(rows, 80)
@@ -192,13 +217,13 @@ func RenderSynthesis(r SubAgentResult) string {
 	// Preview sanitized 300
 	previewRaw := strings.TrimSpace(r.Preview)
 	if previewRaw == "" {
-		b.WriteString("**Preview:** None\n")
+		b.WriteString("**Preview:** " + none + "\n")
 	} else {
 		b.WriteString("**Preview:** " + formatPreview(previewRaw) + "\n")
 	}
 	diffRaw := strings.TrimSpace(r.Diff)
 	if diffRaw == "" {
-		b.WriteString("**Diff:** None\n")
+		b.WriteString("**Diff:** " + none + "\n")
 	} else {
 		b.WriteString("**Diff:** " + formatDiff(diffRaw) + "\n")
 	}
@@ -210,7 +235,7 @@ func RenderSynthesis(r SubAgentResult) string {
 	}
 	validation := strings.TrimSpace(r.Validation)
 	if validation == "" {
-		validation = "None"
+		validation = none
 	} else {
 		validation = sanitizeForWidth(validation, 80)
 	}
@@ -223,6 +248,11 @@ func RenderSynthesis(r SubAgentResult) string {
 		b.WriteString("**Failure:** " + sanitizeForWidth(human, 80) + "\n")
 	}
 	return b.String()
+}
+
+
+func RenderSynthesis(r SubAgentResult) string {
+	return renderSynthesisWithLang(r, "en")
 }
 
 // RenderPrettySynthesis returns a pretty-decorated synthesis that remains valid for HasSynthesis.
@@ -365,10 +395,7 @@ func RenderSynthesisLocalized(r SubAgentResult, lang string) string {
 			normalized = "en"
 		}
 	}
-	// Localized content is supplied in r fields by caller (hint injection); we preserve markers/whitelist by delegating.
-	// No marker translation; technical whitelist via sanitizePlain (never translate "/", "sdd/", "ORDER BY").
-	_ = normalized // currently no per-language string table needed; markers stay English per b0d2fc1
-	return RenderSynthesis(r)
+	return renderSynthesisWithLang(r, normalized)
 }
 
 func deriveLifecycleStatus(r SubAgentResult) string {
@@ -541,7 +568,7 @@ func isChecklistLine(line string) bool {
 
 func sanitizeCell(cell string) string {
 	cell = sanitizePlain(cell)
-	const budget = 17
+	const budget = 34
 	return truncateToWidth(cell, budget)
 }
 

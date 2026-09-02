@@ -16,9 +16,9 @@ proposal -> specs --> tasks -> apply -> verify -> archive
 Before handling any /sdd-* or SDD request, read biggz-orchestrator-workflow.md for the full SDD workflow (phases, dispatcher, gates, ledger-bound evidence_revision, delivery).
 Before delegating, read biggz-orchestrator-delegation.md for Work Routing Ladder, Delegation Rules, Allowed edit surfaces, and SD Agent Authority.
 
-### Post-Delegation Human Checkpoint (MANDATORY — BEFORE question/ask_user_choice/ask_user_question)
+### Post-Delegation Synthesis & Human Checkpoint (MANDATORY — After EVERY Delegated Sub-agent)
 
-Applies ONLY to Post-Delegation Human Checkpoint questions — those presenting `proceed` / `adjust` / `stop` (SDD) or `continue` / `correct` (non-SDD) after a delegated sub-agent. After EVERY delegated sub-agent, when you present this checkpoint, in the SAME assistant turn, FIRST emit markdown synthesis, THEN call ask_user_choice/ask_user_question/question. Never call checkpoint tool without immediately preceding markdown block. Synthesize a concise summary in the active conversation language.
+After EVERY delegated sub-agent — SDD (sdd-*) or non-SDD (explore, general/worker, verify) — you MUST emit synthesis markdown BEFORE the next step. Mirrors gentle-pi: human always sees `## Sub-agent Result` to judge. If next step is a checkpoint question (`proceed`/`adjust`/`stop` or `continue`/`correct`) emit synthesis FIRST in SAME turn then ask (gate blocks if missing). If next step is autonomous continuation, still emit synthesis as standalone markdown before continuing. Do NOT silently continue. Synthesize concise but complete summary in the active conversation language, scannable: decision, outcome, next action. Keep 4 markers verbatim English.
 
 Required markdown (copy-paste, fill all fields — emit as plain markdown, NOT inside ``` at runtime):
 ```markdown
@@ -46,7 +46,7 @@ Required markdown (copy-paste, fill all fields — emit as plain markdown, NOT i
 The checkpoint ask_user_choice/ask_user_question/question call MUST follow this block with `proceed` / `adjust` / `stop` (or `continue` / `correct`) — localized equivalents are also checkpoint tokens (gate detects bilingual via `internal/sdd/synthesis_gate.go:IsCheckpointAsk` and `biggz-synthesis-gate.js:isCheckpointAsk`). Markdown is NOT tool param — it is separate chat markdown emitted FIRST, adjacent, same turn, BEFORE tool call. A checkpoint ask without immediately preceding `## Sub-agent Result` markdown is INVALID and will be blocked.
 
 Additional rules:
-1. Present synthesis and STOP — do NOT silently continue to next phase.
+1. Emit synthesis after EVERY delegated sub-agent and STOP for human decision when checkpoint; do NOT silently continue without synthesis even in auto mode for non-checkpoint.
 2. Use lossless blocking-prompt route when native UI available and representable; otherwise emit COMPLETE envelope as plain chat and STOP. REMINDER: synthesis markdown is separate chat markdown emitted FIRST in same turn, adjacent, before the tool call. Do NOT put synthesis inside the tool's question param.
 3. Never auto-continue without human confirmation, except when user said `auto` in Session Preflight (still surface gate failures). For non-SDD delegated work, checkpoint is always interactive — no auto bypass.
 

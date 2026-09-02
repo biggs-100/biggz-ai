@@ -1,8 +1,10 @@
-// synthesis_gate — enforces Post-Delegation Human Checkpoint.
+// synthesis_gate — enforces Post-Delegation Human Checkpoint (checkpoint-only).
 // Ensures orchestrator emits synthesis markdown with ## Sub-agent Result + Artifacts/Paths + Risks + Next
 // BEFORE calling ask_user_choice (Pi closed single-select, 2-4 ordered options) / ask_user_question (Pi open/free-text) / question (OpenCode).
 // In Pi, strictly closed single-select (proceed/adjust/stop, continue/correct) must use ask_user_choice; open/free-text uses ask_user_question.
 // Gate is tool-agnostic: ShouldBlock checks HasSynthesis + 120s window + IsCheckpointAsk tokens, not tool name.
+// ShouldBlock is checkpoint-only — non-checkpoint general continuations are NOT blocked by the gate;
+// synthesis after EVERY sub-agent (SDD or non-SDD) is enforced via orchestrator prompt (gentle-pi parity).
 // See internal/assets/pi/biggz-synthesis-gate.js for JS counterpart that wraps ask_user_choice/ask_user_question/question.
 
 package sdd
@@ -74,6 +76,9 @@ func IsCheckpointAsk(question string) bool {
 	return false
 }
 
+// ShouldBlock is checkpoint-only: only blocks when IsCheckpointAsk is true.
+// Non-checkpoint continuations (general without proceed/adjust/stop/continue/correct) are allowed
+// by the gate; synthesis after EVERY delegated sub-agent is still required via orchestrator prompt (gentle-pi parity).
 func ShouldBlock(question string, md string, now time.Time) bool {
 	if IsChildBypass() {
 		return false
@@ -97,9 +102,9 @@ func CheckSynthesisPrecondition(question string, md string) (bool, string) {
 	return true, ""
 }
 
-// renderLifecycle renders one-line lifecycle ◆ Phase · Status · Next with color and dim detail.
-// Colors: success=green, warning=yellow, error=red. Dimension detail via ANSI dim.
-// Keeps 4-marker invariant and is used by RenderSynthesis.
+// renderLifecycle renders one-line lifecycle ◆ Phase · Status · Next with color.
+// Colors: success/éxito=green, warning/atención=yellow, error=red.
+// Keeps 4-marker invariant and is used by RenderSynthesis. Single line, no empty dim trailer.
 func renderLifecycle(phase, status, next string) string {
 	phase = strings.TrimSpace(phase)
 	if phase == "" {
@@ -116,20 +121,17 @@ func renderLifecycle(phase, status, next string) string {
 	var color string
 	low := strings.ToLower(status)
 	switch low {
-	case "success", "pass", "done", "ok":
-		color = "\x1b[32m"
-	case "warning", "warn", "pending", "partial":
-		color = "\x1b[33m"
+	case "success", "pass", "done", "ok", "éxito", "exito":
+		color = "[32m"
+	case "warning", "warn", "pending", "partial", "atención", "atencion":
+		color = "[33m"
 	case "error", "fail", "failed", "blocked", "missing":
-		color = "\x1b[31m"
+		color = "[31m"
 	default:
 		// default to success green for unknown but non-error
-		color = "\x1b[32m"
+		color = "[32m"
 	}
-	dim := "\x1b[2m"
-	reset := "\x1b[0m"
-	// single line: ◆ phase · status · next with dim detail suffix
+	reset := "[0m"
 	line := fmt.Sprintf("◆ %s · %s · %s", phase, status, next)
-	// color the whole line, dim detail is the next part already included, but add dim trailer to satisfy spec
-	return color + line + reset + " " + dim + reset
+	return color + line + reset
 }

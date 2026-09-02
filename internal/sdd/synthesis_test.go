@@ -133,8 +133,13 @@ func TestRenderSynthesisLocalized(t *testing.T) {
 	t.Run("empty artifacts -> None", func(t *testing.T) {
 		r := SubAgentResult{Phase: "phase", WhatDone: "", ArtifactsPaths: "", Risks: "", NextRecommended: ""}
 		out := RenderSynthesisLocalized(r, "es")
-		if !strings.Contains(out, "None") {
-			t.Errorf("empty should render None, got %q", out)
+		if !strings.Contains(out, "Ninguno") {
+			t.Errorf("empty should render Ninguno for es, got %q", out)
+		}
+		// also verify en still renders None
+		outEn := RenderSynthesisLocalized(r, "en")
+		if !strings.Contains(outEn, "None") {
+			t.Errorf("empty should render None for en, got %q", outEn)
 		}
 	})
 	t.Run("hi -> en via DetectLanguage", func(t *testing.T) {
