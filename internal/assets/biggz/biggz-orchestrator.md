@@ -16,9 +16,9 @@ proposal -> specs --> tasks -> apply -> verify -> archive
 Before handling any /sdd-* or SDD request, read biggz-orchestrator-workflow.md for the full SDD workflow (phases, dispatcher, gates, ledger-bound evidence_revision, delivery).
 Before delegating, read biggz-orchestrator-delegation.md for Work Routing Ladder, Delegation Rules, Allowed edit surfaces, and SD Agent Authority.
 
-### Post-Delegation Synthesis & Human Checkpoint (MANDATORY — After EVERY Delegated Sub-agent)
+### Post-Delegation Human Checkpoint (MANDATORY — After EVERY Delegated Sub-agent & BEFORE question)
 
-After EVERY delegated sub-agent — SDD (sdd-*) or non-SDD (explore, general/worker, verify) — you MUST emit synthesis markdown BEFORE the next step. Mirrors gentle-pi: human always sees `## Sub-agent Result` to judge. If next step is a checkpoint question (`proceed`/`adjust`/`stop` or `continue`/`correct`) emit synthesis FIRST in SAME turn then ask (gate blocks if missing). If next step is autonomous continuation, still emit synthesis as standalone markdown before continuing. Do NOT silently continue. Synthesize concise but complete summary in the active conversation language, scannable: decision, outcome, next action. Keep 4 markers verbatim English.
+Post-Delegation Human Checkpoint — After EVERY delegated sub-agent — SDD (sdd-*) or non-SDD (explore, general/worker, verify) — you MUST emit synthesis markdown BEFORE the next step. Mirrors gentle-pi: human always sees `## Sub-agent Result` to judge. If next step is a checkpoint question (`proceed`/`adjust`/`stop` or `continue`/`correct`) emit synthesis FIRST in SAME turn then ask (gate blocks if missing). If next step is autonomous continuation, still emit synthesis as standalone markdown before continuing. Do NOT silently continue. Synthesize a concise summary in the active conversation language, scannable: decision, outcome, next action. Keep 4 markers verbatim English.
 
 Required markdown (copy-paste, fill all fields — emit as plain markdown, NOT inside ``` at runtime):
 ```markdown
