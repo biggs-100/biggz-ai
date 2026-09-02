@@ -1,6 +1,11 @@
 package styles
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"os"
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 // Rose Pine palette — single source of truth (Gentleman-Cute refresh).
 var (
@@ -138,6 +143,77 @@ var (
 			Background(ColorToolSuccessBg).
 			Foreground(ColorText)
 )
+
+// ── PR2: Pill tokens with icon/color/spinner per state ─────────────────────
+var (
+	PillRunningStyle  = lipgloss.NewStyle().Background(ColorToolPendingBg).Foreground(ColorLavender).Bold(true).Padding(0, 1).MarginRight(1)
+	PillQueuedStyle   = lipgloss.NewStyle().Background(ColorOverlay).Foreground(ColorText).Padding(0, 1).MarginRight(1)
+	PillCompleteStyle = lipgloss.NewStyle().Background(ColorToolSuccessBg).Foreground(ColorGreen).Padding(0, 1).MarginRight(1)
+	PillFailedStyle   = lipgloss.NewStyle().Background(ColorToolErrorBg).Foreground(ColorRed).Bold(true).Padding(0, 1).MarginRight(1)
+
+	// Token aliases per spec (PillRunning/Queued/Complete/Failed)
+	PillRunning  = PillRunningStyle
+	PillQueued   = PillQueuedStyle
+	PillComplete = PillCompleteStyle
+	PillFailed   = PillFailedStyle
+)
+
+// PillStyle returns lipgloss style per pill state. Honors BIGGZ_PRETTY=0 plain fallback and TERM=dumb strip ANSI.
+func PillStyle(state string) lipgloss.Style {
+	if !IsPrettyEnabled() {
+		return lipgloss.NewStyle()
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return lipgloss.NewStyle()
+	}
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "running", "pending", "streaming", "live", "in_progress", "in-progress":
+		return PillRunningStyle
+	case "queued":
+		return PillQueuedStyle
+	case "complete", "success", "done":
+		return PillCompleteStyle
+	case "failed", "error":
+		return PillFailedStyle
+	default:
+		return lipgloss.NewStyle().Background(ColorSurface).Foreground(ColorText).Padding(0, 1).MarginRight(1)
+	}
+}
+
+// PillIcon returns icon per state, with BIGGZ_PRETTY=0 ASCII and TERM=dumb fallbacks.
+func PillIcon(state string) string {
+	if !IsPrettyEnabled() || os.Getenv("TERM") == "dumb" {
+		switch strings.ToLower(strings.TrimSpace(state)) {
+		case "running":
+			return ">"
+		case "queued":
+			return "-"
+		case "complete", "success":
+			return "+"
+		case "failed", "error":
+			return "x"
+		default:
+			return "·"
+		}
+	}
+	if os.Getenv("BIGGZ_NO_ANIMATION") == "1" || os.Getenv("GENTLE_AI_NO_ANIMATION") == "1" {
+		if strings.EqualFold(strings.TrimSpace(state), "running") {
+			return "·"
+		}
+	}
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "running":
+		return "⠋"
+	case "queued":
+		return "◷"
+	case "complete", "success":
+		return "✓"
+	case "failed", "error":
+		return "✗"
+	default:
+		return "·"
+	}
+}
 
 // GetStatusLineStyle returns preset-aware status-line base style.
 // When BIGGZ_PRETTY=0 or PI_SUBAGENT_CHILD=1, falls back to Rose Pine static style.

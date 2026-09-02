@@ -2,6 +2,7 @@ package screens
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,9 +33,15 @@ func init() {
 }
 
 // StartSharedSpinner arms the single 80ms ticker if not already running.
-// No-op when BIGGZ_PRETTY=0 or PI_SUBAGENT_CHILD=1.
+// No-op when BIGGZ_PRETTY=0, PI_SUBAGENT_CHILD=1, TERM=dumb or NO_ANIMATION.
 func StartSharedSpinner() {
 	if !styles.IsPrettyEnabled() {
+		return
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return
+	}
+	if tuiAnimationsDisabled() {
 		return
 	}
 	sharedSpinnerMu.Lock()
@@ -73,9 +80,15 @@ func StopSharedSpinner() {
 }
 
 // GetSpinnerFrame returns the current spinner glyph phase-locked across N live blocks.
-// When pretty is disabled (BIGGZ_PRETTY=0 or PI_SUBAGENT_CHILD=1) it returns a static glyph.
+// Honors BIGGZ_PRETTY=0 plain fallback, TERM=dumb strip ANSI, and BIGGZ_NO_ANIMATION freeze spinner.
 func GetSpinnerFrame() string {
 	if !styles.IsPrettyEnabled() {
+		return "·"
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return "·"
+	}
+	if tuiAnimationsDisabled() {
 		return "·"
 	}
 	frames := styles.GetSpinnerFrames(styles.SymbolPresetUnicode, styles.SpinnerActivity)
@@ -93,7 +106,18 @@ func GetSharedSpinnerIndex() int { return int(sharedSpinnerFrame.Load()) }
 func AdvanceSpinnerFrame() int { return int(sharedSpinnerFrame.Add(1)) }
 
 // IsSpinnerPrettyEnabled reports whether spinner animation is allowed.
-func IsSpinnerPrettyEnabled() bool { return styles.IsPrettyEnabled() }
+func IsSpinnerPrettyEnabled() bool {
+	if !styles.IsPrettyEnabled() {
+		return false
+	}
+	if os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	if tuiAnimationsDisabled() {
+		return false
+	}
+	return true
+}
 
 func isLiveState(state string) bool {
 	switch strings.ToLower(strings.TrimSpace(state)) {
