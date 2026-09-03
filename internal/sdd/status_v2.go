@@ -236,8 +236,21 @@ func filterEditAuthorityReasons(reasons []string) []string {
 
 func resolveProjectNextRecommended(status ChangeStatus, filteredReasons []string) string {
 	next := status.NextRecommended
+	// Hardening: the internal document already knows EditAuthorityBlocked.
+	// V2 stays authority-free on display (the blocked reason stays filtered
+	// and no consent line is printed), but it must never recommend apply for
+	// a change whose task plan targets repositories outside the authorized
+	// edit roots. "remediate" is the existing value for remedying a block
+	// through the consent exits (grant authority, or edit tasks.md back inside
+	// the authorized roots and re-enter through status).
+	if status.EditAuthorityBlocked && next == "apply" {
+		return "remediate"
+	}
 	if next != "resolve-blockers" || len(filteredReasons) != 0 {
 		return next
+	}
+	if status.EditAuthorityBlocked {
+		return "remediate"
 	}
 	if status.ApplyState == ApplyReady {
 		return "apply"

@@ -114,6 +114,26 @@ func CheckSynthesisPrecondition(question string, md string) (bool, string) {
 	return true, ""
 }
 
+// ShouldBlockApplyAdmission is the write-admission gate: admission to the
+// apply phase (the phase that writes) requires a human checkpoint/proceed
+// with synthesis even in auto mode and even in a child subagent. Unlike
+// ShouldBlock, it honors neither the PI_SUBAGENT_CHILD bypass nor the
+// Session Recall bypass, so auto back-to-back phases cannot self-validate
+// their own entry into writing. It touches only write admission: every
+// other phase keeps the ShouldBlock contract (child/recall bypasses intact).
+func ShouldBlockApplyAdmission(question string, md string, now time.Time) bool {
+	if !IsCheckpointAsk(question) && !HasOptions(question) {
+		return false
+	}
+	if !HasSynthesis(md) {
+		return true
+	}
+	if now.Sub(currentTurnTime) > 120*time.Second {
+		return true
+	}
+	return false
+}
+
 // renderLifecycle renders one-line lifecycle ◆ Phase · Status · Next with color.
 // Colors: success/éxito=green, warning/atención=yellow, error=red.
 // Keeps 4-marker invariant and is used by RenderSynthesis. Single line, no empty dim trailer.

@@ -389,3 +389,106 @@ func TestProjectStatusV2RejectsUnsupportedValues(t *testing.T) {
 		})
 	}
 }
+
+func v2BlockedBase() ChangeStatus {
+	return ChangeStatus{
+		SchemaName:    StatusSchemaName,
+		SchemaVersion: StatusSchemaVersion,
+		Name:          "test",
+		ChangeRoot:    "/repo/openspec/changes/test",
+		PlanningHome:  PlanningHome{Mode: "repo-local", Path: "/repo/openspec"},
+		ArtifactStore: ArtifactStoreOpenSpec,
+		ArtifactPaths: ArtifactPaths{
+			Proposal:      []string{"/repo/openspec/changes/test/proposal.md"},
+			Specs:         []string{"/repo/openspec/changes/test/specs/core/spec.md"},
+			Design:        []string{"/repo/openspec/changes/test/design.md"},
+			Tasks:         []string{"/repo/openspec/changes/test/tasks.md"},
+			ApplyProgress: []string{},
+			VerifyReport:  []string{},
+		},
+		ContextFiles: ArtifactPaths{
+			Proposal:      []string{"/repo/openspec/changes/test/proposal.md"},
+			Specs:         []string{"/repo/openspec/changes/test/specs/core/spec.md"},
+			Design:        []string{"/repo/openspec/changes/test/design.md"},
+			Tasks:         []string{"/repo/openspec/changes/test/tasks.md"},
+			ApplyProgress: []string{},
+			VerifyReport:  []string{},
+		},
+		Artifacts: map[string]ArtifactState{
+			"proposal": ArtifactDone, "specs": ArtifactDone, "design": ArtifactDone,
+			"tasks": ArtifactDone, "applyProgress": ArtifactMissing, "verifyReport": ArtifactMissing,
+		},
+		TaskProgress: TaskProgress{Total: 2, Completed: 1, Pending: 1},
+		Dependencies: Dependencies{
+			Proposal: DependencyAllDone, Specs: DependencyAllDone, Design: DependencyAllDone,
+			Tasks: DependencyAllDone, Apply: DependencyReady, Verify: DependencyBlocked, Archive: DependencyBlocked,
+		},
+		ApplyState:           ApplyReady,
+		ActionContext:        ActionContext{Mode: "repo-local", WorkspaceRoot: "/repo", AllowedEditRoots: []string{"/repo"}},
+		Relationships:        Relationships{},
+		RemediationState:     RemediationState{},
+		EditAuthorityBlocked: true,
+		MissingRoots:         []string{"/other"},
+	}
+}
+
+// TestV2EditAuthorityBlockedNeverRecommendsApply pins the P0-1 hardening:
+// when the internal document already knows EditAuthorityBlocked, the V2
+// projection must never recommend apply. Display stays authority-free (no
+// blocked reason string), while the recommendation demotes to the existing
+// remediate value (remedy through the consent exits).
+func TestV2EditAuthorityBlockedNeverRecommendsApply(t *testing.T) {
+	t.Run("blocked internal apply demotes to remediate", func(t *testing.T) {
+		cs := v2BlockedBase()
+		cs.NextRecommended = "apply"
+		cs.BlockedReasons = []string{}
+		projected, err := ProjectStatusV2(cs)
+		if err != nil {
+			t.Fatalf("ProjectStatusV2 error = %v", err)
+		}
+		if projected.NextRecommended == "apply" {
+			t.Fatalf("nextRecommended = apply for an edit-authority-blocked change, want != apply")
+		}
+		if projected.NextRecommended != "remediate" {
+			t.Fatalf("nextRecommended = %q, want remediate (existing remedy value)", projected.NextRecommended)
+		}
+		if len(projected.BlockedReasons) != 0 {
+			t.Fatalf("blockedReasons = %v, want [] (authority-free display)", projected.BlockedReasons)
+		}
+		payload, err := json.Marshal(projected)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(payload), "blocked(edit_authority_missing)") {
+			t.Fatalf("V2 payload must not print blocked(edit_authority_missing): %s", payload)
+		}
+	})
+
+	t.Run("blocked resolve-blockers remap does not reach apply", func(t *testing.T) {
+		cs := v2BlockedBase()
+		cs.NextRecommended = "resolve-blockers"
+		cs.BlockedReasons = []string{"blocked(edit_authority_missing): tasks.md targets repositories outside the authorized edit roots: \"/other\"; edit tasks.md so every work unit stays inside the authorized edit roots, or grant this change edit authority for those repositories"}
+		projected, err := ProjectStatusV2(cs)
+		if err != nil {
+			t.Fatalf("ProjectStatusV2 error = %v", err)
+		}
+		if projected.NextRecommended == "apply" {
+			t.Fatalf("nextRecommended = apply for an edit-authority-blocked change, want != apply")
+		}
+	})
+
+	t.Run("unblocked apply still recommends apply", func(t *testing.T) {
+		cs := v2BlockedBase()
+		cs.EditAuthorityBlocked = false
+		cs.MissingRoots = nil
+		cs.NextRecommended = "apply"
+		cs.BlockedReasons = []string{}
+		projected, err := ProjectStatusV2(cs)
+		if err != nil {
+			t.Fatalf("ProjectStatusV2 error = %v", err)
+		}
+		if projected.NextRecommended != "apply" {
+			t.Fatalf("nextRecommended = %q, want apply (no regression for unblocked changes)", projected.NextRecommended)
+		}
+	})
+}

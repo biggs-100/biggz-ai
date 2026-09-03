@@ -302,3 +302,71 @@ func TestRecreatedChangeNameDoesNotInheritGrantedRoots(t *testing.T) {
 		t.Fatalf("recreated change did not mint a fresh instance token: %q vs %q (%v)", fresh, token, err)
 	}
 }
+
+// TestV2OutsideRootsNeverRecommendsApply is the P0-1 end-to-end pin:
+// tasks.md targets a repository outside the authorized edit roots while
+// planning is complete, so the internal document reports NextRecommended
+// apply with EditAuthorityBlocked set (the topology guard stays quiet
+// because the planning workspace itself is not a Git repository, exactly
+// the divergence the V2 filter used to hide). The V2 projection must not
+// recommend apply, while display stays authority-free.
+func TestV2OutsideRootsNeverRecommendsApply(t *testing.T) {
+	redirectTestHome(t)
+	workspace := t.TempDir()
+	planning := filepath.Join(workspace, "planning")
+	serviceA := filepath.Join(workspace, "service-a")
+	if err := os.MkdirAll(planning, 0755); err != nil {
+		t.Fatalf("mkdir planning: %v", err)
+	}
+	initEditAuthorityGitRepo(t, serviceA)
+	changeRoot := filepath.Join(planning, "openspec", "changes", "multi-repo-rollout")
+	for rel, content := range map[string]string{
+		"proposal.md":        "# Proposal\n",
+		"specs/core/spec.md": "### Requirement: Capability\n#### Scenario: Works\n",
+		"design.md":          "# Design\n",
+		"tasks.md":           "- [x] 1.1 Agree the header contract\n- [ ] 1.2 Update `../service-a/internal/api/handler.go` to accept the new header\n",
+	} {
+		path := filepath.Join(changeRoot, rel)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	active, _, err := Status(filepath.Join(planning, "openspec"))
+	if err != nil {
+		t.Fatalf("Status() error: %v", err)
+	}
+	if len(active) != 1 {
+		t.Fatalf("active changes = %d, want 1", len(active))
+	}
+	cs := active[0]
+	if !cs.EditAuthorityBlocked {
+		t.Fatal("multi-repo change did not report the edit-authority block")
+	}
+	if cs.NextRecommended != "apply" {
+		t.Fatalf("internal NextRecommended = %q, want apply (the hole under test)", cs.NextRecommended)
+	}
+
+	projected, err := ProjectStatusV2(cs)
+	if err != nil {
+		t.Fatalf("ProjectStatusV2 error = %v", err)
+	}
+	if projected.NextRecommended == "apply" {
+		t.Fatalf("V2 nextRecommended = apply for tasks.md outside the authorized roots, want != apply")
+	}
+	for _, r := range projected.BlockedReasons {
+		if strings.Contains(r, "edit_authority_missing") {
+			t.Fatalf("V2 blockedReasons leaked authority: %q", r)
+		}
+	}
+	encoded, err := json.Marshal(projected.BlockedReasons)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != "[]" {
+		t.Fatalf("V2 blockedReasons payload = %s, want [] (authority-free display)", encoded)
+	}
+}

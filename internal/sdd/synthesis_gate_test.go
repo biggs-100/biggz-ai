@@ -198,3 +198,60 @@ func TestShouldBlock_ChildBypass(t *testing.T) {
 		t.Fatalf("ShouldBlock should be true for orchestrator when missing")
 	}
 }
+
+// TestShouldBlockApplyAdmission_NoBypasses pins the P0-2 hardening: admission
+// to the apply phase (the phase that writes) requires a human
+// checkpoint/proceed with synthesis even in auto mode and even in a child
+// subagent. Unlike ShouldBlock, the write-admission gate honors neither the
+// PI_SUBAGENT_CHILD bypass nor the Session Recall bypass, so auto
+// back-to-back phases cannot self-validate their own entry into writing.
+func TestShouldBlockApplyAdmission_NoBypasses(t *testing.T) {
+	good := mustSynthesisMD("full-prose")
+
+	t.Run("child without synthesis still blocks", func(t *testing.T) {
+		t.Setenv("PI_SUBAGENT_CHILD", "1")
+		SetCurrentTurnMarkdown(good)
+		if ShouldBlock("proceed", "no markers", time.Now()) {
+			t.Fatalf("precondition: ShouldBlock must bypass for the child")
+		}
+		if !ShouldBlockApplyAdmission("proceed", "no markers", time.Now()) {
+			t.Fatalf("ShouldBlockApplyAdmission must block a child checkpoint without synthesis")
+		}
+	})
+
+	t.Run("session recall without synthesis still blocks", func(t *testing.T) {
+		t.Setenv("PI_SUBAGENT_CHILD", "0")
+		recallMD := "## Session Recall\nsome previous context\n"
+		SetCurrentTurnMarkdown(recallMD)
+		if ShouldBlock("proceed", recallMD, time.Now()) {
+			t.Fatalf("precondition: ShouldBlock must bypass for Session Recall")
+		}
+		if !ShouldBlockApplyAdmission("proceed", recallMD, time.Now()) {
+			t.Fatalf("ShouldBlockApplyAdmission must block Session Recall without checkpoint synthesis")
+		}
+	})
+
+	t.Run("human checkpoint with synthesis allows even as child", func(t *testing.T) {
+		t.Setenv("PI_SUBAGENT_CHILD", "1")
+		SetCurrentTurnMarkdown(good)
+		if ShouldBlockApplyAdmission("proceed", good, time.Now().Add(30*time.Second)) {
+			t.Fatalf("ShouldBlockApplyAdmission must allow a checkpoint with synthesis in window")
+		}
+	})
+
+	t.Run("expired synthesis blocks", func(t *testing.T) {
+		t.Setenv("PI_SUBAGENT_CHILD", "0")
+		SetCurrentTurnMarkdown(good)
+		if !ShouldBlockApplyAdmission("proceed", good, time.Now().Add(121*time.Second)) {
+			t.Fatalf("ShouldBlockApplyAdmission must block when synthesis is expired")
+		}
+	})
+
+	t.Run("non-checkpoint never blocks", func(t *testing.T) {
+		t.Setenv("PI_SUBAGENT_CHILD", "0")
+		SetCurrentTurnMarkdown(good)
+		if ShouldBlockApplyAdmission("how are you?", "no markers", time.Now()) {
+			t.Fatalf("ShouldBlockApplyAdmission must allow non-checkpoint asks")
+		}
+	})
+}
