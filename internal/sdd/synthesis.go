@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -166,6 +167,14 @@ func noneLabel(lang string) string {
 }
 
 func renderSynthesisWithLang(r SubAgentResult, lang string) string {
+	return RenderSynthesisWithWidth(r, lang, 80)
+}
+
+func renderSynthesisWithWidth(r SubAgentResult, lang string, width int) string {
+	if width <= 0 {
+		width = 80
+	}
+	budget := cellBudget(width)
 	phase := strings.TrimSpace(r.Phase)
 	if phase == "" {
 		phase = "phase/agent"
@@ -189,23 +198,23 @@ func renderSynthesisWithLang(r SubAgentResult, lang string) string {
 	lifecycle := renderLifecycle(phase, status, next)
 
 	var b strings.Builder
-	b.WriteString("## Sub-agent Result: " + sanitizeForWidth(phase, 80) + "\n")
+	b.WriteString("## Sub-agent Result: " + sanitizeForWidth(phase, width) + "\n")
 	// What was done as table + checklist
 	b.WriteString("**What was done:**\n")
-	rows, checklist := parseWhatDoneRows(r.WhatDone)
+	rows, checklist := parseWhatDoneRows(r.WhatDone, budget)
 	// Ensure at least header present
 	if len(rows) == 0 {
 		rows = [][]string{{none, none}}
 	}
-	// Render table chunked
-	tableMD := renderTable(rows, 80)
+	// Render table chunked — width-aware budget (cellBudget(width)) fixes 34 vs 37 mismatch
+	tableMD := renderTable(rows, width)
 	b.WriteString(tableMD)
 	if len(checklist) > 0 {
 		for _, item := range checklist {
 			// sanitize checklist item but keep prefix
 			sanitized := sanitizePlain(item)
-			// per-item truncate to width 80
-			sanitized = truncateToWidth(sanitized, 80)
+			// per-item truncate to width
+			sanitized = truncateToWidth(sanitized, width)
 			b.WriteString(sanitized + "\n")
 		}
 	}
@@ -214,7 +223,7 @@ func renderSynthesisWithLang(r SubAgentResult, lang string) string {
 	b.WriteString("**Artifacts/Paths:** " + sanitizePlain(arts) + "\n")
 	b.WriteString("**Risks / Open Questions:** " + sanitizePlain(risks) + "\n")
 	b.WriteString("**Next Recommended:** " + sanitizePlain(next) + "\n")
-	// Preview sanitized 300
+	// Preview sanitized 300 (width-aware cell budget only; preview stays 300)
 	previewRaw := strings.TrimSpace(r.Preview)
 	if previewRaw == "" {
 		b.WriteString("**Preview:** " + none + "\n")
@@ -228,16 +237,16 @@ func renderSynthesisWithLang(r SubAgentResult, lang string) string {
 		b.WriteString("**Diff:** " + formatDiff(diffRaw) + "\n")
 	}
 	if v := strings.TrimSpace(r.Decisions); v != "" {
-		b.WriteString("**Decisions:** " + sanitizeForWidth(v, 80) + "\n")
+		b.WriteString("**Decisions:** " + sanitizeForWidth(v, width) + "\n")
 	}
 	if v := strings.TrimSpace(r.Commands); v != "" {
-		b.WriteString("**Commands:** " + sanitizeForWidth(v, 80) + "\n")
+		b.WriteString("**Commands:** " + sanitizeForWidth(v, width) + "\n")
 	}
 	validation := strings.TrimSpace(r.Validation)
 	if validation == "" {
 		validation = none
 	} else {
-		validation = sanitizeForWidth(validation, 80)
+		validation = sanitizeForWidth(validation, width)
 	}
 	b.WriteString("**Validation:** " + validation + "\n")
 	if v := strings.TrimSpace(r.Failure); v != "" {
@@ -245,14 +254,46 @@ func renderSynthesisWithLang(r SubAgentResult, lang string) string {
 		if human == "" {
 			human = v
 		}
-		b.WriteString("**Failure:** " + sanitizeForWidth(human, 80) + "\n")
+		b.WriteString("**Failure:** " + sanitizeForWidth(human, width) + "\n")
 	}
 	return b.String()
 }
 
-
 func RenderSynthesis(r SubAgentResult) string {
-	return renderSynthesisWithLang(r, "en")
+	return RenderSynthesisLocalized(r, "en")
+}
+
+// RenderSynthesisWithWidth renders with explicit width. Width <=0 defaults to 80.
+// Reversible hotfix: width controls table cell budget (cellBudget(width)) and per-field truncation.
+// Preview remains 300 visible width; diff 80 is still truncated via formatDiff but table adapts.
+func RenderSynthesisWithWidth(r SubAgentResult, lang string, width int) string {
+	if width <= 0 {
+		width = 80
+	}
+	normalized := strings.ToLower(strings.TrimSpace(lang))
+	if normalized == "" {
+		normalized = "en"
+	}
+	// handle numeric lang passed accidentally as "80"/"100" — treat as width hint if width is default
+	if num, err := strconv.Atoi(normalized); err == nil && num > 0 && width == 80 {
+		// lang was numeric width string; fallback lang to en and use that numeric width if no explicit override
+		// caller used RenderSynthesisWithWidth with lang="80"; honor numeric width
+		width = num
+		normalized = "en"
+	}
+	if normalized != "es" && normalized != "en" {
+		if num, err := strconv.Atoi(normalized); err == nil && num > 0 {
+			normalized = "en"
+		} else {
+			detected := DetectLanguage(lang)
+			if detected == "es" || detected == "en" {
+				normalized = detected
+			} else {
+				normalized = "en"
+			}
+		}
+	}
+	return renderSynthesisWithWidth(r, normalized, width)
 }
 
 // RenderPrettySynthesis returns a pretty-decorated synthesis that remains valid for HasSynthesis.
@@ -383,6 +424,10 @@ var englishKeywords = map[string]struct{}{
 // Keeps RenderSynthesis compatible; localized content is provided by sub-agent via hint, wrapper preserves whitelist.
 func RenderSynthesisLocalized(r SubAgentResult, lang string) string {
 	normalized := strings.ToLower(strings.TrimSpace(lang))
+	// width-optional: si lang es "80"/"100" numérico, tratar como width (compat hotfix)
+	if num, err := strconv.Atoi(normalized); err == nil && num > 0 {
+		return RenderSynthesisWithWidth(r, "en", num)
+	}
 	if normalized == "" {
 		normalized = "en"
 	}
@@ -395,7 +440,7 @@ func RenderSynthesisLocalized(r SubAgentResult, lang string) string {
 			normalized = "en"
 		}
 	}
-	return renderSynthesisWithLang(r, normalized)
+	return RenderSynthesisWithWidth(r, normalized, 80)
 }
 
 func deriveLifecycleStatus(r SubAgentResult) string {
@@ -524,17 +569,25 @@ func formatDiff(s string) string {
 	return s
 }
 
-func parseWhatDoneRows(s string) ([][]string, []string) {
+func parseWhatDoneRows(s string, budget int) ([][]string, []string) {
+	if budget <= 0 {
+		budget = cellBudget(80)
+	}
 	s = strings.TrimSpace(s)
 	if s == "" || s == "None" {
 		return nil, nil
 	}
 	lines := splitWhatDoneLines(s)
-	rows, checklist := classifyWhatDoneLines(lines)
+	rows, checklist := classifyWhatDoneLines(lines, budget)
 	if len(rows) == 0 {
-		rows = fallbackWhatDoneRows(s)
+		rows = fallbackWhatDoneRows(s, budget)
 	}
 	return rows, checklist
+}
+
+// parseWhatDoneRowsCompat keeps old signature for tests that call without budget (defaults 37)
+func parseWhatDoneRowsCompat(s string) ([][]string, []string) {
+	return parseWhatDoneRows(s, cellBudget(80))
 }
 
 func splitWhatDoneLines(s string) []string {
@@ -566,23 +619,28 @@ func isChecklistLine(line string) bool {
 	return strings.HasPrefix(line, "- [X]")
 }
 
-func sanitizeCell(cell string) string {
+func sanitizeCell(cell string, budget int) string {
 	cell = sanitizePlain(cell)
-	const budget = 34
+	if budget <= 0 {
+		budget = cellBudget(80)
+	}
 	return truncateToWidth(cell, budget)
 }
 
-func tryParseRow(line string) (string, string, bool) {
+func tryParseRow(line string, budget int) (string, string, bool) {
 	topic, decision := splitTopicDecision(line)
 	if topic == "" && decision == "" {
 		return "", "", false
 	}
-	topic = sanitizeCell(topic)
-	decision = sanitizeCell(decision)
+	topic = sanitizeCell(topic, budget)
+	decision = sanitizeCell(decision, budget)
 	return topic, decision, true
 }
 
-func classifyWhatDoneLines(lines []string) ([][]string, []string) {
+func classifyWhatDoneLines(lines []string, budget int) ([][]string, []string) {
+	if budget <= 0 {
+		budget = cellBudget(80)
+	}
 	var rows [][]string
 	var checklist []string
 	for _, raw := range lines {
@@ -594,7 +652,7 @@ func classifyWhatDoneLines(lines []string) ([][]string, []string) {
 			checklist = append(checklist, line)
 			continue
 		}
-		topic, decision, ok := tryParseRow(line)
+		topic, decision, ok := tryParseRow(line, budget)
 		if !ok {
 			continue
 		}
@@ -603,14 +661,20 @@ func classifyWhatDoneLines(lines []string) ([][]string, []string) {
 	return rows, checklist
 }
 
-func fallbackWhatDoneRows(s string) [][]string {
-	if strings.Contains(s, ",") {
-		return splitCommaFallback(s)
+func fallbackWhatDoneRows(s string, budget int) [][]string {
+	if budget <= 0 {
+		budget = cellBudget(80)
 	}
-	return singleFallback(s)
+	if strings.Contains(s, ",") {
+		return splitCommaFallback(s, budget)
+	}
+	return singleFallback(s, budget)
 }
 
-func splitCommaFallback(s string) [][]string {
+func splitCommaFallback(s string, budget int) [][]string {
+	if budget <= 0 {
+		budget = cellBudget(80)
+	}
 	parts := strings.Split(s, ",")
 	var rows [][]string
 	for _, p := range parts {
@@ -622,15 +686,18 @@ func splitCommaFallback(s string) [][]string {
 		if topic == "" {
 			topic = p
 		}
-		topic = sanitizeCell(topic)
-		decision = sanitizeCell(decision)
+		topic = sanitizeCell(topic, budget)
+		decision = sanitizeCell(decision, budget)
 		rows = append(rows, []string{topic, decision})
 	}
 	return rows
 }
 
-func singleFallback(s string) [][]string {
-	topic := sanitizeCell(s)
+func singleFallback(s string, budget int) [][]string {
+	if budget <= 0 {
+		budget = cellBudget(80)
+	}
+	topic := sanitizeCell(s, budget)
 	return [][]string{{topic, ""}}
 }
 

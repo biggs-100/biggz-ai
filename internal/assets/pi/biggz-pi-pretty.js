@@ -33,11 +33,61 @@ export default function biggzPiPretty(pi) {
 		const hidden = lines.length - visible.length;
 		return [`… ${hidden} earlier ${hidden === 1 ? "line" : "lines"}`, ...visible];
 	}
+	function stripAnsi(s){return String(s).replace(/\x1b\[[0-9;]*[A-Za-z]/g,"").replace(/\x1b\][^\x07]*\x07/g,"")}
+	function visibleWidth(s){
+		const clean = stripAnsi(String(s ?? ""));
+		const base = Array.from(clean).length;
+		const surrogatePairs = (clean.match(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g) || []).length;
+		return base + surrogatePairs;
+	}
 	function truncateToWidth(str, max) {
 		const s = String(str ?? "");
-		if (s.length <= max) return s;
+		if (visibleWidth(s) <= max) return s;
 		if (max <= 1) return "…";
-		return s.slice(0, max - 1) + "…";
+		const target = max - 1;
+		let cur = 0;
+		let out = "";
+		let i = 0;
+		while (i < s.length) {
+			if (s.charCodeAt(i) === 0x1b && s[i+1] === '[') {
+				let j = i + 2;
+				while (j < s.length && !/[A-Za-z]/.test(s[j])) j++;
+				if (j < s.length) { out += s.slice(i, j+1); i = j+1; continue; }
+			}
+			if (s.charCodeAt(i) === 0x1b && s[i+1] === ']') {
+				let j = i + 2;
+				while (j < s.length && s.charCodeAt(j) !== 0x07) j++;
+				if (j < s.length) { out += s.slice(i, j+1); i = j+1; continue; }
+			}
+			const code = s.charCodeAt(i);
+			let charLen = 1;
+			let w = 1;
+			if (code >= 0xD800 && code <= 0xDBFF && i+1 < s.length) {
+				const low = s.charCodeAt(i+1);
+				if (low >= 0xDC00 && low <= 0xDFFF) { w = 2; charLen = 2; }
+			}
+			if (cur + w > target) break;
+			out += s.slice(i, i+charLen);
+			cur += w;
+			i += charLen;
+		}
+		let suffix = "";
+		while (i < s.length) {
+			if (s.charCodeAt(i) === 0x1b && s[i+1] === '[') {
+				let j = i + 2;
+				while (j < s.length && !/[A-Za-z]/.test(s[j])) j++;
+				if (j < s.length) { suffix += s.slice(i, j+1); i = j+1; continue; }
+			}
+			if (s.charCodeAt(i) === 0x1b && s[i+1] === ']') {
+				let j = i + 2;
+				while (j < s.length && s.charCodeAt(j) !== 0x07) j++;
+				if (j < s.length) { suffix += s.slice(i, j+1); i = j+1; continue; }
+			}
+			const code = s.charCodeAt(i);
+			if (code >= 0xD800 && code <= 0xDBFF && i+1 < s.length && s.charCodeAt(i+1) >= 0xDC00 && s.charCodeAt(i+1) <= 0xDFFF) i += 2;
+			else i++;
+		}
+		return out + "…" + suffix;
 	}
 
 	const THROTTLE_MS = 3000;
@@ -72,7 +122,7 @@ export default function biggzPiPretty(pi) {
 	function formatHeadlineLines(elapsedSec, runs) {
 		const head = formatHeadline(elapsedSec, runs);
 		const clean = head.split("\n").map((s) => s.trim()).filter(Boolean).join(" ");
-		if (clean.length <= TRUNCATE_LENGTHS.PREVIEW) {
+		if (visibleWidth(clean) <= TRUNCATE_LENGTHS.PREVIEW) {
 			return capPreviewLines([clean], { maxRows: 1 });
 		}
 		const truncated = truncateToWidth(clean, TRUNCATE_LENGTHS.PREVIEW);
@@ -82,11 +132,11 @@ export default function biggzPiPretty(pi) {
 	}
 
 	function compactK(n){n=Number(n)||0;if(n<1000)return String(n);if(n<10000)return n%1000?(n/1000).toFixed(1)+'k':n/1000+'k';return Math.floor(n/1000)+'k';}
-	function rightAlign(s,w){s=String(s);return s.length>=w?s:' '.repeat(w-s.length)+s;}
+	function rightAlign(s,w){s=String(s);const vw=visibleWidth(s);return vw>=w?s:' '.repeat(w-vw)+s;}
 	function fmtElapsed(s){s=Math.floor(Number(s)||0);return s>60?`${Math.floor(s/60)}m${String(s%60).padStart(2,'0')}s`:`${s}s`;}
 	function fmtTokens(w,s){w=Number(w);s=Number(s);if(!Number.isFinite(w))w=s||0;if(!Number.isFinite(s))s=0;return w===s||w<1000?compactK(s):compactK(w)+'›'+compactK(s);}
 	function glyphFor(s){s=String(s||'').toLowerCase();return s.includes('done')||s.includes('complete')||s.includes('success')?'✓':s.includes('wait')?'◌':'◐';}
-	function formatSingleRun(elapsed,run){const r=run||{};const agent=String(r.agent||r.name||r.id||'general').trim()||'general';const state=String(r.state||r.status||'thinking').trim()||'thinking';let task=String(r.task||r.description||'').trim();const sec=typeof elapsed==='number'?elapsed:(parseInt(elapsed,10)||0);let w=r.windowTokens??r.window??r.tokensWindow??null;let sp=r.spentTokens??r.spent??r.tokensSpent??null;if(r.tokens&&typeof r.tokens==='object'){if(w==null)w=r.tokens.window??r.tokens.windowTokens??null;if(sp==null)sp=r.tokens.spent??r.tokens.spentTokens??null;}if(w==null&&sp==null){sp=r.tokens??r.spent??r.windowTokens??0;w=r.windowTokens??r.tokens??sp;}if(w==null)w=sp;if(sp==null)sp=0;w=Number(w);sp=Number(sp);if(Number.isNaN(w))w=0;if(Number.isNaN(sp))sp=0;const gl=glyphFor(state);const el=rightAlign(fmtElapsed(sec),5);const tk=rightAlign(fmtTokens(w,sp),10);const line1=`${gl} ${agent} · ${state} \x1b[2m${el}\x1b[0m \x1b[2m${tk}\x1b[0m`;let td=task||`1 run · ${agent}`;td=td.split('\n').map(s=>s.trim()).filter(Boolean).join(' ');if(td.length>TRUNCATE_LENGTHS.TITLE)td=truncateToWidth(td, TRUNCATE_LENGTHS.TITLE);const line2=`\x1b[2m└ ${td}\x1b[0m`;return[line1,line2];}
+	function formatSingleRun(elapsed,run){const r=run||{};const agent=String(r.agent||r.name||r.id||'general').trim()||'general';const state=String(r.state||r.status||'thinking').trim()||'thinking';let task=String(r.task||r.description||'').trim();const sec=typeof elapsed==='number'?elapsed:(parseInt(elapsed,10)||0);let w=r.windowTokens??r.window??r.tokensWindow??null;let sp=r.spentTokens??r.spent??r.tokensSpent??null;if(r.tokens&&typeof r.tokens==='object'){if(w==null)w=r.tokens.window??r.tokens.windowTokens??null;if(sp==null)sp=r.tokens.spent??r.tokens.spentTokens??null;}if(w==null&&sp==null){sp=r.tokens??r.spent??r.windowTokens??0;w=r.windowTokens??r.tokens??sp;}if(w==null)w=sp;if(sp==null)sp=0;w=Number(w);sp=Number(sp);if(Number.isNaN(w))w=0;if(Number.isNaN(sp))sp=0;const gl=glyphFor(state);const el=rightAlign(fmtElapsed(sec),5);const tk=rightAlign(fmtTokens(w,sp),10);const line1=`${gl} ${agent} · ${state} \x1b[2m${el}\x1b[0m \x1b[2m${tk}\x1b[0m`;let td=task||`1 run · ${agent}`;td=td.split('\n').map(s=>s.trim()).filter(Boolean).join(' ');if(visibleWidth(td)>TRUNCATE_LENGTHS.TITLE)td=truncateToWidth(td, TRUNCATE_LENGTHS.TITLE);const line2=`\x1b[2m└ ${td}\x1b[0m`;return[line1,line2];}
 	function renderSingleRun(piRef,ctx,elapsed,run){const l=formatSingleRun(elapsed,run);const s=l[0]||'',d=l[1]||'';try{if(ctx&&ctx.ui&&typeof ctx.ui.setStatus==='function'){ctx.ui.setStatus('biggz-pi-pretty',s);if(d)ctx.ui.notify(d,'info');}else if(ctx&&ctx.ui&&typeof ctx.ui.notify==='function'){ctx.ui.notify(s,'info');if(d)ctx.ui.notify(d,'info');}else if(piRef&&typeof piRef.notify==='function'){piRef.notify(s,'info');if(d)piRef.notify(d,'info');}}catch{}return l;}
 
 	function renderHeadline(piRef, ctx, elapsedSec, runs) {
@@ -172,6 +222,10 @@ export default function biggzPiPretty(pi) {
 			formatHeadline,
 			formatHeadlineLines,
 			formatSingleRun,
+			stripAnsi,
+			visibleWidth,
+			truncateToWidth,
+			rightAlign,
 			renderHeadline: (elapsed, runs, ctx) => renderHeadline(pi, ctx, elapsed, runs),
 			renderSingleRun: (elapsed, run, ctx) => renderSingleRun(pi, ctx, elapsed, run),
 			_test: {
