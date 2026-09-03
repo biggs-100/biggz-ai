@@ -407,3 +407,26 @@ func TestMCP_MemSaveSmallImageExternalized(t *testing.T) {
 		t.Fatal("image not addr")
 	}
 }
+
+func TestSave_NoSilentTruncation80K(t *testing.T) {
+	s := newIsolatedStore(t)
+	// 80KiB sits in the old silent-loss window: truncateIfNeeded cut at
+	// maxStoredBytes (50k) while ShouldExternalize only fired above 100k,
+	// and the truncation warning was discarded with _.
+	tail := "TAILMARKER-80K"
+	content := strings.Repeat("x", 80*1024-len(tail)) + tail
+	obs := &Observation{Title: "80k-window", Type: "note", Content: content, Project: "test80k"}
+	if err := s.Save(obs); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := s.Get(obs.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Content != content {
+		t.Fatalf("silent loss: got %d bytes want %d", len(got.Content), len(content))
+	}
+	if !strings.HasSuffix(got.Content, tail) {
+		t.Fatal("tail marker lost — content was truncated")
+	}
+}

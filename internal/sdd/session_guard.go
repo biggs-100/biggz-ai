@@ -347,11 +347,11 @@ func IsSessionSummaryBlocked(ctx context.Context, workspaceRoot, change string) 
 	}
 	has, err := HasSessionSummary(ctx, proj, "")
 	if err != nil {
-		// transient error (e.g., empty $HOME without XDG_RUNTIME_DIR fallback):
-		// do not use XDG_RUNTIME_DIR, attempt git fallback but allow retry next session.
+		// Fail CLOSED: a store error must block done, never let it pass
+		// without memory. Git/sdd-status fallback is observability only.
 		_, _ = GitLogFallback(ctx, workspaceRoot)
 		_, _ = SDDStatusFallback(ctx, workspaceRoot)
-		return false, ""
+		return true, SessionSummaryMissingReason
 	}
 	if has {
 		return false, ""

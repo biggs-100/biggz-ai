@@ -1446,21 +1446,25 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 	}
 	obs.UpdatedAt = now
 	obs.Scope = normalizeScope(obs.Scope)
-	// Batch S: private-tag redaction + truncation (Engram parity)
+	// Batch S: private-tag redaction (Engram parity). Never truncate silently:
+	// blob addresses and ShouldExternalize (>100k/data:image) payloads stay raw
+	// inline so DoctorFixBlobs can migrate them later; the 50-100KiB window
+	// between maxStoredBytes and ShouldExternalize is externalized via PutBlob
+	// instead of being cut to 50k with a discarded warning.
 	obs.Title = stripPrivateTags(obs.Title)
 	stripped := stripPrivateTags(obs.Content)
-	// F7: do not truncate blob addresses or ShouldExternalize (>100k/data:image) payloads — CLI and MCP both
-	// benefit (MCP pre-externalizes via PutBlob, CLI now also pre-externalizes; Store.Save is fallback that
-	// preserves raw >100k without truncate so DoctorFixBlobs can later migrate). PutBlob is handled
-	// eagerly in cmd callers; Store.Save avoids truncate for blob-eligible content.
 	if IsBlobAddr(stripped) || ShouldExternalize(stripped) {
 		obs.Content = stripped
-	} else {
-		truncated, meta := truncateIfNeeded(stripped)
-		obs.Content = truncated
-		if meta.Truncated {
-			_ = truncationWarning(meta)
+	} else if len(stripped) > maxStoredBytes {
+		if addr, err := PutBlob([]byte(stripped)); err == nil {
+			obs.Content = addr
+		} else {
+			// Blob unavailable (e.g. empty HOME): preserve raw so no bytes
+			// are lost; DoctorFixBlobs migrates once storage is available.
+			obs.Content = stripped
 		}
+	} else {
+		obs.Content = stripped
 	}
 	obs.NormalizedHash = hashNormalized(obs.Content)
 

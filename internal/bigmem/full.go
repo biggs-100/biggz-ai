@@ -1159,7 +1159,8 @@ func (s *Store) SyncExport(project, projectRoot string) error {
 	defer rows.Close()
 
 	name := fmt.Sprintf("sync-%s.ndjson", time.Now().UTC().Format("20060102T150405"))
-	f, err := os.Create(filepath.Join(dir, name))
+	chunkPath := filepath.Join(dir, name)
+	f, err := os.Create(chunkPath)
 	if err != nil {
 		return err
 	}
@@ -1190,13 +1191,24 @@ func (s *Store) SyncExport(project, projectRoot string) error {
 			obs.DeletedAt = &da.String
 		}
 		obs.Pinned = pinnedInt != 0
+		// Bundle referenced blob bytes into the export so a fresh root can
+		// restore them on import instead of receiving an orphan address.
+		if IsBlobAddr(obs.Content) {
+			data, err := GetBlob(obs.Content)
+			if err != nil {
+				f.Close()
+				os.Remove(chunkPath)
+				return fmt.Errorf("sync export: blob %s missing bytes for observation %s: %w", obs.Content, obs.ID, err)
+			}
+			obs.Content = string(data)
+		}
 		if err := enc.Encode(obs); err != nil {
 			return err
 		}
 		count++
 	}
 	if count == 0 {
-		os.Remove(filepath.Join(dir, name))
+		os.Remove(chunkPath)
 		return fmt.Errorf("no observations to export")
 	}
 	return nil
@@ -1211,6 +1223,7 @@ func (s *Store) SyncImport(projectRoot string) (int, error) {
 	}
 
 	total := 0
+	orphans := 0
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".ndjson") {
 			continue
@@ -1229,6 +1242,21 @@ func (s *Store) SyncImport(projectRoot string) (int, error) {
 			s.db.QueryRow("SELECT COUNT(*) FROM observations WHERE id = ?", obs.ID).Scan(&existing)
 			if existing > 0 {
 				continue
+			}
+			// Orphan blob refs (legacy exports or missing bytes) must not be
+			// inserted: Get would hand back the raw address. Skip visibly.
+			if IsBlobAddr(obs.Content) {
+				if _, err := GetBlob(obs.Content); err != nil {
+					orphans++
+					continue
+				}
+			} else if len(obs.Content) > maxStoredBytes || ShouldExternalize(obs.Content) {
+				// Restore large payloads to blob storage in this root so the
+				// imported row matches source behavior (addr, not inline bulk).
+				// PutBlob failure keeps raw inline: bytes preserved, no orphan.
+				if addr, err := PutBlob([]byte(obs.Content)); err == nil {
+					obs.Content = addr
+				}
 			}
 			if obs.ID == "" {
 				obs.ID = fmt.Sprintf("obs-%d", time.Now().UnixNano())
@@ -1251,6 +1279,9 @@ func (s *Store) SyncImport(projectRoot string) (int, error) {
 				total++
 			}
 		}
+	}
+	if orphans > 0 {
+		return total, fmt.Errorf("sync import: %d observation(s) reference missing blobs; skipped instead of inserting orphan refs", orphans)
 	}
 	return total, nil
 }

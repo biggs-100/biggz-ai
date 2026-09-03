@@ -486,3 +486,40 @@ func TestSessionGuard_PersistentFailDegraded(t *testing.T) {
 		t.Fatalf("bash fallback file not written: %v", err)
 	}
 }
+
+func TestSessionGuard_FailClosedOnStoreError(t *testing.T) {
+	_ = isolatedHomeGuard(t)
+	ctx := context.Background()
+	origOpen := bigmemOpen
+	defer func() { bigmemOpen = origOpen }()
+	bigmemOpen = func(dir string) (*bigmem.Store, error) {
+		return nil, errors.New("boom: store unavailable")
+	}
+	t.Setenv("BIGGZ_PROJECT", "biggz-ai")
+	ws := t.TempDir()
+	// Fail-closed: a store error must block done, never let it pass without memory.
+	blocked, reason := IsSessionSummaryBlocked(ctx, ws, "fail-closed-change")
+	if !blocked {
+		t.Fatalf("IsSessionSummaryBlocked must block on store error (fail-closed)")
+	}
+	if !strings.Contains(reason, "blocked(session_summary_missing)") {
+		t.Fatalf("reason %q must contain blocked(session_summary_missing)", reason)
+	}
+	// Fallback file still satisfies the gate (matrix-test safety).
+	fp := FallbackFilePath(ws, "fail-closed-change")
+	_ = os.MkdirAll(filepath.Dir(fp), 0755)
+	if err := os.WriteFile(fp, []byte("# fallback"), 0644); err != nil {
+		t.Fatalf("write fallback: %v", err)
+	}
+	blocked, _ = IsSessionSummaryBlocked(ctx, ws, "fail-closed-change")
+	if blocked {
+		t.Fatalf("fallback file must satisfy gate even on store error")
+	}
+	// Scoping unchanged: other projects are never gated.
+	t.Setenv("BIGGZ_PROJECT", "other-project")
+	blocked, _ = IsSessionSummaryBlocked(ctx, ws, "fail-closed-change-2")
+	if blocked {
+		t.Fatalf("non-biggz-ai projects must not be gated")
+	}
+	t.Setenv("BIGGZ_PROJECT", "")
+}
