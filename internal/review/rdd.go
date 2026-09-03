@@ -278,6 +278,31 @@ func RDDEnable(worktreeGitDir, commonGitDir string) (*RDDStatusReport, error) {
 	return RDDStatus(worktreeGitDir, commonGitDir)
 }
 
+// RDDEnableAtScope re-enables RDD at exactly one scope by clearing that
+// scope's override, leaving every other scope untouched. Removing a local
+// off reveals the next precedence level (worktree > clone > global), so an
+// explicit narrow enable can never widen its blast radius. "global" keeps
+// the legacy RDDEnable behavior (enable globally + clear all overrides).
+func RDDEnableAtScope(worktreeGitDir, commonGitDir, scope string) (*RDDStatusReport, error) {
+	switch scope {
+	case "worktree":
+		if worktreeGitDir == "" {
+			return nil, fmt.Errorf("not in a git repository — cannot use --scope=worktree")
+		}
+		clearGenerations(worktreeGitDir)
+	case "clone":
+		if commonGitDir == "" {
+			return nil, fmt.Errorf("not in a git repository — cannot use --scope=clone")
+		}
+		clearGenerations(commonGitDir)
+	case "global":
+		return RDDEnable(worktreeGitDir, commonGitDir)
+	default:
+		return nil, fmt.Errorf("unknown scope %q (use worktree, clone, or global)", scope)
+	}
+	return RDDStatus(worktreeGitDir, commonGitDir)
+}
+
 // RDDDisable disables at the given scope: "worktree", "clone", or "global".
 func RDDDisable(worktreeGitDir, commonGitDir, scope string) (*RDDStatusReport, error) {
 	return RDDDisableWithRevision(worktreeGitDir, commonGitDir, scope, "")
@@ -300,13 +325,15 @@ func RDDDisableWithRevision(worktreeGitDir, commonGitDir, scope, expectedRevisio
 		if _, err := SetCloneLocalRDDMode(worktreeGitDir, commonGitDir, RDDModeDisabled, expectedRevision); err != nil {
 			return nil, err
 		}
-	default: // "global"
+	case "global":
 		if expectedRevision != "" {
 			return nil, fmt.Errorf("expected-revision is only supported for --scope=clone and --scope=worktree")
 		}
 		if err := writeGlobalMode(RDDModeDisabled); err != nil {
 			return nil, err
 		}
+	default:
+		return nil, fmt.Errorf("unknown scope %q (use worktree, clone, or global)", scope)
 	}
 	return RDDStatus(worktreeGitDir, commonGitDir)
 }

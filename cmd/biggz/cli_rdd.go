@@ -21,7 +21,7 @@ func rddRun() int {
 	args := os.Args[2:]
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" || args[0] == "help" {
 		fmt.Fprintln(os.Stderr, "Usage: biggz rdd enable|disable|status [--scope worktree|clone|global] [--expected-revision <hash>] [--json]")
-		fmt.Fprintln(os.Stderr, "  --scope worktree|clone|global (default worktree for enable/disable)")
+		fmt.Fprintln(os.Stderr, "  --scope worktree|clone|global (default worktree for disable; bare enable is global, explicit narrow enable clears only that scope)")
 		fmt.Fprintln(os.Stderr, "  --expected-revision <hash> only for disable --scope=clone|worktree (CAS)")
 		fmt.Fprintln(os.Stderr, "  --json                Machine-readable JSON output (status only)")
 		return 0
@@ -29,12 +29,14 @@ func rddRun() int {
 
 	op := args[0]
 	scope := "worktree" // default to narrowest scope (Alan's #1973 recommendation)
+	scopeExplicit := false
 	expectedRevision := ""
 	jsonOutput := false
 	for i := 1; i < len(args); i++ {
 		arg := args[i]
 		if strings.HasPrefix(arg, "--scope=") {
 			scope = strings.TrimPrefix(arg, "--scope=")
+			scopeExplicit = true
 			continue
 		}
 		if strings.HasPrefix(arg, "--expected-revision=") {
@@ -45,6 +47,7 @@ func rddRun() int {
 		case "--scope":
 			if i+1 < len(args) {
 				scope = args[i+1]
+				scopeExplicit = true
 				i++
 			}
 		case "--expected-revision":
@@ -81,12 +84,18 @@ func rddRun() int {
 			return 0
 		}
 	case "enable":
-		// Enable does not use CAS; expectedRevision is ignored for global enable (clear).
-		if expectedRevision != "" && (scope == "clone" || scope == "worktree") {
-			// For clone/worktree enable, clearing with CAS is not required; treat as advisory.
-			// Still forward to the CAS-aware clear via RDDEnable which tolerates non-git dirs.
+		// An explicit narrow scope clears only that scope's override (never
+		// widens blast radius). Bare `enable` keeps legacy behavior: global
+		// enable + clear all overrides.
+		if scopeExplicit && (scope == "clone" || scope == "worktree") {
+			if expectedRevision != "" {
+				fmt.Fprintln(os.Stderr, "error: --expected-revision is only supported for disable --scope=clone and --scope=worktree")
+				return 1
+			}
+			status, err = review.RDDEnableAtScope(worktreeDir, commonDir, scope)
+		} else {
+			status, err = review.RDDEnable(worktreeDir, commonDir)
 		}
-		status, err = review.RDDEnable(worktreeDir, commonDir)
 	case "disable":
 		// Forward expectedRevision to the CAS-aware writer for clone/worktree.
 		switch scope {

@@ -665,6 +665,63 @@ func TestRDDEnable_SkipsNonGitDirectory(t *testing.T) {
 	}
 }
 
+func TestRDDEnableAtScope_CloneClearsOnlyClone(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	gitDir := newFakeGitDir(t)
+	if _, err := RDDDisable(gitDir, gitDir, "clone"); err != nil {
+		t.Fatalf("RDDDisable(clone) error: %v", err)
+	}
+	status, err := RDDEnableAtScope(gitDir, gitDir, "clone")
+	if err != nil {
+		t.Fatalf("RDDEnableAtScope(clone) error: %v", err)
+	}
+	if status.EffectiveMode != RDDModeEnabled {
+		t.Errorf("expected enabled after clone-scoped enable, got %s", status.EffectiveMode)
+	}
+	if status.CloneMode != RDDModeUnset {
+		t.Errorf("expected clone override cleared, got %s", status.CloneMode)
+	}
+}
+
+func TestRDDEnableAtScope_NarrowNeverTouchesGlobal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	gitDir := newFakeGitDir(t)
+	// Global off stays off after a narrow enable: narrow enable only clears
+	// its own scope, it must not widen blast radius to global.
+	if _, err := RDDDisable("", "", "global"); err != nil {
+		t.Fatalf("RDDDisable(global) error: %v", err)
+	}
+	status, err := RDDEnableAtScope(gitDir, gitDir, "clone")
+	if err != nil {
+		t.Fatalf("RDDEnableAtScope(clone) error: %v", err)
+	}
+	if status.EffectiveMode != RDDModeDisabled {
+		t.Errorf("expected still disabled (global off untouched), got %s", status.EffectiveMode)
+	}
+	if status.Source != "global" {
+		t.Errorf("expected source global, got %s", status.Source)
+	}
+}
+
+func TestRDDEnableAtScope_UnknownScope(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	if _, err := RDDEnableAtScope("", "", "globla"); err == nil {
+		t.Fatal("expected error for unknown enable scope")
+	}
+	if _, err := RDDDisable("", "", "globla"); err == nil {
+		t.Fatal("expected error for unknown disable scope (must not silently disable global)")
+	}
+}
+
 func TestRecordConsent_RejectsNonGitDirectory(t *testing.T) {
 	bogus := t.TempDir() // exists, but is not a git directory
 	if err := RecordConsent(bogus); err == nil {
