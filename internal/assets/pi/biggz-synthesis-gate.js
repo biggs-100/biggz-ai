@@ -1,6 +1,6 @@
 /**
  * biggz-synthesis-gate — Pi extension that enforces Post-Delegation Human Checkpoint.
- * IsCheckpointAsk tokens (case-insensitive, label/value/id/name/title scan): proceed/continuar/proseguir, adjust/ajustar, stop/detener/parar, continue/continuar, correct/corregir/cerrar. Same-turn invariant: synthesis markdown with 4 markers MUST be emitted FIRST and checkpoint tool called in SAME assistant turn adjacent ≤120s without extra assistant message; otherwise gate blocks isError:true/block:true (Please synthesize before asking).
+ * IsCheckpointAsk + hasOptions (2-4 options) both require synthesis — IsCheckpointAsk tokens (case-insensitive, label/value/id/name/title scan): proceed/continuar/proseguir/proceder/procede, adjust/ajustar, stop/detener/parar, continue/continuar, correct/corregir/cerrar. Same-turn invariant: synthesis markdown with 4 markers MUST be emitted FIRST and option-bearing ask (2-4 options) or checkpoint tool called in SAME assistant turn adjacent ≤120s without extra assistant message; otherwise gate blocks isError:true/block:true (Please synthesize before asking).
  *
  * biggz-synthesis-gate — Pi extension that enforces Post-Delegation Human Checkpoint.
  *
@@ -532,7 +532,7 @@ export default function biggzSynthesisGate(pi) {
 
 	// Language-aware synthesis (polish-synthesis-human-language): content may be localized (es/en) per human language
 	// (`languageHint` / `Human language: es|en`), but markers stay English verbatim b0d2fc1;
-	// isCheckpointAsk scans only option labels (proceed/continuar/proseguir, adjust/ajustar, stop/detener/parar, continue/continuar, correct/corregir/cerrar)
+	// isCheckpointAsk scans only option labels (proceed/continuar/proseguir/proceder/procede, adjust/ajustar, stop/detener/parar, continue/continuar, correct/corregir/cerrar) — hasOptions (2-4 options) also requires synthesis even without checkpoint token
 	// not synthesis content — Spanish content with English markers passes, missing marker blocks regardless of language.
 	function isCheckpointAsk(params) {
 		if (params == null) return false;
@@ -544,7 +544,7 @@ export default function biggzSynthesisGate(pi) {
 			}
 		}
 		if (typeof params !== "object") return false;
-		const tokens = new Set(["proceed", "adjust", "stop", "continue", "correct", "continuar", "ajustar", "detener", "parar", "cerrar", "corregir", "proseguir"]);
+		const tokens = new Set(["proceed", "adjust", "stop", "continue", "correct", "continuar", "ajustar", "detener", "parar", "cerrar", "corregir", "proseguir", "proceder", "procede"]);
 		const normalize = (s) => String(s).trim().toLowerCase();
 		const isToken = (s) => {
 			const n = normalize(s);
@@ -622,6 +622,27 @@ export default function biggzSynthesisGate(pi) {
 		return false;
 	}
 
+	function hasOptions(params) {
+		if (params == null) return false;
+		if (typeof params === "string") {
+			try { params = JSON.parse(params); } catch { return false; }
+		}
+		if (typeof params !== "object") return false;
+		try {
+			const qs = params.questions;
+			if (Array.isArray(qs)) {
+				for (const q of qs) {
+					if (!q || typeof q !== "object") continue;
+					const opts = q.options;
+					if (Array.isArray(opts) && opts.length >= 2 && opts.length <= 4) return true;
+				}
+			}
+			const topOpts = params.options;
+			if (Array.isArray(topOpts) && topOpts.length >= 2 && topOpts.length <= 4) return true;
+		} catch {}
+		return false;
+	}
+
 	function validateQuestionEnvelope(p){if(p==null||typeof p!="object")return null;let q=p.questions;if(!Array.isArray(q)){let o=p.options;if(Array.isArray(o)){if(o.length<2||o.length>4)return{isError:!0,limit:"options",message:`options out of range 2-4: got ${o.length}`};for(let x of o){let l=typeof x==="string"?x:x.label??x.value??"";if(String(l).length>60)return{isError:!0,limit:"label",message:`label exceeds limit 60: got ${String(l).length}`}} }return null}if(q.length>4)return{isError:!0,limit:"questions",message:`questions exceed limit 4: got ${q.length}`};for(let i=0;i<q.length;i++){let v=q[i];if(!v||typeof v!="object")continue;let h=v.header??v.title??"";if(typeof h==="string"&&h.length>16)return{isError:!0,limit:"header",message:`header exceeds limit 16: got ${h.length}`};let o=v.options;if(!Array.isArray(o))continue;if(o.length<2||o.length>4)return{isError:!0,limit:"options",message:`options out of range 2-4: got ${o.length} for question ${i}`};for(let x of o){let l=typeof x==="string"?x:x.label??x.value??"";if(String(l).length>60)return{isError:!0,limit:"label",message:`label exceeds limit 60: got ${String(l).length}`}}}return null}
 	function formatFallback(p){if(p==null||typeof p!="object")return"";let q=p.questions;if(!Array.isArray(q)||q.length===0){let o=p.options;if(Array.isArray(o)&&o.length>0){let s="## Questions\n\n";for(let x of o){let l=typeof x==="string"?x:x.label??x.value??"";let d=x.description??x.desc??"";s+="- "+l+(d?": "+d:"")+"\n"}return s}return""}let s="";for(let i=0;i<q.length;i++){let v=q[i];if(!v||typeof v!="object")continue;let h=v.header??v.title??"";let qu=v.question??v.text??"";s+=`### ${h?h+": ":""}Question ${i+1}\n`;if(qu)s+=qu+"\n";let o=v.options??[];for(let x of o){let l=typeof x==="string"?x:x.label??"";let d=x.description??"";s+="- "+l+(d?": "+d:"")+"\n"}s+="\n"}return s.trim()+"\n"}
 
@@ -652,7 +673,7 @@ export default function biggzSynthesisGate(pi) {
 	function checkSynthesisPrecondition(ctx) {
 		// STRICT: only currentTurnMarkdown ≤120s with HasSynthesis satisfies. Mirrors Go truth
 		// Diagnostic: missing synthesis vs envelope limit (>16 header, >60 label) are distinct errors;
-		// internal/sdd/synthesis_gate.go:ShouldBlock = !child && !recall && checkpoint && ≤120s && !HasSynthesis(currentTurn)
+		// internal/sdd/synthesis_gate.go:ShouldBlock = !child && !recall && (checkpoint||hasOptions) && ≤120s && !HasSynthesis(currentTurn)
 		// History (ctx.history / lastAssistantMarkdown) MUST NOT satisfy blocking; it is only for
 		// BIGGZ_ADVISE=1 thin concern via getCurrentTurnSynthesis fallback, never for block.
 		const now = Date.now();
@@ -681,6 +702,7 @@ export default function biggzSynthesisGate(pi) {
 			checkSessionRecallInCurrentTurn,
 			checkSynthesisPrecondition,
 			isCheckpointAsk,
+			hasOptions,
 			validateQuestionEnvelope,
 			formatFallback,
 			extractParamsFromToolCall,
@@ -760,8 +782,8 @@ export default function biggzSynthesisGate(pi) {
 					}
 				}
 			} catch {}
-			if (!isCheckpointAsk(params)) {
-				// General clarification / preflight / non-checkpoint: do not block, optionally advise but allow
+			if (!isCheckpointAsk(params) && !hasOptions(params)) {
+				// General free-text without options (no checkpoint token and no 2-4 options): do not block, optionally advise but allow
 				try {
 					const source = getCurrentTurnSynthesis(ctx);
 					if (source && isAdviseEnabled() && isThinSynthesis(source)) {
@@ -962,8 +984,8 @@ export default function biggzSynthesisGate(pi) {
 							return { block: true, reason: reason + (fb ? "\n\nFallback:\n" + fb : "") };
 						}
 					} catch {}
-					if (!isCheckpointAsk(toolParams)) {
-						// General clarification / non-checkpoint: do not block, optionally advise but allow
+					if (!isCheckpointAsk(toolParams) && !hasOptions(toolParams)) {
+						// General free-text without options (no checkpoint token and no 2-4 options): do not block, optionally advise but allow
 						try {
 							const source = getCurrentTurnSynthesis(ctx);
 							if (source && isAdviseEnabled() && isThinSynthesis(source)) {

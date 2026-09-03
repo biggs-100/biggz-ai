@@ -554,7 +554,7 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
 
   it('secondary guard via tool_call actually blocks when missing synthesis (not just warn) — checkpoint only', async () => {
     const checkpointParams = { questions: [{ question: 'Next?', header: 'Checkpoint', options: [{ label: 'proceed' }, { label: 'adjust' }, { label: 'stop' }] }] };
-    const generalParams = { questions: [{ question: '¿por dónde empezamos?', options: [{ label: 'opción A' }, { label: 'opción B' }] }] };
+    const generalParams = { questions: [{ question: '¿por dónde empezamos?' }] };
     delete process.env.BIGGZ_ADVISE;
     const mock = createMockPi();
     gateFn(mock);
@@ -743,7 +743,7 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
   });
 
   it('general question after delegation must NOT block even without synthesis (checkpoint filter)', async () => {
-    const generalParams = { questions: [{ question: '¿por dónde empezamos?', options: [{ label: 'opción A' }, { label: 'opción B' }] }] };
+    const generalParams = { questions: [{ question: '¿por dónde empezamos?' }] };
     delete process.env.BIGGZ_ADVISE;
     const mock = createMockPi();
     gateFn(mock);
@@ -903,7 +903,7 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     const generalTool = { name: 'question', description: 'preflight-general', parameters: { type: 'object', properties: {} }, execute: async () => { generalCalled = true; return { content: [{ type: 'text', text: 'ok' }] }; } };
     mock.registerTool(generalTool);
     const generalWrapped = mock._tools.get('question');
-    const generalParams = { questions: [{ question: '¿por dónde empezamos?', options: [{ label: 'opción A' }, { label: 'opción B' }] }] };
+    const generalParams = { questions: [{ question: '¿por dónde empezamos?' }] };
     const ctxGeneral = makeCtx(missingMarkdown, []);
     const resultGeneral = await generalWrapped.execute('id-preflight-general', generalParams, null, null, ctxGeneral);
     assert.equal(resultGeneral.isError, undefined, 'general non-checkpoint with no synthesis anywhere must still allow');
@@ -941,6 +941,70 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
       Date.now = originalNow;
     }
     mock._biggzSynthesisGate._test.clearCurrent();
+  });
+
+  it('hasOptions (2-4 options) blocks non-checkpoint asks without synthesis — Fix B', async () => {
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi();
+    gateFn(mock);
+    const h = mock._biggzSynthesisGate;
+    // hasOptions helper
+    assert.equal(h.hasOptions({ questions: [{ question: 'Q?', options: [{ label: 'Opción A' }, { label: 'Opción B' }] }] }), true, '2 options should be hasOptions true');
+    assert.equal(h.hasOptions({ questions: [{ question: 'Q?', options: [{ label: 'A' }, { label: 'B' }, { label: 'C' }, { label: 'D' }] }] }), true, '4 options true');
+    assert.equal(h.hasOptions({ questions: [{ question: 'Q?', options: [{ label: 'only' }] }] }), false, '1 option false');
+    assert.equal(h.hasOptions({ questions: [{ question: 'Q?' }] }), false, 'no options false');
+    assert.equal(h.hasOptions({}), false, 'empty false');
+    assert.equal(h.hasOptions({ options: [{ label: 'A' }, { label: 'B' }] }), true, 'top-level 2 options true');
+    // blocking via wrapSingleTool: non-checkpoint but hasOptions should block without current synthesis
+    let called = false;
+    mock.registerTool({ name: 'ask_user_question', description: 't', parameters: { type: 'object', properties: {} }, execute: async () => { called = true; return { content: [{ type: 'text', text: 'ok' }] }; } });
+    const w = mock._tools.get('ask_user_question');
+    h._test.clearCurrent(); h._test.clearLast(); h._test.setLast(richMarkdown);
+    const nonCheckpointWithOptions = { questions: [{ question: 'Elige?', options: [{ label: 'Opción A' }, { label: 'Opción B' }] }] };
+    const ctx = makeCtx(missingMarkdown, []);
+    const resBlocked = await w.execute('id-hasopts-block', nonCheckpointWithOptions, null, null, ctx);
+    assert.equal(resBlocked.isError, true, 'non-checkpoint 2-option ask without current synthesis must block (Fix B)');
+    assert.equal(called, false);
+    // with synthesis should allow
+    h._test.setCurrent(richMarkdown);
+    const resAllowed = await w.execute('id-hasopts-allow', nonCheckpointWithOptions, null, null, makeCtx('', []));
+    assert.equal(resAllowed.isError, undefined, 'non-checkpoint 2-option ask with synthesis must allow');
+    assert.equal(called, true);
+    // tool_call guard also blocks hasOptions
+    h._test.clearCurrent(); h._test.setLast(richMarkdown);
+    const handler = mock._getToolCallHandler();
+    const ret = await handler({ toolName: 'ask_user_question', params: nonCheckpointWithOptions }, makeCtx(missingMarkdown, []));
+    assert.ok(ret && ret.block === true, 'tool_call hasOptions without synthesis must block');
+    h._test.setCurrent(richMarkdown);
+    const ret2 = await handler({ toolName: 'ask_user_question', params: nonCheckpointWithOptions }, makeCtx('', []));
+    assert.equal(ret2, undefined, 'tool_call hasOptions with synthesis must allow');
+    h._test.clearCurrent(); h._test.clearLast();
+  });
+
+  it('proceder/procede tokens are checkpoint (case-insensitive) — Fix B', async () => {
+    const mock = createMockPi(); gateFn(mock);
+    const h = mock._biggzSynthesisGate;
+    const proc = { questions: [{ question: 'Next?', options: [{ label: 'Proceder' }, { label: 'Ajustar' }, { label: 'Detener' }] }] };
+    const procede = { questions: [{ question: 'Q?', options: [{ label: 'procede' }, { label: 'otro' }] }] };
+    const procUpper = { questions: [{ question: 'Q?', options: [{ label: 'PROCEDER' }] }] };
+    const jsonStr = JSON.stringify({ questions: [{ question: 'Q?', options: [{ label: 'Proceder' }] }] });
+    assert.equal(h.isCheckpointAsk(proc), true, 'Proceder should be checkpoint');
+    assert.equal(h.isCheckpointAsk(procede), true, 'procede should be checkpoint');
+    assert.equal(h.isCheckpointAsk(procUpper), true, 'PROCEDER upper should be checkpoint');
+    assert.equal(h.isCheckpointAsk(JSON.parse(jsonStr)), true);
+    // blocking via gate without synthesis
+    delete process.env.BIGGZ_ADVISE;
+    let called = false;
+    mock.registerTool({ name: 'question', description: 't', parameters: { type: 'object', properties: {} }, execute: async () => { called = true; return { content: [{ type: 'text', text: 'ok' }] }; } });
+    const w = mock._tools.get('question');
+    h._test.clearCurrent(); h._test.clearLast(); h._test.setLast(richMarkdown);
+    const res = await w.execute('id-proc', proc, null, null, makeCtx(missingMarkdown, []));
+    assert.equal(res.isError, true, 'Proceder checkpoint without synthesis must block');
+    assert.equal(called, false);
+    h._test.setCurrent(richMarkdown);
+    const res2 = await w.execute('id-proc2', proc, null, null, makeCtx('', []));
+    assert.equal(res2.isError, undefined, 'Proceder with synthesis must allow');
+    h._test.clearCurrent(); h._test.clearLast();
   });
 
 });

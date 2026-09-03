@@ -58,7 +58,7 @@ MUST persist pending-question dual-write (BigMem `sdd/{change}/pending-question`
 ### Language Boundary
 
 Generated technical artifacts default to English regardless of active persona. Subagent prompts in English by default; preserve exact quotes/UI copy.
-Match user's language in reply only. See `internal/assets/pi/biggz-synthesis-gate.js:isCheckpointAsk` for checkpoint tokens and 120s window. Persona Scope (HOW YOU TALK ≠ WHAT YOU BUILD) lives in `biggz-persona.md`; do not duplicate it here.
+Match user's language in reply only. See `internal/assets/pi/biggz-synthesis-gate.js:isCheckpointAsk` + `hasOptions(2-4)` / `internal/sdd/synthesis_gate.go:HasOptions` for checkpoint + option-bearing gate — any ask with 2-4 options requires synthesis (120s window). Persona Scope (HOW YOU TALK ≠ WHAT YOU BUILD) lives in `biggz-persona.md`; do not duplicate it here.
 Synthesis content is localized per human language (`languageHint` / `Human language: es|en — render synthesis content in that language, keep markers English, keep paths/code English`); harness prompts stay English. Markers (`## Sub-agent Result:`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`, `| Topic | Decision |`) and technical identifiers (paths, `sdd/...`, `ORDER BY`, code, branches) stay English — gate `b0d2fc1` (`HasSynthesis`/`isCheckpointAsk`) validates verbatim English markers; whitelist via `sanitizePlain` never translates them. Fallback at render: `DetectLanguage(lastHumanMessage)` or `en` if hint empty.
 
 ### Delegation Quick Pointer
