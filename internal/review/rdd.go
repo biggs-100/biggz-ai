@@ -359,10 +359,14 @@ func plausibleGitDir(path string) bool {
 	return false
 }
 
-// clearGenerations removes the CAS generation directory for the given git dir.
+// clearGenerations removes the CAS generation directory for the given git dir,
+// including the legacy gentle-ai/rdd-mode mirror published on clone-scope
+// disable. Without this, enable-after-disable leaves a stale mirror behind
+// that compat readers still interpret as disabled.
 func clearGenerations(gitDir string) {
 	if gitDir != "" && plausibleGitDir(gitDir) {
 		os.RemoveAll(filepath.Join(gitDir, rddGenerationsDir))
+		os.RemoveAll(filepath.Join(gitDir, "gentle-ai", "rdd-mode"))
 	}
 }
 

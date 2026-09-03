@@ -731,3 +731,58 @@ func TestRecordConsent_RejectsNonGitDirectory(t *testing.T) {
 		t.Errorf("expected no biggz/ tree created inside %s", bogus)
 	}
 }
+
+func TestRDDEnableAtScope_CloneClearsStaleMirror(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	gitDir := newFakeGitDir(t)
+	// Clone-scope disable publishes both the relocated generation and the
+	// legacy gentle-ai mirror.
+	if _, err := RDDDisable(gitDir, gitDir, "clone"); err != nil {
+		t.Fatalf("RDDDisable(clone) error: %v", err)
+	}
+	mirrorDir := filepath.Join(gitDir, "gentle-ai", "rdd-mode")
+	if entries, err := os.ReadDir(mirrorDir); err != nil || len(entries) == 0 {
+		t.Fatalf("expected populated mirror at %s, entries=%v err=%v", mirrorDir, entries, err)
+	}
+
+	// Narrow enable must clear the mirror too, or compat readers keep
+	// seeing a stale disabled generation.
+	status, err := RDDEnableAtScope(gitDir, gitDir, "clone")
+	if err != nil {
+		t.Fatalf("RDDEnableAtScope(clone) error: %v", err)
+	}
+	if _, err := os.Stat(mirrorDir); !os.IsNotExist(err) {
+		t.Errorf("expected mirror %s removed after narrow enable, err=%v", mirrorDir, err)
+	}
+	if _, err := os.Stat(filepath.Join(gitDir, rddGenerationsDir)); !os.IsNotExist(err) {
+		t.Errorf("expected generations dir removed after narrow enable, err=%v", err)
+	}
+	if status.EffectiveMode != RDDModeEnabled {
+		t.Errorf("expected enabled after narrow enable, got %s", status.EffectiveMode)
+	}
+}
+
+func TestRDDEnable_GlobalClearsStaleMirror(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+
+	gitDir := newFakeGitDir(t)
+	if _, err := RDDDisable(gitDir, gitDir, "clone"); err != nil {
+		t.Fatalf("RDDDisable(clone) error: %v", err)
+	}
+	mirrorDir := filepath.Join(gitDir, "gentle-ai", "rdd-mode")
+	if _, err := os.Stat(mirrorDir); err != nil {
+		t.Fatalf("expected mirror at %s after clone disable: %v", mirrorDir, err)
+	}
+
+	if _, err := RDDEnable(gitDir, gitDir); err != nil {
+		t.Fatalf("RDDEnable() error: %v", err)
+	}
+	if _, err := os.Stat(mirrorDir); !os.IsNotExist(err) {
+		t.Errorf("expected mirror %s removed after global enable, err=%v", mirrorDir, err)
+	}
+}
