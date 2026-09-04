@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -97,5 +99,31 @@ describe('extractWithAnchors anchor-preserving', () => {
     assert.ok(markdown.includes('## Title'));
     assert.ok(!markdown.includes('{#'));
     assert.deepEqual(anchors, []);
+  });
+});
+
+describe('providerSearchInstalled yield', () => {
+  const { providerSearchInstalled } = mockPi._biggzWebSearch;
+  const seedPkg = (dir, pkg) => {
+    const pkgDir = path.join(dir, '.pi', 'agent', 'npm', 'node_modules', pkg);
+    fs.mkdirSync(pkgDir, { recursive: true });
+    fs.writeFileSync(path.join(pkgDir, 'package.json'), '{}');
+  };
+  it('detects pi-web-access as search provider', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biggz-ws-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    seedPkg(dir, 'pi-web-access');
+    assert.equal(providerSearchInstalled(dir), 'pi-web-access');
+  });
+  it('detects pi-web-search as search provider', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biggz-ws-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    seedPkg(dir, 'pi-web-search');
+    assert.equal(providerSearchInstalled(dir), 'pi-web-search');
+  });
+  it('returns null when no provider installed', (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biggz-ws-'));
+    t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+    assert.equal(providerSearchInstalled(dir), null);
   });
 });

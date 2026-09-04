@@ -592,12 +592,25 @@ export default function biggzWebSearch(pi) {
     });
   };
 
+  // providerSearchInstalled reports whether a richer web_search provider is
+  // installed (pi-web-search, or pi-web-access which supersedes it with
+  // multi-provider search + fetch/PDF/video/GitHub). When present biggz
+  // yields the web_search tool name to avoid a duplicate-tool crash and
+  // registers biggz_web_search (DuckDuckGo no-key) as fallback instead.
+  // homeDir is injectable for tests; defaults to the real home.
+  const providerSearchInstalled = (homeDir) => {
+    const home = homeDir || os.homedir();
+    for (const pkg of ["pi-web-search", "pi-web-access"]) {
+      try {
+        if (fs.existsSync(path.join(home, ".pi", "agent", "npm", "node_modules", pkg, "package.json"))) return pkg;
+      } catch {}
+    }
+    return null;
+  };
+
   if (register) {
-    // Avoid duplicate web_search when pi-web-search (provider-native) is already installed — it provides better grounding via Gemini/OpenAI/Anthropic
-    let hasPiWebSearch = false;
-    try {
-      hasPiWebSearch = fs.existsSync(path.join(os.homedir(), ".pi", "agent", "npm", "node_modules", "pi-web-search", "package.json"));
-    } catch {}
+    const providerPkg = providerSearchInstalled();
+    const hasPiWebSearch = providerPkg !== null;
     if (!hasPiWebSearch) {
       pi.registerTool({
         name: "web_search",
@@ -632,7 +645,7 @@ export default function biggzWebSearch(pi) {
           return webSearchHandler(params);
         },
       });
-      console.log("[biggz-web-search] pi-web-search provides web_search, registered biggz_web_search fallback (DuckDuckGo no-key)");
+      console.log(`[biggz-web-search] ${providerPkg} provides web_search, registered biggz_web_search fallback (DuckDuckGo no-key)`);
     }
     pi.registerTool({
       name: "web_fetch",
@@ -667,6 +680,7 @@ export default function biggzWebSearch(pi) {
   }
 
   pi._biggzWebSearch = {
+    providerSearchInstalled,
     assertSSRF,
     isPrivateIP,
     isBlockedHostname,
