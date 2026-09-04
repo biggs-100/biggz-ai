@@ -30,6 +30,10 @@ const (
 var legacyPiSubagentPackageIdentities = map[string]struct{}{
 	"vendor/pi-subagents":       {},
 	"vendor/pi-subagents-fixed": {},
+	// Predecessor dispatcher, replaced by the maintained fork below.
+	// Dropping it from settings.json packages keeps pi from loading both
+	// dispatchers (duplicate subagent_* tool registrations).
+	"npm:pi-subagents": {},
 }
 
 type statResult struct {
@@ -88,10 +92,11 @@ func (a *Adapter) Detect(_ context.Context, homeDir string) (bool, string, strin
 // Biggz uses BigMem (native Go at cmd/biggz-mcp / `biggz mcp`), not Engram,
 // so it does NOT need gentle-pi, gentle-engram, pi-mcp-adapter, pi-engram init,
 // or rpiv-* / pi-btw. The only runtime dependency beyond the pi CLI itself is
-// the subagent dispatcher (nicobailon/pi-subagents) which provides
-// scout/researcher/worker/reviewer/oracle/delegate + workflowScript/worktree
-// isolation. Without it pi has only read/bash/edit/write (user reported
-// "No tengo disponible el mecanismo para lanzar sub-agentes").
+// the subagent dispatcher (j0k3r-dev-rgl/pi-subagents-j0k3r, maintained fork
+// of nicobailon/pi-subagents) which provides subagent_run/continue,
+// background delegation, task history and model profiles. Without it pi has
+// only read/bash/edit/write (user reported "No tengo disponible el mecanismo
+// para lanzar sub-agentes").
 // npm install is idempotent; BigMem MCP is provisioned separately via
 // ProvisionBigMemMCP (biggz-mcp).
 // Additionally, biggz deploys SDD skills as pi-native agents at
@@ -113,7 +118,7 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	// packages invisible to pi's capability probes and FleetView would never
 	// become ready. `pi install` writes into the agent-owned node_modules
 	// where pi actually discovers packages.
-	// - npm:pi-subagents must use `pi install` (not `npm install -g`) — pi
+	// - npm:pi-subagents-j0k3r must use `pi install` (not `npm install -g`) — pi
 	//   loader only scans ~/.pi/agent/npm.
 	// - npm:@juicesharp/rpiv-ask-user-question provides the `ask_user_question`
 	//   TUI (single/multi-select + "Type something." + "Chat about this") that
@@ -123,7 +128,7 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	//   via `pi install`; it is copied to `~/.pi/agent/extensions/` via
 	//   DeployPiQuestionMouse (filemerge) during `biggz install --agent pi`.
 	return [][]string{
-		{"pi", "install", "npm:pi-subagents"},
+		{"pi", "install", "npm:pi-subagents-j0k3r"},
 		{"pi", "install", "npm:@juicesharp/rpiv-ask-user-question"},
 	}, nil
 }
@@ -291,10 +296,11 @@ func (a *Adapter) mergePiSettingsBigMem(path, mcpBinary string) (filemerge.Write
 	if err != nil {
 		return filemerge.WriteResult{}, err
 	}
-	// Ensure packages always contains the FleetView dispatcher and its
-	// pretty renderer, deduplicated, while still filtering legacy vendor
-	// prefixes. This is idempotent: repeated installs keep exactly one copy.
-	desiredPiPackages := []string{"npm:pi-subagents", "npm:@heyhuynhgiabuu/pi-pretty"}
+	// Ensure packages always contains the subagent dispatcher (j0k3r fork)
+	// and its pretty renderer, deduplicated, while still filtering legacy
+	// vendor prefixes and the predecessor npm:pi-subagents entry. This is
+	// idempotent: repeated installs keep exactly one copy.
+	desiredPiPackages := []string{"npm:pi-subagents-j0k3r", "npm:@heyhuynhgiabuu/pi-pretty"}
 	var filtered []any
 	if pkgs, ok := obj["packages"]; ok {
 		filtered = filterPiPackages(pkgs)

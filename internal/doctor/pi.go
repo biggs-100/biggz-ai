@@ -18,18 +18,21 @@ const (
 	PiLastModelCheckID CheckID = "pi-last-model"
 )
 
-// PiSubagentsCheck verifies that pi-subagents (nicobailon/pi-subagents) is
-// installed when pi is present. Without it pi has only read/bash/edit/write
-// and cannot delegate to subagents (scout, researcher, worker, reviewer, etc.).
+// PiSubagentsCheck verifies that the subagent dispatcher
+// (j0k3r-dev-rgl/pi-subagents-j0k3r, installed as npm:pi-subagents-j0k3r)
+// is installed when pi is present. Without it pi has only
+// read/bash/edit/write and cannot delegate to subagents.
 //
 // It checks in order:
-//  1. `npm list -g pi-subagents` succeeds
-//  2. `pi-subagents` binary is on PATH (where/which)
-//  3. `~/.pi/agent/node_modules/pi-subagents` exists
-//  4. `~/.pi/node_modules/pi-subagents` exists (fallback)
+//  1. `~/.pi/agent/npm/node_modules/pi-subagents-j0k3r` exists (authoritative,
+//     written by `pi install`) plus the historic node_modules fallbacks
+//  2. legacy `pi-subagents` (nicobailon) present without the fork → warning
+//     with a migrate hint (loading both registers duplicate tools)
+//  3. `npm list -g pi-subagents-j0k3r` succeeds (legacy global fallback)
+//  4. `pi-subagents-j0k3r` binary is on PATH (where/which)
 //
-// If pi itself is not installed, the check is informational (pass) — pi-subagents
-// is only relevant when pi is in use.
+// If pi itself is not installed, the check is informational (pass) — the
+// dispatcher is only relevant when pi is in use.
 type PiSubagentsCheck struct {
 	lookPath  func(string) (string, error)
 	execFn    func(string, ...string) ([]byte, error)
@@ -77,7 +80,7 @@ func NewPiSubagentsCheckWithCustom(
 // ID returns the check identifier.
 func (c *PiSubagentsCheck) ID() CheckID { return PiSubagentsCheckID }
 
-// Run verifies pi-subagents installation.
+// Run verifies the pi subagent dispatcher installation.
 func (c *PiSubagentsCheck) Run(ctx context.Context) *Result {
 	// If pi itself is not installed, skip — not relevant.
 	if _, err := c.lookPath("pi"); err != nil {
@@ -89,42 +92,66 @@ func (c *PiSubagentsCheck) Run(ctx context.Context) *Result {
 		}
 	}
 
-	// 1. pi's loader path is authoritative: ~/.pi/agent/npm/node_modules/pi-subagents
-	// (pnpm symlinks via `pi install`), not the global npm prefix. Check this first — `pi install`
-	// writes to npm/node_modules, and gentle-pi's FleetView capability probe uses package.json
-	// presence, not `npm list -g`.
+	// 1. pi's loader path is authoritative:
+	// ~/.pi/agent/npm/node_modules/pi-subagents-j0k3r (written by `pi install`),
+	// not the global npm prefix. Check this first — `pi install` writes to
+	// npm/node_modules, and capability probes use package.json presence,
+	// not `npm list -g`.
 	home, err := c.homeDirFn()
 	if err == nil && home != "" {
 		candidates := []string{
-			filepath.Join(home, ".pi", "agent", "npm", "node_modules", "pi-subagents"),
-			filepath.Join(home, ".pi", "agent", "node_modules", "pi-subagents"),
-			filepath.Join(home, ".pi", "node_modules", "pi-subagents"),
+			filepath.Join(home, ".pi", "agent", "npm", "node_modules", "pi-subagents-j0k3r"),
+			filepath.Join(home, ".pi", "agent", "node_modules", "pi-subagents-j0k3r"),
+			filepath.Join(home, ".pi", "node_modules", "pi-subagents-j0k3r"),
 		}
 		// Also respect PI_CODING_AGENT_DIR if set (mirrors pi adapter ConfigPath)
 		if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
-			candidates = append(candidates, filepath.Join(v, "npm", "node_modules", "pi-subagents"), filepath.Join(v, "node_modules", "pi-subagents"))
+			candidates = append(candidates, filepath.Join(v, "npm", "node_modules", "pi-subagents-j0k3r"), filepath.Join(v, "node_modules", "pi-subagents-j0k3r"))
 		}
 		for _, cand := range candidates {
 			if info, err := c.statFn(cand); err == nil && info.IsDir() {
 				return &Result{
 					ID:       PiSubagentsCheckID,
 					Status:   StatusPass,
-					Message:  fmt.Sprintf("pi-subagents found at %s", cand),
+					Message:  fmt.Sprintf("pi-subagents-j0k3r found at %s", cand),
 					Severity: SeverityInfo,
 				}
 			}
 		}
 	}
 
-	// 2. npm list -g pi-subagents (legacy global check — not where pi loads from,
-	// but kept as fallback for older installs).
-	if out, err := c.execFn("npm", "list", "-g", "pi-subagents"); err == nil {
+	// 2. Predecessor without the fork: warn with a migrate hint instead
+	// of passing — loading both registers duplicate subagent_* tools.
+	if err == nil && home != "" {
+		legacy := []string{
+			filepath.Join(home, ".pi", "agent", "npm", "node_modules", "pi-subagents"),
+			filepath.Join(home, ".pi", "agent", "node_modules", "pi-subagents"),
+		}
+		if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
+			legacy = append(legacy, filepath.Join(v, "npm", "node_modules", "pi-subagents"))
+		}
+		for _, cand := range legacy {
+			if info, err := c.statFn(cand); err == nil && info.IsDir() {
+				return &Result{
+					ID:       PiSubagentsCheckID,
+					Status:   StatusWarn,
+					Message:  "legacy pi-subagents installed without the j0k3r fork — migrate (run: pi uninstall npm:pi-subagents && pi install npm:pi-subagents-j0k3r)",
+					Severity: SeverityWarning,
+					Error:    fmt.Sprintf("predecessor pi-subagents at %s, fork missing", cand),
+				}
+			}
+		}
+	}
+
+	// 3. npm list -g pi-subagents-j0k3r (legacy global check — not where pi
+	// loads from, but kept as fallback for older installs).
+	if out, err := c.execFn("npm", "list", "-g", "pi-subagents-j0k3r"); err == nil {
 		// npm list exits 0 when found; output contains package name
-		if strings.Contains(string(out), "pi-subagents") {
+		if strings.Contains(string(out), "pi-subagents-j0k3r") {
 			return &Result{
 				ID:       PiSubagentsCheckID,
 				Status:   StatusPass,
-				Message:  "pi-subagents installed (npm list -g)",
+				Message:  "pi-subagents-j0k3r installed (npm list -g)",
 				Severity: SeverityInfo,
 			}
 		}
@@ -132,17 +159,17 @@ func (c *PiSubagentsCheck) Run(ctx context.Context) *Result {
 		return &Result{
 			ID:       PiSubagentsCheckID,
 			Status:   StatusPass,
-			Message:  "pi-subagents installed (npm list -g)",
+			Message:  "pi-subagents-j0k3r installed (npm list -g)",
 			Severity: SeverityInfo,
 		}
 	}
 
-	// 3. pi-subagents binary on PATH (some installs expose a binary)
-	if _, err := c.lookPath("pi-subagents"); err == nil {
+	// 4. pi-subagents-j0k3r binary on PATH (some installs expose a binary)
+	if _, err := c.lookPath("pi-subagents-j0k3r"); err == nil {
 		return &Result{
 			ID:       PiSubagentsCheckID,
 			Status:   StatusPass,
-			Message:  "pi-subagents binary found on PATH",
+			Message:  "pi-subagents-j0k3r binary found on PATH",
 			Severity: SeverityInfo,
 		}
 	}
@@ -150,28 +177,28 @@ func (c *PiSubagentsCheck) Run(ctx context.Context) *Result {
 	return &Result{
 		ID:       PiSubagentsCheckID,
 		Status:   StatusWarn,
-		Message:  "pi-subagents not installed — pi subagent dispatcher missing (run: pi install npm:pi-subagents)",
+		Message:  "pi-subagents-j0k3r not installed — pi subagent dispatcher missing (run: pi install npm:pi-subagents-j0k3r)",
 		Severity: SeverityWarning,
-		Error:    "pi-subagents not found via npm list -g, PATH, or ~/.pi/agent/npm/node_modules/pi-subagents",
+		Error:    "pi-subagents-j0k3r not found via npm list -g, PATH, or ~/.pi/agent/npm/node_modules/pi-subagents-j0k3r",
 	}
 }
 
-// Remedy returns a repair action that installs pi-subagents via pi.
+// Remedy returns a repair action that installs the j0k3r dispatcher via pi.
 func (c *PiSubagentsCheck) Remedy() *Remedy {
 	return &Remedy{
 		ID:          string(PiSubagentsCheckID),
-		Description: "Install pi-subagents dispatcher (pi install npm:pi-subagents)",
+		Description: "Install pi-subagents-j0k3r dispatcher (pi install npm:pi-subagents-j0k3r)",
 		Action: func(ctx context.Context) error {
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			default:
 			}
-			cmd := exec.CommandContext(ctx, "pi", "install", "npm:pi-subagents")
+			cmd := exec.CommandContext(ctx, "pi", "install", "npm:pi-subagents-j0k3r")
 			platform.EnsureCommandDir(cmd)
 			out, err := cmd.CombinedOutput()
 			if err != nil {
-				return fmt.Errorf("pi install npm:pi-subagents: %w (output: %s)", err, strings.TrimSpace(string(out)))
+				return fmt.Errorf("pi install npm:pi-subagents-j0k3r: %w (output: %s)", err, strings.TrimSpace(string(out)))
 			}
 			return nil
 		},

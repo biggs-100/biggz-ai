@@ -222,6 +222,10 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		}
 	}
 	if adapter.ID() == agents.AgentPi && !cfg.DryRun {
+		// Best-effort removal of the predecessor dispatcher: leaving both
+		// npm:pi-subagents and npm:pi-subagents-j0k3r installed registers
+		// duplicate subagent_* tools. Never fails the install.
+		removeLegacyPiSubagents(ctx, homeDir)
 		if cmds, err := adapter.InstallCommand(nil); err == nil && len(cmds) > 0 {
 			for _, cmd := range cmds {
 				if len(cmd) == 0 {
@@ -2438,6 +2442,40 @@ func ensurePiTheme(homeDir, themeName string) error {
 		return err
 	}
 	return nil
+}
+
+// removeLegacyPiSubagents uninstalls the predecessor npm:pi-subagents
+// package when present, so only the j0k3r fork remains. Best-effort: it
+// returns nothing and never fails the install (fresh installs have nothing
+// to remove; settings.json reconciliation already drops the stale entry).
+func removeLegacyPiSubagents(ctx context.Context, homeDir string) {
+	roots := []string{filepath.Join(homeDir, ".pi", "agent")}
+	if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
+		roots = append(roots, v)
+	}
+	present := false
+	for _, root := range roots {
+		if st, err := os.Stat(filepath.Join(root, "npm", "node_modules", "pi-subagents")); err == nil && st.IsDir() {
+			present = true
+			break
+		}
+	}
+	if !present {
+		return
+	}
+	args := []string{"uninstall", "npm:pi-subagents"}
+	var c *exec.Cmd
+	if runtime.GOOS == "windows" {
+		piPath := "pi"
+		if resolved, err := exec.LookPath("pi"); err == nil && resolved != "" {
+			piPath = resolved
+		}
+		c = exec.CommandContext(ctx, "cmd", append([]string{"/c", piPath}, args...)...)
+	} else {
+		c = exec.CommandContext(ctx, "pi", args...)
+	}
+	platform.EnsureCommandDir(c)
+	_ = c.Run()
 }
 
 // BinaryOnPath reports whether a biggz binary already resolves via any
