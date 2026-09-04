@@ -76,6 +76,8 @@ func main() {
 			os.Exit(sddGatekeeperRun())
 		case "sdd-dedup":
 			os.Exit(sddDedupRun())
+		case "sdd-workload":
+			os.Exit(sddWorkloadRun())
 		case "bigmem":
 			os.Exit(bigmemRun())
 		case "recall":

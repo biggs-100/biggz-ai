@@ -1432,3 +1432,107 @@ func runSddDedup(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "\n%s\n", string(jsonBytes))
 	return 0
 }
+
+// sddWorkloadRun handles the "biggz sdd-workload" subcommand.
+// Usage: biggz sdd-workload --forecast <json> --strategy <strategy> [--chain <chain-strategy>]
+// Evaluate the review workload guard before sdd-apply.
+func sddWorkloadRun() int {
+	return runSddWorkload(os.Args[2:], os.Stdout, os.Stderr)
+}
+
+// runSddWorkload is the testable core of sddWorkloadRun.
+func runSddWorkload(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(stderr, "Usage: biggz sdd-workload --forecast <json> --strategy <strategy> [--chain <chain-strategy>]")
+		fmt.Fprintln(stderr, "  Evaluate the review workload guard before sdd-apply.")
+		fmt.Fprintln(stderr, "  --forecast   — JSON string with workload forecast")
+		fmt.Fprintln(stderr, "  --strategy   — Delivery strategy: ask-on-risk, auto-chain, single-pr, exception-ok")
+		fmt.Fprintln(stderr, "  --chain      — Chain strategy: stacked-to-main, feature-branch-chain (for auto-chain)")
+		fmt.Fprintln(stderr, "")
+		fmt.Fprintln(stderr, "Example:")
+		fmt.Fprintln(stderr, `  biggz sdd-workload --forecast '{"estimated_lines":500,"chained_prs_recommended":true}' --strategy ask-on-risk`)
+		return 0
+	}
+
+	forecastJSON := ""
+	strategy := ""
+	chainStrategy := ""
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--forecast":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "error: --forecast requires a JSON string")
+				return 1
+			}
+			i++
+			forecastJSON = args[i]
+		case "--strategy":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "error: --strategy requires a value")
+				return 1
+			}
+			i++
+			strategy = args[i]
+		case "--chain":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "error: --chain requires a value")
+				return 1
+			}
+			i++
+			chainStrategy = args[i]
+		}
+	}
+
+	if forecastJSON == "" {
+		fmt.Fprintln(stderr, "error: --forecast is required")
+		return 1
+	}
+	if strategy == "" {
+		fmt.Fprintln(stderr, "error: --strategy is required")
+		return 1
+	}
+	if !sdd.ValidateDeliveryStrategy(strategy) {
+		fmt.Fprintf(stderr, "error: invalid strategy %q (use: ask-on-risk, auto-chain, single-pr, exception-ok)\n", strategy)
+		return 1
+	}
+	if chainStrategy != "" && !sdd.ValidateChainStrategy(chainStrategy) {
+		fmt.Fprintf(stderr, "error: invalid chain strategy %q (use: stacked-to-main, feature-branch-chain)\n", chainStrategy)
+		return 1
+	}
+
+	// Parse forecast
+	forecast, err := sdd.ParseForecast(forecastJSON)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	// Run guard
+	result := sdd.WorkloadGuard(forecast, sdd.DeliveryStrategy(strategy), sdd.ChainStrategy(chainStrategy), nil)
+
+	// Output
+	fmt.Fprintln(stdout, sdd.WorkloadGuardSummary(result))
+	if result.Reason != "" {
+		fmt.Fprintf(stdout, "  Reason: %s\n", result.Reason)
+	}
+	if result.Exception != nil {
+		fmt.Fprintf(stdout, "  Exception: approved\n")
+	}
+
+	// JSON output
+	jsonBytes, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Fprintf(stdout, "\n%s\n", string(jsonBytes))
+
+	// Exit code based on action
+	switch result.Action {
+	case sdd.GuardAllow:
+		return 0
+	case sdd.GuardAsk:
+		return 2 // Special exit code for ASK
+	case sdd.GuardBlock:
+		return 1
+	default:
+		return 1
+	}
+}
