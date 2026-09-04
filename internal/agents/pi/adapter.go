@@ -124,12 +124,15 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	//   TUI (single/multi-select + "Type something." + "Chat about this") that
 	//   is pi's parity for opencode's `question` (grouped interaction,
 	//   header/label/description, custom answer row auto-appended).
+	// - npm:rpiv-todo provides the visual task-tracking overlay in pi's TUI
+	//   (Claude-Code parity), the same one gentle-pi ships.
 	// - Mouse parity for that TUI (biggz-question-mouse.js) is NOT installed
 	//   via `pi install`; it is copied to `~/.pi/agent/extensions/` via
 	//   DeployPiQuestionMouse (filemerge) during `biggz install --agent pi`.
 	return [][]string{
 		{"pi", "install", "npm:pi-subagents-j0k3r"},
 		{"pi", "install", "npm:@juicesharp/rpiv-ask-user-question"},
+		{"pi", "install", "npm:rpiv-todo"},
 	}, nil
 }
 

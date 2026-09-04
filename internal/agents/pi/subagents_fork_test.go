@@ -28,6 +28,22 @@ func TestInstallCommand_UsesJ0k3rFork(t *testing.T) {
 	}
 }
 
+// TestInstallCommand_IncludesTodoOverlay ensures pi installs the rpiv-todo
+// visual task-tracking overlay (gentle-pi parity).
+func TestInstallCommand_IncludesTodoOverlay(t *testing.T) {
+	a := NewAdapter()
+	cmds, err := a.InstallCommand(nil)
+	if err != nil {
+		t.Fatalf("InstallCommand: %v", err)
+	}
+	for _, cmd := range cmds {
+		if strings.Join(cmd, " ") == "pi install npm:rpiv-todo" {
+			return
+		}
+	}
+	t.Errorf("InstallCommand missing todo overlay install, got %v", cmds)
+}
+
 // TestFilterPiPackages_DropsPredecessor ensures settings.json reconciliation
 // drops the predecessor dispatcher entry while keeping the fork, so pi never
 // loads both (duplicate subagent_* tool registrations).
