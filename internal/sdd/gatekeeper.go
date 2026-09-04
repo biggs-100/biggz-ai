@@ -132,6 +132,9 @@ func Gatekeeper(openspecRoot, changeName, completedPhase string, result *PhaseRe
 	// 5. Routing coherence
 	gr.checkRouting(completedPhase, result)
 
+	// 6. Complexity gate (verify phase only)
+	gr.checkComplexityGate(openspecRoot, completedPhase)
+
 	// Final verdict
 	for _, d := range gr.Details {
 		if !d.Passed && !d.Skipped {
@@ -345,6 +348,40 @@ func (gr *GatekeeperResult) checkRouting(completedPhase string, result *PhaseRes
 			result.NextRecommended, completedPhase, validNext)
 	}
 
+	gr.Details = append(gr.Details, check)
+}
+
+// checkComplexityGate runs the diff-aware complexity gate for the verify
+// phase: new 15/20 offenders in critical packages block, everything else
+// warns. Non-verify phases skip. Non-git workspaces skip with a reason
+// instead of failing (R2 lens and CI remain backstops there).
+func (gr *GatekeeperResult) checkComplexityGate(openspecRoot, completedPhase string) {
+	check := GatekeeperCheck{Name: "complexity_gate", Passed: true}
+	if completedPhase != "verify" {
+		check.Skipped = true
+		gr.Details = append(gr.Details, check)
+		return
+	}
+	repoRoot := filepath.Dir(openspecRoot)
+	res, err := GateWorkingTreeComplexity(repoRoot)
+	if err != nil {
+		check.Skipped = true
+		check.Reason = err.Error()
+		gr.Details = append(gr.Details, check)
+		return
+	}
+	if len(res.Warnings) > 0 {
+		check.Reason = "warnings: " + strings.Join(res.Warnings, "; ")
+	}
+	if !res.Passed {
+		check.Passed = false
+		blockers := "new complexity offenders: " + FormatGateBlockers(res.Blocking)
+		if check.Reason != "" {
+			check.Reason += "; " + blockers
+		} else {
+			check.Reason = blockers
+		}
+	}
 	gr.Details = append(gr.Details, check)
 }
 

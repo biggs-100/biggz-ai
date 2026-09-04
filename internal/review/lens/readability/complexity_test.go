@@ -524,3 +524,111 @@ func TestLens_NoSecondDiff(t *testing.T) {
 		t.Error("expected finding via DeriveRiskInput reuse without second diff")
 	}
 }
+
+func writeCycloFixture(t *testing.T, dir, rel string, branches int) string {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("package foo\n\nfunc Big(x int) int {\n\ty := 0\n")
+	for i := 0; i < branches; i++ {
+		b.WriteString("if x == " + itoa(i) + " { y++ }\n")
+	}
+	b.WriteString("return y\n}\n")
+	full := filepath.Join(dir, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(b.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return full
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var d []byte
+	for i > 0 {
+		d = append([]byte{byte('0' + i%10)}, d...)
+		i /= 10
+	}
+	return string(d)
+}
+
+func TestSplitFileDiffs(t *testing.T) {
+	diff := "diff --git a/internal/sdd/a.go b/internal/sdd/a.go\n@@ -1,3 +1,4 @@\n+line\n" +
+		"diff --git a/docs/b.md b/docs/b.md\n@@ -1 +1 @@\n-old\n+new\n" +
+		"diff --git a/old.go b/dev/null\n@@ -1 +0,0 @@\n-gone\n"
+	got := SplitFileDiffs(diff)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 files (deleted skipped), got %d: %v", len(got), keysOf(got))
+	}
+	if _, ok := got["internal/sdd/a.go"]; !ok {
+		t.Errorf("missing internal/sdd/a.go in %v", keysOf(got))
+	}
+	if _, ok := got["docs/b.md"]; !ok {
+		t.Errorf("missing docs/b.md in %v", keysOf(got))
+	}
+	if !strings.Contains(string(got["internal/sdd/a.go"]), "@@") {
+		t.Error("per-file section must keep hunk headers")
+	}
+}
+
+func TestSplitFileDiffsQuotedPath(t *testing.T) {
+	diff := "diff --git \"a/my dir/f.go\" \"b/my dir/f.go\"\n@@ -1 +1 @@\n-x\n+y\n"
+	got := SplitFileDiffs(diff)
+	if _, ok := got["my dir/f.go"]; !ok {
+		t.Errorf("quoted path not parsed, got %v", keysOf(got))
+	}
+}
+
+func keysOf(m map[string][]byte) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+func TestOffendersForFileDiffs_OverlapBlocks(t *testing.T) {
+	dir := t.TempDir()
+	rel := filepath.Join("internal", "sdd", "big.go")
+	writeCycloFixture(t, dir, rel, 20) // cyclo ~21 > 15
+	diff := "diff --git a/" + filepath.ToSlash(rel) + " b/" + filepath.ToSlash(rel) + "\n@@ -1,5 +1,25 @@\n+// touched\n"
+	hunks := map[string][]byte{filepath.ToSlash(rel): []byte(diff)}
+	offs, _ := OffendersForFileDiffs(dir, hunks)
+	found := false
+	for _, o := range offs {
+		if o.Function == "Big" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected Big offender overlapping hunk, got %v", offs)
+	}
+}
+
+func TestOffendersForFileDiffs_NoOverlapPasses(t *testing.T) {
+	dir := t.TempDir()
+	rel := filepath.Join("internal", "sdd", "big.go")
+	writeCycloFixture(t, dir, rel, 20)
+	// Hunk far below the function (lines 500+): no overlap → grandfathered.
+	diff := "diff --git a/" + filepath.ToSlash(rel) + " b/" + filepath.ToSlash(rel) + "\n@@ -500,3 +500,4 @@\n+// far away\n"
+	hunks := map[string][]byte{filepath.ToSlash(rel): []byte(diff)}
+	offs, _ := OffendersForFileDiffs(dir, hunks)
+	if len(offs) != 0 {
+		t.Errorf("expected no offenders outside hunks, got %v", offs)
+	}
+}
+
+func TestOffendersForFileDiffs_NonCriticalIgnored(t *testing.T) {
+	dir := t.TempDir()
+	rel := filepath.Join("internal", "foo", "big.go")
+	writeCycloFixture(t, dir, rel, 20)
+	diff := "diff --git a/" + filepath.ToSlash(rel) + " b/" + filepath.ToSlash(rel) + "\n@@ -1,5 +1,25 @@\n+// touched\n"
+	hunks := map[string][]byte{filepath.ToSlash(rel): []byte(diff)}
+	offs, _ := OffendersForFileDiffs(dir, hunks)
+	if len(offs) != 0 {
+		t.Errorf("expected non-critical package ignored, got %v", offs)
+	}
+}

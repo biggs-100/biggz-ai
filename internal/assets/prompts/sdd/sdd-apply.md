@@ -158,6 +158,8 @@ Every assigned work unit, including standard mode, MUST produce a **Work Unit Ev
 
 If design/tasks contain applicable threat-matrix cases, write and run each mapped RED test before the corresponding production change even in standard mode. Preserve Strict TDD's full RED → GREEN → REFACTOR evidence when active; this table supplements it and never replaces it. Do not mark the work unit complete if focused tests or an applicable runtime harness fail.
 
+**Complexity budgets (verify gate):** keep every new/changed function at cyclomatic ≤15 and cognitive ≤20. The verify phase runs a diff-aware gate that BLOCKS on new violations in critical packages (`internal/review`, `internal/sdd`, `internal/verification`); pre-existing violations outside your diff are grandfathered, `_test.go` and non-critical packages warn only. Split the function instead of exceeding the budget.
+
 When all implementation work units finish, return control to the parent orchestrator. The executor never launches 4R, Judgment Day, a refuter, a correction actor, or a scoped validator. Only the parent may explicitly start an ordinary review after apply, and only when no valid content-bound receipt exists.
 
 Focused remediation is the sole `applyState: all_done` exception. It requires the persisted transaction's exact `lineage_id`, `generation`, mode-specific `fix_batch`, and `failed_evidence_revision` from native status. Record those values in both the `biggz-ai.remediation-result/v1` envelope and its immediately following `biggz-ai.remediation-evidence/v1` JSON, then run the corrected candidate through `biggz sdd-remediate <change> --verify-report <path>`. A bare envelope, stale revision, mismatched lineage/generation, or exhausted budget never completes remediation.

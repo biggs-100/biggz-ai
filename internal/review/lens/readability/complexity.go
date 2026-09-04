@@ -373,6 +373,73 @@ func sortOffenders(offenders []Offender) {
 	})
 }
 
+// OffendersForFileDiffs runs the hunk-bounded complexity scan over per-file
+// unified diffs (git diff per-file sections, see SplitFileDiffs) for repoRoot.
+// Only functions overlapping changed hunks in critical packages are reported,
+// so pre-existing violations elsewhere can never fail a diff-based gate.
+// Content is read from the working tree; test-file filtering is left to the
+// caller (test offenders are returned like any other).
+func OffendersForFileDiffs(repoRoot string, hunks map[string][]byte) ([]Offender, []string) {
+	return offendersFromHunks(lens.LensInput{Repo: repoRoot, Hunks: hunks})
+}
+
+// SplitFileDiffs splits a unified diff (git diff output) into per-file
+// sections keyed by new path. Deleted files (new path /dev/null) are
+// skipped: there is no content left to scan.
+func SplitFileDiffs(diff string) map[string][]byte {
+	out := make(map[string][]byte)
+	var cur []string
+	curPath := ""
+	flush := func() {
+		if curPath != "" && len(cur) > 0 {
+			out[curPath] = []byte(strings.Join(cur, "\n"))
+		}
+		cur = nil
+		curPath = ""
+	}
+	for line := range strings.SplitSeq(diff, "\n") {
+		if strings.HasPrefix(line, "diff --git ") {
+			flush()
+			curPath = newPathFromDiffHeader(strings.TrimPrefix(line, "diff --git "))
+			if curPath == "" || curPath == "dev/null" || curPath == "/dev/null" {
+				curPath = ""
+				continue
+			}
+		}
+		if curPath != "" {
+			cur = append(cur, line)
+		}
+	}
+	flush()
+	return out
+}
+
+// newPathFromDiffHeader extracts the new (b/) path from a diff --git header.
+// Handles quoted paths with spaces ("a/pa th" "b/pa th"); returns ""
+// when unparseable.
+func newPathFromDiffHeader(rest string) string {
+	s := strings.TrimSpace(rest)
+	var b string
+	if strings.HasPrefix(s, `"`) {
+		end := strings.Index(s[1:], `"`)
+		if end < 0 {
+			return ""
+		}
+		b = strings.TrimSpace(s[1+end+1:])
+	} else {
+		fields := strings.Fields(s)
+		if len(fields) < 2 {
+			return ""
+		}
+		b = fields[1]
+	}
+	b = strings.Trim(b, `"`)
+	if !strings.HasPrefix(b, "b/") {
+		return ""
+	}
+	return strings.TrimPrefix(b, "b/")
+}
+
 func offendersFromHunks(input lens.LensInput) ([]Offender, []string) {
 	var warnings []string
 	if input.Repo != "" && !filepath.IsAbs(input.Repo) {
