@@ -2440,8 +2440,37 @@ func ensurePiTheme(homeDir, themeName string) error {
 	return nil
 }
 
+// BinaryOnPath reports whether a biggz binary already resolves via any
+// directory on PATH (e.g. GOBIN after `go install`). When true, install skips
+// adding ~/.biggz to the persistent User PATH: the entry would only create a
+// duplicate binary that trips `biggz doctor`'s path check. The ~/.biggz binary
+// copy is still deployed — agent configs reference it by absolute path.
+//
+// This deliberately mirrors doctor's PathCheck (SplitList + Stat) instead of
+// exec.LookPath: on Windows LookPath first probes the working directory and
+// returns ErrDot without scanning PATH when ./biggz.exe exists (go.dev/issue/53536),
+// which is exactly the case when installing from a repo checkout.
+func BinaryOnPath() bool {
+	binaries := []string{"biggz"}
+	if runtime.GOOS == "windows" {
+		binaries = []string{"biggz.exe"}
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			continue
+		}
+		for _, name := range binaries {
+			if st, err := os.Stat(filepath.Join(dir, name)); err == nil && !st.IsDir() {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // deploySelfToPath copies the running biggz binary to ~/.biggz/biggz.exe
-// and ensures ~/.biggz/ is on the user PATH (persistent, per-user).
+// and ensures ~/.biggz/ is on the user PATH (persistent, per-user),
+// unless the binary already resolves via PATH (see BinaryOnPath).
 // Only runs on Windows and only when homeDir matches the real user home.
 func deploySelfToPath(homeDir string) error {
 	if runtime.GOOS != "windows" {
@@ -2489,6 +2518,14 @@ func deploySelfToPath(homeDir string) error {
 		if _, err := filemerge.WriteFileAtomic(selfPath, data, 0755); err != nil {
 			return fmt.Errorf("write %s: %w", selfPath, err)
 		}
+	}
+
+	// Skip the persistent PATH mutation when biggz already resolves via PATH
+	// (e.g. GOBIN after `go install`): adding ~/.biggz would only create a
+	// duplicate binary that trips `biggz doctor`'s path check. The copy above
+	// is still required — agent configs reference ~/.biggz by absolute path.
+	if BinaryOnPath() {
+		return nil
 	}
 
 	// Add ~/.biggz/ to persistent user PATH via PowerShell (Windows)

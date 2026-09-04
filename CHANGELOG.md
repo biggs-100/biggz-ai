@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased] — 2026-08-31
 
+### Fixed
+- **install-path-dedup** (2026-09-04) — `biggz install` no longer re-adds `~/.biggz` to the User PATH when the binary already resolves via PATH (e.g. GOBIN after `go install`), eliminating the recurring `doctor` duplicate-binary warning. New exported `install.BinaryOnPath()` scans PATH directly (SplitList + Stat, mirroring doctor's PathCheck) instead of `exec.LookPath`, which returns ErrDot without scanning PATH when `./biggz.exe` exists in the working directory (go.dev/issue/53536). The `~/.biggz` binary copy is still deployed (agent configs reference it by absolute path). Tests: `TestBinaryOnPath_{Found,Missing,IgnoresWorkingDirectory}`.
+
 ### Added
 - **bigmem-rescue-ownership** (2026-08-28) — orphan BigMem session rescue with DryRun/scope handling (15 tasks, archived).
 - **bigmem-sync-v2** (2026-08-28) — BigMem sync v2 parity with Engram (21 tasks, archived).
