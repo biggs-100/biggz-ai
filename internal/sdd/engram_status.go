@@ -368,6 +368,7 @@ func collectBigMemChangesWithArchive(workspaceRoot string, includeInstructions b
 // rows only. Caller ctx flows through with a 5s default timeout.
 func collectBigMemChangesWithArchiveCtx(ctx context.Context, workspaceRoot string, includeInstructions bool) (active []ChangeStatus, archived []ChangeStatus, err error) {
 	if declaredArtifactStore(workspaceRoot) == "" {
+		log.Printf("[sdd-status] artifact store none, skipping BigMem collection, falling back to filesystem-only")
 		return nil, nil, nil
 	}
 	ctx, cancel := bigmem.WithTimeout(ctx)
@@ -425,7 +426,7 @@ func collectBigMemChangesWithArchiveCtx(ctx context.Context, workspaceRoot strin
 				return nil, nil, fmt.Errorf("bigmem sdd-status collect: %w", ctx.Err())
 			}
 			log.Printf("[sdd-status] bigmem get %s: %v", p.id, err)
-			continue
+			return nil, nil, fmt.Errorf("bigmem sdd-status hydrate %s: %w", p.id, err)
 		}
 		mergeTopic(byChange, archivedSet, seenSet, p.change, p.suffix, obs.Content)
 	}
@@ -466,7 +467,7 @@ func mergeTopic(byChange map[string]map[string]string, archivedSet, seenSet map[
 	byChange[changeName][suffix] = content
 	if isArchived(suffix) {
 		archivedSet[changeName] = true
-	} else if suffix != "state" {
+	} else if suffix != "state" && suffix != "explore" {
 		seenSet[changeName] = true
 	}
 }

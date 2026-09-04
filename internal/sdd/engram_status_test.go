@@ -2,6 +2,7 @@ package sdd
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
+	_ "modernc.org/sqlite"
 )
 
 // seedBigMemChange writes a BigMem change with given topic suffix -> content.
@@ -582,5 +584,84 @@ func TestStatusCtxCancel(t *testing.T) {
 	}
 	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("error must wrap Canceled/DeadlineExceeded, got: %v", err)
+	}
+}
+
+func TestCollectBigMemChanges_HydrationErrorFails(t *testing.T) {
+	workspace, _ := mkStatusWorkspace(t)
+	storeRoot := t.TempDir()
+	SetBigMemStoreRootForTest(storeRoot)
+	defer SetBigMemStoreRootForTest("")
+	seedBigMemRow(t, storeRoot, "sdd/hyd-fail/proposal", "unfiltered-project", "project", "# P\n")
+	dbPath, err := bigmem.ResolveDBPath(storeRoot)
+	if err != nil {
+		t.Fatalf("resolve db path: %v", err)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatalf("open raw db: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE observations SET revision_count='not-an-int' WHERE topic_key='sdd/hyd-fail/proposal'`); err != nil {
+		db.Close()
+		t.Fatalf("corrupt row: %v", err)
+	}
+	db.Close()
+	_, _, err = collectBigMemChangesWithArchive(workspace, false)
+	if err == nil {
+		t.Fatal("expected wrapped hydration error, got nil (partial success not allowed)")
+	}
+	if !strings.Contains(err.Error(), "bigmem sdd-status") {
+		t.Errorf("error must name the operation, got: %v", err)
+	}
+}
+
+func TestStatusWithOptions_HybridPropagatesBigMemError(t *testing.T) {
+	workspace, openspecRoot := mkStatusWorkspace(t)
+	fsDir := filepath.Join(openspecRoot, "changes", "fs-ok")
+	os.MkdirAll(fsDir, 0755)
+	os.WriteFile(filepath.Join(fsDir, "proposal.md"), []byte("# P\n"), 0644)
+	storeRoot := t.TempDir()
+	dbPath, err := bigmem.ResolveDBPath(storeRoot)
+	if err != nil {
+		t.Fatalf("resolve db path: %v", err)
+	}
+	os.MkdirAll(filepath.Dir(dbPath), 0755)
+	if err := os.WriteFile(dbPath, []byte("not a sqlite database, corrupt"), 0644); err != nil {
+		t.Fatalf("write corrupt db: %v", err)
+	}
+	SetBigMemStoreRootForTest(storeRoot)
+	defer SetBigMemStoreRootForTest("")
+	_, _, err = StatusWithOptions(openspecRoot, StatusOptions{})
+	if err == nil {
+		t.Fatal("expected hybrid BigMem error to propagate, got nil (silent success not allowed)")
+	}
+	if !strings.Contains(err.Error(), "bigmem sdd-status") {
+		t.Errorf("error must name the operation, got: %v", err)
+	}
+	_ = workspace
+}
+
+func TestCollectBigMemChanges_ExploreExcludedFromSeen(t *testing.T) {
+	workspace, _ := mkStatusWorkspace(t)
+	storeRoot := t.TempDir()
+	SetBigMemStoreRootForTest(storeRoot)
+	defer SetBigMemStoreRootForTest("")
+	seedBigMemRow(t, storeRoot, "sdd/ghost/explore", "unfiltered-project", "project", "# explore\n")
+	seedBigMemRow(t, storeRoot, "sdd/ghost2/state", "unfiltered-project", "project", "# state\n")
+	seedBigMemRow(t, storeRoot, "sdd/real/proposal", "unfiltered-project", "project", "# P\n")
+	seedBigMemRow(t, storeRoot, "sdd/real/explore", "unfiltered-project", "project", "# explore\n")
+	active, _, err := collectBigMemChangesWithArchive(workspace, false)
+	if err != nil {
+		t.Fatalf("collect: %v", err)
+	}
+	names := map[string]bool{}
+	for _, cs := range active {
+		names[cs.Name] = true
+	}
+	if names["ghost"] || names["ghost2"] {
+		t.Errorf("explore/state-only changes must stay invisible, got %v", names)
+	}
+	if !names["real"] {
+		t.Errorf("proposal+explore change must stay visible, got %v", names)
 	}
 }

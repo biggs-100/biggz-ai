@@ -324,11 +324,15 @@ func applyStoreRoutingCtx(ctx context.Context, active, archived []ChangeStatus, 
 			if fsActive, fsArchived, err := collectFilesystemChangesCtx(ctx, workspaceRoot, includeInstructions); err == nil {
 				return fsActive, fsArchived, nil
 			}
+			log.Printf("[sdd-status] bigmem engram fallback re-collect failed, returning degraded BigMem-derived status")
 			return active, archived, nil
 		}
 		return memActive, memArchived, nil
 	}
-	if memActive, memArchived, err := collectBigMemChangesWithArchiveCtx(ctx, workspaceRoot, includeInstructions); err == nil && len(memActive)+len(memArchived) > 0 {
+	if memActive, memArchived, err := collectBigMemChangesWithArchiveCtx(ctx, workspaceRoot, includeInstructions); err != nil {
+		log.Printf("[sdd-status] bigmem hybrid collect: %v", err)
+		return nil, nil, fmt.Errorf("bigmem sdd-status hybrid collect: %w", err)
+	} else if len(memActive)+len(memArchived) > 0 {
 		active, archived = mergeFilesystemAndBigMem(active, archived, memActive, memArchived)
 	}
 	return active, archived, nil

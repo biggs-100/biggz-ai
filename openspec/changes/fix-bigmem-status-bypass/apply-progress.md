@@ -64,3 +64,15 @@ None. 10/10 tasks complete. Ready for verify.
 - Current work unit: APPLY-bypass-single-pr (Phases 1-4, all tasks)
 - Boundary: `topic_prefix.go` additive first → collector rewrite → `*Ctx` threading → parity/integration tests + e2e
 - Estimated review budget impact: ~775 changed lines (add+del), exceeds 400 budget — `size:exception` confirmation recommended; clean split available at Unit 1/Unit 2 boundary if reviewer prefers
+
+## Correction RDD-correction-hybrid-hydration (2026-09-04)
+
+- Ledger: work-unit RDD-correction-hybrid-hydration, token tok-662e625f5e761ba90b87665c, request-id sdd2-fix-001, max-lines 200, review budget 80.
+- R1-hydration-drop (`engram_status.go` hydration loop): `GetCtx` failure for a visible row now logs + returns `bigmem sdd-status hydrate <id>: %w` instead of log+continue partial success (Req5).
+- R4-hybrid-error-swallow (`status.go` hybrid routing): BigMem collector errors now log + propagate as `bigmem sdd-status hybrid collect: %w` instead of silent success; absent-DB `(nil,nil,nil)` fallback with its explicit warning still falls through to filesystem (Req5).
+- R3-none-silent (`engram_status.go` empty-store guard): logs `[sdd-status] artifact store none, skipping BigMem collection, falling back to filesystem-only` before `(nil,nil,nil)` (Req5).
+- R1-fallback-stale (`status.go` engram empty-DB fallback): filesystem re-collect failure now logs `[sdd-status] bigmem engram fallback re-collect failed, returning degraded BigMem-derived status` (Req5).
+- R3-explore-parity (`engram_status.go` mergeTopic): `explore` excluded from seen set alongside `state`, restoring legacy header intent (Req6 parity).
+- Tests added (`engram_status_test.go` +81): `TestCollectBigMemChanges_HydrationErrorFails` (revision_count text-corruption forces List-ok/Get-fail, asserts wrapped `bigmem sdd-status`), `TestStatusWithOptions_HybridPropagatesBigMemError` (corrupt DB + fs change asserts hybrid propagates, no silent success), `TestCollectBigMemChanges_ExploreExcludedFromSeen` (explore/state-only invisible, proposal+explore visible).
+- Evidence: `go build ./...` exit 0; `go test ./internal/sdd/ ./internal/bigmem/ -count=1` ok sdd 16.3s, ok bigmem 9.7s; new tests 3/3 PASS.
+- Diff: 3 files, 89 insertions(+), 3 deletions(-); prod code 11 changed lines (within 80 review budget), total within 200 ledger max-lines. No commit.
