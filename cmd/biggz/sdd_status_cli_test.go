@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
 // runSDDStatusCLIArgs invokes sddStatusRun in-process with explicit flags,
@@ -101,6 +103,21 @@ func seedCompleteChange(t *testing.T, planning, name string) {
 // (nextRecommended, blockedReasons, applyState, dependencies,
 // taskProgress.allComplete, actionContext.allowedEditRoots).
 func TestSDDStatusJSONEnvelopeDerivesStructuredFields(t *testing.T) {
+	// Isolate HOME to avoid global RDD state leaking into test.
+	// review reads ~/.biggz/rdd-mode.json via UserHomeDir.
+	home := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	oldUserProfile := os.Getenv("USERPROFILE")
+	_ = os.Setenv("HOME", home)
+	_ = os.Setenv("USERPROFILE", home)
+	defer func() {
+		_ = os.Setenv("HOME", oldHome)
+		_ = os.Setenv("USERPROFILE", oldUserProfile)
+	}()
+	// Write disabled global RDD so test is deterministic.
+	_, _ = review.RDDDisable("", "", "global")
+	defer func() { _, _ = review.RDDEnable("", "") }()
+
 	workspace := t.TempDir()
 	planning := filepath.Join(workspace, "planning")
 	if err := os.MkdirAll(planning, 0755); err != nil {
