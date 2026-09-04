@@ -23,6 +23,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "  sdd-attempt                Manage attempt budgets")
 	fmt.Fprintln(os.Stderr, "  sdd-continue <change>      Determine next SDD phase")
 	fmt.Fprintln(os.Stderr, "  sdd-gatekeeper <change>    Validate completed phase before next")
+	fmt.Fprintln(os.Stderr, "  sdd-dedup <phase> <task>   Check/record sub-agent launches")
 	fmt.Fprintln(os.Stderr, "  sdd-new [change-name]      Interactive wizard to create new SDD change")
 	fmt.Fprintln(os.Stderr, "  bigmem save|search|get     Persistent memory")
 	fmt.Fprintln(os.Stderr, "  recall [--type T] [--project P] [--limit N] [--json]  Recent observations by updated_at DESC")

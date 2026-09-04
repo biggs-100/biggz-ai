@@ -1324,3 +1324,111 @@ func runSddGatekeeper(args []string, stdout, stderr io.Writer) int {
 	}
 	return 0
 }
+
+// sddDedupRun handles the "biggz sdd-dedup" subcommand.
+// Usage: biggz sdd-dedup <phase> <task> [--record] [--state <file>]
+// Check or record sub-agent launches to prevent duplicates.
+func sddDedupRun() int {
+	return runSddDedup(os.Args[2:], os.Stdout, os.Stderr)
+}
+
+// runSddDedup is the testable core of sddDedupRun.
+// The --state flag points to a JSON file that persists the dedup state across calls.
+// Without --state, operates in single-call mode (check+record in one invocation).
+func runSddDedup(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(stderr, "Usage: biggz sdd-dedup <phase> <task> [--record] [--state <file>]")
+		fmt.Fprintln(stderr, "  Check or record sub-agent launches to prevent duplicates.")
+		fmt.Fprintln(stderr, "  <phase>    — SDD phase (explore, propose, spec, design, tasks, apply, verify)")
+		fmt.Fprintln(stderr, "  <task>     — Task description (used to compute fingerprint)")
+		fmt.Fprintln(stderr, "  --record   — Record the launch (default: check only)")
+		fmt.Fprintln(stderr, "  --state    — Path to JSON file for persistent dedup state")
+		fmt.Fprintln(stderr, "")
+		fmt.Fprintln(stderr, "Examples:")
+		fmt.Fprintln(stderr, `  biggz sdd-dedup spec "Create spec for feature X" --record`)
+		fmt.Fprintln(stderr, `  biggz sdd-dedup spec "Create spec for feature X"`)
+		return 0
+	}
+
+	phase := ""
+	task := ""
+	record := false
+	stateFile := ""
+
+	// Parse positional args
+	posIdx := 0
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--record":
+			record = true
+		case "--state":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "error: --state requires a file path")
+				return 1
+			}
+			i++
+			stateFile = args[i]
+		default:
+			if posIdx == 0 {
+				phase = args[i]
+			} else if posIdx == 1 {
+				task = args[i]
+			}
+			posIdx++
+		}
+	}
+
+	if phase == "" {
+		fmt.Fprintln(stderr, "error: phase is required")
+		return 1
+	}
+	if task == "" {
+		fmt.Fprintln(stderr, "error: task description is required")
+		return 1
+	}
+
+	// Load state from file if specified
+	dedup := sdd.NewLaunchDedup()
+	if stateFile != "" {
+		if data, err := os.ReadFile(stateFile); err == nil {
+			var state map[string]bool
+			if json.Unmarshal(data, &state) == nil {
+				for key, val := range state {
+					if val {
+						dedup.RecordByKey(key)
+					}
+				}
+			}
+		}
+	}
+
+	// Check if blocked
+	blocked := dedup.ShouldBlock(phase, task)
+
+	if record && !blocked {
+		dedup.Record(phase, task)
+
+		// Save state if specified
+		if stateFile != "" {
+			state := dedup.ExportState()
+			if data, err := json.Marshal(state); err == nil {
+				os.WriteFile(stateFile, data, 0644)
+			}
+		}
+	}
+
+	// Output result
+	if blocked {
+		fmt.Fprintf(stdout, "◆ %s · BLOCKED (duplicate launch)\n", phase)
+		result := sdd.LaunchDedupResult{Blocked: true, Phase: phase, Message: "launch already recorded"}
+		jsonBytes, _ := json.MarshalIndent(result, "", "  ")
+		fmt.Fprintf(stdout, "\n%s\n", string(jsonBytes))
+		return 1
+	}
+
+	fmt.Fprintf(stdout, "◆ %s · OK%s\n", phase, map[bool]string{true: " (recorded)", false: ""}[record])
+	result := sdd.LaunchDedupResult{Blocked: false, Phase: phase}
+	jsonBytes, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Fprintf(stdout, "\n%s\n", string(jsonBytes))
+	return 0
+}
