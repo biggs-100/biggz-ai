@@ -165,12 +165,20 @@ For selected SDD work, use delivery strategy, chain strategy, workload forecast,
 Enforcement retired (2026-09-04): no code blocks question tools. The agent
 owns context-before-question. Three rules:
 
-1. Write the context as plain chat FIRST (decision, artifacts/paths, risks,
-   next), then call the question tool. Same turn, adjacent. PLUS: make every
-   question self-contained — the popup shows only the tool call, not the
-   chat. Repeat the decision-critical context inside the `question` text and
-   put consequences in each option `description`. A question must be
-   answerable from the popup alone; never rely on chat history.
+1. THE QUESTION ENVELOPE IS THE ONLY DECISION SURFACE. The popup shows
+   only the tool call — never the chat. Therefore the `question` text MUST
+   contain everything needed to decide: (a) what was just done + key
+   result (with artifact paths), (b) what `proceed` will concretely do
+   next, (c) open risks or blockers. Each option `description` MUST state
+   its consequence (what happens + cost/risk). Chat synthesis markdown is
+   record-keeping only and MUST NOT be relied upon for the decision.
+   Before invoking the question tool, re-read ONLY the question text +
+   options and confirm a reader who never saw this chat could decide
+   correctly. If not, rewrite — do not call.
+   BAD: "Spec lista. ¿Vamos a design?"
+   GOOD: "Spec SDD2 lista (6 reqs, 9 escenarios, Store *Ctx + filtro SQL).
+   Design resolverá cap-50, firma ctx y key-only (riesgo: key-only puede
+   exigir método Store nuevo). Proceed lanza sdd-design ahora."
 2. Checkpoint meaning lives in option labels: offer proceed/adjust/stop
    (or continue/correct) only for real post-delegation checkpoints.
 3. Respect the tool's own envelope limits (header ≤16, label ≤60, 2-4
