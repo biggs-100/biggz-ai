@@ -87,6 +87,18 @@ func NextPhaseDescription(phase string) string {
 	}
 }
 
+// NextPhaseChecked gates NextPhase on explicit preflight prefs via
+// CheckPhaseEntryPreflight. Without explicit prefs it returns
+// blocked(preflight_missing) with next resolve-blockers and launches
+// nothing; with explicit prefs it proceeds to normal phase routing.
+// Phase entry only: NextPhase itself stays a pure read. REQ-DG-3.
+func NextPhaseChecked(openspecRoot, changeName, cwd string, home ...string) (string, error) {
+	if blocked, reason, next := CheckPhaseEntryPreflight(cwd, home...); blocked {
+		return "", fmt.Errorf("%s: explicit preflight required before SDD phase entry (next: %s)", reason, next)
+	}
+	return NextPhase(openspecRoot, changeName)
+}
+
 func countTaskProgress(tasksPath string) (done, total int) {
 	data, err := os.ReadFile(tasksPath)
 	if err != nil {

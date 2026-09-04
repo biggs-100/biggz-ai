@@ -1695,3 +1695,20 @@ func sddFindOffendingSurface(values ...string) string {
 	}
 	return ""
 }
+
+// PreflightMissingReason is the dispatcher block emitted when SDD phase
+// entry is attempted without explicit preflight prefs. REQ-DG-3.
+const PreflightMissingReason = "blocked(preflight_missing)"
+
+// CheckPhaseEntryPreflight gates SDD phase entry on explicit preflight
+// prefs (HasExplicitPreflight: cache hit OR disk read success). Until
+// explicit it returns blocked=true with reason blocked(preflight_missing)
+// and nextRecommended resolve-blockers, and the caller MUST NOT launch any
+// phase. Phase entry only: status reads (Status/StatusWithOptions) are
+// unaffected and never consult this gate. REQ-DG-3.
+func CheckPhaseEntryPreflight(cwd string, home ...string) (blocked bool, blockedReason string, nextRecommended string) {
+	if HasExplicitPreflight(cwd, home...) {
+		return false, "", ""
+	}
+	return true, PreflightMissingReason, "resolve-blockers"
+}

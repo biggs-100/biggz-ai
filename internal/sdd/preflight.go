@@ -99,6 +99,21 @@ func ClearPreflightPrefs(cwd string) {
 	delete(preflightCache, cwd)
 }
 
+// HasExplicitPreflight reports whether explicit preflight prefs exist for
+// cwd: a cache hit OR a successful disk read. Silent defaults alone (what
+// ResolvePreflightPrefs falls back to with no cache and no disk file)
+// return false. REQ-DG-3: callers MUST check explicitness first and route
+// SDD phase entry through CheckPhaseEntryPreflight.
+func HasExplicitPreflight(cwd string, home ...string) bool {
+	if _, ok := GetPreflightPrefs(cwd); ok {
+		return true
+	}
+	if _, ok := ReadSddPreflightToDisk(home...); ok {
+		return true
+	}
+	return false
+}
+
 func ResolvePreflightPrefs(cwd string, home ...string) PreflightPrefs {
 	if p, ok := GetPreflightPrefs(cwd); ok {
 		return p
