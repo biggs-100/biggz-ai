@@ -1536,3 +1536,103 @@ func runSddWorkload(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 }
+
+// sddGateRun handles the "biggz sdd-gate" subcommand.
+// Usage: biggz sdd-gate <gate> <change> [--evidence <rev>] [--receipt <hash>]
+// Evaluate a review gate.
+func sddGateRun() int {
+	return runSddGate(os.Args[2:], os.Stdout, os.Stderr)
+}
+
+// runSddGate is the testable core of sddGateRun.
+func runSddGate(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(stderr, "Usage: biggz sdd-gate <gate> <change> [--evidence <rev>] [--receipt <hash>]")
+		fmt.Fprintln(stderr, "  Evaluate a review gate.")
+		fmt.Fprintln(stderr, "  <gate>     — Gate kind: post-apply, pre-commit, pre-push, pre-pr, release")
+		fmt.Fprintln(stderr, "  <change>   — SDD change name")
+		fmt.Fprintln(stderr, "  --evidence — Evidence revision (SHA-256)")
+		fmt.Fprintln(stderr, "  --receipt  — Receipt hash (SHA-256)")
+		fmt.Fprintln(stderr, "")
+		fmt.Fprintln(stderr, "Exit codes:")
+		fmt.Fprintln(stderr, "  0 — ALLOW")
+		fmt.Fprintln(stderr, "  1 — INVALIDATED or ESCALATED")
+		fmt.Fprintln(stderr, "")
+		fmt.Fprintln(stderr, "Example:")
+		fmt.Fprintln(stderr, `  biggz sdd-gate post-apply my-feature --evidence abc123`)
+		return 0
+	}
+
+	gate := ""
+	change := ""
+	evidence := ""
+	receipt := ""
+
+	// Parse positional args
+	posIdx := 0
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--evidence":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "error: --evidence requires a value")
+				return 1
+			}
+			i++
+			evidence = args[i]
+		case "--receipt":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "error: --receipt requires a value")
+				return 1
+			}
+			i++
+			receipt = args[i]
+		default:
+			if posIdx == 0 {
+				gate = args[i]
+			} else if posIdx == 1 {
+				change = args[i]
+			}
+			posIdx++
+		}
+	}
+
+	if gate == "" {
+		fmt.Fprintln(stderr, "error: gate is required")
+		return 1
+	}
+	if change == "" {
+		fmt.Fprintln(stderr, "error: change name is required")
+		return 1
+	}
+
+	// Create request
+	req := &sdd.GateRequest{
+		Gate:             sdd.GateKind(gate),
+		ChangeName:       change,
+		EvidenceRevision: evidence,
+		ReceiptHash:      receipt,
+	}
+
+	// Evaluate gate
+	resp, err := sdd.EvaluateGate(req)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	// Output
+	fmt.Fprintln(stdout, sdd.GateResultSummary(resp))
+	if resp.Details != "" {
+		fmt.Fprintf(stdout, "  Details: %s\n", resp.Details)
+	}
+
+	// JSON output
+	jsonBytes, _ := json.MarshalIndent(resp, "", "  ")
+	fmt.Fprintf(stdout, "\n%s\n", string(jsonBytes))
+
+	// Exit code
+	if resp.Result == sdd.GateAllow {
+		return 0
+	}
+	return 1
+}
