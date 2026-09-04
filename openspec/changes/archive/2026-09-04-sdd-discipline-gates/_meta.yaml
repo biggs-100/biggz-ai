@@ -1,0 +1,10 @@
+name: sdd-discipline-gates
+created: 2026-09-03T00:00:00Z
+phase: propose
+status: active
+description: "Blindar disciplina SDD: gate de preguntas presenta contexto+pregunta al bloquear; dispatcher exige preflight explicito fail-closed"
+preflight:
+  executionMode: interactive
+  artifactStore: openspec
+  chainStrategy: auto-chain
+  reviewBudgetLines: 400
