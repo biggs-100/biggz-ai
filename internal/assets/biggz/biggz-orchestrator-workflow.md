@@ -98,6 +98,26 @@ For new product/code change saying "use SDD", start at preflight → init guard 
 
 Only launch `sdd-apply` when: preflight complete, spec+design+tasks artifacts exist, and user explicitly asked to apply/continue or prior planning completed and workload guard passed. Otherwise STOP and propose new change.
 
+## Public Implementation States
+
+The orchestrator MUST expose exactly four public states. These are the only user-facing lifecycle indicators.
+
+| State | Meaning |
+|---|---|
+| **Working** | Implementation can still change |
+| **Checking** | Functional proof and bounded review in progress |
+| **Ready** | Exact candidate has sufficient evidence for the delivery route |
+| **Needs your decision** | Safe convergence impossible; orchestrator presents cause, impact, and choices |
+
+State transitions:
+- `Working` → `Checking` (tests/review launched)
+- `Checking` → `Ready` (evidence sufficient)
+- `Checking` → `Needs your decision` (ambiguity/failure)
+- `Ready` → delivery (commit/PR)
+- `Needs your decision` → `Working` (human decides, work resumes)
+
+Public states replace old synthesis lifecycle markers (`◆ phase·status·next`). Synthesis markdown (`## Sub-agent Result`, `**What was done:**`, `| Topic | Decision |`, etc.) remains as record-keeping but is NOT the decision surface — the `question` tool envelope is.
+
 ## SDD Init Guard
 
 After preflight and before ANY SDD command, check `sdd-init`:

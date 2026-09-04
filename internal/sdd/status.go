@@ -182,6 +182,7 @@ type ChangeStatus struct {
 	ReviewOffer       *ReviewOfferBlock        `json:"reviewOffer,omitempty"`
 	NextRecommended   string                   `json:"nextRecommended,omitempty"`
 	BlockedReasons    []string                 `json:"blockedReasons,omitempty"`
+	Route             string                   `json:"route,omitempty"`
 	PhaseInstructions *PhaseInstructions       `json:"phaseInstructions,omitempty"`
 
 	Name        string
@@ -535,6 +536,7 @@ func deriveChangeStatusWithForcedStoreCtx(ctx context.Context, cs *ChangeStatus,
 	cs.ReviewOffer = deriveReviewOffer(cs.Name, workspaceRoot, applyState, artifacts, verifyResult)
 	cs.NextRecommended = nextRecommended
 	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
+	cs.Route = deriveRoute(cs)
 	if includeInstructions {
 		instructions := renderPhaseInstructions(*cs)
 		cs.PhaseInstructions = &instructions
@@ -816,6 +818,7 @@ func deriveChangeStatusCtx(ctx context.Context, cs *ChangeStatus, changeDir, wor
 	cs.ReviewOffer = deriveReviewOffer(cs.Name, workspaceRoot, applyState, artifacts, verifyResult)
 	cs.NextRecommended = nextRecommended
 	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
+	cs.Route = deriveRoute(cs)
 	if includeInstructions {
 		instructions := renderPhaseInstructions(*cs)
 		cs.PhaseInstructions = &instructions
@@ -1165,6 +1168,20 @@ func resolveNextRecommended(dependencies Dependencies, applyState ApplyState, ve
 		return next
 	}
 	return "resolve-blockers"
+}
+
+// deriveRoute returns the implementation route for a change.
+// "sdd" when any SDD artifact exists, "organic" when none do, "" when archived.
+// CLI cannot distinguish direct-inline from delegated-direct (both have zero
+// SDD artifacts); the orchestrator prompt knows which sub-route was used.
+func deriveRoute(cs *ChangeStatus) string {
+	if cs.IsArchived {
+		return ""
+	}
+	if cs.HasSpecs || cs.HasDesign || cs.HasTasks || cs.HasApply {
+		return "sdd"
+	}
+	return "organic"
 }
 
 func fileExists(path string) bool {

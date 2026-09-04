@@ -4,13 +4,19 @@ Bind this to the dedicated `biggz-orchestrator` agent only, on delegation or rou
 
 ### Work Routing Ladder
 
-Route work through the smallest harness that is safe. Three tiers (verbatim):
+Route authorized work through exactly ONE of three implementation routes based on context file count and ambiguity.
 
-1. **Inline Direct** — small, mechanical, parent has context (typo, one-file edit, read-only check of 1–3 known files, bash for state). No SDD ceremony; stop when it is no longer small.
-2. **Simple Delegation** — generic non-SDD exploration → `explore` scout; bounded implementation → `general` worker; command-running verification → `general` verify. Use narrow mapping/verification constraints and report fallback. SDD roles stay inside SDD.
-3. **SDD (optional)** — selected only by explicit request (`biggz sdd-new`/`sdd-continue` or direct ask) or accepted proposal; size, file count, or risk alone never selects SDD. Suggest organically when durable proposal/spec/design/tasks would materially reduce substantial ambiguity. Once selected, do not jump to implementation; create artifacts and gate for approval.
+| Route | When | What happens |
+|---|---|---|
+| **Direct inline** | Understand/verify from 1–3 files; or one mechanical, already-understood file with no research or unresolved design decision | Inline edit. No artifacts. No delegation. No SDD. |
+| **Delegated direct** | Understand needs 4+ files; reading prepares a write; broad research needed; or writer touches 2+ non-trivial files | One scout or one writer. Bounded. No SDD artifacts. |
+| **Optional SDD** | Substantial ambiguity where durable proposal/spec/design/tasks materially reduce uncertainty | Propose SDD. Selected only by explicit request or accepted proposal. |
 
-> **Fail-closed heuristic (12-file rule):** Given 12 files, 800 lines, no explicit SDD request → MUST NOT launch `sdd-propose`; select **Simple Delegation** (MAY suggest SDD but never auto-select). File count/size/risk alone never selects SDD — only explicit intent via `biggz sdd-new`/`sdd-continue`/direct ask or accepted proposal does.
+**SIZE NEVER SELECTS SDD.** File counts describe context needed for the current action, not a risk score and not an SDD threshold. Risk may strengthen native verification, but it never forces SDD.
+
+**Per-action delegation does not change route.** Tests, builds, installs, and native review actors may use fresh workers without changing the selected route or creating SDD state.
+
+**Direct/delegated work creates zero SDD artifacts.** No proposal.md, spec.md, tasks.md, phase attempts, or synthetic SDD runs.
 
 ### Delegation Rules
 

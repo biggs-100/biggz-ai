@@ -1006,6 +1006,21 @@ func runSddContinue(args []string, stdin io.Reader, stdout, stderr io.Writer) in
 	fmt.Fprintf(stdout, "Change: %s\n", change)
 	fmt.Fprintf(stdout, "Next phase: %s\n", phase)
 	fmt.Fprintf(stdout, "Description: %s\n", sdd.NextPhaseDescription(phase))
+	// Show route context
+	routeActive, _, routeErr := sdd.StatusWithOptions(openspecRoot, sdd.StatusOptions{})
+	if routeErr == nil {
+		for _, cs := range routeActive {
+			if cs.Name == change {
+				if cs.Route == "organic" {
+					fmt.Fprintln(stdout, "Route: organic (direct inline or delegated direct)")
+					fmt.Fprintln(stdout, "No SDD next — work completed via organic route.")
+				} else if cs.Route == "sdd" {
+					fmt.Fprintln(stdout, "Route: sdd")
+				}
+				break
+			}
+		}
+	}
 	return 0
 }
 
