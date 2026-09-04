@@ -1,6 +1,7 @@
 /**
  * biggz-synthesis-gate — Pi extension that enforces Post-Delegation Human Checkpoint.
- * IsCheckpointAsk + hasOptions (2-4 options) both require synthesis — IsCheckpointAsk tokens (case-insensitive, label/value/id/name/title scan): proceed/continuar/proseguir/proceder/procede, adjust/ajustar, stop/detener/parar, continue/continuar, correct/corregir/cerrar. Same-turn invariant: synthesis markdown with 4 markers MUST be emitted FIRST and option-bearing ask (2-4 options) or checkpoint tool called in SAME assistant turn adjacent ≤120s without extra assistant message; otherwise gate blocks isError:true/block:true (Please synthesize before asking).
+ * IsCheckpointAsk alone requires synthesis (REQ-DG-1); hasOptions alone NEVER blocks — free-text
+ * asks and Session Preflight option-asks always pass. IsCheckpointAsk tokens (case-insensitive, label/value/id/name/title scan): proceed/continuar/proseguir/proceder/procede, adjust/ajustar, stop/detener/parar, continue/continuar, correct/corregir/cerrar. Same-turn invariant: synthesis markdown with 4 markers MUST be emitted FIRST and checkpoint tool called in SAME assistant turn adjacent ≤120s without extra assistant message; otherwise gate blocks isError:true/block:true (Please synthesize before asking).
  *
  * biggz-synthesis-gate — Pi extension that enforces Post-Delegation Human Checkpoint.
  *
@@ -37,8 +38,8 @@
  *
  * Minimal but functional — mirrors biggz-thinking-wrap.js pattern.
  *
- * Parity truth: internal/sdd/synthesis_gate.go:ShouldBlock is canonical.
- * JS MUST mirror Go: only currentTurnMarkdown ≤120s with HasSynthesis satisfies blocking;
+ * Parity truth: internal/sdd/synthesis_gate.go:ShouldBlock is canonical (REQ-DG-1: IsCheckpointAsk only).
+ * JS MUST mirror Go: only isCheckpointAsk gates; hasOptions alone NEVER blocks;
  * history (ctx.history / lastAssistantMarkdown) is advise-only (BIGGZ_ADVISE=1 thin concern)
  * and MUST NEVER satisfy block. Drift risk in internal/assets/biggz/biggz-orchestrator.md
  * noted (duplicated checkpoint block) — no edit this change.
@@ -532,7 +533,7 @@ export default function biggzSynthesisGate(pi) {
 
 	// Language-aware synthesis (polish-synthesis-human-language): content may be localized (es/en) per human language
 	// (`languageHint` / `Human language: es|en`), but markers stay English verbatim b0d2fc1;
-	// isCheckpointAsk scans only option labels (proceed/continuar/proseguir/proceder/procede, adjust/ajustar, stop/detener/parar, continue/continuar, correct/corregir/cerrar) — hasOptions (2-4 options) also requires synthesis even without checkpoint token
+	// isCheckpointAsk scans only option labels (proceed/continuar/proseguir/proceder/procede, adjust/ajustar, stop/detener/parar, continue/continuar, correct/corregir/cerrar) — REQ-DG-1: hasOptions (2-4 options) alone NEVER requires synthesis
 	// not synthesis content — Spanish content with English markers passes, missing marker blocks regardless of language.
 	function isCheckpointAsk(params) {
 		if (params == null) return false;
@@ -646,6 +647,19 @@ export default function biggzSynthesisGate(pi) {
 	function validateQuestionEnvelope(p){if(p==null||typeof p!="object")return null;let q=p.questions;if(!Array.isArray(q)){let o=p.options;if(Array.isArray(o)){if(o.length<2||o.length>4)return{isError:!0,limit:"options",message:`options out of range 2-4: got ${o.length}`};for(let x of o){let l=typeof x==="string"?x:x.label??x.value??"";if(String(l).length>60)return{isError:!0,limit:"label",message:`label exceeds limit 60: got ${String(l).length}`}} }return null}if(q.length>4)return{isError:!0,limit:"questions",message:`questions exceed limit 4: got ${q.length}`};for(let i=0;i<q.length;i++){let v=q[i];if(!v||typeof v!="object")continue;let h=v.header??v.title??"";if(typeof h==="string"&&h.length>16)return{isError:!0,limit:"header",message:`header exceeds limit 16: got ${h.length}`};let o=v.options;if(!Array.isArray(o))continue;if(o.length<2||o.length>4)return{isError:!0,limit:"options",message:`options out of range 2-4: got ${o.length} for question ${i}`};for(let x of o){let l=typeof x==="string"?x:x.label??x.value??"";if(String(l).length>60)return{isError:!0,limit:"label",message:`label exceeds limit 60: got ${String(l).length}`}}}return null}
 	function formatFallback(p){if(p==null||typeof p!="object")return"";let q=p.questions;if(!Array.isArray(q)||q.length===0){let o=p.options;if(Array.isArray(o)&&o.length>0){let s="## Questions\n\n";for(let x of o){let l=typeof x==="string"?x:x.label??x.value??"";let d=x.description??x.desc??"";s+="- "+l+(d?": "+d:"")+"\n"}return s}return""}let s="";for(let i=0;i<q.length;i++){let v=q[i];if(!v||typeof v!="object")continue;let h=v.header??v.title??"";let qu=v.question??v.text??"";s+=`### ${h?h+": ":""}Question ${i+1}\n`;if(qu)s+=qu+"\n";let o=v.options??[];for(let x of o){let l=typeof x==="string"?x:x.label??"";let d=x.description??"";s+="- "+l+(d?": "+d:"")+"\n"}s+="\n"}return s.trim()+"\n"}
 
+	// blockedEnvelope builds the REQ-DG-2 same-turn plain-chat payload: attempted
+	// context + full question via formatFallback so nothing is swallowed.
+	// Mirrors Go BuildBlockedEnvelope in internal/sdd/synthesis_gate.go.
+	function blockedEnvelope(params, reason) {
+		const fb = formatFallback(params);
+		let context = "synthesis required before checkpoint ask";
+		try {
+			const raw = typeof params === "string" ? params : JSON.stringify(params);
+		if (raw) context += ": " + raw;
+		} catch {}
+		return { block: true, reason, context, fallback: fb };
+	}
+
 	function extractParamsFromToolCall(event) {
 		if (!event || typeof event !== "object") return null;
 		const candidates = [event.params, event.args, event.arguments, event.input, event.payload, event.data];
@@ -673,7 +687,7 @@ export default function biggzSynthesisGate(pi) {
 	function checkSynthesisPrecondition(ctx) {
 		// STRICT: only currentTurnMarkdown ≤120s with HasSynthesis satisfies. Mirrors Go truth
 		// Diagnostic: missing synthesis vs envelope limit (>16 header, >60 label) are distinct errors;
-		// internal/sdd/synthesis_gate.go:ShouldBlock = !child && !recall && (checkpoint||hasOptions) && ≤120s && !HasSynthesis(currentTurn)
+		// internal/sdd/synthesis_gate.go:ShouldBlock = !child && !recall && isCheckpointAsk && ≤120s && !HasSynthesis(currentTurn) (REQ-DG-1)
 		// History (ctx.history / lastAssistantMarkdown) MUST NOT satisfy blocking; it is only for
 		// BIGGZ_ADVISE=1 thin concern via getCurrentTurnSynthesis fallback, never for block.
 		const now = Date.now();
@@ -705,6 +719,7 @@ export default function biggzSynthesisGate(pi) {
 			hasOptions,
 			validateQuestionEnvelope,
 			formatFallback,
+			blockedEnvelope,
 			extractParamsFromToolCall,
 			emitConcern: (ctx, metrics) => emitConcern(ctx, pi, metrics),
 			// test helpers to manipulate internal state
@@ -782,8 +797,8 @@ export default function biggzSynthesisGate(pi) {
 					}
 				}
 			} catch {}
-			if (!isCheckpointAsk(params) && !hasOptions(params)) {
-				// General free-text without options (no checkpoint token and no 2-4 options): do not block, optionally advise but allow
+			if (!isCheckpointAsk(params)) {
+				// REQ-DG-1: only checkpoint asks gate; free-text and preflight option-asks never block
 				try {
 					const source = getCurrentTurnSynthesis(ctx);
 					if (source && isAdviseEnabled() && isThinSynthesis(source)) {
@@ -805,18 +820,20 @@ export default function biggzSynthesisGate(pi) {
 				} else {
 					const reason =
 						"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_choice/ask_user_question/question (closed: ask_user_choice). Diagnostic: if envelope error (header >16 e.g. 'Decisión del checkpoint' 23 vs 'Decisión' 8, or label >60) fix header/label first; else ensure synthesis has 4 verbatim markers, plain markdown not in ``` code block, same turn ≤120s, not from history.";
-					console.error(`[biggz-synthesis-gate] blocked ${toolName}: ${reason}`);
+					const env = blockedEnvelope(params, reason);
+					const text = reason + (env.fallback ? "\n\nFallback:\n" + env.fallback : "");
+					console.error(`[biggz-synthesis-gate] blocked ${toolName}: ${reason} — context+fallback emitted same turn (REQ-DG-2)`);
 					try {
-						ctx?.ui?.notify?.(reason, "error");
+						ctx?.ui?.notify?.(text, "error");
 					} catch {}
 					try {
-						pi.notify?.(reason, "error");
+						pi.notify?.(text, "error");
 					} catch {}
 					try {
-						pi.ui?.notify?.(reason, "error");
+						pi.ui?.notify?.(text, "error");
 					} catch {}
 					return {
-						content: [{ type: "text", text: reason }],
+						content: [{ type: "text", text }],
 						isError: true,
 					};
 				}
@@ -984,8 +1001,8 @@ export default function biggzSynthesisGate(pi) {
 							return { block: true, reason: reason + (fb ? "\n\nFallback:\n" + fb : "") };
 						}
 					} catch {}
-					if (!isCheckpointAsk(toolParams) && !hasOptions(toolParams)) {
-						// General free-text without options (no checkpoint token and no 2-4 options): do not block, optionally advise but allow
+					if (!isCheckpointAsk(toolParams)) {
+						// REQ-DG-1: only checkpoint asks gate; free-text and preflight option-asks never block
 						try {
 							const source = getCurrentTurnSynthesis(ctx);
 							if (source && isAdviseEnabled() && isThinSynthesis(source)) {
@@ -1002,17 +1019,19 @@ export default function biggzSynthesisGate(pi) {
 						} else {
 							const reason =
 								"Please synthesize before asking — missing ## Sub-agent Result block. Required markdown: ## Sub-agent Result: {phase/agent} + **Artifacts/Paths:** + **Risks / Open Questions:** + **Next Recommended:**. Emit markdown FIRST, adjacent, same turn, before ask_user_choice/ask_user_question/question (closed: ask_user_choice). Diagnostic: if envelope error (header >16 e.g. 'Decisión del checkpoint' 23 vs 'Decisión' 8, or label >60) fix header/label first; else ensure synthesis has 4 verbatim markers, plain markdown not in ``` code block, same turn ≤120s, not from history.";
-							console.error(`[biggz-synthesis-gate] blocked (tool_call) ${name}: ${reason}`);
+							const env = blockedEnvelope(toolParams, reason);
+							const text = reason + (env.fallback ? "\n\nFallback:\n" + env.fallback : "");
+							console.error(`[biggz-synthesis-gate] blocked (tool_call) ${name}: ${reason} — context+fallback emitted same turn (REQ-DG-2)`);
 							try {
-								ctx?.ui?.notify?.(reason, "error");
+								ctx?.ui?.notify?.(text, "error");
 							} catch {}
 							try {
-								pi.notify?.(reason, "error");
+								pi.notify?.(text, "error");
 							} catch {}
 							try {
-								pi.ui?.notify?.(reason, "error");
+								pi.ui?.notify?.(text, "error");
 							} catch {}
-							return { block: true, reason };
+							return { block: true, reason: text, context: env.context, fallback: env.fallback };
 						}
 					}
 					// Has synthesis or preflight allowance — check thin + advise for concern (non-blocking)

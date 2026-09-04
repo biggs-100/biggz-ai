@@ -1,6 +1,7 @@
 package sdd
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -172,6 +173,75 @@ func TestShouldBlock_CheckpointWithoutSynthesisEvenWhenHistoryEmpty(t *testing.T
 	}
 }
 
+func TestShouldBlock_ReqDG1_OptionBearingNonCheckpoint(t *testing.T) {
+	t.Setenv("PI_SUBAGENT_CHILD", "0")
+	// REQ-DG-1: HasOptions alone MUST NOT block. Only IsCheckpointAsk gates.
+	// Free-text ask (no options, no checkpoint token) never blocks.
+	freeText := `{"question":"How are you doing today?"}`
+	if IsCheckpointAsk(freeText) || HasOptions(freeText) {
+		t.Fatalf("precondition: free-text fixture must be neither checkpoint nor option-bearing")
+	}
+	if ShouldBlock(freeText, "no markers", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for free-text ask even without synthesis")
+	}
+	if ShouldBlock(freeText, "", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for free-text ask with empty md")
+	}
+
+	// Session Preflight option-ask (bears options, no checkpoint token) never blocks.
+	// Labels avoid checkpoint tokens (proceed/adjust/stop/continue/correct + ES variants).
+	preflightOptions := `{"questions":[{"question":"Pick pace","options":[{"label":"Relaxed"},{"label":"Fast"}]}]}`
+	if !HasOptions(preflightOptions) {
+		t.Fatalf("precondition: preflight fixture must bear options")
+	}
+	if IsCheckpointAsk(preflightOptions) {
+		t.Fatalf("precondition: preflight fixture must not be a checkpoint ask")
+	}
+	if ShouldBlock(preflightOptions, "no markers", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for preflight option-ask even without synthesis (REQ-DG-1)")
+	}
+	if ShouldBlock(preflightOptions, "", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for preflight option-ask with empty md (REQ-DG-1)")
+	}
+	good := mustSynthesisMD("full-prose")
+	SetCurrentTurnMarkdown(good)
+	if ShouldBlock(preflightOptions, good, time.Now().Add(121*time.Second)) {
+		t.Fatalf("ShouldBlock should be false for preflight option-ask even when window expired")
+	}
+
+	// Checkpoint WITH options and no synthesis MUST still block (REQ-DG-4 regression).
+	checkpointOptions := `{"questions":[{"question":"Next?","options":[{"label":"Proceed"},{"label":"Adjust"}]}]}`
+	if !HasOptions(checkpointOptions) || !IsCheckpointAsk(checkpointOptions) {
+		t.Fatalf("precondition: checkpoint fixture must bear options AND checkpoint token")
+	}
+	SetCurrentTurnMarkdown(good)
+	if !ShouldBlock(checkpointOptions, "no markers", time.Now()) {
+		t.Fatalf("ShouldBlock should be true for option-bearing checkpoint without synthesis")
+	}
+	// Valid synthesis in window passes.
+	SetCurrentTurnMarkdown(good)
+	if ShouldBlock(checkpointOptions, good, time.Now().Add(30*time.Second)) {
+		t.Fatalf("ShouldBlock should be false for option-bearing checkpoint with valid synthesis")
+	}
+}
+
+func TestShouldBlock_ReqDG1_BypassUnchanged(t *testing.T) {
+	// Threat-matrix row: PI_SUBAGENT_CHILD + Session Recall bypasses keep prior behavior.
+	checkpointOptions := `{"questions":[{"question":"Next?","options":[{"label":"Proceed"},{"label":"Adjust"}]}]}`
+
+	t.Setenv("PI_SUBAGENT_CHILD", "1")
+	if ShouldBlock(checkpointOptions, "no markers", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for option-bearing checkpoint in child (bypass unchanged)")
+	}
+
+	t.Setenv("PI_SUBAGENT_CHILD", "0")
+	recallMD := "## Session Recall\nsome previous context\n"
+	SetCurrentTurnMarkdown(recallMD)
+	if ShouldBlock(checkpointOptions, recallMD, time.Now()) {
+		t.Fatalf("ShouldBlock should be false for option-bearing checkpoint with Session Recall (bypass unchanged)")
+	}
+}
+
 func TestShouldBlock_SessionRecallBypass(t *testing.T) {
 	t.Setenv("PI_SUBAGENT_CHILD", "0")
 	recallMD := "## Session Recall\nsome previous context\n"
@@ -254,4 +324,45 @@ func TestShouldBlockApplyAdmission_NoBypasses(t *testing.T) {
 			t.Fatalf("ShouldBlockApplyAdmission must allow non-checkpoint asks")
 		}
 	})
+}
+
+// TestBlockedEnvelope_ReqDG2_FallbackVerbatim pins REQ-DG-2: a blocked
+// checkpoint emits context + fallback with the full question verbatim
+// (via FormatFallback); free-text and preflight option-asks never block.
+func TestBlockedEnvelope_ReqDG2_FallbackVerbatim(t *testing.T) {
+	t.Setenv("PI_SUBAGENT_CHILD", "0")
+	good := mustSynthesisMD("full-prose")
+	SetCurrentTurnMarkdown(good)
+
+	checkpointEnv := QuestionEnvelope{Questions: []Question{{Header: "Decisi\u00f3n", Question: "Proceed with plan?", Options: []QuestionOption{{Label: "Proceed"}, {Label: "Adjust"}}}}}
+	checkpointQ := `{"questions":[{"question":"Proceed with plan?","options":[{"label":"Proceed"},{"label":"Adjust"}]}]}`
+	env := BuildBlockedEnvelope(checkpointQ, "no markers", time.Now(), checkpointEnv)
+	if !env.Block {
+		t.Fatalf("BuildBlockedEnvelope should block checkpoint without synthesis")
+	}
+	if env.Context == "" || !strings.Contains(env.Context, checkpointQ) {
+		t.Fatalf("blocked envelope context must carry attempted ask, got %q", env.Context)
+	}
+	for _, want := range []string{"Proceed with plan?", "Proceed", "Adjust"} {
+		if !strings.Contains(env.Fallback, want) {
+			t.Fatalf("blocked envelope fallback must contain %q verbatim, got %q", want, env.Fallback)
+		}
+	}
+
+	freeTextQ := `{"question":"How are you doing today?"}`
+	freeEnv := QuestionEnvelope{}
+	if got := BuildBlockedEnvelope(freeTextQ, "no markers", time.Now(), freeEnv); got.Block {
+		t.Fatalf("BuildBlockedEnvelope must not block free-text ask")
+	}
+
+	preflightQ := `{"questions":[{"question":"Pick pace","options":[{"label":"Relaxed"},{"label":"Fast"}]}]}`
+	preflightEnv := QuestionEnvelope{Questions: []Question{{Question: "Pick pace", Options: []QuestionOption{{Label: "Relaxed"}, {Label: "Fast"}}}}}
+	if got := BuildBlockedEnvelope(preflightQ, "no markers", time.Now(), preflightEnv); got.Block {
+		t.Fatalf("BuildBlockedEnvelope must not block preflight option-ask (REQ-DG-1)")
+	}
+
+	SetCurrentTurnMarkdown(good)
+	if got := BuildBlockedEnvelope(checkpointQ, good, time.Now().Add(30*time.Second), checkpointEnv); got.Block {
+		t.Fatalf("BuildBlockedEnvelope must not block checkpoint with valid synthesis")
+	}
 }

@@ -943,7 +943,7 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     mock._biggzSynthesisGate._test.clearCurrent();
   });
 
-  it('hasOptions (2-4 options) blocks non-checkpoint asks without synthesis — Fix B', async () => {
+  it('hasOptions alone never blocks non-checkpoint asks — REQ-DG-1 supersedes Fix B', async () => {
     delete process.env.BIGGZ_ADVISE;
     const mock = createMockPi();
     gateFn(mock);
@@ -955,26 +955,26 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     assert.equal(h.hasOptions({ questions: [{ question: 'Q?' }] }), false, 'no options false');
     assert.equal(h.hasOptions({}), false, 'empty false');
     assert.equal(h.hasOptions({ options: [{ label: 'A' }, { label: 'B' }] }), true, 'top-level 2 options true');
-    // blocking via wrapSingleTool: non-checkpoint but hasOptions should block without current synthesis
+    // blocking via wrapSingleTool: non-checkpoint with options must ALLOW without synthesis (REQ-DG-1)
     let called = false;
     mock.registerTool({ name: 'ask_user_question', description: 't', parameters: { type: 'object', properties: {} }, execute: async () => { called = true; return { content: [{ type: 'text', text: 'ok' }] }; } });
     const w = mock._tools.get('ask_user_question');
     h._test.clearCurrent(); h._test.clearLast(); h._test.setLast(richMarkdown);
     const nonCheckpointWithOptions = { questions: [{ question: 'Elige?', options: [{ label: 'Opción A' }, { label: 'Opción B' }] }] };
     const ctx = makeCtx(missingMarkdown, []);
-    const resBlocked = await w.execute('id-hasopts-block', nonCheckpointWithOptions, null, null, ctx);
-    assert.equal(resBlocked.isError, true, 'non-checkpoint 2-option ask without current synthesis must block (Fix B)');
-    assert.equal(called, false);
+    const resAllowedFirst = await w.execute('id-hasopts-allow', nonCheckpointWithOptions, null, null, ctx);
+    assert.equal(resAllowedFirst.isError, undefined, 'non-checkpoint 2-option ask without current synthesis must allow (REQ-DG-1)');
+    assert.equal(called, true);
     // with synthesis should allow
     h._test.setCurrent(richMarkdown);
-    const resAllowed = await w.execute('id-hasopts-allow', nonCheckpointWithOptions, null, null, makeCtx('', []));
+    const resAllowed = await w.execute('id-hasopts-allow-2', nonCheckpointWithOptions, null, null, makeCtx('', []));
     assert.equal(resAllowed.isError, undefined, 'non-checkpoint 2-option ask with synthesis must allow');
     assert.equal(called, true);
-    // tool_call guard also blocks hasOptions
+    // tool_call guard also allows hasOptions-only without synthesis
     h._test.clearCurrent(); h._test.setLast(richMarkdown);
     const handler = mock._getToolCallHandler();
     const ret = await handler({ toolName: 'ask_user_question', params: nonCheckpointWithOptions }, makeCtx(missingMarkdown, []));
-    assert.ok(ret && ret.block === true, 'tool_call hasOptions without synthesis must block');
+    assert.equal(ret, undefined, 'tool_call hasOptions-only without synthesis must allow (REQ-DG-1)');
     h._test.setCurrent(richMarkdown);
     const ret2 = await handler({ toolName: 'ask_user_question', params: nonCheckpointWithOptions }, makeCtx('', []));
     assert.equal(ret2, undefined, 'tool_call hasOptions with synthesis must allow');
@@ -1004,6 +1004,56 @@ describe('biggz-synthesis-gate advisor dual-mode — fixtures no network', () =>
     h._test.setCurrent(richMarkdown);
     const res2 = await w.execute('id-proc2', proc, null, null, makeCtx('', []));
     assert.equal(res2.isError, undefined, 'Proceder with synthesis must allow');
+    h._test.clearCurrent(); h._test.clearLast();
+  });
+
+  it('REQ-DG-1/REQ-DG-2 parity vs Go fixtures — checkpoint/free-text/preflight verdicts + fallback verbatim', async () => {
+    delete process.env.BIGGZ_ADVISE;
+    const mock = createMockPi(); gateFn(mock);
+    const h = mock._biggzSynthesisGate;
+    // Same fixtures as Go TestShouldBlock_ReqDG1_OptionBearingNonCheckpoint +
+    // TestBlockedEnvelope_ReqDG2_FallbackVerbatim — JS verdicts must match Go.
+    const checkpoint = { questions: [{ question: 'Proceed with plan?', header: 'Decisión', options: [{ label: 'Proceed' }, { label: 'Adjust' }] }] };
+    const freeText = { question: 'How are you doing today?' };
+    const preflight = { questions: [{ question: 'Pick pace', options: [{ label: 'Relaxed' }, { label: 'Fast' }] }] };
+    assert.equal(h.isCheckpointAsk(checkpoint), true, 'checkpoint fixture must be checkpoint');
+    assert.equal(h.isCheckpointAsk(freeText), false, 'free-text fixture must not be checkpoint');
+    assert.equal(h.isCheckpointAsk(preflight), false, 'preflight option-ask must not be checkpoint (REQ-DG-1)');
+    // Gate verdicts without synthesis: checkpoint blocks; free-text + preflight allow.
+    let called = false;
+    mock.registerTool({ name: 'ask_user_question', description: 't', parameters: { type: 'object', properties: {} }, execute: async () => { called = true; return { content: [{ type: 'text', text: 'ok' }] }; } });
+    const w = mock._tools.get('ask_user_question');
+    h._test.clearCurrent(); h._test.clearLast();
+    const ctxNotify = [];
+    const resCp = await w.execute('id-parity-cp', checkpoint, null, null, makeCtx(missingMarkdown, ctxNotify));
+    assert.equal(resCp.isError, true, 'parity: checkpoint without synthesis must block (Go ShouldBlock=true)');
+    assert.equal(called, false);
+    called = false;
+    const resFree = await w.execute('id-parity-free', freeText, null, null, makeCtx(missingMarkdown, []));
+    assert.equal(resFree.isError, undefined, 'parity: free-text without synthesis must allow (Go ShouldBlock=false)');
+    assert.equal(called, true);
+    called = false;
+    const resPre = await w.execute('id-parity-pre', preflight, null, null, makeCtx(missingMarkdown, []));
+    assert.equal(resPre.isError, undefined, 'parity: preflight option-ask without synthesis must allow (Go ShouldBlock=false)');
+    assert.equal(called, true);
+    // REQ-DG-2: blocked checkpoint envelope carries context + full question verbatim.
+    const env = h.blockedEnvelope(checkpoint, 'synthesis required');
+    assert.equal(env.block, true, 'blockedEnvelope must flag block');
+    assert.ok(env.context && env.context.includes('Proceed with plan?'), `context must carry attempted ask, got ${JSON.stringify(env.context)}`);
+    for (const want of ['Proceed with plan?', 'Proceed', 'Adjust']) {
+      assert.ok(env.fallback && env.fallback.includes(want), `fallback must contain ${want} verbatim, got ${JSON.stringify(env.fallback)}`);
+    }
+    // Blocked execute/tool_call responses must surface the fallback (nothing swallowed).
+    const blockedText = resCp.content?.[0]?.text ?? '';
+    assert.ok(blockedText.includes('Proceed') && blockedText.includes('Adjust'), 'blocked execute response must include fallback options');
+    h._test.clearCurrent(); h._test.clearLast();
+    const handler = mock._getToolCallHandler();
+    const ctxCpNotify = [];
+    const retCp = await handler({ toolName: 'ask_user_question', params: checkpoint }, makeCtx(missingMarkdown, ctxCpNotify));
+    assert.ok(retCp && retCp.block === true, 'tool_call checkpoint must block');
+    assert.ok(String(retCp.reason).includes('Proceed') && String(retCp.reason).includes('Adjust'), 'tool_call block reason must include fallback options');
+    const retPre = await handler({ toolName: 'ask_user_question', params: preflight }, makeCtx(missingMarkdown, []));
+    assert.equal(retPre, undefined, 'tool_call preflight must allow');
     h._test.clearCurrent(); h._test.clearLast();
   });
 

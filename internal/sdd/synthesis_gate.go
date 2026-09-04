@@ -1,7 +1,7 @@
 // synthesis_gate — enforces Post-Delegation Human Checkpoint (checkpoint + option-bearing).
 // Ensures orchestrator emits synthesis markdown with ## Sub-agent Result + Artifacts/Paths + Risks + Next
 // BEFORE calling ask_user_choice (Pi closed single-select, 2-4 ordered options) / ask_user_question (Pi open/free-text) / question (OpenCode).
-// IsCheckpointAsk + HasOptions (2-4 options or options-bearing envelope) both require synthesis.
+// IsCheckpointAsk alone requires synthesis (REQ-DG-1); HasOptions alone never blocks.
 // In Pi, strictly closed single-select (proceed/adjust/stop, continue/correct) must use ask_user_choice; open/free-text uses ask_user_question.
 // Gate is tool-agnostic: ShouldBlock checks HasSynthesis + 120s window + IsCheckpointAsk/HasOptions, not tool name.
 // Free-text without options is allowed; option-bearing (2-4 or HasOptions) and checkpoint asks require synthesis;
@@ -83,10 +83,10 @@ func IsCheckpointAsk(question string) bool {
 	return false
 }
 
-// ShouldBlock blocks checkpoint and option-bearing asks without synthesis.
-// Free-text asks without options (IsCheckpointAsk==false && HasOptions==false) are allowed
-// by the gate; synthesis after EVERY delegated sub-agent is still required via orchestrator prompt.
-// When HasOptions || IsCheckpointAsk, requires HasSynthesis in current turn within 120s window.
+// ShouldBlock blocks checkpoint asks without synthesis (REQ-DG-1).
+// Only IsCheckpointAsk gates: HasOptions alone NEVER blocks, so free-text
+// asks and Session Preflight option-asks always pass the gate.
+// When IsCheckpointAsk, requires HasSynthesis in current turn within 120s window.
 // Strict same-turn 120s: missing or expired MUST block. Go is canonical for JS mirror.
 func ShouldBlock(question string, md string, now time.Time) bool {
 	if IsChildBypass() {
@@ -95,7 +95,7 @@ func ShouldBlock(question string, md string, now time.Time) bool {
 	if HasSessionRecall(md) {
 		return false
 	}
-	if !IsCheckpointAsk(question) && !HasOptions(question) {
+	if !IsCheckpointAsk(question) {
 		return false
 	}
 	if !HasSynthesis(md) {
@@ -112,6 +112,34 @@ func CheckSynthesisPrecondition(question string, md string) (bool, string) {
 		return false, "synthesis required: missing ## Sub-agent Result with 4 markers in current turn (120s window)"
 	}
 	return true, ""
+}
+
+// BlockedFallbackEnvelope is the REQ-DG-2 same-turn plain-chat payload.
+// On block it carries the attempted context plus the full question text
+// (via FormatFallback) so nothing is swallowed. Go is canonical for the
+// JS mirror (blockedEnvelope in biggz-synthesis-gate.js).
+type BlockedFallbackEnvelope struct {
+	Block    bool
+	Reason   string
+	Context  string
+	Fallback string
+}
+
+// BuildBlockedEnvelope returns Block:false when the gate allows the ask.
+// When ShouldBlock is true it returns Block:true with Reason (same text
+// as CheckSynthesisPrecondition), Context (attempted ask summary carrying
+// the full question string), and Fallback (FormatFallback of env, prompt
+// and options verbatim). ShouldBlock itself is unchanged (REQ-DG-1).
+func BuildBlockedEnvelope(question string, md string, now time.Time, env QuestionEnvelope) BlockedFallbackEnvelope {
+	if !ShouldBlock(question, md, now) {
+		return BlockedFallbackEnvelope{Block: false}
+	}
+	return BlockedFallbackEnvelope{
+		Block:    true,
+		Reason:   "synthesis required: missing ## Sub-agent Result with 4 markers in current turn (120s window)",
+		Context:  "synthesis required before checkpoint ask: " + question,
+		Fallback: FormatFallback(env),
+	}
 }
 
 // ShouldBlockApplyAdmission is the write-admission gate: admission to the
