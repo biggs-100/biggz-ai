@@ -667,6 +667,9 @@ func (s *Store) TimelineCtx(ctx context.Context, opts TimelineOptions) ([]Timeli
 		if err != nil && ctx.Err() != nil {
 			return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
 		}
+		if err != nil {
+			return nil, err
+		}
 		if err == nil {
 			defer beforeRows.Close()
 			for beforeRows.Next() {
@@ -679,8 +682,11 @@ func (s *Store) TimelineCtx(ctx context.Context, opts TimelineOptions) ([]Timeli
 				e.IsBefore = true
 				result = append(result, e)
 			}
-			if err := beforeRows.Err(); err != nil && ctx.Err() != nil {
-				return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+			if rErr := beforeRows.Err(); rErr != nil {
+				if ctx.Err() != nil {
+					return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+				}
+				return nil, rErr
 			}
 		}
 
@@ -706,6 +712,9 @@ func (s *Store) TimelineCtx(ctx context.Context, opts TimelineOptions) ([]Timeli
 		if err != nil && ctx.Err() != nil {
 			return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
 		}
+		if err != nil {
+			return nil, err
+		}
 		if err == nil {
 			defer afterRows.Close()
 			for afterRows.Next() {
@@ -717,8 +726,11 @@ func (s *Store) TimelineCtx(ctx context.Context, opts TimelineOptions) ([]Timeli
 				e.CreatedAt, _ = time.Parse(time.RFC3339, ca)
 				result = append(result, e)
 			}
-			if err := afterRows.Err(); err != nil && ctx.Err() != nil {
-				return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+			if rErr := afterRows.Err(); rErr != nil {
+				if ctx.Err() != nil {
+					return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+				}
+				return nil, rErr
 			}
 		}
 		if ctx.Err() != nil {

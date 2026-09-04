@@ -1552,6 +1552,9 @@ func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...strin
 				obs.TopicKey, obs.Project, obs.Scope, obs.NormalizedHash,
 				nowStr, boolToInt(obs.Pinned), nowStr, existingID)
 			if err != nil {
+				if ctx.Err() != nil {
+					return fmt.Errorf("bigmem save exec: %w", ctx.Err())
+				}
 				return err
 			}
 			if errQ := tryEnqueueObservationTx(tx, obs); errQ != nil {
@@ -1559,6 +1562,9 @@ func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...strin
 				return err
 			}
 			if err = tx.Commit(); err != nil {
+				if ctx.Err() != nil {
+					return fmt.Errorf("bigmem save commit: %w", ctx.Err())
+				}
 				return err
 			}
 			return nil
@@ -1590,6 +1596,9 @@ func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...strin
 			WHERE id=?`,
 				nowStr, nowStr, existingID)
 			if err != nil {
+				if ctx.Err() != nil {
+					return fmt.Errorf("bigmem save exec: %w", ctx.Err())
+				}
 				return err
 			}
 			if errQ := tryEnqueueObservationTx(tx, obs); errQ != nil {
@@ -1597,6 +1606,9 @@ func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...strin
 				return err
 			}
 			if err = tx.Commit(); err != nil {
+				if ctx.Err() != nil {
+					return fmt.Errorf("bigmem save commit: %w", ctx.Err())
+				}
 				return err
 			}
 			return nil
@@ -1818,6 +1830,12 @@ func (s *Store) SearchCtx(ctx context.Context, query string, opts SearchOptions)
 		tkArgs = append(tkArgs, limit)
 
 		tkRows, err := s.db.QueryContext(ctx, tkSQL, tkArgs...)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("bigmem search: %w", ctx.Err())
+			}
+			return nil, fmt.Errorf("search: %w", err)
+		}
 		if err == nil {
 			defer tkRows.Close()
 			for tkRows.Next() {
@@ -1976,10 +1994,22 @@ func (s *Store) SearchCtx(ctx context.Context, query string, opts SearchOptions)
 		}
 		results = append(results, obs)
 	}
+	if rErr := rows.Err(); rErr != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem search: %w", ctx.Err())
+		}
+		return nil, rErr
+	}
 	// Fallback to LIKE if FTS returned no rows (covers rebuild race or corrupted FTS)
 	if !hasRows {
 		likeSQL, likeArgs := buildLikeSearchSQL(query, opts, limit)
 		likeRows, err := s.db.QueryContext(ctx, likeSQL, likeArgs...)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("bigmem search: %w", ctx.Err())
+			}
+			return nil, fmt.Errorf("search: %w", err)
+		}
 		if err == nil {
 			defer likeRows.Close()
 			for likeRows.Next() {
@@ -2060,6 +2090,21 @@ func (s *Store) UpdateCtx(ctx context.Context, id string, updates map[string]any
 	}
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("bigmem update: %w", ctx.Err())
+	}
+	// Lost-delete guard (CTX-1 atomicity, budget-bounded): re-check existence
+	// under the write lock so a Delete landing between GetCtx and SaveCtx fails
+	// instead of resurrecting the row via upsert. Direct QueryRowContext is used
+	// here (never GetCtx) because the write lock is held and locking helpers
+	// would deadlock. Full single-lock re-read+save refactor deferred (budget).
+	s.mu.Lock()
+	var guardID string
+	guardErr := s.db.QueryRowContext(ctx, "SELECT id FROM observations WHERE id = ?", id).Scan(&guardID)
+	s.mu.Unlock()
+	if guardErr != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem update: %w", ctx.Err())
+		}
+		return nil, fmt.Errorf("not found: %w", guardErr)
 	}
 	if err := s.SaveCtx(ctx, obs); err != nil {
 		if ctx.Err() != nil {

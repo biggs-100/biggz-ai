@@ -179,3 +179,60 @@ PR1 section (WithTimeout + 5 core Ctx in `bigmem.go`) and PR2 section (3 extende
 ## Status
 
 11/11 tasks complete (Phases 1–4 done). Ready for verify. No commit per instructions.
+
+---
+
+# Apply Progress — fix-bigmem-store-ctx · RDD correction (CTX-1/CTX-4/CTX-5 gaps, FINAL)
+
+**Change**: fix-bigmem-store-ctx
+**Work unit**: RDD-correction-ctx-gaps (request-id rdd-fix-001, token tok-b2d73b8c101249cafa8d1464)
+**Mode**: Standard (strict_tdd=false)
+**Delivery**: auto-chain · stacked-to-main · correction slice (76 insertions, 4 deletions — within 200-line ledger + review budgets)
+**Date (UTC)**: 2026-09-04
+**Skills**: internal/assets/biggz/biggz-orchestrator-workflow.md + biggz-orchestrator-delegation.md (both read before work)
+
+## Scope (RDD correction ONLY — 5 deterministic CRITICAL findings, no new features)
+
+- [x] R1 SearchCtx: rows.Err() + ctx.Err() check after FTS loop; QueryContext error mapping on LIKE fallback + topic-key phase-1 (CTX-1/CTX-4)
+- [x] R2 SaveCtx phases 1/2: tx Exec/Commit errors map to wrapped ctx.Err() when ctx done, matching phase-3 pattern (CTX-4)
+- [x] R3 TimelineCtx focus path: non-ctx driver errors propagate (return err) when ctx live; ctx mapping kept when cancelled (CTX-1/CTX-4)
+- [x] R4 UpdateCtx atomicity: existence re-check under write lock before SaveCtx (budget-bounded minimum per task; no locking-helper calls under lock, no deadlock) (CTX-1)
+- [x] R5 tryMCPSave: ctx.Err() checks before/after legacy EnsureImplicitSession/SessionEnd with wrapped ctx error (CTX-5; scope kept, no new twins)
+
+PR1/PR2/PR3 sections above preserved as-is; post-squash HEAD db70332e re-verified present via grep before starting (WithTimeout, 8 *Ctx) and NOT reimplemented.
+
+## What was done
+
+- `internal/bigmem/bigmem.go` (+45): topic-key `QueryContext` error now returns `search: %w` (or wrapped `ctx.Err()` when cancelled) instead of silent skip; `rows.Err()` after FTS loop returns wrapped ctx error or driver error instead of silent partial; LIKE fallback `QueryContext` error mapped the same way; phase-1/2 `ExecContext`/`Commit` errors map to `bigmem save exec/commit: %w` when ctx done; `UpdateCtx` re-checks `SELECT id` under `s.mu.Lock` (direct `QueryRowContext`, never `GetCtx`, so no deadlock) and returns `not found` instead of resurrecting a concurrently deleted row. Redundant `if err == nil` guards kept intentionally after early error returns to hold the diff to insertions only.
+- `internal/bigmem/full.go` (+20/-4): focus-path `beforeRows`/`afterRows` `QueryContext` errors now `return nil, err` when ctx live (previously swallowed); `beforeRows.Err()`/`afterRows.Err()` rewritten to propagate non-ctx iteration errors and keep wrapped `ctx.Err()` mapping when cancelled.
+- `internal/sdd/session_guard.go` (+15): `tryMCPSave` checks `ctx.Err()` before `EnsureImplicitSession`, between the two legacy calls, and after `SessionEnd`, returning `session guard save: %w` when cancelled; legacy errors still returned verbatim when ctx live (scope kept, no new twins).
+- `ctx_test.go` untouched: existing cancelled-ctx/parity/fast-fail assertions hold (new branches trigger only on driver errors with live ctx, which tests do not inject).
+
+## Work Unit Evidence
+
+| Evidence | Value |
+|---|---|
+| Focused test command and exact result | `go test ./internal/bigmem/ ./internal/sdd/ ./internal/doctor/ -count=1` → ok (bigmem 9.3s, sdd 14.1s, doctor 1.6s) |
+| Runtime harness command and exact result | `go build ./...` → exit 0; `go vet ./internal/bigmem/ ./internal/sdd/` → clean; `gofmt -l` on 3 touched files → empty |
+| Rollback boundary | Revert `internal/bigmem/bigmem.go` + `internal/bigmem/full.go` + `internal/sdd/session_guard.go` (3 files, 80 changed lines, no schema/data/test change) |
+
+## Deviations from Design
+
+- UpdateCtx uses the budget-bounded minimum (existence re-check under write lock, tiny unlock→SaveCtx window remains) instead of the full single-lock re-read+save refactor, exactly as the task permits when the refactor exceeds budget; the check itself holds the write lock so no concurrent Delete interleaves during the guard, and the window is documented here.
+- `if err == nil` wrappers kept after new early error returns (redundant-but-harmless) to keep the correction insertions-only and reviewable; behavior is identical to unindented code.
+
+## Issues Found
+
+None. Out-of-scope items untouched per instructions (MCP Background pattern, WAL checkpoint placement, DeleteObservation legacy API).
+
+## Workload / PR Boundary
+
+- Mode: chained PR slice (auto-chain, stacked-to-main) — correction on top of PR1→PR2→PR3 squash db70332e
+- Current work unit: RDD-correction-ctx-gaps
+- Boundary: starts at SearchCtx topic-key query, ends at tryMCPSave ctx guards; no consumer/test/schema changes
+- Review budget impact: 80 changed lines (76 insertions, 4 deletions) — within max-lines 200 and review budget 200
+- Next: verify (11/11 tasks + 5/5 corrections complete)
+
+## Status
+
+11/11 tasks + 5/5 RDD corrections complete. Ready for verify. No commit per instructions.

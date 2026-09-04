@@ -234,11 +234,26 @@ func tryMCPSave(ctx context.Context, proj, sessionID, content string) (string, e
 	defer store.Close()
 	// Prefer SessionEnd when sessionID provided
 	if strings.TrimSpace(sessionID) != "" {
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("session guard save: %w", ctx.Err())
+		}
 		if err := store.EnsureImplicitSession(sessionID, proj); err != nil {
+			if ctx.Err() != nil {
+				return "", fmt.Errorf("session guard save: %w", ctx.Err())
+			}
 			return "", err
 		}
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("session guard save: %w", ctx.Err())
+		}
 		if _, err := store.SessionEnd(sessionID, content); err != nil {
+			if ctx.Err() != nil {
+				return "", fmt.Errorf("session guard save: %w", ctx.Err())
+			}
 			return "", err
+		}
+		if ctx.Err() != nil {
+			return "", fmt.Errorf("session guard save: %w", ctx.Err())
 		}
 		// Also persist as observation for verification via Search
 		obs := &bigmem.Observation{Title: "Session summary", Type: "session_summary", Content: content, Project: proj, SessionID: sessionID}
