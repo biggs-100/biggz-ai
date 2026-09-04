@@ -33,6 +33,22 @@ const (
 	stepInstallError               // failure
 )
 
+// Wizard steps (PR1 foundation): extended step enum mirroring the
+// internal/tui router.go stage order. Full Update/View dispatch per stage
+// lands in PR2/PR3; legacy 6-state flow above is unchanged.
+const (
+	stepWizWelcome installStep = iota + 7
+	stepWizDetection
+	stepWizAgents
+	stepWizPersona
+	stepWizPreset
+	stepWizDepTree
+	stepWizSkillPicker
+	stepWizReview
+	stepWizInstalling
+	stepWizComplete
+)
+
 // InstallModel handles the guided installation wizard.
 type InstallModel struct {
 	step       installStep
@@ -44,11 +60,298 @@ type InstallModel struct {
 	agent      string
 	installing InstallingModel
 	progressCh pipeline.ProgressChan
+	// Wizard state (PR1 foundation; consumed by PR2+ screens).
+	wizardStep     installStep
+	selectedAgents []string
+	persona        string
+	preset         string
+	selectedDepTree []string
+	selectedSkills []string
+	useLegacy      bool
+}
+
+// isLegacyInstall reports whether the lean 6-state flow is forced via
+// BIGGZ_LEGACY_INSTALL=1 (mirrors tui.LegacyInstall without an import cycle).
+func isLegacyInstall() bool {
+	return os.Getenv("BIGGZ_LEGACY_INSTALL") == "1"
 }
 
 // NewInstallModel creates the install screen.
+// The wizard (Welcome→Complete) is the default; BIGGZ_LEGACY_INSTALL=1
+// keeps the lean 6-state flow (Idle→Detect→Select→Review→Running→Done).
 func NewInstallModel() InstallModel {
-	return InstallModel{step: stepInstallIdle, selected: -1}
+	m := InstallModel{step: stepInstallIdle, selected: -1, wizardStep: stepWizWelcome, useLegacy: isLegacyInstall()}
+	if !m.useLegacy {
+		m.step = stepWizWelcome
+	}
+	return m
+}
+
+// isWizardStep reports whether s is one of the 10 wizard stages.
+func isWizardStep(s installStep) bool {
+	return s >= stepWizWelcome && s <= stepWizComplete
+}
+
+// wizardListLen returns the navigable row count for wizard stages.
+// DepTree is navigable only for the custom preset (read-only otherwise).
+func (m InstallModel) wizardListLen() int {
+	switch m.step {
+	case stepWizAgents:
+		return len(WizardAgentOptions)
+	case stepWizPersona:
+		return len(WizardPersonaOptions)
+	case stepWizPreset:
+		return len(WizardPresetOptions)
+	case stepWizDepTree:
+		if m.preset == "custom" {
+			return len(WizardDepTreeOptions)
+		}
+		return 0
+	case stepWizSkillPicker:
+		return len(WizardSkillOptions)
+	default:
+		return 0
+	}
+}
+
+// wizardOptionIndex returns the row index of name in opts, or 0.
+func wizardOptionIndex(opts []WizardOption, name string) int {
+	for i, o := range opts {
+		if o.Name == name {
+			return i
+		}
+	}
+	return 0
+}
+
+// wizardAdapter resolves the orchestrator adapter for the wizard Review
+// confirm: first selected agent matched case-insensitively by name,
+// else first detected adapter. Returns nil when nothing was detected
+// (keyboard traversal still advances; live progress events arrive on a
+// later confirm once detection succeeds).
+func (m InstallModel) wizardAdapter() plugin.AgentAdapter {
+	if len(m.selectedAgents) > 0 {
+		for _, a := range m.adapters {
+			for _, sel := range m.selectedAgents {
+				if strings.EqualFold(a.Name(), sel) {
+					return a
+				}
+			}
+		}
+	}
+	if len(m.adapters) > 0 {
+		return m.adapters[0]
+	}
+	return nil
+}
+
+// updateWizard handles keys for all wizard stages (Welcome→Complete).
+// enter confirms and advances; esc retreats with selections intact.
+// Review confirm arms the Installing model and streams the orchestrator
+// via runOrchestratorCmd + waitProgress (REQ-WIZ-006); Installing advances
+// to Complete on channel close (progressDoneMsg) or install result, and
+// stays with the error view on failure. RollbackOnFailure semantics live
+// in the pipeline; no pipeline API change.
+func (m InstallModel) updateWizard(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Progress pipeline for the Installing stage (task 3.4): forward
+	// ProgressEvent losslessly into InstallingModel and re-arm
+	// waitProgress; close (progressDoneMsg success) advances to Complete,
+	// failure surfaces the error view in place.
+	switch v := msg.(type) {
+	case pipeline.ProgressEvent:
+		if m.step == stepWizInstalling {
+			updated, _ := m.installing.Update(msg)
+			m.installing = updated.(InstallingModel)
+			if m.progressCh != nil {
+				return m, waitProgress(m.progressCh)
+			}
+		}
+		return m, nil
+	case progressDoneMsg:
+		if m.step == stepWizInstalling {
+			updated, _ := m.installing.Update(msg)
+			m.installing = updated.(InstallingModel)
+			if m.installing.Failed {
+				return m, nil
+			}
+			if m.installing.Done {
+				m.step = stepWizComplete
+				m.cursor = 0
+			}
+		}
+		return m, nil
+	case installResultMsg:
+		if m.step == stepWizInstalling {
+			if v.err != nil {
+				m.installing.Failed = true
+				m.installing.Err = v.err.Error()
+				return m, nil
+			}
+			m.result = v.result
+			m.installing.Done = true
+			if m.installing.Percent < 100 {
+				m.installing.Percent = 100
+			}
+			m.step = stepWizComplete
+			m.cursor = 0
+		}
+		return m, nil
+	}
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch keyMsg.String() {
+	case "enter":
+		switch m.step {
+		case stepWizWelcome:
+			m.step = stepWizDetection
+			m.adapters = m.detectAdapters()
+			m.cursor = 0
+		case stepWizDetection:
+			m.step = stepWizAgents
+			m.cursor = 0
+		case stepWizAgents:
+			m.step = stepWizPersona
+			m.cursor = wizardOptionIndex(WizardPersonaOptions, m.persona)
+		case stepWizPersona:
+			if m.cursor >= 0 && m.cursor < len(WizardPersonaOptions) {
+				m.persona = WizardPersonaOptions[m.cursor].Name
+			}
+			m.step = stepWizPreset
+			m.cursor = wizardOptionIndex(WizardPresetOptions, m.preset)
+		case stepWizPreset:
+			if m.cursor >= 0 && m.cursor < len(WizardPresetOptions) {
+				m.preset = WizardPresetOptions[m.cursor].Name
+			}
+			m.step = stepWizDepTree
+			m.cursor = 0
+			if m.preset == "custom" && len(m.selectedDepTree) == 0 {
+				m.selectedDepTree = defaultWizardDepTree()
+			}
+		case stepWizDepTree:
+			m.step = stepWizSkillPicker
+			m.cursor = 0
+		case stepWizSkillPicker:
+			m.step = stepWizReview
+			m.cursor = 0
+		case stepWizReview:
+			m.step = stepWizInstalling
+			m.cursor = 0
+			m.installing = NewInstallingModel()
+			m.progressCh = make(pipeline.ProgressChan, 32)
+			if adapter := m.wizardAdapter(); adapter != nil {
+				return m, tea.Batch(runOrchestratorCmd(adapter, m.progressCh), waitProgress(m.progressCh))
+			}
+			return m, waitProgress(m.progressCh)
+		case stepWizInstalling:
+			// Progress wiring (task 3.4) lands in PR5; keyboard
+			// traversal reaches Complete on confirm until then.
+			m.step = stepWizComplete
+			m.cursor = 0
+		}
+		return m, nil
+	case " ":
+		if m.step == stepWizAgents && m.cursor >= 0 && m.cursor < len(WizardAgentOptions) {
+			m.selectedAgents = toggleWizardAgent(m.selectedAgents, WizardAgentOptions[m.cursor])
+		}
+		if m.step == stepWizDepTree && m.preset == "custom" && m.cursor >= 0 && m.cursor < len(WizardDepTreeOptions) {
+			m.selectedDepTree = toggleWizardDepTree(m.selectedDepTree, WizardDepTreeOptions[m.cursor].Name)
+		}
+		if m.step == stepWizSkillPicker && m.cursor >= 0 && m.cursor < len(WizardSkillOptions) {
+			m.selectedSkills = toggleWizardSkill(m.selectedSkills, WizardSkillOptions[m.cursor])
+		}
+		return m, nil
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+		return m, nil
+	case "down", "j":
+		if m.cursor < m.wizardListLen()-1 {
+			m.cursor++
+		}
+		return m, nil
+	case "esc":
+		switch m.step {
+		case stepWizDetection:
+			m.step = stepWizWelcome
+		case stepWizAgents:
+			m.step = stepWizDetection
+		case stepWizPersona:
+			m.step = stepWizAgents
+			m.cursor = 0
+		case stepWizPreset:
+			m.step = stepWizPersona
+			m.cursor = wizardOptionIndex(WizardPersonaOptions, m.persona)
+		case stepWizDepTree:
+			m.step = stepWizPreset
+			m.cursor = wizardOptionIndex(WizardPresetOptions, m.preset)
+		case stepWizSkillPicker:
+			m.step = stepWizDepTree
+			m.cursor = 0
+		case stepWizReview:
+			m.step = stepWizSkillPicker
+			m.cursor = 0
+		case stepWizInstalling:
+			m.step = stepWizReview
+			m.cursor = 0
+		case stepWizComplete:
+			m.step = stepWizInstalling
+			m.cursor = 0
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+// wizardView dispatches wizard stages to their pure Render funcs.
+func (m InstallModel) wizardView() string {
+	switch m.step {
+	case stepWizWelcome:
+		return RenderWizardWelcome()
+	case stepWizDetection:
+		names := make([]string, 0, len(m.adapters))
+		for _, a := range m.adapters {
+			names = append(names, a.Name())
+		}
+		return RenderWizardDetection(names)
+	case stepWizAgents:
+		return RenderWizardAgents(m.cursor, m.selectedAgents)
+	case stepWizPersona:
+		return RenderWizardPersona(m.cursor, m.persona)
+	case stepWizPreset:
+		return RenderWizardPreset(m.cursor, m.preset)
+	case stepWizDepTree:
+		return RenderWizardDepTree(m.cursor, m.preset, m.selectedDepTree)
+	case stepWizSkillPicker:
+		return RenderWizardSkills(m.cursor, m.selectedSkills)
+	case stepWizReview:
+		return RenderWizardReview(m.selectedAgents, m.persona, m.preset, m.selectedSkills)
+	case stepWizInstalling:
+		view := m.installing.View()
+		if !isInstallingSyncSupported() {
+			view = strings.ReplaceAll(view, "\x1b[?2026h", "")
+			view = strings.ReplaceAll(view, "\x1b[?2026l", "")
+		}
+		if os.Getenv("TERM") == "dumb" || os.Getenv("BIGGZ_PRETTY") == "0" {
+			view = ansi.Strip(view)
+			return view
+		}
+		return view
+	case stepWizComplete:
+		skills, commands, merged := 0, 0, false
+		agent := m.agent
+		if len(m.selectedAgents) > 0 {
+			agent = m.selectedAgents[0]
+		}
+		if m.result != nil {
+			skills, commands, merged = m.result.SkillsDeployed, m.result.CommandsWritten, m.result.ConfigMerged
+		}
+		return RenderWizardComplete(agent, skills, commands, merged)
+	default:
+		return wizardGuardView(styles.AppStyle.Render(styles.Help.Render("Next wizard stages land in PR3 · esc back")))
+	}
 }
 
 func (m InstallModel) Init() tea.Cmd { return nil }
@@ -128,6 +431,9 @@ func runOrchestratorCmd(adapter plugin.AgentAdapter, ch pipeline.ProgressChan) t
 
 // Update handles input.
 func (m InstallModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if !m.useLegacy && isWizardStep(m.step) {
+		return m.updateWizard(msg)
+	}
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -251,6 +557,9 @@ func (m InstallModel) detectAdapters() []plugin.AgentAdapter {
 
 // View renders the install screen.
 func (m InstallModel) View() string {
+	if !m.useLegacy && isWizardStep(m.step) {
+		return m.wizardView()
+	}
 	var b strings.Builder
 	b.WriteString(styles.Title.Render("Install biggz-ai"))
 	b.WriteString("\n\n")

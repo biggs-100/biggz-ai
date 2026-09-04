@@ -1,0 +1,10 @@
+name: tui-installer-full-parity
+created: 2026-09-03T00:00:00Z
+phase: propose
+status: active
+description: "Full-paridad TUI instaladora visual como gentle-ai, descartando su banner"
+preflight:
+  executionMode: interactive
+  artifactStore: openspec
+  chainStrategy: auto-chain
+  reviewBudgetLines: 400
