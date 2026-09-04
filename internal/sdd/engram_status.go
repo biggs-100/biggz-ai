@@ -3,18 +3,18 @@
 // Alias invariant: engram == bigmem — both topic prefixes refer to the same
 // BigMem store; drift that renames one without the other must be detected.
 
-//
 // This file ports gentle-ai's resolveEngramStatus / collectEngramChanges /
 // engramObservation machinery as a minimal native derivation that makes
 // StatusWithOptions authoritative for both stores without breaking
 // filesystem-only users.
 //
 // Design notes (intentional minimal wire):
-//   - BigMem observations are read via direct SQLite on the BigMem store
-//     file (modernc.org/sqlite), topic_key LIKE 'sdd/%', mirroring
-//     gentle's sdd/{change}/tasks etc convention. Using SQLite avoids an
-//     import cycle if internal/bigmem ever imports internal/sdd and keeps
-//     the derivation testable with t.TempDir() stores.
+//   - BigMem observations are read via the Store *Ctx API
+//     (ListByTopicPrefixCtx key-only sweep + GetCtx hydration), topic_key
+//     LIKE 'sdd/%', mirroring gentle's sdd/{change}/tasks etc convention.
+//     Filtering (project/scope/deleted_at) happens in SQL; content hydrates
+//     only for visible rows. Caller ctx flows through with a 5s default
+//     timeout and failures surface as wrapped errors.
 //   - When the store file is absent or has no sdd/ observations, the
 //     collector returns (nil,nil,nil) and StatusWithOptions falls back to
 //     filesystem only — no breakage for filesystem-only users.
@@ -34,9 +34,10 @@ package sdd
 
 import (
 	"cmp"
-	"database/sql"
+	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,7 +48,6 @@ import (
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
 	"github.com/biggs-100/biggz-ai/internal/project"
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
-	_ "modernc.org/sqlite"
 )
 
 // bigmemStoreRootOverride allows tests to inject a temporary BigMem store
@@ -66,14 +66,6 @@ func SetBigMemStoreRootForTest(root string) { bigmemStoreRootOverride = root }
 // verify-report plus archive-report (closure signal) and state/explore
 // (ignored for existence). It mirrors gentle-ai's engramTitlePattern.
 var bigmemTitlePattern = regexp.MustCompile(`^sdd/([^/]+)/(proposal|spec|design|tasks|apply-progress|verify-report|archive-report|state|explore)$`)
-
-// bigmemDBPath returns the bigmem.db file path for a store root using
-// the unified bigmem.ResolveDBPath helper. Empty root means the default
-// ~/.biggz/bigmem. This ensures Store.Open and engram_status share ghost
-// WAL/SHM handling, checkpoint-before-copy, and max(updated_at) merge.
-func bigmemDBPath(root string) (string, error) {
-	return bigmem.ResolveDBPath(root)
-}
 
 // inferBigMemProject delegates to internal/project.DetectProjectFull (5-case detection).
 // It preserves fallback behavior: when detection is ambiguous or fails, it falls back to normalized basename.
@@ -361,55 +353,86 @@ func collectBigMemChanges(workspaceRoot string) ([]ChangeStatus, error) {
 // collectBigMemChangesWithArchive is the hybrid authority used by
 // StatusWithOptions. It returns both active and archived BigMem changes,
 // reconstructing ChangeStatus via deriveBigMemChangeStatus. When the BigMem
-// DB is absent or has no sdd/ observations, it returns (nil,nil,nil) —
-// caller (applyStoreRouting) will fallback to filesystem when BigMem has
-// no observations (fresh clone), mirroring hybrid len>0 guard.
+// DB is absent or has no sdd/ observations, it returns (nil,nil,nil) with an
+// explicit logged warning — caller (applyStoreRouting) will fallback to
+// filesystem when BigMem has no observations (fresh clone), mirroring
+// hybrid len>0 guard. Query failures are logged and returned as wrapped
+// errors, never silent (nil,nil,nil).
 func collectBigMemChangesWithArchive(workspaceRoot string, includeInstructions bool) (active []ChangeStatus, archived []ChangeStatus, err error) {
+	return collectBigMemChangesWithArchiveCtx(context.Background(), workspaceRoot, includeInstructions)
+}
+
+// collectBigMemChangesWithArchiveCtx derives BigMem status via the Store *Ctx
+// API: key-only sweep (ListByTopicPrefixCtx, SQL-side project/scope/
+// deleted_at/topic_key filtering) followed by GetCtx hydration of visible
+// rows only. Caller ctx flows through with a 5s default timeout.
+func collectBigMemChangesWithArchiveCtx(ctx context.Context, workspaceRoot string, includeInstructions bool) (active []ChangeStatus, archived []ChangeStatus, err error) {
 	if declaredArtifactStore(workspaceRoot) == "" {
 		return nil, nil, nil
 	}
-	db, err := openBigMemDB()
-	if err != nil || db == nil {
-		return nil, nil, nil
+	ctx, cancel := bigmem.WithTimeout(ctx)
+	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return nil, nil, fmt.Errorf("bigmem sdd-status collect: %w", err)
 	}
-	defer db.Close()
-
-	rows, err := queryBigMemRows(db)
+	dbPath, err := bigmem.ResolveDBPath(bigmemStoreRootOverride)
 	if err != nil {
+		log.Printf("[sdd-status] bigmem resolve db path: %v", err)
+		return nil, nil, fmt.Errorf("bigmem sdd-status resolve: %w", err)
+	}
+	if _, err := os.Stat(dbPath); err != nil {
+		log.Printf("[sdd-status] bigmem store absent at %s, falling back to filesystem-only", dbPath)
 		return nil, nil, nil
 	}
-	defer rows.Close()
+	store, err := bigmem.Open(bigmemStoreRootOverride)
+	if err != nil {
+		log.Printf("[sdd-status] bigmem open: %v", err)
+		return nil, nil, fmt.Errorf("bigmem sdd-status open: %w", err)
+	}
+	defer store.Close()
 
 	inferredProject := inferredBigMemProject(workspaceRoot)
-	byChange, archivedSet, seenSet := scanBigMemTopics(rows, inferredProject)
-	if err := rows.Err(); err != nil {
-		return nil, nil, nil
+	keys, err := store.ListByTopicPrefixCtx(ctx, "sdd/", inferredProject, true)
+	if err != nil {
+		log.Printf("[sdd-status] bigmem list topics: %v", err)
+		return nil, nil, fmt.Errorf("bigmem sdd-status list-topics: %w", err)
+	}
+	// Go-side: title-pattern parse on keys first; hydrate content only for
+	// rows surviving the pattern (visible-only hydration).
+	type pendingTopic struct {
+		change string
+		suffix string
+		id     string
+	}
+	var want []pendingTopic
+	for _, k := range keys {
+		changeName, suffix, ok := parseTopicKey(k.TopicKey)
+		if !ok {
+			continue
+		}
+		want = append(want, pendingTopic{change: changeName, suffix: suffix, id: k.ID})
+	}
+	byChange := map[string]map[string]string{}
+	archivedSet := map[string]bool{}
+	seenSet := map[string]bool{}
+	for _, p := range want {
+		if err := ctx.Err(); err != nil {
+			return nil, nil, fmt.Errorf("bigmem sdd-status collect: %w", err)
+		}
+		obs, err := store.GetCtx(ctx, p.id)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, nil, fmt.Errorf("bigmem sdd-status collect: %w", ctx.Err())
+			}
+			log.Printf("[sdd-status] bigmem get %s: %v", p.id, err)
+			continue
+		}
+		mergeTopic(byChange, archivedSet, seenSet, p.change, p.suffix, obs.Content)
 	}
 	allNames := collectBigMemNames(byChange, archivedSet, seenSet)
 	active, archived = collectChanges(allNames, byChange, archivedSet, seenSet, workspaceRoot, includeInstructions)
 	sortChanges(active, archived)
 	return active, archived, nil
-}
-
-// openBigMemDB opens the BigMem DB if available, handling ghost WAL/SHM and missing file.
-func openBigMemDB() (*sql.DB, error) {
-	dbPath, err := bigmemDBPath(bigmemStoreRootOverride)
-	if err != nil {
-		return nil, nil
-	}
-	if _, err := os.Stat(dbPath); err != nil {
-		return nil, nil
-	}
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		return nil, nil
-	}
-	return db, nil
-}
-
-// queryBigMemRows queries all sdd observations from the BigMem DB.
-func queryBigMemRows(db *sql.DB) (*sql.Rows, error) {
-	return db.Query(`SELECT topic_key, content, project, scope FROM observations WHERE topic_key LIKE 'sdd/%' AND deleted_at IS NULL`)
 }
 
 // inferredBigMemProject returns the project filter for BigMem queries.
@@ -420,58 +443,9 @@ func inferredBigMemProject(workspaceRoot string) string {
 	return inferBigMemProject(workspaceRoot)
 }
 
-// scanBigMemTopics scans rows and builds the topic maps using helper predicates.
-func scanBigMemTopics(rows *sql.Rows, inferredProject string) (map[string]map[string]string, map[string]bool, map[string]bool) {
-	byChange := map[string]map[string]string{}
-	archivedSet := map[string]bool{}
-	seenSet := map[string]bool{}
-	for rows.Next() {
-		var topicKey, content, project, scope sql.NullString
-		if err := rows.Scan(&topicKey, &content, &project, &scope); err != nil {
-			continue
-		}
-		if isPersonalScope(scope) {
-			continue
-		}
-		if inferredProject != "" && isProjectMismatch(project, inferredProject) {
-			continue
-		}
-		changeName, suffix, ok := parseTopicKey(topicKey)
-		if !ok {
-			continue
-		}
-		c := ""
-		if content.Valid {
-			c = content.String
-		}
-		mergeTopic(byChange, archivedSet, seenSet, changeName, suffix, c)
-	}
-	return byChange, archivedSet, seenSet
-}
-
-// isPersonalScope reports whether the scope is personal.
-func isPersonalScope(scope sql.NullString) bool {
-	if !scope.Valid {
-		return false
-	}
-	return strings.EqualFold(strings.TrimSpace(scope.String), "personal")
-}
-
-// isProjectMismatch reports whether the observation project mismatches the inferred project.
-func isProjectMismatch(project sql.NullString, inferredProject string) bool {
-	obsProject := ""
-	if project.Valid {
-		obsProject = strings.TrimSpace(project.String)
-	}
-	return !strings.EqualFold(obsProject, inferredProject)
-}
-
 // parseTopicKey parses a topic_key into changeName and suffix.
-func parseTopicKey(topicKey sql.NullString) (string, string, bool) {
-	topic := ""
-	if topicKey.Valid {
-		topic = strings.TrimSpace(topicKey.String)
-	}
+func parseTopicKey(topic string) (string, string, bool) {
+	topic = strings.TrimSpace(topic)
 	matches := bigmemTitlePattern.FindStringSubmatch(topic)
 	if len(matches) != 3 {
 		return "", "", false

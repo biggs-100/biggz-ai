@@ -1,6 +1,8 @@
 package sdd
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -354,5 +356,231 @@ func TestStatusWithOptions_FilesystemOnlyWhenBigMemEmpty(t *testing.T) {
 	}
 	if len(active) != 1 || active[0].Name != "only-fs" {
 		t.Errorf("expected only-fs, got %v", active)
+	}
+}
+
+// seedBigMemRow saves a single observation with explicit project/scope and
+// returns its ID. It opens the store per call; batch seeders below reuse one
+// handle for the 100-row hydration test.
+func seedBigMemRow(t *testing.T, storeRoot, topic, project, scope, content string) string {
+	t.Helper()
+	store, err := bigmem.Open(storeRoot)
+	if err != nil {
+		t.Fatalf("open bigmem: %v", err)
+	}
+	defer store.Close()
+	obs := &bigmem.Observation{
+		Title:    topic,
+		TopicKey: topic,
+		Type:     "sdd",
+		Content:  content,
+		Project:  project,
+		Scope:    scope,
+	}
+	if err := store.Save(obs); err != nil {
+		t.Fatalf("save %s: %v", topic, err)
+	}
+	return obs.ID
+}
+
+func mkStatusWorkspace(t *testing.T) (workspace, openspecRoot string) {
+	t.Helper()
+	workspace = t.TempDir()
+	openspecRoot = filepath.Join(workspace, "openspec")
+	if err := os.MkdirAll(filepath.Join(openspecRoot, "changes", "archive"), 0755); err != nil {
+		t.Fatalf("mkdir changes: %v", err)
+	}
+	return workspace, openspecRoot
+}
+
+func TestCollectBigMemChanges_PersonalExcluded(t *testing.T) {
+	workspace, _ := mkStatusWorkspace(t)
+	storeRoot := t.TempDir()
+	SetBigMemStoreRootForTest(storeRoot)
+	defer SetBigMemStoreRootForTest("")
+
+	seedBigMemRow(t, storeRoot, "sdd/pub-change/proposal", "unfiltered-project", "project", "# Proposal\n")
+	seedBigMemRow(t, storeRoot, "sdd/priv-change/proposal", "unfiltered-project", "personal", "# Proposal\n")
+	seedBigMemRow(t, storeRoot, "sdd/priv-change2/proposal", "unfiltered-project", "Personal", "# Proposal\n")
+
+	active, _, err := collectBigMemChangesWithArchive(workspace, false)
+	if err != nil {
+		t.Fatalf("collectBigMemChangesWithArchive: %v", err)
+	}
+	if len(active) != 1 || active[0].Name != "pub-change" {
+		names := []string{}
+		for _, cs := range active {
+			names = append(names, cs.Name)
+		}
+		t.Fatalf("expected only pub-change, got %v", names)
+	}
+}
+
+func TestCollectBigMemChanges_ProjectOverrideDisablesFilter(t *testing.T) {
+	workspace, _ := mkStatusWorkspace(t)
+	storeRoot := t.TempDir()
+	SetBigMemStoreRootForTest(storeRoot)
+	defer SetBigMemStoreRootForTest("")
+
+	// Arbitrary projects stay visible while the test override is set.
+	seedBigMemRow(t, storeRoot, "sdd/foreign-change/proposal", "some-other-project", "project", "# Proposal\n")
+	seedBigMemRow(t, storeRoot, "sdd/local-change/proposal", "unfiltered-project", "project", "# Proposal\n")
+
+	active, _, err := collectBigMemChangesWithArchive(workspace, false)
+	if err != nil {
+		t.Fatalf("collectBigMemChangesWithArchive: %v", err)
+	}
+	names := map[string]bool{}
+	for _, cs := range active {
+		names[cs.Name] = true
+	}
+	if !names["foreign-change"] || !names["local-change"] {
+		t.Errorf("override must disable project filter, got %v", names)
+	}
+	// Production filtering (non-override) is enforced by the
+	// ListByTopicPrefixCtx SQL predicate; see TestListByTopicPrefix_ProjectMatchCaseInsensitive.
+}
+
+func TestCollectBigMemChanges_VisibleOnlyHydration(t *testing.T) {
+	workspace, _ := mkStatusWorkspace(t)
+	storeRoot := t.TempDir()
+	SetBigMemStoreRootForTest(storeRoot)
+	defer SetBigMemStoreRootForTest("")
+
+	store, err := bigmem.Open(storeRoot)
+	if err != nil {
+		t.Fatalf("open bigmem: %v", err)
+	}
+	save := func(topic, project, scope, content string) string {
+		t.Helper()
+		obs := &bigmem.Observation{Title: topic, TopicKey: topic, Type: "sdd", Content: content, Project: project, Scope: scope}
+		if err := store.Save(obs); err != nil {
+			t.Fatalf("save %s: %v", topic, err)
+		}
+		return obs.ID
+	}
+	// 2 visible changes with full planning content.
+	visibleTasks := "- [x] T1\n- [x] T2\n- [ ] T3\n"
+	save("sdd/vis-one/proposal", "unfiltered-project", "project", "# Proposal\n")
+	save("sdd/vis-one/spec", "unfiltered-project", "project", "### Requirement: R1\n#### Scenario: S1\n")
+	save("sdd/vis-one/design", "unfiltered-project", "project", "# Design\n")
+	save("sdd/vis-one/tasks", "unfiltered-project", "project", visibleTasks)
+	save("sdd/vis-two/proposal", "unfiltered-project", "project", "# Proposal\n")
+	save("sdd/vis-two/tasks", "unfiltered-project", "project", "- [x] Only\n")
+	// 98 noise rows: other prefixes, personal scope, non-pattern topics, deleted.
+	var deletedIDs []string
+	for i := 0; i < 30; i++ {
+		save("other/noise/proposal", "unfiltered-project", "project", "# noise\n")
+	}
+	for i := 0; i < 30; i++ {
+		save("sdd/hidden/proposal", "unfiltered-project", "personal", "# hidden\n")
+	}
+	for i := 0; i < 20; i++ {
+		save("sdd/freeform-note", "unfiltered-project", "project", "# not an artifact topic\n")
+	}
+	for i := 0; i < 12; i++ {
+		deletedIDs = append(deletedIDs, save("sdd/doomed/proposal", "unfiltered-project", "project", "# doomed\n"))
+	}
+	store.Close()
+	// Soft-delete outside the write handle so the rows exist but are filtered.
+	delStore, err := bigmem.Open(storeRoot)
+	if err != nil {
+		t.Fatalf("reopen bigmem: %v", err)
+	}
+	for _, id := range deletedIDs {
+		if err := delStore.Delete(id); err != nil {
+			t.Fatalf("delete %s: %v", id, err)
+		}
+	}
+	delStore.Close()
+
+	active, archived, err := collectBigMemChangesWithArchive(workspace, false)
+	if err != nil {
+		t.Fatalf("collectBigMemChangesWithArchive: %v", err)
+	}
+	if len(archived) != 0 {
+		t.Errorf("expected 0 archived, got %d", len(archived))
+	}
+	if len(active) != 2 {
+		names := []string{}
+		for _, cs := range active {
+			names = append(names, cs.Name)
+		}
+		t.Fatalf("expected exactly 2 visible changes, got %v", names)
+	}
+	byName := map[string]ChangeStatus{}
+	for _, cs := range active {
+		byName[cs.Name] = cs
+	}
+	one, ok := byName["vis-one"]
+	if !ok {
+		t.Fatalf("vis-one missing: %v", byName)
+	}
+	if one.TasksTotal != 3 || one.TasksDone != 2 {
+		t.Errorf("vis-one tasks = %d/%d, want 2/3 (content must hydrate)", one.TasksDone, one.TasksTotal)
+	}
+	if one.Artifacts["proposal"] != ArtifactDone || one.Artifacts["specs"] != ArtifactDone ||
+		one.Artifacts["design"] != ArtifactDone || one.Artifacts["tasks"] != ArtifactDone {
+		t.Errorf("vis-one artifacts must match full-hydration states, got %v", one.Artifacts)
+	}
+	two, ok := byName["vis-two"]
+	if !ok {
+		t.Fatalf("vis-two missing: %v", byName)
+	}
+	if two.TasksTotal != 1 || two.TasksDone != 1 {
+		t.Errorf("vis-two tasks = %d/%d, want 1/1", two.TasksDone, two.TasksTotal)
+	}
+}
+
+func TestCollectBigMemChanges_CorruptDBSurfacesError(t *testing.T) {
+	workspace, _ := mkStatusWorkspace(t)
+	storeRoot := t.TempDir()
+	dbPath, err := bigmem.ResolveDBPath(storeRoot)
+	if err != nil {
+		t.Fatalf("resolve db path: %v", err)
+	}
+	if err := os.WriteFile(dbPath, []byte("not a sqlite database, corrupt"), 0644); err != nil {
+		t.Fatalf("write corrupt db: %v", err)
+	}
+	SetBigMemStoreRootForTest(storeRoot)
+	defer SetBigMemStoreRootForTest("")
+
+	active, archived, err := collectBigMemChangesWithArchive(workspace, false)
+	if err == nil {
+		t.Fatalf("expected wrapped error for corrupt DB, got nil (active=%d archived=%d)", len(active), len(archived))
+	}
+	if !strings.Contains(err.Error(), "bigmem sdd-status") {
+		t.Errorf("error must name the operation, got: %v", err)
+	}
+}
+
+func TestCollectBigMemChanges_CancelledCtxFailsFast(t *testing.T) {
+	workspace, _ := mkStatusWorkspace(t)
+	storeRoot := t.TempDir()
+	SetBigMemStoreRootForTest(storeRoot)
+	defer SetBigMemStoreRootForTest("")
+	seedBigMemRow(t, storeRoot, "sdd/x/proposal", "unfiltered-project", "project", "# P\n")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := collectBigMemChangesWithArchiveCtx(ctx, workspace, false)
+	if err == nil {
+		t.Fatal("expected wrapped ctx error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error must wrap Canceled/DeadlineExceeded, got: %v", err)
+	}
+}
+
+func TestStatusCtxCancel(t *testing.T) {
+	_, openspecRoot := mkStatusWorkspace(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err := StatusWithOptionsCtx(ctx, openspecRoot, StatusOptions{})
+	if err == nil {
+		t.Fatal("expected wrapped ctx error, got nil")
+	}
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("error must wrap Canceled/DeadlineExceeded, got: %v", err)
 	}
 }

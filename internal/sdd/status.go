@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/bigmem"
 	"github.com/biggs-100/biggz-ai/internal/pathquote"
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
@@ -211,27 +212,50 @@ func Status(openspecRoot string) (active []ChangeStatus, archived []ChangeStatus
 	return StatusWithOptions(openspecRoot, StatusOptions{})
 }
 
+// StatusCtx is the ctx-aware Status: caller ctx flows through the BigMem
+// collector and the session guard with a 5s default timeout.
+func StatusCtx(ctx context.Context, openspecRoot string) (active []ChangeStatus, archived []ChangeStatus, err error) {
+	return StatusWithOptionsCtx(ctx, openspecRoot, StatusOptions{})
+}
+
 // StatusWithOptions scans like Status, deriving the structured status
 // (artifacts, taskProgress, dependencies, applyState, nextRecommended,
 // blockedReasons) for every change. IncludeInstructions additionally renders
 // the phaseInstructions block on each derived ChangeStatus.
 func StatusWithOptions(openspecRoot string, opts StatusOptions) (active []ChangeStatus, archived []ChangeStatus, err error) {
+	return StatusWithOptionsCtx(context.Background(), openspecRoot, opts)
+}
+
+// StatusWithOptionsCtx is the ctx-aware StatusWithOptions. It fails fast
+// with a wrapped ctx error when the caller ctx is already cancelled and
+// otherwise bounds Store work with bigmem.WithTimeout (5s default, caller
+// deadline wins).
+func StatusWithOptionsCtx(ctx context.Context, openspecRoot string, opts StatusOptions) (active []ChangeStatus, archived []ChangeStatus, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, fmt.Errorf("sdd-status: %w", err)
+	}
+	ctx, cancel := bigmem.WithTimeout(ctx)
+	defer cancel()
 	workspaceRoot := filepath.Dir(openspecRoot)
 	changesDir := filepath.Join(openspecRoot, "changes")
 	archiveDir := filepath.Join(changesDir, "archive")
 
-	active, err = collectActiveChanges(changesDir, workspaceRoot, opts.IncludeInstructions)
+	active, err = collectActiveChangesCtx(ctx, changesDir, workspaceRoot, opts.IncludeInstructions)
 	if err != nil {
 		return nil, nil, err
 	}
-	archived, err = collectArchivedChanges(archiveDir, workspaceRoot, opts.IncludeInstructions)
+	archived, err = collectArchivedChangesCtx(ctx, archiveDir, workspaceRoot, opts.IncludeInstructions)
 	if err != nil {
 		return active, nil, err
 	}
-	return applyStoreRouting(active, archived, workspaceRoot, opts.IncludeInstructions)
+	return applyStoreRoutingCtx(ctx, active, archived, workspaceRoot, opts.IncludeInstructions)
 }
 
 func collectActiveChanges(changesDir, workspaceRoot string, includeInstructions bool) ([]ChangeStatus, error) {
+	return collectActiveChangesCtx(context.Background(), changesDir, workspaceRoot, includeInstructions)
+}
+
+func collectActiveChangesCtx(ctx context.Context, changesDir, workspaceRoot string, includeInstructions bool) ([]ChangeStatus, error) {
 	entries, err := os.ReadDir(changesDir)
 	if err != nil {
 		return nil, fmt.Errorf("read changes dir: %w", err)
@@ -241,7 +265,7 @@ func collectActiveChanges(changesDir, workspaceRoot string, includeInstructions 
 		if !entry.IsDir() || entry.Name() == "archive" {
 			continue
 		}
-		cs, err := readChange(filepath.Join(changesDir, entry.Name()), entry.Name(), false, workspaceRoot, includeInstructions)
+		cs, err := readChangeCtx(ctx, filepath.Join(changesDir, entry.Name()), entry.Name(), false, workspaceRoot, includeInstructions)
 		if err != nil {
 			continue
 		}
@@ -251,6 +275,10 @@ func collectActiveChanges(changesDir, workspaceRoot string, includeInstructions 
 }
 
 func collectArchivedChanges(archiveDir, workspaceRoot string, includeInstructions bool) ([]ChangeStatus, error) {
+	return collectArchivedChangesCtx(context.Background(), archiveDir, workspaceRoot, includeInstructions)
+}
+
+func collectArchivedChangesCtx(ctx context.Context, archiveDir, workspaceRoot string, includeInstructions bool) ([]ChangeStatus, error) {
 	entries, err := os.ReadDir(archiveDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -264,7 +292,7 @@ func collectArchivedChanges(archiveDir, workspaceRoot string, includeInstruction
 		if !entry.IsDir() {
 			continue
 		}
-		cs, err := readChange(filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot, includeInstructions)
+		cs, err := readChangeCtx(ctx, filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot, includeInstructions)
 		if err != nil {
 			continue
 		}
@@ -274,28 +302,33 @@ func collectArchivedChanges(archiveDir, workspaceRoot string, includeInstruction
 }
 
 func applyStoreRouting(active, archived []ChangeStatus, workspaceRoot string, includeInstructions bool) ([]ChangeStatus, []ChangeStatus, error) {
+	return applyStoreRoutingCtx(context.Background(), active, archived, workspaceRoot, includeInstructions)
+}
+
+func applyStoreRoutingCtx(ctx context.Context, active, archived []ChangeStatus, workspaceRoot string, includeInstructions bool) ([]ChangeStatus, []ChangeStatus, error) {
 	store := declaredArtifactStore(workspaceRoot)
 	if store == "" {
 		clearArtifactStoreFields(active, archived)
 		return active, archived, nil
 	}
 	if IsEngramStore(store) {
-		if memActive, memArchived, err := collectBigMemChangesWithArchive(workspaceRoot, includeInstructions); err == nil {
-			if len(memActive)+len(memArchived) == 0 {
-				// fallback to filesystem when BigMem empty (fresh clone), like hybrid
-				// When store is engram, initial active/archived were derived with BigMem paths
-				// and may be empty due to derivation failure (bigmem: paths unreadable).
-				// Re-collect filesystem changes with openspec store for correct fallback.
-				if fsActive, fsArchived, err := collectFilesystemChanges(workspaceRoot, includeInstructions); err == nil {
-					return fsActive, fsArchived, nil
-				}
-				return active, archived, nil
-			}
-			return memActive, memArchived, nil
+		memActive, memArchived, err := collectBigMemChangesWithArchiveCtx(ctx, workspaceRoot, includeInstructions)
+		if err != nil {
+			return nil, nil, err
 		}
-		return nil, nil, nil
+		if len(memActive)+len(memArchived) == 0 {
+			// fallback to filesystem when BigMem empty (fresh clone), like hybrid
+			// When store is engram, initial active/archived were derived with BigMem paths
+			// and may be empty due to derivation failure (bigmem: paths unreadable).
+			// Re-collect filesystem changes with openspec store for correct fallback.
+			if fsActive, fsArchived, err := collectFilesystemChangesCtx(ctx, workspaceRoot, includeInstructions); err == nil {
+				return fsActive, fsArchived, nil
+			}
+			return active, archived, nil
+		}
+		return memActive, memArchived, nil
 	}
-	if memActive, memArchived, err := collectBigMemChangesWithArchive(workspaceRoot, includeInstructions); err == nil && len(memActive)+len(memArchived) > 0 {
+	if memActive, memArchived, err := collectBigMemChangesWithArchiveCtx(ctx, workspaceRoot, includeInstructions); err == nil && len(memActive)+len(memArchived) > 0 {
 		active, archived = mergeFilesystemAndBigMem(active, archived, memActive, memArchived)
 	}
 	return active, archived, nil
@@ -320,13 +353,17 @@ func clearArtifactStoreFields(active, archived []ChangeStatus) {
 // may be empty due to derivation failure (os.ReadFile on bigmem: path). This
 // helper forces ArtifactStoreOpenSpec so filesystem files are correctly read.
 func collectFilesystemChanges(workspaceRoot string, includeInstructions bool) ([]ChangeStatus, []ChangeStatus, error) {
+	return collectFilesystemChangesCtx(context.Background(), workspaceRoot, includeInstructions)
+}
+
+func collectFilesystemChangesCtx(ctx context.Context, workspaceRoot string, includeInstructions bool) ([]ChangeStatus, []ChangeStatus, error) {
 	changesDir := filepath.Join(workspaceRoot, "openspec", "changes")
 	archiveDir := filepath.Join(changesDir, "archive")
-	active, err := collectActiveChangesForcedStore(changesDir, workspaceRoot, includeInstructions, ArtifactStoreOpenSpec)
+	active, err := collectActiveChangesForcedStoreCtx(ctx, changesDir, workspaceRoot, includeInstructions, ArtifactStoreOpenSpec)
 	if err != nil {
 		return nil, nil, err
 	}
-	archived, err := collectArchivedChangesForcedStore(archiveDir, workspaceRoot, includeInstructions, ArtifactStoreOpenSpec)
+	archived, err := collectArchivedChangesForcedStoreCtx(ctx, archiveDir, workspaceRoot, includeInstructions, ArtifactStoreOpenSpec)
 	if err != nil {
 		return active, nil, err
 	}
@@ -334,6 +371,10 @@ func collectFilesystemChanges(workspaceRoot string, includeInstructions bool) ([
 }
 
 func collectActiveChangesForcedStore(changesDir, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) ([]ChangeStatus, error) {
+	return collectActiveChangesForcedStoreCtx(context.Background(), changesDir, workspaceRoot, includeInstructions, forcedStore)
+}
+
+func collectActiveChangesForcedStoreCtx(ctx context.Context, changesDir, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) ([]ChangeStatus, error) {
 	entries, err := os.ReadDir(changesDir)
 	if err != nil {
 		return nil, fmt.Errorf("read changes dir: %w", err)
@@ -343,7 +384,7 @@ func collectActiveChangesForcedStore(changesDir, workspaceRoot string, includeIn
 		if !entry.IsDir() || entry.Name() == "archive" {
 			continue
 		}
-		cs, err := readChangeWithForcedStore(filepath.Join(changesDir, entry.Name()), entry.Name(), false, workspaceRoot, includeInstructions, forcedStore)
+		cs, err := readChangeWithForcedStoreCtx(ctx, filepath.Join(changesDir, entry.Name()), entry.Name(), false, workspaceRoot, includeInstructions, forcedStore)
 		if err != nil {
 			continue
 		}
@@ -353,6 +394,10 @@ func collectActiveChangesForcedStore(changesDir, workspaceRoot string, includeIn
 }
 
 func collectArchivedChangesForcedStore(archiveDir, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) ([]ChangeStatus, error) {
+	return collectArchivedChangesForcedStoreCtx(context.Background(), archiveDir, workspaceRoot, includeInstructions, forcedStore)
+}
+
+func collectArchivedChangesForcedStoreCtx(ctx context.Context, archiveDir, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) ([]ChangeStatus, error) {
 	entries, err := os.ReadDir(archiveDir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -366,7 +411,7 @@ func collectArchivedChangesForcedStore(archiveDir, workspaceRoot string, include
 		if !entry.IsDir() {
 			continue
 		}
-		cs, err := readChangeWithForcedStore(filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot, includeInstructions, forcedStore)
+		cs, err := readChangeWithForcedStoreCtx(ctx, filepath.Join(archiveDir, entry.Name()), entry.Name(), true, workspaceRoot, includeInstructions, forcedStore)
 		if err != nil {
 			continue
 		}
@@ -376,6 +421,10 @@ func collectArchivedChangesForcedStore(archiveDir, workspaceRoot string, include
 }
 
 func readChangeWithForcedStore(dir, name string, isArchived bool, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) (ChangeStatus, error) {
+	return readChangeWithForcedStoreCtx(context.Background(), dir, name, isArchived, workspaceRoot, includeInstructions, forcedStore)
+}
+
+func readChangeWithForcedStoreCtx(ctx context.Context, dir, name string, isArchived bool, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) (ChangeStatus, error) {
 	cs := ChangeStatus{Name: name, IsArchived: isArchived}
 	probeArtifacts(dir, workspaceRoot, name, &cs)
 	hasTasks, tasksText, total, done := loadTasksInfo(dir)
@@ -387,13 +436,17 @@ func readChangeWithForcedStore(dir, name string, isArchived bool, workspaceRoot 
 			return cs, err
 		}
 	}
-	if err := deriveChangeStatusWithForcedStore(&cs, dir, workspaceRoot, includeInstructions, forcedStore); err != nil {
+	if err := deriveChangeStatusWithForcedStoreCtx(ctx, &cs, dir, workspaceRoot, includeInstructions, forcedStore); err != nil {
 		return cs, err
 	}
 	return cs, nil
 }
 
 func deriveChangeStatusWithForcedStore(cs *ChangeStatus, changeDir, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) error {
+	return deriveChangeStatusWithForcedStoreCtx(context.Background(), cs, changeDir, workspaceRoot, includeInstructions, forcedStore)
+}
+
+func deriveChangeStatusWithForcedStoreCtx(ctx context.Context, cs *ChangeStatus, changeDir, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) error {
 	if cs.IsArchived {
 		cs.NextRecommended = "done"
 		return nil
@@ -450,7 +503,7 @@ func deriveChangeStatusWithForcedStore(cs *ChangeStatus, changeDir, workspaceRoo
 	}
 	// Session guard before done/batch-close (REQ-SD-B1/S1).
 	if applyState == ApplyAllDone && coreReady {
-		if blocked, reason := IsSessionSummaryBlocked(context.Background(), workspaceRoot, cs.Name); blocked {
+		if blocked, reason := IsSessionSummaryBlocked(ctx, workspaceRoot, cs.Name); blocked {
 			if dependencies.Verify == DependencyReady {
 				dependencies.Verify = DependencyBlocked
 			}
@@ -566,6 +619,10 @@ func applyEditAuthorityForChange(dir, name, workspaceRoot, tasksText string, cs 
 }
 
 func readChange(dir, name string, isArchived bool, workspaceRoot string, includeInstructions bool) (ChangeStatus, error) {
+	return readChangeCtx(context.Background(), dir, name, isArchived, workspaceRoot, includeInstructions)
+}
+
+func readChangeCtx(ctx context.Context, dir, name string, isArchived bool, workspaceRoot string, includeInstructions bool) (ChangeStatus, error) {
 	cs := ChangeStatus{Name: name, IsArchived: isArchived}
 	probeArtifacts(dir, workspaceRoot, name, &cs)
 	hasTasks, tasksText, total, done := loadTasksInfo(dir)
@@ -577,7 +634,7 @@ func readChange(dir, name string, isArchived bool, workspaceRoot string, include
 			return cs, err
 		}
 	}
-	if err := deriveChangeStatus(&cs, dir, workspaceRoot, includeInstructions); err != nil {
+	if err := deriveChangeStatusCtx(ctx, &cs, dir, workspaceRoot, includeInstructions); err != nil {
 		return cs, err
 	}
 	return cs, nil
@@ -653,6 +710,12 @@ func buildRemediationState(changeDir, changeName, workspaceRoot string, artifact
 // It runs at the END of readChange, after the legacy file probe and the
 // change-instance/grant read, and is skipped for archived changes.
 func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, includeInstructions bool) error {
+	return deriveChangeStatusCtx(context.Background(), cs, changeDir, workspaceRoot, includeInstructions)
+}
+
+// deriveChangeStatusCtx is the ctx-aware deriveChangeStatus: the session
+// guard receives the caller ctx instead of context.Background.
+func deriveChangeStatusCtx(ctx context.Context, cs *ChangeStatus, changeDir, workspaceRoot string, includeInstructions bool) error {
 	if cs.IsArchived {
 		cs.NextRecommended = "done"
 		return nil
@@ -720,7 +783,7 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 	// Session guard before done/batch-close: block verify/archive when session_summary missing (REQ-SD-B1/S1).
 	// Only for biggz-ai project to keep matrix tests green; real repo is biggz-ai via git remote.
 	if applyState == ApplyAllDone && coreReady {
-		if blocked, reason := IsSessionSummaryBlocked(context.Background(), workspaceRoot, cs.Name); blocked {
+		if blocked, reason := IsSessionSummaryBlocked(ctx, workspaceRoot, cs.Name); blocked {
 			if dependencies.Verify == DependencyReady {
 				dependencies.Verify = DependencyBlocked
 			}
