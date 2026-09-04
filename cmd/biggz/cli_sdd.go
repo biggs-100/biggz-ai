@@ -623,6 +623,9 @@ func sddAttemptRun() int {
 				i++
 				token = strings.TrimSpace(args[i])
 			}
+		default:
+			fmt.Fprintf(os.Stderr, "error: unknown flag %s\n", args[i])
+			return 1
 		}
 	}
 

@@ -109,7 +109,9 @@ type RuntimeAttempt struct {
 	BeganAt string `json:"began_at"`
 	EndedAt string `json:"ended_at,omitempty"`
 
-	// Outcome: "passed", "failed", "interrupted"
+	// Outcome: "passed", "failed", "interrupted", "progress" (settle-only
+	// non-terminal checkpoint: closes the attempt without completing the
+	// ledger, so the next acquire in the same scope is admitted).
 	Outcome string `json:"outcome,omitempty"`
 
 	// Evidence
@@ -1446,6 +1448,12 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 // validates the ordinal is the live active attempt, and records the outcome
 // with the same state derivation as Finish (Complete / DecisionRequired /
 // NextAction). It is the bounded-path counterpart to Finish.
+//
+// Outcome "progress" is a non-terminal checkpoint for multi-unit scopes:
+// it closes the attempt like a failure (NextAction "begin", ledger stays
+// open) without completing the ledger, so ONE acquire scope can cover N
+// work units with a single final settle(passed). "progress" consumes one
+// delivered attempt of budget, exactly like "failed".
 func Settle(params SettleParams) (*SettleResult, error) {
 	if params.RequestID != "" && !requestIDPattern.MatchString(params.RequestID) {
 		return nil, errors.New("request_id must be a canonical lowercase identifier")
@@ -1458,9 +1466,9 @@ func Settle(params SettleParams) (*SettleResult, error) {
 		return nil, errors.New("outcome is required for settle")
 	}
 	switch params.Outcome {
-	case "passed", "failed", "interrupted":
+	case "passed", "failed", "interrupted", "progress":
 	default:
-		return nil, fmt.Errorf("invalid outcome %q; want passed, failed, or interrupted", params.Outcome)
+		return nil, fmt.Errorf("invalid outcome %q; want passed, failed, interrupted, or progress (progress is settle-only)", params.Outcome)
 	}
 	if params.Outcome == "interrupted" && params.EvidenceRevision != "" {
 		return nil, errors.New("interrupted attempts must omit evidence_revision")
@@ -2175,6 +2183,9 @@ Usage:
   biggz sdd-attempt acquire <change> [flags]     — claim a bounded attempt and return its token
   biggz sdd-attempt settle <change> [flags]      — complete the attempt selected by its token
 
+  <change> is positional (the word right after the operation); there are no
+  --change or --cwd flags. The workspace root is always os.Getwd().
+
 Flags:
   --expected-revision <hash>    CAS guard: fail if current revision differs
                                 (optional for grant: empty on a fresh
@@ -2184,6 +2195,11 @@ Flags:
                                 replaying the same request id returns the
                                 recorded result without mutating the ledger
   --outcome <passed|failed|interrupted>  Result of the attempt (finish)
+  --outcome <passed|failed|interrupted|progress>  Result of the attempt (settle;
+                                progress is a non-terminal checkpoint: it
+                                closes the attempt without completing the
+                                ledger, so one scope can cover N work units
+                                with a single final passed settle)
   --diagnosis <text>            Human-readable diagnosis (finish/reset)
   --reason <text>               Reset reason (reset, required) or grant reason
                                 (grant, required)

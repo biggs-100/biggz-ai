@@ -278,6 +278,58 @@ func TestAcquire_BudgetExhaustedWithObligation(t *testing.T) {
 	}
 }
 
+func TestSettle_ProgressMultiUnitSingleFinalSettle(t *testing.T) {
+	setStoreRoot(t)
+
+	// One ledger scope ("units-multi") covers N=2 work units: an
+	// intermediate settle(progress) must NOT complete the ledger, the next
+	// acquire (same scope) must be admitted, and only the final
+	// settle(passed) completes. RED: "progress" was not a valid outcome.
+	acq, err := Acquire(AcquireParams{
+		ChangeName: "ch-acq-multi", RepoRoot: "r", RequestID: "req-multi-1",
+		WorkUnit: "units-multi", EvidenceGoal: "goal", MaxAttempts: 3, MaxLines: 400,
+	})
+	if err != nil {
+		t.Fatalf("Acquire(unit1): %v", err)
+	}
+	mid, err := Settle(SettleParams{
+		ChangeName: "ch-acq-multi", RepoRoot: "r", Token: acq.Token,
+		RequestID: "req-multi-settle-1", Outcome: "progress",
+		Diagnosis: "unit1 done", HarnessDisposition: "reused",
+		CleanupEvidence: "c", ProcessEvidence: "p",
+	})
+	if err != nil {
+		t.Fatalf("Settle(progress): %v", err)
+	}
+	if mid.Complete {
+		t.Fatal("intermediate settle(progress) completed the ledger, want open")
+	}
+	status, _ := StatusWithInstance("ch-acq-multi", "r", "")
+	if status.Complete || status.BlockedReason != "" || status.NextAction != "begin" {
+		t.Fatalf("mid status = %+v, want open/begin/unblocked", status)
+	}
+	acq2, err := Acquire(AcquireParams{
+		ChangeName: "ch-acq-multi", RepoRoot: "r", RequestID: "req-multi-2",
+		WorkUnit: "units-multi", EvidenceGoal: "goal", MaxAttempts: 3, MaxLines: 400,
+	})
+	if err != nil {
+		t.Fatalf("Acquire(unit2) after progress settle: %v", err)
+	}
+	final, err := Settle(SettleParams{
+		ChangeName: "ch-acq-multi", RepoRoot: "r", Token: acq2.Token,
+		RequestID: "req-multi-settle-2", Outcome: "passed",
+		EvidenceRevision:   "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		Diagnosis:          "done", HarnessDisposition: "reused",
+		CleanupEvidence: "c", ProcessEvidence: "p",
+	})
+	if err != nil {
+		t.Fatalf("Settle(passed) final: %v", err)
+	}
+	if !final.Complete {
+		t.Fatalf("final settle(passed) = %+v, want Complete true", final)
+	}
+}
+
 func TestSettle_InvalidToken(t *testing.T) {
 	setStoreRoot(t)
 
