@@ -673,7 +673,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 			project = ""
 		}
 		matchMode := getStr(args, "match_mode")
-		limit := getInt(args, "limit", 10)
+		limit, requestedLimit, limitClamped := parseSearchLimit(args)
 		// BM25Floor/Limit override via env (Engram parity MCPConfig)
 		var bm25Floor *float64
 		if envVal := strings.TrimSpace(os.Getenv("BIGMEM_BM25_FLOOR")); envVal != "" {
@@ -731,35 +731,36 @@ func handleToolCall(id any, name string, args map[string]any) {
 			}
 			entries = append(entries, entry)
 		}
-		// Annotate relations if available (supersedes / superseded_by / conflicts)
+		// Annotate relations if available (supersedes / superseded_by / conflicts).
+		// Bounded by construction: one scoped ListRelationsByIDs over the union
+		// of result IDs, titles resolved from the in-memory map with a
+		// "deleted" fallback — zero per-relation GetCtx on the hot path.
+		// Annotation errors never fail the search.
 		if len(results) > 0 {
-			if rels, err := store.ListRelations(""); err == nil && len(rels) > 0 {
-				// Build lookup for observation titles
-				titleByID := make(map[string]string, len(results))
-				for _, r := range results {
-					titleByID[r.ID] = r.Title
+			seenIDs := make(map[string]struct{}, len(results))
+			ids := make([]string, 0, len(results))
+			titleByID := make(map[string]string, len(results))
+			for _, r := range results {
+				titleByID[r.ID] = r.Title
+				if _, ok := seenIDs[r.ID]; !ok {
+					seenIDs[r.ID] = struct{}{}
+					ids = append(ids, r.ID)
 				}
+			}
+			if rels, err := store.ListRelationsByIDs(ids); err == nil && len(rels) > 0 {
 				for i, r := range results {
 					for _, rel := range rels {
 						if rel.SourceID == r.ID && rel.Relation == "supersedes" {
 							title := titleByID[rel.TargetID]
 							if title == "" {
-								if obs, err := store.GetCtx(context.Background(), rel.TargetID); err == nil {
-									title = obs.Title
-								} else {
-									title = "deleted"
-								}
+								title = "deleted"
 							}
 							entries[i]["supersedes"] = fmt.Sprintf("#%s (%s)", rel.TargetID, title)
 						}
 						if rel.TargetID == r.ID && rel.Relation == "supersedes" {
 							title := titleByID[rel.SourceID]
 							if title == "" {
-								if obs, err := store.GetCtx(context.Background(), rel.SourceID); err == nil {
-									title = obs.Title
-								} else {
-									title = "deleted"
-								}
+								title = "deleted"
 							}
 							entries[i]["superseded_by"] = fmt.Sprintf("#%s (%s)", rel.SourceID, title)
 						}
@@ -770,17 +771,16 @@ func handleToolCall(id any, name string, args map[string]any) {
 							}
 							title := titleByID[otherID]
 							if title == "" {
-								if obs, err := store.GetCtx(context.Background(), otherID); err == nil {
-									title = obs.Title
-								} else {
-									title = "deleted"
-								}
+								title = "deleted"
 							}
 							entries[i]["conflicts"] = fmt.Sprintf("#%s (%s)", otherID, title)
 						}
 					}
 				}
 			}
+		}
+		if limitClamped {
+			fmt.Fprintf(os.Stderr, "limit clamped: requested=%d effective=50\n", requestedLimit)
 		}
 		if anyPreviewTruncated {
 			fmt.Fprintln(os.Stderr, "Results above are previews (300 chars). Call biggz_mem_get_observation for full content.")
@@ -1234,12 +1234,12 @@ func buildToolList(profile string) []map[string]any {
 			"pinned":                map[string]any{"type": "boolean"},
 		}, []string{"title"}),
 		toolDef("mem_search", "Search memory by keywords.", map[string]any{
-			"query":       map[string]any{"type": "string"},
-			"project":     map[string]any{"type": "string", "description": "Filter by project. Ignored when all_projects=true."},
-			"type":        map[string]any{"type": "string"},
-			"scope":       map[string]any{"type": "string"},
-			"limit":       map[string]any{"type": "number", "description": "Max results (default: 10)"},
-			"match_mode":  map[string]any{"type": "string", "description": "\"all\" (AND, default) or \"any\" (OR)"},
+			"query":        map[string]any{"type": "string"},
+			"project":      map[string]any{"type": "string", "description": "Filter by project. Ignored when all_projects=true."},
+			"type":         map[string]any{"type": "string"},
+			"scope":        map[string]any{"type": "string"},
+			"limit":        map[string]any{"type": "number", "description": "Max results (default: 20, max 50; larger values clamp with a notice)"},
+			"match_mode":   map[string]any{"type": "string", "description": "\"all\" (AND, default) or \"any\" (OR)"},
 			"all_projects": map[string]any{"type": "boolean", "description": "When true, search across all projects (ignore project filter). Scope=personal also ignores project."},
 		}, []string{}),
 		toolDef("mem_get_observation", "Get full observation by ID.", map[string]any{
@@ -1367,6 +1367,53 @@ func getFloat(m map[string]any, key string, def float64) float64 {
 		return v
 	}
 	return def
+}
+
+// parseSearchLimit validates the mem_search limit argument (N+1 fix, explicit
+// limit semantics): missing/non-numeric/<=0 defaults to 20; >50 clamps to 50
+// and reports clamped=true with the original request for the stderr signal.
+// The Store keeps the same 50-row cap as a second layer; this function owns
+// the visible default + clamp signal so callers never silently truncate.
+func parseSearchLimit(args map[string]any) (effective, requested int, clamped bool) {
+	const defLimit = 20
+	const maxLimit = 50
+	v, ok := args["limit"]
+	if !ok || v == nil {
+		return defLimit, 0, false
+	}
+	var n int
+	switch t := v.(type) {
+	case float64:
+		n = int(t)
+	case float32:
+		n = int(t)
+	case int:
+		n = t
+	case int64:
+		n = int(t)
+	case json.Number:
+		if i, err := t.Int64(); err == nil {
+			n = int(i)
+		} else {
+			return defLimit, 0, false
+		}
+	case string:
+		s := strings.TrimSpace(t)
+		if i, err := strconv.Atoi(s); err == nil {
+			n = i
+		} else {
+			return defLimit, 0, false
+		}
+	default:
+		return defLimit, 0, false
+	}
+	if n <= 0 {
+		return defLimit, 0, false
+	}
+	if n > maxLimit {
+		return maxLimit, n, true
+	}
+	return n, 0, false
 }
 
 func getBool(m map[string]any, key string, def bool) bool {

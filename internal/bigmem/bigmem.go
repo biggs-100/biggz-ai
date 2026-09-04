@@ -188,6 +188,7 @@ type SearchOptions struct {
 	Type        string   `json:"type,omitempty"`
 	Scope       string   `json:"scope,omitempty"`
 	Limit       int      `json:"limit,omitempty"`
+	Offset      int      `json:"offset,omitempty"`       // 0 = legacy behavior (no OFFSET clause)
 	MatchMode   string   `json:"match_mode,omitempty"`   // "" | "all" (default) | "any"
 	AllProjects bool     `json:"all_projects,omitempty"` // when true, project filter is ignored (Engram parity)
 	BM25Floor   *float64 `json:"bm25_floor,omitempty"`   // nil = no floor; forwarded from MCPConfig
@@ -1081,12 +1082,22 @@ func buildLikeSearchSQL(query string, opts SearchOptions, limit int) (string, []
 	}
 	sqlQ += " ORDER BY o.updated_at DESC LIMIT ?"
 	args = append(args, limit)
-	return sqlQ, args
+	return appendOffset(sqlQ, args, opts)
 }
 
 // shouldFilterProject reports whether the project filter should be applied.
 func shouldFilterProject(opts SearchOptions) bool {
 	return opts.Project != "" && !opts.AllProjects && normalizeScope(opts.Scope) != "personal"
+}
+
+// appendOffset appends an OFFSET clause only when opts.Offset > 0 so queries
+// without pagination stay byte-identical to the legacy form (N+1 fix, D6).
+func appendOffset(sqlQ string, args []any, opts SearchOptions) (string, []any) {
+	if opts.Offset > 0 {
+		sqlQ += " OFFSET ?"
+		args = append(args, opts.Offset)
+	}
+	return sqlQ, args
 }
 
 // ─── Rescue Ownership Helpers (REQ-RO1/RO2) ─────────────────────────────────
@@ -1828,6 +1839,7 @@ func (s *Store) SearchCtx(ctx context.Context, query string, opts SearchOptions)
 		}
 		tkSQL += " ORDER BY updated_at DESC LIMIT ?"
 		tkArgs = append(tkArgs, limit)
+		tkSQL, tkArgs = appendOffset(tkSQL, tkArgs, opts)
 
 		tkRows, err := s.db.QueryContext(ctx, tkSQL, tkArgs...)
 		if err != nil {
@@ -1893,6 +1905,7 @@ func (s *Store) SearchCtx(ctx context.Context, query string, opts SearchOptions)
 		}
 		q += " ORDER BY o.updated_at DESC LIMIT ?"
 		args = append(args, limit)
+		q, args = appendOffset(q, args, opts)
 		rows, err = s.db.QueryContext(ctx, q, args...)
 	} else {
 		// FTS5 with BM25 ranking — "all" = AND, "any" = OR (Engram parity)
@@ -1936,6 +1949,7 @@ func (s *Store) SearchCtx(ctx context.Context, query string, opts SearchOptions)
 
 		sqlQ += " ORDER BY rank LIMIT ?"
 		args = append(args, limit)
+		sqlQ, args = appendOffset(sqlQ, args, opts)
 		rows, err = s.db.QueryContext(ctx, sqlQ, args...)
 	}
 	if err != nil {
@@ -2444,6 +2458,76 @@ func (s *Store) ListRelations(status string) ([]Relation, error) {
 		r.CreatedAt, _ = time.Parse(time.RFC3339, ca)
 		r.UpdatedAt, _ = time.Parse(time.RFC3339, ua)
 		result = append(result, r)
+	}
+	return result, nil
+}
+
+// ListRelationsByIDs returns relations where source or target is in ids.
+// It dedupes ids, returns empty without querying on empty input, chunks IN
+// clauses at 400 IDs (800 vars, under SQLite's 999-variable limit), applies
+// no LIMIT (the result set is bounded by the input IDs), and orders by
+// created_at DESC like ListRelations. All values are bound placeholders.
+func (s *Store) ListRelationsByIDs(ids []string) ([]Relation, error) {
+	seen := make(map[string]struct{}, len(ids))
+	uniq := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniq = append(uniq, id)
+	}
+	if len(uniq) == 0 {
+		return nil, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	const chunkSize = 400
+	var result []Relation
+	for start := 0; start < len(uniq); start += chunkSize {
+		end := start + chunkSize
+		if end > len(uniq) {
+			end = len(uniq)
+		}
+		chunk := uniq[start:end]
+		placeholders := strings.Repeat("?,", len(chunk)-1) + "?"
+		q := `SELECT id, source_id, target_id, relation, judgment_status,
+			COALESCE(reason,''), COALESCE(evidence,''), COALESCE(confidence,0),
+			COALESCE(marked_by,''), COALESCE(marked_by_actor,''), COALESCE(marked_by_kind,''), COALESCE(marked_by_model,''),
+			COALESCE(session_id,''), created_at, updated_at FROM memory_relations
+			WHERE source_id IN (` + placeholders + `) OR target_id IN (` + placeholders + `)
+			ORDER BY created_at DESC`
+		args := make([]any, 0, 2*len(chunk))
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+		rows, err := s.db.Query(q, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var r Relation
+			var ca, ua string
+			if err := rows.Scan(&r.ID, &r.SourceID, &r.TargetID, &r.Relation,
+				&r.JudgmentStatus, &r.Reason, &r.Evidence, &r.Confidence,
+				&r.MarkedBy, &r.MarkedByActor, &r.MarkedByKind, &r.MarkedByModel, &r.SessionID, &ca, &ua); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			r.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+			r.UpdatedAt, _ = time.Parse(time.RFC3339, ua)
+			result = append(result, r)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }

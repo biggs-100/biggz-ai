@@ -557,13 +557,65 @@ func bigmemRun() int {
 
 	case "export":
 		filePath := "bigmem-export.json"
-		if len(args) > 1 {
-			filePath = args[1]
+		exportLimit := 0 // 0/omitted = uncapped
+		exportProject := ""
+		for i := 1; i < len(args); i++ {
+			switch args[i] {
+			case "--limit":
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "error: missing value for --limit")
+					return 1
+				}
+				n, err := strconv.Atoi(args[i+1])
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "error: invalid --limit %q: must be an integer\n", args[i+1])
+					return 1
+				}
+				if n < 0 {
+					fmt.Fprintf(os.Stderr, "error: invalid --limit %d: must be >= 0\n", n)
+					return 1
+				}
+				exportLimit = n
+				i++
+			case "--project":
+				if i+1 >= len(args) {
+					fmt.Fprintln(os.Stderr, "error: missing value for --project")
+					return 1
+				}
+				exportProject = args[i+1]
+				i++
+			default:
+				if strings.HasPrefix(args[i], "-") {
+					fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
+					return 1
+				}
+				filePath = args[i]
+			}
 		}
-		all, err := store.Search("", bigmem.SearchOptions{Limit: 100000})
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error: export: %v\n", err)
-			return 1
+		// Page through Search at the 50-row Store cap (single Limit:100000
+		// calls silently clamp to 50 and truncate). JSON shape unchanged.
+		const exportPageSize = 50
+		var all []*bigmem.Observation
+		for offset := 0; ; offset += exportPageSize {
+			pageLimit := exportPageSize
+			if exportLimit > 0 && exportLimit-len(all) < pageLimit {
+				pageLimit = exportLimit - len(all)
+			}
+			page, err := store.Search("", bigmem.SearchOptions{Project: exportProject, Limit: pageLimit, Offset: offset})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error: export: %v\n", err)
+				return 1
+			}
+			all = append(all, page...)
+			if len(page) < pageLimit {
+				break
+			}
+			if exportLimit > 0 && len(all) >= exportLimit {
+				break
+			}
+		}
+		if all == nil {
+			all = []*bigmem.Observation{}
 		}
 		data, err := json.MarshalIndent(all, "", "  ")
 		if err != nil {
