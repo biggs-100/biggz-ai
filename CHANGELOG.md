@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased] — 2026-08-31
 
 ### Fixed
+- **install-pi-packages-web-btw** (2026-09-04) — `biggz install --agent pi` now installs `npm:pi-web-access` (multi-provider search, URL/PDF extraction, video understanding, GitHub cloning) and `npm:pi-btw` (`/btw` parallel side conversations). Same InstallCommand pattern as `rpiv-todo`. Test: `TestInstallCommand_IncludesWebAndBtw`.
 - **question-visible-context** (2026-09-04) — blocking questions must carry visible decision context: `ValidateQuestionEnvelope` now rejects options with empty descriptions fail-closed, `QuestionOption` gains `preview` (side-by-side detail, persisted verbatim by `FormatFallback`), and the orchestrator workflow mandates context-first in the human language before every question. The questionnaire modal shows only the envelope, so bare-label choices are no longer a representable state. Tests: missing-description (per-question + top-level), preview-in-fallback; existing fixtures migrated.
 - **install-pi-todo-overlay** (2026-09-04) — `biggz install --agent pi` now installs `npm:rpiv-todo` (visual task-tracking overlay in pi's TUI, gentle-pi parity). Same pattern as `rpiv-ask-user-question`: via `InstallCommand` only. Test: `TestInstallCommand_IncludesTodoOverlay`.
 - **install-pi-drop-startup-banner** (2026-09-04) — removed `startup-banner.ts` (animated gentle-pi banner) from `internal/assets/pi` and the pi deploy list per user request; install self-heals stale copies. Purely visual extension, no backend impact.

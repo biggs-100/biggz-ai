@@ -44,6 +44,32 @@ func TestInstallCommand_IncludesTodoOverlay(t *testing.T) {
 	t.Errorf("InstallCommand missing todo overlay install, got %v", cmds)
 }
 
+// TestInstallCommand_IncludesWebAndBtw ensures pi installs the web-access
+// capabilities and the /btw side-conversation channel (gentle-pi parity).
+func TestInstallCommand_IncludesWebAndBtw(t *testing.T) {
+	a := NewAdapter()
+	cmds, err := a.InstallCommand(nil)
+	if err != nil {
+		t.Fatalf("InstallCommand: %v", err)
+	}
+	joined := make([]string, 0, len(cmds))
+	for _, cmd := range cmds {
+		joined = append(joined, strings.Join(cmd, " "))
+	}
+	for _, want := range []string{"pi install npm:pi-web-access", "pi install npm:pi-btw"} {
+		found := false
+		for _, got := range joined {
+			if got == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("InstallCommand missing %q, got %v", want, joined)
+		}
+	}
+}
+
 // TestFilterPiPackages_DropsPredecessor ensures settings.json reconciliation
 // drops the predecessor dispatcher entry while keeping the fork, so pi never
 // loads both (duplicate subagent_* tool registrations).

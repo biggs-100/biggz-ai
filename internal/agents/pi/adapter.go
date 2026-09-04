@@ -126,6 +126,11 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	//   header/label/description, custom answer row auto-appended).
 	// - npm:rpiv-todo provides the visual task-tracking overlay in pi's TUI
 	//   (Claude-Code parity), the same one gentle-pi ships.
+	// - npm:pi-web-access provides multi-provider web search, URL/PDF
+	//   extraction, video understanding and GitHub cloning (zero-config
+	//   via Exa; keys optional in ~/.pi/web-search.json).
+	// - npm:pi-btw provides /btw parallel side conversations in a modal
+	//   overlay without interrupting the main run.
 	// - Mouse parity for that TUI (biggz-question-mouse.js) is NOT installed
 	//   via `pi install`; it is copied to `~/.pi/agent/extensions/` via
 	//   DeployPiQuestionMouse (filemerge) during `biggz install --agent pi`.
@@ -133,6 +138,8 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 		{"pi", "install", "npm:pi-subagents-j0k3r"},
 		{"pi", "install", "npm:@juicesharp/rpiv-ask-user-question"},
 		{"pi", "install", "npm:rpiv-todo"},
+		{"pi", "install", "npm:pi-web-access"},
+		{"pi", "install", "npm:pi-btw"},
 	}, nil
 }
 
