@@ -145,6 +145,9 @@ func (c *BigmemCheck) Remedy() *Remedy {
 			}
 			store, err := c.opener()
 			if err == nil {
+				// CTX-5 probe: exercise the cancellable Store read path with the
+				// caller ctx before repairing (ignored: repair proceeds regardless).
+				_, _ = store.SearchCtx(ctx, "", bigmem.SearchOptions{Limit: 1})
 				// Comprehensive fix via Store API (WAL checkpoint, VACUUM, FTS rebuild, directory migration).
 				fixErr := store.DoctorFix()
 				_ = store.Close()

@@ -4,6 +4,7 @@
 package bigmem
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"errors"
@@ -205,7 +206,24 @@ const (
 	defaultMaxSearchResults     = 20
 	defaultDedupeWindow         = 15 * time.Minute
 	maxStoredBytes              = 50000
+	// defaultBigmemTimeout bounds cancellable Store work (CTX-3/D4).
+	// Matches busy_timeout=5000; generous for FTS. Caller deadline wins.
+	defaultBigmemTimeout = 5 * time.Second
 )
+
+// WithTimeout enforces a default timeout for BigMem Store *Ctx methods (CTX-3).
+// When the caller ctx already carries a deadline, the caller value wins and
+// the default MUST NOT extend it (returns WithCancel child). Otherwise applies
+// the 5s default. Every CTX-1/CTX-2 method MUST use it and defer cancel().
+func WithTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithTimeout(ctx, defaultBigmemTimeout)
+}
 
 // ─── Unified DB Path Resolution (A1) ───────────────────────────────────────
 
@@ -1422,11 +1440,23 @@ func (s *Store) RescueNullProjectOwnership(project string, opts RescueOptions) (
 //
 // Optional parentID anchoring (REQ-B5): when provided, associates observation with branch.
 func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
+	return s.SaveCtx(context.Background(), obs, parentID...)
+}
+
+// SaveCtx persists an observation with ctx + timeout (CTX-1/3/4).
+// Holds the logic; Save is a thin Background() wrapper (D2).
+// Cancelled ctx fails visibly with wrapped ctx.Err(), never silently.
+func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...string) (err error) {
+	ctx, cancel := WithTimeout(ctx)
+	defer cancel()
+	if ctx.Err() != nil {
+		return fmt.Errorf("bigmem save: %w", ctx.Err())
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	defer func() {
 		if err == nil {
-			_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+			_, _ = s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 		}
 	}()
 
@@ -1475,9 +1505,12 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 		requestedProject = projpkg.NormalizeProjectName(requestedProject)
 		obs.Project = requestedProject
 	}
-	s.db.Exec("PRAGMA busy_timeout=5000")
-	tx, err := s.db.Begin()
+	_, _ = s.db.ExecContext(ctx, "PRAGMA busy_timeout=5000")
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("bigmem save begin: %w", ctx.Err())
+		}
 		return err
 	}
 	defer func() {
@@ -1485,6 +1518,10 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 			_ = tx.Rollback()
 		}
 	}()
+	if ctx.Err() != nil {
+		err = fmt.Errorf("bigmem save: %w", ctx.Err())
+		return err
+	}
 	if obs.SessionID != "" && strings.TrimSpace(requestedProject) != "" && strings.ToLower(strings.TrimSpace(requestedProject)) != "unknown" {
 		if rErr := s.resolveWriteProjectTx(tx, obs.SessionID, requestedProject); rErr != nil {
 			err = rErr
@@ -1495,7 +1532,7 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 	if obs.TopicKey != "" {
 		var existingID string
 		var existingCreated string
-		if qErr := tx.QueryRow(
+		if qErr := tx.QueryRowContext(ctx,
 			`SELECT id, created_at FROM observations
 			 WHERE topic_key = ? AND project = ? AND scope = ? AND deleted_at IS NULL
 			 ORDER BY updated_at DESC LIMIT 1`,
@@ -1505,7 +1542,7 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 			if t, pErr := time.Parse(time.RFC3339, existingCreated); pErr == nil {
 				obs.CreatedAt = t
 			}
-			_, err = tx.Exec(`UPDATE observations SET
+			_, err = tx.ExecContext(ctx, `UPDATE observations SET
 				type=?, title=?, content=?, session_id=?, tool_name=?,
 				topic_key=?, project=?, scope=?, normalized_hash=?,
 				revision_count=revision_count+1, last_seen_at=?,
@@ -1532,7 +1569,7 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 	window := dedupeWindowExpression(0)
 	{
 		var existingID string
-		if qErr := tx.QueryRow(
+		if qErr := tx.QueryRowContext(ctx,
 			`SELECT id FROM observations
 			 WHERE normalized_hash = ? AND project = ? AND scope = ?
 			 AND type = ? AND title = ? AND deleted_at IS NULL
@@ -1544,11 +1581,11 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 			obs.ID = existingID
 			// Preserve original created_at
 			var origCreated string
-			_ = tx.QueryRow("SELECT created_at FROM observations WHERE id=?", existingID).Scan(&origCreated)
+			_ = tx.QueryRowContext(ctx, "SELECT created_at FROM observations WHERE id=?", existingID).Scan(&origCreated)
 			if t, pErr := time.Parse(time.RFC3339, origCreated); pErr == nil {
 				obs.CreatedAt = t
 			}
-			_, err = tx.Exec(`UPDATE observations SET
+			_, err = tx.ExecContext(ctx, `UPDATE observations SET
 			duplicate_count=duplicate_count+1, last_seen_at=?, updated_at=?
 			WHERE id=?`,
 				nowStr, nowStr, existingID)
@@ -1570,7 +1607,7 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 	// the ID already exists (e.g., from Update → Get → Save path).
 	reviewAfterStr := computeReviewAfterAt(now, obs.Type)
 
-	_, err = tx.Exec(`INSERT INTO observations
+	_, err = tx.ExecContext(ctx, `INSERT INTO observations
 		(id, title, type, content, session_id, tool_name, topic_key, project, scope,
 		 normalized_hash, revision_count, duplicate_count, last_seen_at, review_after,
 		 pinned, created_at, updated_at)
@@ -1591,13 +1628,23 @@ func (s *Store) Save(obs *Observation, parentID ...string) (err error) {
 		nowStr, reviewAfterStr, boolToInt(obs.Pinned),
 		obs.CreatedAt.Format(time.RFC3339), nowStr)
 	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("bigmem save exec: %w", ctx.Err())
+		}
 		return err
 	}
 	if errQ := tryEnqueueObservationTx(tx, obs); errQ != nil {
 		err = errQ
 		return err
 	}
+	if ctx.Err() != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("bigmem save commit: %w", ctx.Err())
+	}
 	if err = tx.Commit(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("bigmem save commit: %w", ctx.Err())
+		}
 		return err
 	}
 	return nil
@@ -1650,6 +1697,16 @@ func resolveBlobContent(content string) string {
 
 // Get retrieves an observation by ID.
 func (s *Store) Get(id string) (*Observation, error) {
+	return s.GetCtx(context.Background(), id)
+}
+
+// GetCtx retrieves an observation by ID with ctx + timeout (CTX-1/3/4).
+func (s *Store) GetCtx(ctx context.Context, id string) (*Observation, error) {
+	ctx, cancel := WithTimeout(ctx)
+	defer cancel()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("bigmem get: %w", ctx.Err())
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -1657,7 +1714,7 @@ func (s *Store) Get(id string) (*Observation, error) {
 	var ca, ua string
 	var ra, da, lsa sql.NullString
 	var pinnedInt int
-	err := s.db.QueryRow(`SELECT id, title, type, content, session_id, tool_name,
+	err := s.db.QueryRowContext(ctx, `SELECT id, title, type, content, session_id, tool_name,
 		topic_key, project, scope, normalized_hash, revision_count, duplicate_count,
 		last_seen_at, review_after, pinned, created_at, updated_at, deleted_at
 		FROM observations WHERE id = ?`, id).
@@ -1666,6 +1723,9 @@ func (s *Store) Get(id string) (*Observation, error) {
 			&obs.RevisionCount, &obs.DuplicateCount, &lsa, &ra, &pinnedInt,
 			&ca, &ua, &da)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem get: %w", ctx.Err())
+		}
 		return nil, fmt.Errorf("not found: %w", err)
 	}
 	obs.CreatedAt, _ = time.Parse(time.RFC3339, ca)
@@ -1695,11 +1755,22 @@ func (s *Store) Get(id string) (*Observation, error) {
 // Supports "all" (AND) and "any" (OR) match modes.
 // If query contains "/", does an exact topic_key lookup first.
 func (s *Store) Search(query string, opts SearchOptions) (results []*Observation, err error) {
+	return s.SearchCtx(context.Background(), query, opts)
+}
+
+// SearchCtx finds observations with ctx + timeout (CTX-1/3/4).
+// Holds the logic; Search is a thin Background() wrapper (D2).
+func (s *Store) SearchCtx(ctx context.Context, query string, opts SearchOptions) (results []*Observation, err error) {
+	ctx, cancel := WithTimeout(ctx)
+	defer cancel()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("bigmem search: %w", ctx.Err())
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	defer func() {
 		if err == nil {
-			_, _ = s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+			_, _ = s.db.ExecContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)")
 		}
 	}()
 
@@ -1746,7 +1817,7 @@ func (s *Store) Search(query string, opts SearchOptions) (results []*Observation
 		tkSQL += " ORDER BY updated_at DESC LIMIT ?"
 		tkArgs = append(tkArgs, limit)
 
-		tkRows, err := s.db.Query(tkSQL, tkArgs...)
+		tkRows, err := s.db.QueryContext(ctx, tkSQL, tkArgs...)
 		if err == nil {
 			defer tkRows.Close()
 			for tkRows.Next() {
@@ -1804,7 +1875,7 @@ func (s *Store) Search(query string, opts SearchOptions) (results []*Observation
 		}
 		q += " ORDER BY o.updated_at DESC LIMIT ?"
 		args = append(args, limit)
-		rows, err = s.db.Query(q, args...)
+		rows, err = s.db.QueryContext(ctx, q, args...)
 	} else {
 		// FTS5 with BM25 ranking — "all" = AND, "any" = OR (Engram parity)
 		var ftsQuery string
@@ -1847,13 +1918,16 @@ func (s *Store) Search(query string, opts SearchOptions) (results []*Observation
 
 		sqlQ += " ORDER BY rank LIMIT ?"
 		args = append(args, limit)
-		rows, err = s.db.Query(sqlQ, args...)
+		rows, err = s.db.QueryContext(ctx, sqlQ, args...)
 	}
 	if err != nil {
 		// FTS error — fallback to LIKE search
 		likeSQL, likeArgs := buildLikeSearchSQL(query, opts, limit)
-		rows, err = s.db.Query(likeSQL, likeArgs...)
+		rows, err = s.db.QueryContext(ctx, likeSQL, likeArgs...)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("bigmem search: %w", ctx.Err())
+			}
 			return nil, fmt.Errorf("search: %w", err)
 		}
 	}
@@ -1905,7 +1979,7 @@ func (s *Store) Search(query string, opts SearchOptions) (results []*Observation
 	// Fallback to LIKE if FTS returned no rows (covers rebuild race or corrupted FTS)
 	if !hasRows {
 		likeSQL, likeArgs := buildLikeSearchSQL(query, opts, limit)
-		likeRows, err := s.db.Query(likeSQL, likeArgs...)
+		likeRows, err := s.db.QueryContext(ctx, likeSQL, likeArgs...)
 		if err == nil {
 			defer likeRows.Close()
 			for likeRows.Next() {
@@ -1951,7 +2025,18 @@ func (s *Store) Search(query string, opts SearchOptions) (results []*Observation
 
 // Update modifies fields of an existing observation.
 func (s *Store) Update(id string, updates map[string]any) (*Observation, error) {
-	obs, err := s.Get(id)
+	return s.UpdateCtx(context.Background(), id, updates)
+}
+
+// UpdateCtx modifies fields via GetCtx+SaveCtx with ctx + timeout (CTX-1/3/4, D3).
+// It never calls legacy Get/Save so cancellation propagates end-to-end.
+func (s *Store) UpdateCtx(ctx context.Context, id string, updates map[string]any) (*Observation, error) {
+	ctx, cancel := WithTimeout(ctx)
+	defer cancel()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("bigmem update: %w", ctx.Err())
+	}
+	obs, err := s.GetCtx(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -1973,16 +2058,40 @@ func (s *Store) Update(id string, updates map[string]any) (*Observation, error) 
 	if v, ok := updates["tool_name"].(string); ok {
 		obs.ToolName = v
 	}
-	return obs, s.Save(obs)
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("bigmem update: %w", ctx.Err())
+	}
+	if err := s.SaveCtx(ctx, obs); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem update: %w", ctx.Err())
+		}
+		return nil, err
+	}
+	return obs, nil
 }
 
 // ─── Delete ──────────────────────────────────────────────────────────────────
 
 // Delete removes an observation permanently.
 func (s *Store) Delete(id string) error {
+	return s.DeleteCtx(context.Background(), id)
+}
+
+// DeleteCtx removes an observation with ctx + timeout (CTX-1/3/4).
+func (s *Store) DeleteCtx(ctx context.Context, id string) error {
+	ctx, cancel := WithTimeout(ctx)
+	defer cancel()
+	if ctx.Err() != nil {
+		return fmt.Errorf("bigmem delete: %w", ctx.Err())
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, err := s.db.Exec("DELETE FROM observations WHERE id = ?", id)
+	_, err := s.db.ExecContext(ctx, "DELETE FROM observations WHERE id = ?", id)
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("bigmem delete: %w", ctx.Err())
+		}
+	}
 	return err
 }
 

@@ -2,6 +2,7 @@
 package bigmem
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -184,15 +185,35 @@ func parseSessionTime(s string) time.Time {
 
 // SessionContext returns recent sessions, newest first.
 func (s *Store) SessionContext(limit int) ([]Session, error) {
+	return s.SessionContextCtx(context.Background(), limit)
+}
+
+// SessionContextCtx returns recent sessions with ctx + timeout (CTX-2/3/4).
+// Holds the logic; SessionContext is a thin Background() wrapper (D2).
+// Cancelled ctx fails visibly with wrapped ctx.Err() before touching SQLite.
+func (s *Store) SessionContextCtx(ctx context.Context, limit int) ([]Session, error) {
+	ctx, cancel := WithTimeout(ctx)
+	defer cancel()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("bigmem session context: %w", ctx.Err())
+	}
 	if limit <= 0 {
 		limit = 5
 	}
-	s.db.Exec(`CREATE TABLE IF NOT EXISTS sessions
-		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT, parent_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, leaf_id TEXT, branch_summary TEXT)`)
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS sessions
+		(id TEXT PRIMARY KEY, start_time TEXT, end_time TEXT, summary TEXT, project TEXT, directory TEXT, parent_id TEXT REFERENCES sessions(id) ON DELETE SET NULL, leaf_id TEXT, branch_summary TEXT)`); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem session context: %w", ctx.Err())
+		}
+		// Legacy ignores DDL errors; preserve parity for non-ctx failures.
+	}
 
-	rows, err := s.db.Query(
+	rows, err := s.db.QueryContext(ctx,
 		"SELECT id, start_time, end_time, summary, project, directory, parent_id, leaf_id, branch_summary FROM sessions ORDER BY start_time DESC LIMIT ?", limit)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem session context: %w", ctx.Err())
+		}
 		return nil, fmt.Errorf("session query: %w", err)
 	}
 	defer rows.Close()
@@ -226,6 +247,12 @@ func (s *Store) SessionContext(limit int) ([]Session, error) {
 			sess.BranchSummary = branchSummary.String
 		}
 		sessions = append(sessions, sess)
+	}
+	if err := rows.Err(); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem session context: %w", ctx.Err())
+		}
+		return nil, err
 	}
 	return sessions, nil
 }
@@ -440,10 +467,26 @@ type SavedPrompt struct {
 
 // SavePrompt persists a user prompt.
 func (s *Store) SavePrompt(content, sessionID string) (*SavedPrompt, error) {
+	return s.SavePromptCtx(context.Background(), content, sessionID)
+}
+
+// SavePromptCtx persists a user prompt with ctx + timeout (CTX-2/3/4).
+// Holds the logic; SavePrompt is a thin Background() wrapper (D2).
+func (s *Store) SavePromptCtx(ctx context.Context, content, sessionID string) (*SavedPrompt, error) {
+	ctx, cancel := WithTimeout(ctx)
+	defer cancel()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("bigmem save prompt: %w", ctx.Err())
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.db.Exec(`CREATE TABLE IF NOT EXISTS prompts
-		(id TEXT PRIMARY KEY, content TEXT, session_id TEXT, created_at TEXT)`)
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS prompts
+		(id TEXT PRIMARY KEY, content TEXT, session_id TEXT, created_at TEXT)`); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem save prompt: %w", ctx.Err())
+		}
+		// Legacy ignores DDL errors; preserve parity for non-ctx failures.
+	}
 	// Batch S: private-tag redaction + truncation (Engram parity)
 	content = stripPrivateTags(content)
 	truncated, _ := truncateIfNeeded(content)
@@ -454,9 +497,15 @@ func (s *Store) SavePrompt(content, sessionID string) (*SavedPrompt, error) {
 		SessionID: sessionID,
 		CreatedAt: time.Now(),
 	}
-	_, err := s.db.Exec("INSERT INTO prompts (id, content, session_id, created_at) VALUES (?, ?, ?, ?)",
+	_, err := s.db.ExecContext(ctx, "INSERT INTO prompts (id, content, session_id, created_at) VALUES (?, ?, ?, ?)",
 		p.ID, p.Content, p.SessionID, p.CreatedAt.Format(time.RFC3339))
-	return p, err
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem save prompt: %w", ctx.Err())
+		}
+		return p, err
+	}
+	return p, nil
 }
 
 // SearchPrompts searches prompts using FTS5.
@@ -582,14 +631,28 @@ type TimelineEntry struct {
 
 // Timeline returns observations in chronological order.
 func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
+	return s.TimelineCtx(context.Background(), opts)
+}
+
+// TimelineCtx returns observations in chronological order with ctx + timeout (CTX-2/3/4).
+// Holds the logic; Timeline is a thin Background() wrapper (D2).
+func (s *Store) TimelineCtx(ctx context.Context, opts TimelineOptions) ([]TimelineEntry, error) {
+	ctx, cancel := WithTimeout(ctx)
+	defer cancel()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+	}
 	var rows *sql.Rows
 	var err error
 	var result []TimelineEntry
 
 	if opts.FocusID != "" {
 		var focusTime string
-		err := s.db.QueryRow("SELECT created_at FROM observations WHERE id = ?", opts.FocusID).Scan(&focusTime)
+		err := s.db.QueryRowContext(ctx, "SELECT created_at FROM observations WHERE id = ?", opts.FocusID).Scan(&focusTime)
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+			}
 			return nil, fmt.Errorf("focus not found: %w", err)
 		}
 
@@ -597,10 +660,13 @@ func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
 		if opts.Before > 0 {
 			beforeLimit = opts.Before
 		}
-		beforeRows, err := s.db.Query(
+		beforeRows, err := s.db.QueryContext(ctx,
 			`SELECT id, title, type, created_at FROM observations
 			 WHERE created_at < ? AND id != ? AND deleted_at IS NULL
 			 ORDER BY created_at DESC LIMIT ?`, focusTime, opts.FocusID, beforeLimit)
+		if err != nil && ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+		}
 		if err == nil {
 			defer beforeRows.Close()
 			for beforeRows.Next() {
@@ -613,25 +679,33 @@ func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
 				e.IsBefore = true
 				result = append(result, e)
 			}
+			if err := beforeRows.Err(); err != nil && ctx.Err() != nil {
+				return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+			}
 		}
 
 		var focusEntry TimelineEntry
 		var ca string
-		if err := s.db.QueryRow("SELECT id, title, type, created_at FROM observations WHERE id = ?", opts.FocusID).
+		if err := s.db.QueryRowContext(ctx, "SELECT id, title, type, created_at FROM observations WHERE id = ?", opts.FocusID).
 			Scan(&focusEntry.ID, &focusEntry.Title, &focusEntry.Type, &ca); err == nil {
 			focusEntry.CreatedAt, _ = time.Parse(time.RFC3339, ca)
 			focusEntry.IsFocus = true
 			result = append(result, focusEntry)
+		} else if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
 		}
 
 		afterLimit := 5
 		if opts.After > 0 {
 			afterLimit = opts.After
 		}
-		afterRows, err := s.db.Query(
+		afterRows, err := s.db.QueryContext(ctx,
 			`SELECT id, title, type, created_at FROM observations
 			 WHERE created_at > ? AND id != ? AND deleted_at IS NULL
 			 ORDER BY created_at ASC LIMIT ?`, focusTime, opts.FocusID, afterLimit)
+		if err != nil && ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+		}
 		if err == nil {
 			defer afterRows.Close()
 			for afterRows.Next() {
@@ -643,6 +717,12 @@ func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
 				e.CreatedAt, _ = time.Parse(time.RFC3339, ca)
 				result = append(result, e)
 			}
+			if err := afterRows.Err(); err != nil && ctx.Err() != nil {
+				return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+			}
+		}
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
 		}
 		return result, nil
 	}
@@ -651,9 +731,12 @@ func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
 	if opts.Limit > 0 {
 		limit = opts.Limit
 	}
-	rows, err = s.db.Query(
+	rows, err = s.db.QueryContext(ctx,
 		"SELECT id, title, type, created_at FROM observations WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT ?", limit)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+		}
 		return nil, err
 	}
 	defer rows.Close()
@@ -665,6 +748,12 @@ func (s *Store) Timeline(opts TimelineOptions) ([]TimelineEntry, error) {
 		}
 		e.CreatedAt, _ = time.Parse(time.RFC3339, ca)
 		result = append(result, e)
+	}
+	if err := rows.Err(); err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("bigmem timeline: %w", ctx.Err())
+		}
+		return nil, err
 	}
 	return result, nil
 }

@@ -3,6 +3,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -636,7 +637,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 			// Wire capture_prompt (Engram parity): best-effort prompt persistence when enabled (default true).
 			if getBool(args, "capture_prompt", true) {
 				if pending := sessionActivity.GetPendingPrompt(resolvedProject, obs.SessionID); pending != "" {
-					_, _ = store.SavePrompt(pending, obs.SessionID)
+					_, _ = store.SavePromptCtx(context.Background(), pending, obs.SessionID)
 				}
 			}
 			origContent := obs.Content
@@ -648,7 +649,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 					fmt.Fprintf(os.Stderr, "[bigmem] PutBlob failed: %v\n", err)
 				}
 			}
-			if err := store.Save(obs); err != nil {
+			if err := store.SaveCtx(context.Background(), obs); err != nil {
 				writeError(id, err.Error())
 				return
 			}
@@ -697,7 +698,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 			AllProjects: allProjects,
 			BM25Floor:   bm25Floor,
 		}
-		results, err := store.Search(query, opts)
+		results, err := store.SearchCtx(context.Background(), query, opts)
 		if err != nil {
 			writeError(id, err.Error())
 			return
@@ -743,7 +744,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 						if rel.SourceID == r.ID && rel.Relation == "supersedes" {
 							title := titleByID[rel.TargetID]
 							if title == "" {
-								if obs, err := store.Get(rel.TargetID); err == nil {
+								if obs, err := store.GetCtx(context.Background(), rel.TargetID); err == nil {
 									title = obs.Title
 								} else {
 									title = "deleted"
@@ -754,7 +755,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 						if rel.TargetID == r.ID && rel.Relation == "supersedes" {
 							title := titleByID[rel.SourceID]
 							if title == "" {
-								if obs, err := store.Get(rel.SourceID); err == nil {
+								if obs, err := store.GetCtx(context.Background(), rel.SourceID); err == nil {
 									title = obs.Title
 								} else {
 									title = "deleted"
@@ -769,7 +770,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 							}
 							title := titleByID[otherID]
 							if title == "" {
-								if obs, err := store.Get(otherID); err == nil {
+								if obs, err := store.GetCtx(context.Background(), otherID); err == nil {
 									title = obs.Title
 								} else {
 									title = "deleted"
@@ -797,7 +798,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, "id is required")
 			return
 		}
-		obs, err := store.Get(obsID)
+		obs, err := store.GetCtx(context.Background(), obsID)
 		if err != nil {
 			writeError(id, err.Error())
 			return
@@ -843,7 +844,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 		if v, ok := args["scope"]; ok {
 			updates["scope"] = v
 		}
-		obs, err := store.Update(obsID, updates)
+		obs, err := store.UpdateCtx(context.Background(), obsID, updates)
 		if err != nil {
 			writeError(id, err.Error())
 			return
@@ -856,14 +857,14 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, "id is required")
 			return
 		}
-		if err := store.Delete(obsID); err != nil {
+		if err := store.DeleteCtx(context.Background(), obsID); err != nil {
 			writeError(id, err.Error())
 			return
 		}
 		textResult(id, "Deleted")
 
 	case "mem_context":
-		sessions, err := store.SessionContext(getInt(args, "limit", 5))
+		sessions, err := store.SessionContextCtx(context.Background(), getInt(args, "limit", 5))
 		if err != nil {
 			writeError(id, err.Error())
 			return
@@ -973,7 +974,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 				return
 			}
 			origPrompt := content
-			p, err := store.SavePrompt(content, sessionID)
+			p, err := store.SavePromptCtx(context.Background(), content, sessionID)
 			if err != nil {
 				writeError(id, err.Error())
 				return
@@ -1030,7 +1031,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 		textResult(id, key)
 
 	case "mem_timeline":
-		entries, err := store.Timeline(bigmem.TimelineOptions{
+		entries, err := store.TimelineCtx(context.Background(), bigmem.TimelineOptions{
 			Limit: getInt(args, "limit", 20),
 		})
 		if err != nil {
@@ -1133,7 +1134,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 		for _, o := range obs {
 			o.SessionID = sessionID
 			o.Project = resolvedProj
-			if e := store.Save(o); e == nil {
+			if e := store.SaveCtx(context.Background(), o); e == nil {
 				saved++
 			}
 		}

@@ -103,7 +103,7 @@ func HasSessionSummary(ctx context.Context, proj, sessionID string) (bool, error
 	}
 
 	// 1) sessions table: any ended session with summary
-	if sessions, sErr := store.SessionContext(5); sErr == nil && len(sessions) > 0 {
+	if sessions, sErr := store.SessionContextCtx(ctx, 5); sErr == nil && len(sessions) > 0 {
 		for _, s := range sessions {
 			if s.EndTime.IsZero() || strings.TrimSpace(s.Summary) == "" {
 				continue
@@ -122,7 +122,7 @@ func HasSessionSummary(ctx context.Context, proj, sessionID string) (bool, error
 	if proj != "" {
 		opts.Project = proj
 	}
-	results, rErr := store.Search("", opts)
+	results, rErr := store.SearchCtx(ctx, "", opts)
 	if rErr == nil && len(results) > 0 {
 		for _, o := range results {
 			if o.Type != "session_summary" {
@@ -203,7 +203,7 @@ func SaveSessionSummaryWithFallbackForChange(ctx context.Context, workspaceRoot,
 	for attempt := 0; attempt < 2; attempt++ {
 		var err error
 		if hasMCP {
-			resultID, err = tryMCPSave(proj, sessionID, saveContent)
+			resultID, err = tryMCPSave(ctx, proj, sessionID, saveContent)
 		} else {
 			resultID, err = saveViaBash(ctx, workspaceRoot, proj, saveContent)
 		}
@@ -226,7 +226,7 @@ func SaveSessionSummaryWithFallbackForChange(ctx context.Context, workspaceRoot,
 	return "", lastErr
 }
 
-func tryMCPSave(proj, sessionID, content string) (string, error) {
+func tryMCPSave(ctx context.Context, proj, sessionID, content string) (string, error) {
 	store, err := bigmemOpen("")
 	if err != nil {
 		return "", err
@@ -242,11 +242,11 @@ func tryMCPSave(proj, sessionID, content string) (string, error) {
 		}
 		// Also persist as observation for verification via Search
 		obs := &bigmem.Observation{Title: "Session summary", Type: "session_summary", Content: content, Project: proj, SessionID: sessionID}
-		_ = store.Save(obs)
+		_ = store.SaveCtx(ctx, obs)
 		return sessionID, nil
 	}
 	obs := &bigmem.Observation{Title: "Session summary", Type: "session_summary", Content: content, Project: proj, SessionID: sessionID}
-	if err := store.Save(obs); err != nil {
+	if err := store.SaveCtx(ctx, obs); err != nil {
 		return "", err
 	}
 	return obs.ID, nil
