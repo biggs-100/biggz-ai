@@ -233,6 +233,14 @@ Guarantees the human sees audited `## Sub-agent Result` before deciding. Gate `b
 
 **Layer 1 — Prompt (machine-verifiable invariant):** `internal/assets/biggz/biggz-orchestrator.md` contains a copy-pasteable block with 4 markers (`## Sub-agent Result: {phase/agent}`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`) and states `INVALID and will be blocked` for any **checkpoint** `ask_user_question`/`question` (those presenting `proceed`/`adjust`/`stop` or `continue`/`correct` after a delegated sub-agent) without immediately preceding markdown. General clarification questions that are NOT a checkpoint do NOT require synthesis and MUST NOT be blocked — e.g. '¿por dónde empezamos?', preflight, or other orchestration clarifications not presenting a delegated result use the question tool directly without synthesis. Every checkpoint `ask` reference is followed by `REMINDER: synthesis markdown is separate chat markdown emitted FIRST...` (12× convergence) so prompt and gate cannot drift.
 
+> ENFORCEMENT RETIRED (2026-09-04): blocking proved unfulfillable from the
+> agent side (same-turn side-channel + body-text false positives) and is now a
+> passthrough in Go (`ShouldBlock`/`ShouldBlockApplyAdmission` always false)
+> and JS (wrappers call through). Context-before-question is governed by the
+> explicit ask contract in the orchestrator delegation doc, not by code.
+> Helpers (`HasSynthesis`, `isCheckpointAsk` labels-only, `FormatFallback`)
+> and their unit tests stay as living documentation. Full doc-sync pending.
+>
 **Layer 2 — Pi gate (blocking + thin advise):** `internal/assets/pi/biggz-synthesis-gate.js` wraps `pi.registerTool` for future `ask_user_question`/`question` AND sweeps pre-registered tools (`pi.tools` / `pi._tools` / `pi.getAllTools`→`getToolDefinition` if available) — load-order safe — and hooks `pi.on("tool_call")` as a secondary guard that **actually blocks** (`{block:true, reason}`), not just warns.
 
 - **Source priority (blocking STRICT):** **only** `currentTurnMarkdown` satisfies the block — `ctx.history`/`lastAssistant` are history (stale) and are deliberately NOT checked for blocking (they only feed the non-blocking advise path via `getCurrentTurnSynthesis` fallback). The same-turn buffer (`recordText` via `pi.on("message_end")`/`message_update`/`message_start` plus legacy `assistant_message` fallback, reset at `turn_start`/`agent_start` and after each successful question) fixes the streaming race where markdown is emitted milliseconds before the tool call and has not yet landed in `ctx.history` (120 s window).

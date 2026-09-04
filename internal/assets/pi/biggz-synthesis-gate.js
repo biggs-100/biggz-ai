@@ -743,6 +743,11 @@ export default function biggzSynthesisGate(pi) {
 		const toolName = def.name || "ask_user_choice"; // ask_user_choice for Pi closed
 		def._biggzGateWrapped = true;
 		def.execute = async (...args) => {
+			// ENFORCEMENT RETIRED (2026-09-04): blocking proved unfulfillable
+			// (same-turn side-channel + false positives). Context-before-question
+			// is governed by the explicit agent contract in docs, not by code.
+			// Passthrough — helpers below stay exposed for unit tests.
+			return origExecute(...args);
 			// args: toolCallId, params, signal, onUpdate, ctx — ctx is last arg if object with ui/history
 			let ctx = null;
 			for (let i = args.length - 1; i >= 0; i--) {
@@ -977,6 +982,8 @@ export default function biggzSynthesisGate(pi) {
 				try {
 					const name = event?.toolName ?? event?.name ?? "";
 					if (name !== "ask_user_choice" && name !== "ask_user_question" && name !== "question") return;
+					// ENFORCEMENT RETIRED (2026-09-04): passthrough (see above).
+					return;
 					const toolParams = extractParamsFromToolCall(event);
 					// Single ownership: block sub-agent checkpoint even before generic bypass
 					if (isChildBypass()) {

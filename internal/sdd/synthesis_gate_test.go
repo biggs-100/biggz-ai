@@ -1,7 +1,6 @@
 package sdd
 
 import (
-	"strings"
 	"testing"
 	"time"
 )
@@ -91,85 +90,70 @@ func TestIsCheckpointAsk(t *testing.T) {
 	}
 }
 
+func TestIsCheckpointAskEnvelopeLabelsOnly(t *testing.T) {
+	t.Setenv("PI_SUBAGENT_CHILD", "0")
+	// Token in question BODY with neutral labels is content, not a choice → false.
+	bodyOnly := `{"questions":[{"header":"Ritmo","question":"¿Qué ritmo usamos para continuar con el change?","options":[{"label":"Interactivo"},{"label":"Automático"}]}]}`
+	if IsCheckpointAsk(bodyOnly) {
+		t.Fatalf("IsCheckpointAsk must be false when token is only in question body, labels neutral")
+	}
+	// Token in a label is a checkpoint choice → true.
+	labelHit := `{"questions":[{"header":"Checkpoint","question":"¿Seguimos?","options":[{"label":"Continuar"},{"label":"Ajustar"}]}]}`
+	if !IsCheckpointAsk(labelHit) {
+		t.Fatalf("IsCheckpointAsk must be true when token is in an option label")
+	}
+	// Token in option value counts as a choice → true.
+	valueHit := `{"questions":[{"question":"Next?","options":[{"label":"Go","value":"proceed"}]}]}`
+	if !IsCheckpointAsk(valueHit) {
+		t.Fatalf("IsCheckpointAsk must be true when token is in an option value")
+	}
+	// Plain-string options are labels → true when token present.
+	stringHit := `{"questions":[{"question":"Next?","options":["proceed","stop"]}]}`
+	if !IsCheckpointAsk(stringHit) {
+		t.Fatalf("IsCheckpointAsk must be true for plain-string checkpoint options")
+	}
+	// Top-level options with neutral labels → false even with token in body.
+	topNeutral := `{"question":"¿Cómo continuar?","options":[{"label":"A"},{"label":"B"}]}`
+	if IsCheckpointAsk(topNeutral) {
+		t.Fatalf("IsCheckpointAsk must be false for neutral top-level options")
+	}
+	// Raw non-envelope strings keep legacy whole-string behavior.
+	if !IsCheckpointAsk("Continuar con el cambio") {
+		t.Fatalf("legacy raw-string scan must stay true for backward compat")
+	}
+}
+
 func TestShouldBlock(t *testing.T) {
 	t.Setenv("PI_SUBAGENT_CHILD", "0")
 	good := mustSynthesisMD("full-prose")
 
-	// within window allows
+	// Enforcement RETIRED (2026-09-04): ShouldBlock is a passthrough.
+	// Context-before-question is governed by the explicit agent contract
+	// in docs, not by code. Every case below must allow.
 	SetCurrentTurnMarkdown(good)
-	if ShouldBlock("proceed", good, time.Now().Add(30*time.Second)) {
-		t.Fatalf("ShouldBlock should be false when synthesis within 30s window with proceed")
+	for _, q := range []string{"proceed", "continuar", "how are you?", "general question"} {
+		for _, md := range []string{good, "no markers at all", ""} {
+			if ShouldBlock(q, md, time.Now()) {
+				t.Fatalf("ShouldBlock(%q) must be false (passthrough retired)", q)
+			}
+			if ShouldBlock(q, md, time.Now().Add(121*time.Second)) {
+				t.Fatalf("ShouldBlock(%q) must be false even when expired (passthrough retired)", q)
+			}
 	}
-	if ShouldBlock("continuar", good, time.Now().Add(30*time.Second)) {
-		t.Fatalf("ShouldBlock should be false for Spanish token continuar within window")
-	}
-
-	// missing blocks
-	SetCurrentTurnMarkdown(good)
-	if !ShouldBlock("proceed", "no markers at all", time.Now()) {
-		t.Fatalf("ShouldBlock should be true when synthesis missing")
-	}
-	if !ShouldBlock("continuar", "no markers", time.Now()) {
-		t.Fatalf("ShouldBlock should be true for Spanish token when missing")
-	}
-
-	// expired blocks (121s)
-	SetCurrentTurnMarkdown(good)
-	if !ShouldBlock("proceed", good, time.Now().Add(121*time.Second)) {
-		t.Fatalf("ShouldBlock should be true when expired 121s even with valid synthesis")
-	}
-	if !ShouldBlock("proceed", "no markers", time.Now().Add(121*time.Second)) {
-		t.Fatalf("ShouldBlock should be true when missing and expired")
-	}
-
-	// non-checkpoint never blocks
-	SetCurrentTurnMarkdown(good)
-	// also test with missing synthesis but non-checkpoint
-	if ShouldBlock("how are you?", "no markers", time.Now()) {
-		t.Fatalf("ShouldBlock should be false for non-checkpoint question even without synthesis")
-	}
-	if ShouldBlock("how are you?", good, time.Now()) {
-		t.Fatalf("ShouldBlock should be false for non-checkpoint even with synthesis")
-	}
-	// ensure non-checkpoint within and expired both allow
-	if ShouldBlock("general question", "no markers", time.Now().Add(121*time.Second)) {
-		t.Fatalf("non-checkpoint should not block even when expired")
 	}
 }
 
-func TestShouldBlock_CheckpointWithoutSynthesisEvenWhenHistoryEmpty(t *testing.T) {
+func TestShouldBlock_PassthroughRetired(t *testing.T) {
 	t.Setenv("PI_SUBAGENT_CHILD", "0")
-	// Bug regression: checkpoint without synthesis in current turn must block even when
-	// there is no synthesis anywhere in history (anySynthesis empty). The old JS gate
-	// confused empty history with preflight allowance and let checkpoint pass.
-	// Go canonical never had that allowance — verify it blocks strictly.
+	// Enforcement RETIRED: checkpoint without synthesis must NOT block even
+	// with empty history. The agent contract governs context-before-question.
 	SetCurrentTurnMarkdown(mustSynthesisMD("full-prose"))
-	// missing synthesis, empty history analogue (md parameter empty)
-	if !ShouldBlock("proceed", "", time.Now()) {
-		t.Fatalf("ShouldBlock should be true for checkpoint 'proceed' with empty md even when history empty")
+	for _, q := range []string{"proceed", "continuar", "Pace", "Artifacts", "PRs", "Review", "¿por dónde empezamos?"} {
+		for _, md := range []string{"", "no markers at all"} {
+			if ShouldBlock(q, md, time.Now()) {
+				t.Fatalf("ShouldBlock(%q) must be false (passthrough retired)", q)
+			}
 	}
-	if !ShouldBlock("continuar", "", time.Now()) {
-		t.Fatalf("ShouldBlock should be true for checkpoint 'continuar' with empty md even when history empty")
-	}
-	if !ShouldBlock("proceed", "no markers at all", time.Now()) {
-		t.Fatalf("ShouldBlock should be true for checkpoint with no markers even when history empty")
-	}
-	// Preflight non-checkpoint (Pace/Artifacts/PRs/Review) must still be allowed without synthesis
-	// IsCheckpointAsk=false -> gate never blocks, regardless of md
-	if ShouldBlock("Pace", "", time.Now()) {
-		t.Fatalf("ShouldBlock should be false for preflight non-checkpoint 'Pace' even without synthesis")
-	}
-	if ShouldBlock("Artifacts", "no markers", time.Now()) {
-		t.Fatalf("ShouldBlock should be false for preflight non-checkpoint 'Artifacts' even without synthesis")
-	}
-	if ShouldBlock("PRs", "", time.Now()) {
-		t.Fatalf("ShouldBlock should be false for preflight non-checkpoint 'PRs' even without synthesis")
-	}
-	if ShouldBlock("Review", "", time.Now()) {
-		t.Fatalf("ShouldBlock should be false for preflight non-checkpoint 'Review' even without synthesis")
-	}
-	if ShouldBlock("¿por dónde empezamos?", "", time.Now()) {
-		t.Fatalf("ShouldBlock should be false for general non-checkpoint even without synthesis and empty history")
 	}
 }
 
@@ -209,14 +193,14 @@ func TestShouldBlock_ReqDG1_OptionBearingNonCheckpoint(t *testing.T) {
 		t.Fatalf("ShouldBlock should be false for preflight option-ask even when window expired")
 	}
 
-	// Checkpoint WITH options and no synthesis MUST still block (REQ-DG-4 regression).
+	// Checkpoint WITH options and no synthesis NO LONGER blocks (retired).
 	checkpointOptions := `{"questions":[{"question":"Next?","options":[{"label":"Proceed"},{"label":"Adjust"}]}]}`
 	if !HasOptions(checkpointOptions) || !IsCheckpointAsk(checkpointOptions) {
 		t.Fatalf("precondition: checkpoint fixture must bear options AND checkpoint token")
 	}
 	SetCurrentTurnMarkdown(good)
-	if !ShouldBlock(checkpointOptions, "no markers", time.Now()) {
-		t.Fatalf("ShouldBlock should be true for option-bearing checkpoint without synthesis")
+	if ShouldBlock(checkpointOptions, "no markers", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for option-bearing checkpoint without synthesis (retired)")
 	}
 	// Valid synthesis in window passes.
 	SetCurrentTurnMarkdown(good)
@@ -262,42 +246,39 @@ func TestShouldBlock_ChildBypass(t *testing.T) {
 		t.Fatalf("ShouldBlock should be false when PI_SUBAGENT_CHILD=1 (child bypass)")
 	}
 	t.Setenv("PI_SUBAGENT_CHILD", "0")
-	// back to orchestrator, should block when missing
+	// back to orchestrator, passthrough retired: never blocks when missing
 	SetCurrentTurnMarkdown(mustSynthesisMD("full-prose"))
-	if !ShouldBlock("proceed", "no markers", time.Now()) {
-		t.Fatalf("ShouldBlock should be true for orchestrator when missing")
+	if ShouldBlock("proceed", "no markers", time.Now()) {
+		t.Fatalf("ShouldBlock should be false for orchestrator when missing (retired)")
 	}
 }
 
-// TestShouldBlockApplyAdmission_NoBypasses pins the P0-2 hardening: admission
-// to the apply phase (the phase that writes) requires a human
-// checkpoint/proceed with synthesis even in auto mode and even in a child
-// subagent. Unlike ShouldBlock, the write-admission gate honors neither the
-// PI_SUBAGENT_CHILD bypass nor the Session Recall bypass, so auto
-// back-to-back phases cannot self-validate their own entry into writing.
+// TestShouldBlockApplyAdmission_NoBypasses documents the RETIRED write-
+// admission gate: it is now a passthrough like ShouldBlock. Human checkpoints
+// in the workflow govern write admission, not code.
 func TestShouldBlockApplyAdmission_NoBypasses(t *testing.T) {
 	good := mustSynthesisMD("full-prose")
 
-	t.Run("child without synthesis still blocks", func(t *testing.T) {
+	t.Run("child without synthesis allows (retired)", func(t *testing.T) {
 		t.Setenv("PI_SUBAGENT_CHILD", "1")
 		SetCurrentTurnMarkdown(good)
 		if ShouldBlock("proceed", "no markers", time.Now()) {
 			t.Fatalf("precondition: ShouldBlock must bypass for the child")
 		}
-		if !ShouldBlockApplyAdmission("proceed", "no markers", time.Now()) {
-			t.Fatalf("ShouldBlockApplyAdmission must block a child checkpoint without synthesis")
+		if ShouldBlockApplyAdmission("proceed", "no markers", time.Now()) {
+			t.Fatalf("ShouldBlockApplyAdmission must allow a child checkpoint without synthesis (retired)")
 		}
 	})
 
-	t.Run("session recall without synthesis still blocks", func(t *testing.T) {
+	t.Run("session recall without synthesis allows (retired)", func(t *testing.T) {
 		t.Setenv("PI_SUBAGENT_CHILD", "0")
 		recallMD := "## Session Recall\nsome previous context\n"
 		SetCurrentTurnMarkdown(recallMD)
 		if ShouldBlock("proceed", recallMD, time.Now()) {
 			t.Fatalf("precondition: ShouldBlock must bypass for Session Recall")
 		}
-		if !ShouldBlockApplyAdmission("proceed", recallMD, time.Now()) {
-			t.Fatalf("ShouldBlockApplyAdmission must block Session Recall without checkpoint synthesis")
+		if ShouldBlockApplyAdmission("proceed", recallMD, time.Now()) {
+			t.Fatalf("ShouldBlockApplyAdmission must allow Session Recall without checkpoint synthesis (retired)")
 		}
 	})
 
@@ -309,11 +290,11 @@ func TestShouldBlockApplyAdmission_NoBypasses(t *testing.T) {
 		}
 	})
 
-	t.Run("expired synthesis blocks", func(t *testing.T) {
+	t.Run("expired synthesis allows (retired)", func(t *testing.T) {
 		t.Setenv("PI_SUBAGENT_CHILD", "0")
 		SetCurrentTurnMarkdown(good)
-		if !ShouldBlockApplyAdmission("proceed", good, time.Now().Add(121*time.Second)) {
-			t.Fatalf("ShouldBlockApplyAdmission must block when synthesis is expired")
+		if ShouldBlockApplyAdmission("proceed", good, time.Now().Add(121*time.Second)) {
+			t.Fatalf("ShouldBlockApplyAdmission must allow when synthesis is expired (retired)")
 		}
 	})
 
@@ -337,16 +318,12 @@ func TestBlockedEnvelope_ReqDG2_FallbackVerbatim(t *testing.T) {
 	checkpointEnv := QuestionEnvelope{Questions: []Question{{Header: "Decisi\u00f3n", Question: "Proceed with plan?", Options: []QuestionOption{{Label: "Proceed"}, {Label: "Adjust"}}}}}
 	checkpointQ := `{"questions":[{"question":"Proceed with plan?","options":[{"label":"Proceed"},{"label":"Adjust"}]}]}`
 	env := BuildBlockedEnvelope(checkpointQ, "no markers", time.Now(), checkpointEnv)
-	if !env.Block {
-		t.Fatalf("BuildBlockedEnvelope should block checkpoint without synthesis")
+	if env.Block {
+		t.Fatalf("BuildBlockedEnvelope must not block checkpoint without synthesis (retired)")
 	}
-	if env.Context == "" || !strings.Contains(env.Context, checkpointQ) {
-		t.Fatalf("blocked envelope context must carry attempted ask, got %q", env.Context)
-	}
-	for _, want := range []string{"Proceed with plan?", "Proceed", "Adjust"} {
-		if !strings.Contains(env.Fallback, want) {
-			t.Fatalf("blocked envelope fallback must contain %q verbatim, got %q", want, env.Fallback)
-		}
+	// Context/fallback payload retired with blocking: envelope carries no block.
+	if env.Context != "" || env.Fallback != "" {
+		t.Fatalf("retired blocked envelope must be empty, got context %q fallback %q", env.Context, env.Fallback)
 	}
 
 	freeTextQ := `{"question":"How are you doing today?"}`

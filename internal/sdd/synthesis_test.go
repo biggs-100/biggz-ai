@@ -95,8 +95,8 @@ func TestRender_MarkerInvariant(t *testing.T) {
 		t.Errorf("marker invariant: translated Artifacts/Paths should fail HasSynthesis")
 	}
 	SetCurrentTurnMarkdown(translated)
-	if !ShouldBlock("proceed", translated, time.Now()) {
-		t.Errorf("marker invariant: missing Artifacts marker should block")
+	if ShouldBlock("proceed", translated, time.Now()) {
+		t.Errorf("marker invariant: retired passthrough must not block even with translated markers")
 	}
 	translated2 := strings.ReplaceAll(outES, "## Sub-agent Result", "## Resultado del Sub-agente")
 	if HasSynthesis(translated2) {
