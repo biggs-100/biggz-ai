@@ -150,6 +150,12 @@ func (reasons blockerReasons) finalize(nextRecommended string) []string {
 // StatusOptions configures status output.
 type StatusOptions struct {
 	ReviewDisabled bool
+	// ReviewDisabledForWorkspace lets the composition root resolve the RDD
+	// switch against the exact workspace normalized by Status. When set, it
+	// is called once and its result replaces ReviewDisabled for the whole
+	// status decision. This allows tests to control RDD without touching
+	// global config.
+	ReviewDisabledForWorkspace func(workspaceRoot string) (bool, error)
 	// IncludeInstructions requests the phaseInstructions block on every
 	// derived ChangeStatus (renderPhaseInstructions).
 	IncludeInstructions bool
@@ -238,6 +244,15 @@ func StatusWithOptionsCtx(ctx context.Context, openspecRoot string, opts StatusO
 	ctx, cancel := bigmem.WithTimeout(ctx)
 	defer cancel()
 	workspaceRoot := filepath.Dir(openspecRoot)
+
+	// Resolve ReviewDisabledForWorkspace hook once, propagate via ReviewDisabled.
+	if opts.ReviewDisabledForWorkspace != nil {
+		disabled, hookErr := opts.ReviewDisabledForWorkspace(workspaceRoot)
+		if hookErr == nil {
+			opts.ReviewDisabled = disabled
+		}
+	}
+
 	changesDir := filepath.Join(openspecRoot, "changes")
 	archiveDir := filepath.Join(changesDir, "archive")
 
@@ -451,7 +466,7 @@ func deriveChangeStatusWithForcedStore(cs *ChangeStatus, changeDir, workspaceRoo
 	return deriveChangeStatusWithForcedStoreCtx(context.Background(), cs, changeDir, workspaceRoot, includeInstructions, forcedStore)
 }
 
-func deriveChangeStatusWithForcedStoreCtx(ctx context.Context, cs *ChangeStatus, changeDir, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore) error {
+func deriveChangeStatusWithForcedStoreCtx(ctx context.Context, cs *ChangeStatus, changeDir, workspaceRoot string, includeInstructions bool, forcedStore ArtifactStore, opts ...StatusOptions) error {
 	if cs.IsArchived {
 		cs.NextRecommended = "done"
 		return nil
@@ -533,7 +548,11 @@ func deriveChangeStatusWithForcedStoreCtx(ctx context.Context, cs *ChangeStatus,
 	cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: allowedEditRoots}
 	cs.Relationships = Relationships{}
 	cs.RemediationState = remediationState
-	cs.ReviewOffer = deriveReviewOffer(cs.Name, workspaceRoot, applyState, artifacts, verifyResult)
+	var reviewOpts []StatusOptions
+	if len(opts) > 0 {
+		reviewOpts = opts
+	}
+	cs.ReviewOffer = deriveReviewOffer(cs.Name, workspaceRoot, applyState, artifacts, verifyResult, reviewOpts...)
 	cs.NextRecommended = nextRecommended
 	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
 	cs.Route = deriveRoute(cs)
@@ -721,7 +740,7 @@ func deriveChangeStatus(cs *ChangeStatus, changeDir, workspaceRoot string, inclu
 
 // deriveChangeStatusCtx is the ctx-aware deriveChangeStatus: the session
 // guard receives the caller ctx instead of context.Background.
-func deriveChangeStatusCtx(ctx context.Context, cs *ChangeStatus, changeDir, workspaceRoot string, includeInstructions bool) error {
+func deriveChangeStatusCtx(ctx context.Context, cs *ChangeStatus, changeDir, workspaceRoot string, includeInstructions bool, opts ...StatusOptions) error {
 	if cs.IsArchived {
 		cs.NextRecommended = "done"
 		return nil
@@ -815,7 +834,11 @@ func deriveChangeStatusCtx(ctx context.Context, cs *ChangeStatus, changeDir, wor
 	cs.ActionContext = ActionContext{Mode: "repo-local", WorkspaceRoot: workspaceRoot, AllowedEditRoots: allowedEditRoots}
 	cs.Relationships = Relationships{}
 	cs.RemediationState = remediationState
-	cs.ReviewOffer = deriveReviewOffer(cs.Name, workspaceRoot, applyState, artifacts, verifyResult)
+	var reviewOpts []StatusOptions
+	if len(opts) > 0 {
+		reviewOpts = opts
+	}
+	cs.ReviewOffer = deriveReviewOffer(cs.Name, workspaceRoot, applyState, artifacts, verifyResult, reviewOpts...)
 	cs.NextRecommended = nextRecommended
 	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
 	cs.Route = deriveRoute(cs)
@@ -829,7 +852,7 @@ func deriveChangeStatusCtx(ctx context.Context, cs *ChangeStatus, changeDir, wor
 // deriveReviewOffer emits a fresh post-verification invitation iff
 // applyState==all_done && verifyReport==done && passing && RDD enabled.
 // No lineage/binding/receipt is persisted, only the quoted invocation.
-func deriveReviewOffer(changeName, workspaceRoot string, applyState ApplyState, artifacts map[string]ArtifactState, vr verifyResultEvaluation) *ReviewOfferBlock {
+func deriveReviewOffer(changeName, workspaceRoot string, applyState ApplyState, artifacts map[string]ArtifactState, vr verifyResultEvaluation, opts ...StatusOptions) *ReviewOfferBlock {
 	if applyState != ApplyAllDone {
 		return nil
 	}
@@ -839,7 +862,11 @@ func deriveReviewOffer(changeName, workspaceRoot string, applyState ApplyState, 
 	if !vr.Passing {
 		return nil
 	}
-	if !isRDDEnabled(workspaceRoot) {
+	var rddOpts []StatusOptions
+	if len(opts) > 0 {
+		rddOpts = opts
+	}
+	if !isRDDEnabled(workspaceRoot, rddOpts...) {
 		return nil
 	}
 	shortSHA := shortSHAForWorkspace(workspaceRoot)
@@ -871,7 +898,14 @@ func detectGitDirs(workspaceRoot string) (worktreeDir, commonDir string) {
 	return worktreeDir, commonDir
 }
 
-func isRDDEnabled(workspaceRoot string) bool {
+func isRDDEnabled(workspaceRoot string, opts ...StatusOptions) bool {
+	// If ReviewDisabled is set via hook or explicit flag, use it.
+	if len(opts) > 0 {
+		if opts[0].ReviewDisabled {
+			return false
+		}
+	}
+
 	worktreeDir, commonDir := detectGitDirs(workspaceRoot)
 	// When not in a git repo, fall back to global mode check via RDDStatus with empty dirs
 	// RDDStatus handles empty dirs as global-only check.
