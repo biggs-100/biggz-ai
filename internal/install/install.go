@@ -792,7 +792,7 @@ func DeployPersona(adapter plugin.AgentAdapter, homeDir string, dryRun bool) err
 			// Replace background policy token with live capability probe at install time.
 			// This mirrors gentle-pi's renderOrchestratorPrompt which injects
 			// Background subagent policy: on|off (capability: ready|absent).
-			// If pi-subagents is not yet installed, render off/absent with hint.
+			// If pi-subagents-j0k3r or pi-subagents is not yet installed, render off/absent with hint.
 			if strings.Contains(orchContent, "{{BIGGZ_BACKGROUND_POLICY}}") {
 				bgLine := piadapter.RenderBackgroundSubagentsStatusLine(homeDir)
 				orchContent = strings.ReplaceAll(orchContent, "{{BIGGZ_BACKGROUND_POLICY}}", bgLine)
@@ -1360,6 +1360,7 @@ func piExtensionsDir(homeDir string) string {
 
 // piSubagentConfigDir returns the pi-subagents extension config directory
 // (~/.pi/agent/extensions/subagent/), respecting PI_CODING_AGENT_DIR.
+// Supports both pi-subagents and pi-subagents-j0k3r (preferred).
 func piSubagentConfigDir(homeDir string) string {
 	return filepath.Join(piExtensionsDir(homeDir), "subagent")
 }
@@ -1368,6 +1369,7 @@ func piSubagentConfigDir(homeDir string) string {
 // ~/.pi/agent/extensions/subagent/config.json. It ensures defaultSubagentContext
 // is always "fresh" (installer-enforced) and FleetView/inlineToolDisplay are
 // set to the desired defaults, while preserving unknown user keys.
+// Supports pi-subagents-j0k3r (preferred) or pi-subagents.
 //
 // It reads pi/subagent-config.json from ffs (or assets.FS fallback), merges it
 // into the existing config via filemerge.MergeJSONC (asset overlay wins so

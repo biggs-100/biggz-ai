@@ -102,6 +102,16 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 		{"pi/biggz-web-search.js", "biggz-web-search.js"},
 		{"pi/biggz-question-mouse.js", "biggz-question-mouse.js"},
 	}
+	// gentle-pi extensions (TypeScript)
+	extensions = append(extensions, []struct{ asset, target string }{
+		{"pi/ask-user-choice.ts", "ask-user-choice.ts"},
+		{"pi/codegraph-tools.ts", "codegraph-tools.ts"},
+		{"pi/gentle-ai.ts", "gentle-ai.ts"},
+		{"pi/quiet-tools.ts", "quiet-tools.ts"},
+		{"pi/sdd-init.ts", "sdd-init.ts"},
+		{"pi/skill-registry.ts", "skill-registry.ts"},
+		{"pi/startup-banner.ts", "startup-banner.ts"},
+	}...)
 	extCount := 0
 	for i, e := range extensions {
 		select {
@@ -147,6 +157,7 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 		}
 	}
 	// Deploy pi subagent config.
+	// Note: pi-subagents-j0k3r is preferred over pi-subagents for better FleetView support.
 	if err := p.deploySubAgentConfig(ctx, fsys); err != nil {
 		return err
 	}
