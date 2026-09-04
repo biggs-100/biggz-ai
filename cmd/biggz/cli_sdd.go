@@ -1228,3 +1228,99 @@ func sddRemediateRun() int {
 	fmt.Println("Remediation validation: PASSED")
 	return 0
 }
+
+// sddGatekeeperRun handles the "biggz sdd-gatekeeper" subcommand.
+// Usage: biggz sdd-gatekeeper <change> <phase> --result <json>
+// Validates a completed SDD phase before launching the next.
+func sddGatekeeperRun() int {
+	return runSddGatekeeper(os.Args[2:], os.Stdout, os.Stderr)
+}
+
+// runSddGatekeeper is the testable core of sddGatekeeperRun.
+func runSddGatekeeper(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(stderr, "Usage: biggz sdd-gatekeeper <change> <phase> --result <json>")
+		fmt.Fprintln(stderr, "  Validates a completed SDD phase before launching the next.")
+		fmt.Fprintln(stderr, "  <change>    — SDD change name")
+		fmt.Fprintln(stderr, "  <phase>     — completed phase (explore, propose, spec, design, tasks, apply, verify)")
+		fmt.Fprintln(stderr, "  --result    — JSON string with phase result (status, executive_summary, artifacts, next_recommended)")
+		fmt.Fprintln(stderr, "")
+		fmt.Fprintln(stderr, "Example:")
+		fmt.Fprintln(stderr, `  biggz sdd-gatekeeper add-dark-mode spec --result '{"status":"success","executive_summary":"Done","artifacts":[{"path":"spec.md"}],"next_recommended":"design"}'`)
+		return 0
+	}
+
+	change := ""
+	phase := ""
+	resultJSON := ""
+
+	// Parse positional args
+	posIdx := 0
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--result":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "error: --result requires a JSON string")
+				return 1
+			}
+			i++
+			resultJSON = args[i]
+		default:
+			if posIdx == 0 {
+				change = args[i]
+			} else if posIdx == 1 {
+				phase = args[i]
+			}
+			posIdx++
+		}
+	}
+
+	if change == "" {
+		fmt.Fprintln(stderr, "error: change name is required")
+		return 1
+	}
+	if phase == "" {
+		fmt.Fprintln(stderr, "error: phase is required")
+		return 1
+	}
+	if resultJSON == "" {
+		fmt.Fprintln(stderr, "error: --result is required")
+		return 1
+	}
+
+	// Detect openspec root
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v", err)
+		return 1
+	}
+	openspecRoot := filepath.Join(cwd, "openspec")
+
+	// Run gatekeeper
+	gk, err := sdd.GatekeeperFromJSON(openspecRoot, change, phase, resultJSON)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v", err)
+		return 1
+	}
+
+	// Output
+	if gk.Passed {
+		fmt.Fprintf(stdout, "◆ %s · gatekeeper PASS\n", phase)
+	} else {
+		fmt.Fprintf(stdout, "◆ %s · gatekeeper FAIL\n", phase)
+		for _, d := range gk.Details {
+			if !d.Passed && !d.Skipped {
+				fmt.Fprintf(stdout, "  ✗ %s: %s\n", d.Name, d.Reason)
+			}
+		}
+	}
+
+	// Always output JSON for machine consumption
+	jsonBytes, _ := json.MarshalIndent(gk, "", "  ")
+	fmt.Fprintf(stdout, "\n%s\n", string(jsonBytes))
+
+	if !gk.Passed {
+		return 1
+	}
+	return 0
+}
