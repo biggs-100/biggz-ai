@@ -1636,3 +1636,69 @@ func runSddGate(args []string, stdout, stderr io.Writer) int {
 	}
 	return 1
 }
+
+// sddTDDRun handles the "biggz sdd-tdd" subcommand.
+// Usage: biggz sdd-tdd <phase> [--project <name>]
+// Check and forward TDD instructions for sub-agents.
+func sddTDDRun() int {
+	return runSDDTDD(os.Args[2:], os.Stdout, os.Stderr)
+}
+
+// runSDDTDD is the testable core of sddTDDRun.
+func runSDDTDD(args []string, stdout, stderr io.Writer) int {
+	if len(args) < 1 || args[0] == "--help" || args[0] == "-h" {
+		fmt.Fprintln(stderr, "Usage: biggz sdd-tdd <phase> [--project <name>]")
+		fmt.Fprintln(stderr, "  Check and forward TDD instructions for sub-agents.")
+		fmt.Fprintln(stderr, "  <phase>    — SDD phase (apply, verify)")
+		fmt.Fprintln(stderr, "  --project  — Project name (default: auto-detect)")
+		fmt.Fprintln(stderr, "")
+		fmt.Fprintln(stderr, "Output:")
+		fmt.Fprintln(stderr, "  Returns TDD instructions if enabled, empty otherwise.")
+		fmt.Fprintln(stderr, "  Exit code 0 = TDD enabled, 1 = disabled or error.")
+		return 0
+	}
+
+	phase := ""
+	project := ""
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--project":
+			if i+1 >= len(args) {
+				fmt.Fprintln(stderr, "error: --project requires a name")
+				return 1
+			}
+			i++
+			project = args[i]
+		default:
+			if phase == "" {
+				phase = args[i]
+			}
+		}
+	}
+
+	if phase == "" {
+		fmt.Fprintln(stderr, "error: phase is required")
+		return 1
+	}
+
+	// Get workspace root
+	cwd, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(stderr, "error: %v\n", err)
+		return 1
+	}
+
+	// Forward TDD
+	instructions := sdd.ForwardTDDToSubAgent(cwd, project, phase)
+
+	if instructions == "" {
+		fmt.Fprintln(stdout, "TDD forwarding: DISABLED")
+		return 1
+	}
+
+	fmt.Fprintln(stdout, "TDD forwarding: ENABLED")
+	fmt.Fprintln(stdout, "")
+	fmt.Fprintln(stdout, instructions)
+	return 0
+}

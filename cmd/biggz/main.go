@@ -80,6 +80,8 @@ func main() {
 			os.Exit(sddWorkloadRun())
 		case "sdd-gate":
 			os.Exit(sddGateRun())
+		case "sdd-tdd":
+			os.Exit(sddTDDRun())
 		case "bigmem":
 			os.Exit(bigmemRun())
 		case "recall":
