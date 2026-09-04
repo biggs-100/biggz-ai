@@ -62,7 +62,7 @@ func (c *BigmemCheck) Run(ctx context.Context) *Result {
 	//
 	// Open a second connection to the same database file for the integrity
 	// check, since bigmem.Store's db field is unexported.
-	dbPath := store.RootDir() + "/bigmem.db"
+	dbPath := filepath.Join(store.RootDir(), "bigmem.db")
 	result := c.checkIntegrity(ctx, dbPath)
 	return result
 }

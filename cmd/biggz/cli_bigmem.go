@@ -158,11 +158,13 @@ func bigmemRun() int {
 		}
 		// F7 parity: externalize >100k/data:image via PutBlob before Save (mirrors MCP) — Store.Save also
 		// avoids truncate for ShouldExternalize as fallback, but eager PutBlob keeps CLI/MCP converged.
+		// See docs/bigmem-DOCS.md: failure stays visible on stderr (exit 0),
+		// bytes persist raw inline for DoctorFixBlobs.
 		if bigmem.ShouldExternalize(obs.Content) {
 			if addr, err := bigmem.PutBlob([]byte(obs.Content)); err == nil {
 				obs.Content = addr
 			} else {
-				fmt.Fprintf(os.Stderr, "[bigmem] PutBlob failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "[bigmem] PutBlob failed: %v — bytes preserved inline, DoctorFixBlobs will migrate\n", err)
 			}
 		}
 		if err := store.Save(obs); err != nil {

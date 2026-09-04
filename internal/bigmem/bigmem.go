@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -1502,6 +1503,8 @@ func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...strin
 		} else {
 			// Blob unavailable (e.g. empty HOME): preserve raw so no bytes
 			// are lost; DoctorFixBlobs migrates once storage is available.
+			// See docs/bigmem-DOCS.md. Save stays non-failing (log-only).
+			log.Printf("[bigmem] PutBlob failed (%d bytes): %v — preserving raw inline; DoctorFixBlobs will migrate", len(stripped), err)
 			obs.Content = stripped
 		}
 	} else {
@@ -1705,15 +1708,9 @@ func ShouldExternalize(c string) bool {
 }
 
 // resolveBlobContent returns blob bytes if content is a blob address, else content.
+// Miss returns an explicit marker + log via the shared helper (never bare addr).
 func resolveBlobContent(content string) string {
-	if !IsBlobAddr(content) {
-		return content
-	}
-	data, err := GetBlob(content)
-	if err != nil {
-		return content
-	}
-	return string(data)
+	return ResolveBlobOrMarker(content)
 }
 
 // ─── Get ─────────────────────────────────────────────────────────────────────
@@ -1763,12 +1760,9 @@ func (s *Store) GetCtx(ctx context.Context, id string) (*Observation, error) {
 		obs.DeletedAt = &da.String
 	}
 	obs.Pinned = pinnedInt != 0
-	// Transparent blob resolve: blob addr -> bytes, miss -> raw addr, no DB mutate.
-	if IsBlobAddr(obs.Content) {
-		if data, err := GetBlob(obs.Content); err == nil {
-			obs.Content = string(data)
-		}
-	}
+	// Transparent blob resolve via shared helper: hit -> bytes, miss ->
+	// explicit marker + log, no DB mutate. See docs/bigmem-DOCS.md.
+	obs.Content = ResolveBlobOrMarker(obs.Content)
 	return obs, nil
 }
 
@@ -1873,11 +1867,7 @@ func (s *Store) SearchCtx(ctx context.Context, query string, opts SearchOptions)
 					obs.DeletedAt = &da.String
 				}
 				obs.Pinned = pinnedInt != 0
-				if IsBlobAddr(obs.Content) {
-					if data, err := GetBlob(obs.Content); err == nil {
-						obs.Content = string(data)
-					}
-				}
+				obs.Content = ResolveBlobOrMarker(obs.Content)
 				directResults = append(directResults, obs)
 			}
 		}
@@ -2001,11 +1991,7 @@ func (s *Store) SearchCtx(ctx context.Context, query string, opts SearchOptions)
 			obs.DeletedAt = &da.String
 		}
 		obs.Pinned = pinnedInt != 0
-		if IsBlobAddr(obs.Content) {
-			if data, err := GetBlob(obs.Content); err == nil {
-				obs.Content = string(data)
-			}
-		}
+		obs.Content = ResolveBlobOrMarker(obs.Content)
 		results = append(results, obs)
 	}
 	if rErr := rows.Err(); rErr != nil {
@@ -2053,11 +2039,7 @@ func (s *Store) SearchCtx(ctx context.Context, query string, opts SearchOptions)
 					obs.DeletedAt = &da.String
 				}
 				obs.Pinned = pinnedInt != 0
-				if IsBlobAddr(obs.Content) {
-					if data, err := GetBlob(obs.Content); err == nil {
-						obs.Content = string(data)
-					}
-				}
+				obs.Content = ResolveBlobOrMarker(obs.Content)
 				results = append(results, obs)
 			}
 		}

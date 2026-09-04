@@ -192,6 +192,9 @@ func SaveSessionSummaryWithFallbackForChange(ctx context.Context, workspaceRoot,
 	// normalize content: handle PutBlob for >100k/data:image/
 	// Empty $HOME intentionally does NOT fallback to XDG_RUNTIME_DIR — PutBlob
 	// returns error when BlobRoot=="", caller keeps raw content.
+	// See docs/bigmem-DOCS.md: PutBlob failure here is intentionally silent
+	// (comment-only) — raw inline is already correct and this is a library
+	// path with no stderr contract; DoctorFixBlobs migrates later.
 	saveContent := content
 	if bigmem.ShouldExternalize(saveContent) {
 		if addr, err := bigmem.PutBlob([]byte(saveContent)); err == nil {

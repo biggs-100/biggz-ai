@@ -642,11 +642,17 @@ func handleToolCall(id any, name string, args map[string]any) {
 			}
 			origContent := obs.Content
 			origWasExternalized := bigmem.ShouldExternalize(origContent)
+			// See docs/bigmem-DOCS.md: PutBlob failure stays visible (result
+			// status + stderr) while bytes persist raw inline for DoctorFixBlobs.
+			blobExternalizeFailed := false
+			var blobErr error
 			if bigmem.ShouldExternalize(obs.Content) {
 				if addr, err := bigmem.PutBlob([]byte(obs.Content)); err == nil {
 					obs.Content = addr
 				} else {
-					fmt.Fprintf(os.Stderr, "[bigmem] PutBlob failed: %v\n", err)
+					blobExternalizeFailed = true
+					blobErr = err
+					fmt.Fprintf(os.Stderr, "[bigmem] PutBlob failed: %v — bytes preserved inline, DoctorFixBlobs will migrate\n", err)
 				}
 			}
 			if err := store.SaveCtx(context.Background(), obs); err != nil {
@@ -654,6 +660,9 @@ func handleToolCall(id any, name string, args map[string]any) {
 				return
 			}
 			msg := fmt.Sprintf("Saved: %s (id: %s)", obs.Title, obs.ID)
+			if blobExternalizeFailed {
+				msg += fmt.Sprintf(" ⚠️ blob externalize failed: %v — bytes preserved inline, DoctorFixBlobs will migrate", blobErr)
+			}
 			if !origWasExternalized && len(origContent) > 50000 {
 				msg += fmt.Sprintf(" ⚠️ content truncated from %d to %d bytes", len(origContent), 50000)
 			}
@@ -803,11 +812,11 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, err.Error())
 			return
 		}
-		if bigmem.IsBlobAddr(obs.Content) {
-			if data, err := bigmem.GetBlob(obs.Content); err == nil {
-				obs.Content = string(data)
-			}
+		resolved := bigmem.ResolveBlobOrMarker(obs.Content)
+		if bigmem.IsMissingBlobMarker(resolved) {
+			fmt.Fprintf(os.Stderr, "[bigmem] blob missing: %s — returning marker\n", obs.Content)
 		}
+		obs.Content = resolved
 		jsonResult(id, map[string]any{
 			"id": obs.ID, "title": obs.Title, "type": obs.Type,
 			"content": obs.Content, "session_id": obs.SessionID,

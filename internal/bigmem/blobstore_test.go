@@ -176,8 +176,15 @@ func TestGet_MissingFallback(t *testing.T) {
 	obs := &Observation{Title: "m", Type: "note", Content: addr, Project: "test"}
 	s.Save(obs)
 	got, _ := s.Get(obs.ID)
-	if got.Content != addr {
-		t.Fatalf("fallback failed")
+	// fix-bigmem-blob-docs: miss returns an explicit marker embedding the
+	// addr (never the bare addr silently); the DB row keeps the raw addr.
+	if !IsMissingBlobMarker(got.Content) || !strings.Contains(got.Content, addr) {
+		t.Fatalf("marker fallback failed, got %q", got.Content)
+	}
+	var raw string
+	s.db.QueryRow("SELECT content FROM observations WHERE id=?", obs.ID).Scan(&raw)
+	if raw != addr {
+		t.Fatalf("DB mutated on miss: %q", raw)
 	}
 }
 func TestSearch_BlobPassthrough(t *testing.T) {
@@ -428,5 +435,136 @@ func TestSave_NoSilentTruncation80K(t *testing.T) {
 	}
 	if !strings.HasSuffix(got.Content, tail) {
 		t.Fatal("tail marker lost — content was truncated")
+	}
+}
+
+func TestMissingBlobMarker_Format(t *testing.T) {
+	addr := BlobPrefix + strings.Repeat("a", 64)
+	m := MissingBlobMarker(addr)
+	want := "[missing-blob " + addr + "]"
+	if m != want {
+		t.Fatalf("marker %q want %q", m, want)
+	}
+	if !strings.Contains(m, addr) {
+		t.Fatal("marker must embed addr")
+	}
+}
+
+func TestIsMissingBlobMarker_AnchoredRegex(t *testing.T) {
+	addr := BlobPrefix + strings.Repeat("b", 64)
+	m := MissingBlobMarker(addr)
+	if !IsMissingBlobMarker(m) {
+		t.Fatalf("IsMissingBlobMarker(%q) = false", m)
+	}
+	// Anchored IsBlobAddr regex must never match a marker (no resolve loop).
+	if IsBlobAddr(m) {
+		t.Fatalf("IsBlobAddr must not match marker %q", m)
+	}
+	for _, bad := range []string{"[missing-blob ]", "[missing-blob blob:sha256:zzzz]", "[missing-blob " + addr, addr, "", "[missing-blob blob:sha256:" + strings.Repeat("c", 63) + "]"} {
+		if IsMissingBlobMarker(bad) {
+			t.Errorf("IsMissingBlobMarker(%q) = true, want false", bad)
+		}
+	}
+}
+
+func TestResolveBlobOrMarker_NoMutate(t *testing.T) {
+	s := newIsolatedStore(t)
+	d := []byte("resolve-no-mutate-payload")
+	h := sha256.Sum256(d)
+	hex := fmt.Sprintf("%x", h)
+	addr := BlobPrefix + hex
+	_ = os.Remove(filepath.Join(BlobRoot(), hex))
+	obs := &Observation{Title: "miss", Type: "note", Content: addr, Project: "test"}
+	if err := s.Save(obs); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	got, err := s.Get(obs.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !IsMissingBlobMarker(got.Content) {
+		t.Fatalf("Get miss must return marker, got %q", got.Content)
+	}
+	if !strings.Contains(got.Content, addr) {
+		t.Fatalf("marker must embed addr %q", addr)
+	}
+	// Miss must not mutate the DB: raw row keeps the addr so a restored
+	// blob file self-heals.
+	var raw string
+	if err := s.db.QueryRow("SELECT content FROM observations WHERE id=?", obs.ID).Scan(&raw); err != nil {
+		t.Fatalf("raw read: %v", err)
+	}
+	if raw != addr {
+		t.Fatalf("DB mutated on miss: %q want %q", raw, addr)
+	}
+	// Traversal-shaped input never becomes a marker and never hits disk.
+	for _, bad := range []string{"blob:sha256:../../etc/passwd", "blob:sha256:" + strings.Repeat("a", 64) + "/etc"} {
+		if out := ResolveBlobOrMarker(bad); out != bad {
+			t.Errorf("traversal %q rewritten to %q", bad, out)
+		}
+		if IsMissingBlobMarker(ResolveBlobOrMarker(bad)) {
+			t.Errorf("traversal %q became marker", bad)
+		}
+	}
+	// Literal marker text passes through untouched (display-only, never
+	// fed back to GetBlob).
+	literal := MissingBlobMarker(BlobPrefix + strings.Repeat("d", 64))
+	if out := ResolveBlobOrMarker(literal); out != literal {
+		t.Errorf("literal marker rewritten to %q", out)
+	}
+}
+
+func TestSaveFailure_PersistsRawInline_And_DoctorFixBlobsRemigrates(t *testing.T) {
+	home := isolatedHome(t)
+	s, err := Open(filepath.Join(home, ".biggz", "bigmem"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+	// Force PutBlob failure via empty HOME (no XDG_RUNTIME_DIR fallback).
+	savedHome, homeSet := os.LookupEnv("HOME")
+	savedProfile, profileSet := os.LookupEnv("USERPROFILE")
+	_ = os.Setenv("HOME", "")
+	_ = os.Setenv("USERPROFILE", "")
+	large := strings.Repeat("Z", 150*1024)
+	obs := &Observation{Title: "save-fail", Type: "note", Content: large, Project: "test"}
+	if err := s.Save(obs); err != nil {
+		t.Fatalf("Save must persist raw inline without failing: %v", err)
+	}
+	var raw string
+	if err := s.db.QueryRow("SELECT content FROM observations WHERE id=?", obs.ID).Scan(&raw); err != nil {
+		t.Fatalf("raw read: %v", err)
+	}
+	if raw != large {
+		t.Fatalf("PutBlob failure must keep raw inline (%d bytes), got %d", len(large), len(raw))
+	}
+	// Restore storage and migrate via DoctorFixBlobs.
+	if homeSet {
+		_ = os.Setenv("HOME", savedHome)
+	} else {
+		_ = os.Unsetenv("HOME")
+	}
+	if profileSet {
+		_ = os.Setenv("USERPROFILE", savedProfile)
+	} else {
+		_ = os.Unsetenv("USERPROFILE")
+	}
+	res, err := s.DoctorFixBlobs()
+	if err != nil {
+		t.Fatalf("DoctorFixBlobs: %v", err)
+	}
+	if res.Migrated < 1 {
+		t.Fatalf("expected >=1 migrated, got %+v", res)
+	}
+	s.db.QueryRow("SELECT content FROM observations WHERE id=?", obs.ID).Scan(&raw)
+	if !IsBlobAddr(raw) {
+		t.Fatalf("after migrate raw must be addr, got %d bytes", len(raw))
+	}
+	got, err := s.Get(obs.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.Content != large {
+		t.Fatal("remigrated bytes mismatch")
 	}
 }

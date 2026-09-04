@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1345,9 +1346,11 @@ func (s *Store) SyncImport(projectRoot string) (int, error) {
 				continue
 			}
 			// Orphan blob refs (legacy exports or missing bytes) must not be
-			// inserted: Get would hand back the raw address. Skip visibly.
+			// inserted: Get would hand back a missing-blob marker. Skip visibly.
+			// See docs/bigmem-DOCS.md.
 			if IsBlobAddr(obs.Content) {
 				if _, err := GetBlob(obs.Content); err != nil {
+					log.Printf("[bigmem] sync import: missing blob %s for observation %s, skipping", obs.Content, obs.ID)
 					orphans++
 					continue
 				}
