@@ -19,7 +19,7 @@ func TestPendingDualWriteEquality(t *testing.T) {
 	defer SetBigMemStoreRootForTest("")
 	ch := "test-pending"
 	setupPendingWS(t, ws, ch)
-	pq := PendingQuestion{Schema: PendingSchema, Change: ch, Envelope: QuestionEnvelope{Questions: []Question{{Header: "Hdr1", Question: "Q1?", Options: []QuestionOption{{Label: "proceed"}, {Label: "adjust"}, {Label: "stop"}}}}}, SynthesisMD: "## Sub-agent Result: test\n**What was done:** did\n**Artifacts/Paths:** a/b, c/d\n**Risks / Open Questions:** none\n**Next Recommended:** next\n"}
+	pq := PendingQuestion{Schema: PendingSchema, Change: ch, Envelope: QuestionEnvelope{Questions: []Question{{Header: "Hdr1", Question: "Q1?", Options: []QuestionOption{{Label: "proceed", Description: "continue as planned"}, {Label: "adjust", Description: "change direction first"}, {Label: "stop", Description: "halt here"}}}}}, SynthesisMD: "## Sub-agent Result: test\n**What was done:** did\n**Artifacts/Paths:** a/b, c/d\n**Risks / Open Questions:** none\n**Next Recommended:** next\n"}
 	if err := SavePendingDualWriteAt(ws, ch, pq); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -42,7 +42,7 @@ func TestPendingCompactionFallback(t *testing.T) {
 	defer SetBigMemStoreRootForTest("")
 	ch := "test-pending-fallback"
 	setupPendingWS(t, ws, ch)
-	pq := PendingQuestion{Schema: PendingSchema, Change: ch, Envelope: QuestionEnvelope{Questions: []Question{{Header: "Checkpoint", Question: "Next?", Options: []QuestionOption{{Label: "proceed"}, {Label: "adjust"}, {Label: "stop"}}}, {Header: "Prefs", Question: "Which?", Options: []QuestionOption{{Label: "a"}, {Label: "b"}}}}}, SynthesisMD: "## Sub-agent Result: x\n**What was done:** y\n**Artifacts/Paths:** p/q\n**Risks / Open Questions:** none\n**Next Recommended:** verify\n"}
+	pq := PendingQuestion{Schema: PendingSchema, Change: ch, Envelope: QuestionEnvelope{Questions: []Question{{Header: "Checkpoint", Question: "Next?", Options: []QuestionOption{{Label: "proceed", Description: "continue as planned"}, {Label: "adjust", Description: "change direction first"}, {Label: "stop", Description: "halt here"}}}, {Header: "Prefs", Question: "Which?", Options: []QuestionOption{{Label: "a", Description: "first"}, {Label: "b", Description: "second"}}}}}, SynthesisMD: "## Sub-agent Result: x\n**What was done:** y\n**Artifacts/Paths:** p/q\n**Risks / Open Questions:** none\n**Next Recommended:** verify\n"}
 	if err := SavePendingDualWriteAt(ws, ch, pq); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -101,7 +101,7 @@ func TestReadLoopLarge(t *testing.T) {
 	ch := "large-pending"
 	setupPendingWS(t, ws, ch)
 	large := "## Sub-agent Result: large\n**What was done:** x\n**Artifacts/Paths:** " + strings.Repeat("a/b, ", 200) + "\n**Risks / Open Questions:** none\n**Next Recommended:** next\n**Preview:** " + strings.Repeat("p", 60*1024) + "\n"
-	pq := PendingQuestion{Schema: PendingSchema, Change: ch, Envelope: QuestionEnvelope{Questions: []Question{{Header: "H", Question: "Q?", Options: []QuestionOption{{Label: "proceed"}, {Label: "stop"}}}}}, SynthesisMD: large}
+	pq := PendingQuestion{Schema: PendingSchema, Change: ch, Envelope: QuestionEnvelope{Questions: []Question{{Header: "H", Question: "Q?", Options: []QuestionOption{{Label: "proceed", Description: "continue as planned"}, {Label: "stop", Description: "halt here"}}}}}, SynthesisMD: large}
 	if err := SavePendingDualWriteAt(ws, ch, pq); err != nil {
 		t.Fatalf("save large %v", err)
 	}

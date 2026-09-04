@@ -41,11 +41,24 @@ func TestValidate(t *testing.T) {
 		l60 := strings.Repeat("d", 60)
 		qs := make([]Question, 3)
 		for i := range qs {
-			qs[i] = Question{Header: h12, Question: "Valid?", Options: []QuestionOption{{Label: "a"}, {Label: "b"}, {Label: l60[:30]}}}
+			qs[i] = Question{Header: h12, Question: "Valid?", Options: []QuestionOption{{Label: "a", Description: "first choice"}, {Label: "b", Description: "second choice"}, {Label: l60[:30], Description: "third choice"}}}
 		}
 		qs[2].Options[2].Label = l60
 		if err := ValidateQuestionEnvelope(QuestionEnvelope{Questions: qs}); err != nil {
 			t.Fatalf("expected valid, got %v", err)
+		}
+	})
+	t.Run("missing description", func(t *testing.T) {
+		mustErr(QuestionEnvelope{Questions: []Question{{Header: "h", Question: "Q", Options: []QuestionOption{{Label: "a", Description: "has context"}, {Label: "b"}}}}}, "description")
+	})
+	t.Run("missing description top-level", func(t *testing.T) {
+		mustErr(QuestionEnvelope{Options: []QuestionOption{{Label: "a", Description: "has context"}, {Label: "b"}}}, "description")
+	})
+	t.Run("preview in fallback", func(t *testing.T) {
+		q := QuestionEnvelope{Questions: []Question{{Header: "H", Question: "Q?", Options: []QuestionOption{{Label: "a", Description: "pick a", Preview: "detail line"}}}}}
+		fb := FormatFallback(q)
+		if !strings.Contains(fb, "pick a") || !strings.Contains(fb, "detail line") {
+			t.Errorf("fallback must keep description and preview: %q", fb)
 		}
 	})
 	t.Run("fallback order", func(t *testing.T) {

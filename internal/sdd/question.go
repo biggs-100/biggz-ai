@@ -9,6 +9,11 @@ import (
 type QuestionOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
+	// Preview carries side-by-side detail (mockup, snippet, diff, config)
+	// for options that need richer comparison than a description allows.
+	// Rendered by the questionnaire UI when present; persisted verbatim
+	// by FormatFallback.
+	Preview string `json:"preview,omitempty"`
 }
 type Question struct {
 	Question string           `json:"question"`
@@ -86,6 +91,9 @@ func validateTopLevelOptions(options []QuestionOption) error {
 		if err := validateOptionLabel(o.Label); err != nil {
 			return err
 		}
+		if err := validateOptionDescription(o); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -101,6 +109,9 @@ func validateSingleQuestion(index int, qu Question) error {
 		if err := validateOptionLabel(o.Label); err != nil {
 			return err
 		}
+		if err := validateOptionDescription(o); err != nil {
+			return fmt.Errorf("%w (question %d)", err, index)
+		}
 	}
 	return nil
 }
@@ -112,16 +123,39 @@ func validateOptionLabel(label string) error {
 	return nil
 }
 
+// validateOptionDescription enforces visible decision context: every choice
+// must explain itself. A question whose options carry bare labels forces the
+// human to decide blind (the questionnaire modal shows only the envelope),
+// so context-free options are rejected fail-closed.
+func validateOptionDescription(o QuestionOption) error {
+	if strings.TrimSpace(o.Description) == "" {
+		return fmt.Errorf("isError:true option %q missing description (every choice must carry visible decision context)", o.Label)
+	}
+	return nil
+}
+
+// writeFallbackOption renders one option with its description and, when
+// present, its preview as indented lines so persisted fallbacks keep the
+// full decision context the human saw.
+func writeFallbackOption(b *strings.Builder, o QuestionOption) {
+	b.WriteString("- " + o.Label)
+	if strings.TrimSpace(o.Description) != "" {
+		b.WriteString(": " + strings.TrimSpace(o.Description))
+	}
+	b.WriteString("\n")
+	if strings.TrimSpace(o.Preview) != "" {
+		for _, line := range strings.Split(o.Preview, "\n") {
+			b.WriteString("  > " + line + "\n")
+		}
+	}
+}
+
 func FormatFallback(q QuestionEnvelope) string {
 	var b strings.Builder
 	if len(q.Questions) == 0 && len(q.Options) > 0 {
 		b.WriteString("## Questions\n\n")
 		for _, o := range q.Options {
-			b.WriteString("- " + o.Label)
-			if strings.TrimSpace(o.Description) != "" {
-				b.WriteString(": " + strings.TrimSpace(o.Description))
-			}
-			b.WriteString("\n")
+			writeFallbackOption(&b, o)
 		}
 		return b.String()
 	}
@@ -137,11 +171,7 @@ func FormatFallback(q QuestionEnvelope) string {
 			b.WriteString(qs + "\n")
 		}
 		for _, o := range qu.Options {
-			b.WriteString("- " + o.Label)
-			if strings.TrimSpace(o.Description) != "" {
-				b.WriteString(": " + strings.TrimSpace(o.Description))
-			}
-			b.WriteString("\n")
+			writeFallbackOption(&b, o)
 		}
 		b.WriteString("\n")
 	}

@@ -139,6 +139,15 @@ Interactive is phase-scoped: "continue"/"dale"/"go on" approves only immediate n
 
 Before `sdd-propose` in interactive, offer proposal question round: 3–5 concrete business/product questions (problem, users, rules, outcome, gap, impact, edge cases, scope boundaries, non-goals, constraints, tradeoffs). Summarize assumptions and ask correct/second-round/continue via lossless route. Do not ask about test commands/PR shape/budget unless user asks.
 
+## Visible Context Before Every Question (MANDATORY)
+
+Never emit a blocking question the human must decide blind. The questionnaire modal shows only the envelope — chat text is not visible at decision time — so the decision context must travel INSIDE the question:
+
+- Context message first, in the human language (`languageHint`), then the question call. Never both without the other.
+- Every option carries a substantive `description` explaining what choosing it means (tradeoffs included). Bare labels are rejected fail-closed by `internal/sdd/question.go:ValidateQuestionEnvelope`.
+- When options need richer comparison (mockups, snippets, diffs, configs), attach `preview` per option (side-by-side layout, single-select only); it is persisted verbatim by `FormatFallback`.
+- Shortcuts (2–4 options, ≤60-char labels, ≤16-char headers) still apply; synthesis markdown stays FIRST and adjacent before any checkpoint ask.
+
 ## Automatic Mode Gatekeeper (MANDATORY)
 
 In `auto`, orchestrator is quality gate after each phase before next. Autonomous validation — do not ask user on happy path; stop and report only on problem.
