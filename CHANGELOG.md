@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased] — 2026-08-31
 
 ### Fixed
+- **install-pi-drop-startup-banner** (2026-09-04) — removed `startup-banner.ts` (animated gentle-pi banner) from `internal/assets/pi` and the pi deploy list per user request; install self-heals stale copies. Purely visual extension, no backend impact.
+- **install-pi-unportable-extensions** (2026-09-04) — `biggz install --agent pi` no longer deploys `gentle-ai.ts`/`quiet-tools.ts`/`sdd-init.ts`: they import from `../lib/*`, a tree never ported into `internal/assets/pi`, and crashed pi on startup (`Cannot find module '../lib/sdd-preflight.ts'`). Install self-heals stale copies from existing `~/.pi/agent/extensions/`, and the dead sources (~344KB) were deleted from `internal/assets/pi`. Covered features remain via `biggz-synthesis-gate.js`, `biggz-tool-pills.js`, `skill-registry.ts` and the biggz review/SDD CLI. Test: `TestPiExtensionsStep_DropsUnportableExtensions`.
 - **install-path-dedup** (2026-09-04) — `biggz install` no longer re-adds `~/.biggz` to the User PATH when the binary already resolves via PATH (e.g. GOBIN after `go install`), eliminating the recurring `doctor` duplicate-binary warning. New exported `install.BinaryOnPath()` scans PATH directly (SplitList + Stat, mirroring doctor's PathCheck) instead of `exec.LookPath`, which returns ErrDot without scanning PATH when `./biggz.exe` exists in the working directory (go.dev/issue/53536). The `~/.biggz` binary copy is still deployed (agent configs reference it by absolute path). Tests: `TestBinaryOnPath_{Found,Missing,IgnoresWorkingDirectory}`.
 
 ### Added

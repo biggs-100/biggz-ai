@@ -102,15 +102,19 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 		{"pi/biggz-web-search.js", "biggz-web-search.js"},
 		{"pi/biggz-question-mouse.js", "biggz-question-mouse.js"},
 	}
-	// gentle-pi extensions (TypeScript)
+	// gentle-pi extensions (TypeScript).
+	// NOTE: gentle-ai.ts, quiet-tools.ts and sdd-init.ts were removed from
+	// internal/assets/pi (2026-09-04): they imported from ../lib/*
+	// (sdd-preflight, gentle-ai-binary, review-*, terminal-theme, ...), a
+	// tree that was never ported, and they bound to the gentle-ai binary
+	// instead of biggz. Deploying them crashed pi on startup ("Cannot find
+	// module '../lib/sdd-preflight.ts'"). Their features are covered
+	// natively by biggz-synthesis-gate.js, biggz-tool-pills.js,
+	// skill-registry.ts and the biggz review/SDD CLI commands.
 	extensions = append(extensions, []struct{ asset, target string }{
 		{"pi/ask-user-choice.ts", "ask-user-choice.ts"},
 		{"pi/codegraph-tools.ts", "codegraph-tools.ts"},
-		{"pi/gentle-ai.ts", "gentle-ai.ts"},
-		{"pi/quiet-tools.ts", "quiet-tools.ts"},
-		{"pi/sdd-init.ts", "sdd-init.ts"},
 		{"pi/skill-registry.ts", "skill-registry.ts"},
-		{"pi/startup-banner.ts", "startup-banner.ts"},
 	}...)
 	extCount := 0
 	for i, e := range extensions {
@@ -172,6 +176,14 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 	// Self-heal legacy wrapper.
 	if !p.DryRun {
 		_ = os.Remove(filepath.Join(piExtensionsDir(p.HomeDir), "biggz-pi-pretty.js"))
+		// Self-heal: remove unportable extensions deployed before they were
+		// dropped from the deploy list (see NOTE above). Left in place they
+		// crash pi on startup with "Cannot find module '../lib/...'".
+		extDir := piExtensionsDir(p.HomeDir)
+		for _, stale := range []string{"gentle-ai.ts", "quiet-tools.ts", "sdd-init.ts", "startup-banner.ts"} {
+			_ = os.Remove(filepath.Join(extDir, stale))
+		}
+		_ = os.RemoveAll(filepath.Join(extDir, "_disabled_broken_backup"))
 	}
 	return nil
 }
