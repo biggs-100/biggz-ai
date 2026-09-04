@@ -64,3 +64,8 @@
 - None blocking. `gofmt -l` flags several `internal/bigmem/` files, but it
   also flags untouched files (pre-existing CRLF/line-ending state); the
   `git diff` for this change is minimal and no reformat was applied.
+
+## RDD correction (review CRITICALs R1-2/R4-3, shared root cause)
+- GetBlob now rejects empty BlobRoot deterministically (`home dir: not found — blob unavailable`) instead of joining a cwd-relative path. Mirrors PutBlob guard. Pre-existing hole, 5-line fix + TestGetBlob_EmptyRootDeterministicError.
+- Evidence: `go test ./internal/bigmem/ -run TestGetBlob -count=1` PASS (5/5); full bigmem suite green.
+- Out of correction scope (accepted): session-guard comment-only (approved design tradeoff), marker-spoof indistinguishability (display-only by design), inline-bloat window (DoctorFixBlobs migration path), image case-sensitivity (pre-existing), DoctorFixBlobs lock/ctx (pre-existing), Remedy scope (pre-existing).

@@ -115,8 +115,12 @@ func GetBlob(addr string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	root := BlobRoot()
+	if root == "" {
+		return nil, fmt.Errorf("home dir: not found — blob unavailable")
+	}
 	// Guard path is inside BlobRoot (hex-only ensures no traversal).
-	path := filepath.Join(BlobRoot(), hex)
+	path := filepath.Join(root, hex)
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {

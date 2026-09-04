@@ -109,6 +109,27 @@ func TestGetBlob_MissingNotFound(t *testing.T) {
 	}
 }
 
+func TestGetBlob_EmptyRootDeterministicError(t *testing.T) {
+	isolatedHome(t)
+	h := sha256.Sum256([]byte("empty-root-deterministic-67890"))
+	addr := BlobPrefix + fmt.Sprintf("%x", h)
+	savedHome, homeSet := os.LookupEnv("HOME")
+	savedProfile, profileSet := os.LookupEnv("USERPROFILE")
+	_ = os.Setenv("HOME", "")
+	_ = os.Setenv("USERPROFILE", "")
+	t.Cleanup(func() {
+		if homeSet {
+			_ = os.Setenv("HOME", savedHome)
+		}
+		if profileSet {
+			_ = os.Setenv("USERPROFILE", savedProfile)
+		}
+	})
+	if _, err := GetBlob(addr); err == nil || err == ErrBlobNotFound {
+		t.Fatalf("empty BlobRoot must fail deterministically, got %v", err)
+	}
+}
+
 // Good: failure mode + external contract — races PutBlob with -race vs TestExpectSrcContains (Bad)
 // See docs/testing-guidance.md — pinned example TestBlob_ConcurrentSameBytes (-race) proves external contract (blobstore file+ValidateAddr) not source-grep.
 func TestBlob_ConcurrentSameBytes(t *testing.T) {
