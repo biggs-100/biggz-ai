@@ -129,6 +129,3 @@ export const SafetyPlugin: Plugin = async () => {
 }
 
 export default SafetyPlugin
-
-// Export helpers for parity harness / tests
-export { isDenied, classifyGuardedCommand, evaluateSensitivePathTool, isSensitivePath }

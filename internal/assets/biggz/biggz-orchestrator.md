@@ -15,11 +15,13 @@ proposal -> specs --> tasks -> apply -> verify -> archive
 
 Before handling any /sdd-* or SDD request, read biggz-orchestrator-workflow.md for the full SDD workflow (phases, dispatcher, gates, ledger-bound evidence_revision, delivery).
 Before delegating, read biggz-orchestrator-delegation.md for Work Routing Ladder, Delegation Rules, Allowed edit surfaces, and SD Agent Authority.
-Reads MUST be via file read and evidenced in launch prompt; skipped/unreadable MUST fail-closed and block routing (see Mandatory Pre-Delegation Reads in workflow).
+Reads MUST be via file read and evidenced in launch prompt; if unreadable, warn and continue with dispatcher as authority — lazy on-demand, not fail-closed (see Mandatory Pre-Delegation Reads in workflow).
 
-### Post-Delegation Human Checkpoint (MANDATORY — After EVERY Delegated Sub-agent & BEFORE question)
+### Post-Delegation Human Checkpoint (ADVISE — After Delegated Sub-agent & BEFORE checkpoint question)
 
-Post-Delegation Human Checkpoint — After EVERY delegated sub-agent — SDD (sdd-*) or non-SDD (explore, general/worker, verify) — you MUST emit synthesis markdown BEFORE the next step. Mirrors gentle-pi: human always sees `## Sub-agent Result` to judge. If next step is a checkpoint question (`proceed`/`adjust`/`stop` or `continue`/`correct`) emit synthesis FIRST in SAME turn then ask (gate blocks if missing). If next step is autonomous continuation, still emit synthesis as standalone markdown before continuing. Do NOT silently continue. Synthesize a concise summary in the active conversation language, scannable: decision, outcome, next action. Keep 4 markers verbatim English.
+> ENFORCEMENT RETIRED (2026-09-04, code removed 2026-09-05): no blocking gate in code. Context-before-question contract governs, not blocking. Helpers (`HasSynthesis`/`isCheckpointAsk`) stay as advise-only library.
+
+Post-Delegation Human Checkpoint — After delegated sub-agent — SDD (sdd-*) or non-SDD (explore, general/worker, verify) — emit synthesis markdown BEFORE a checkpoint question. Mirrors gentle-pi: human sees `## Sub-agent Result` to judge. Keep synthesis short by default: decision, outcome, next action (full 4-marker template only for checkpoint asks). If next step is a checkpoint question (`proceed`/`adjust`/`stop` or `continue`/`correct`) emit synthesis FIRST in SAME turn then ask (gate advises if missing — enforcement retired 2026-09-04, passthrough). If next step is autonomous continuation in `auto`, continue with 3-line recap, no stop. Do NOT silently continue. Synthesize a concise summary in the active conversation language, scannable: decision, outcome, next action. Keep 4 markers verbatim English.
 
 Required markdown (copy-paste, fill all fields — emit as plain markdown, NOT inside ``` at runtime):
 ```markdown
@@ -44,12 +46,12 @@ Required markdown (copy-paste, fill all fields — emit as plain markdown, NOT i
 
 > **Runtime note:** Emit markdown above as plain chat markdown **FIRST**, then immediately call `ask_user_choice`/`ask_user_question`/`question` in SAME assistant turn without extra message. Do NOT wrap synthesis markers in ``` code block, do NOT translate markers, and keep question header ≤16 chars (e.g. `Decisión` (8) not `Decisión del checkpoint` (23)).
 
-The checkpoint ask_user_choice/ask_user_question/question call MUST follow this block with `proceed` / `adjust` / `stop` (or `continue` / `correct`) — localized equivalents are also checkpoint tokens (gate detects bilingual via `internal/sdd/synthesis_gate.go:IsCheckpointAsk` and `biggz-synthesis-gate.js:isCheckpointAsk`). Markdown is NOT tool param — it is separate chat markdown emitted FIRST, adjacent, same turn, BEFORE tool call. A checkpoint ask without immediately preceding `## Sub-agent Result` markdown is INVALID and will be blocked.
+The checkpoint ask_user_choice/ask_user_question/question call MUST follow this block with `proceed` / `adjust` / `stop` (or `continue` / `correct`) — localized equivalents are also checkpoint tokens (gate detects bilingual via `internal/sdd/synthesis_gate.go:IsCheckpointAsk` and `biggz-synthesis-gate.js:isCheckpointAsk`). Markdown is NOT tool param — it is separate chat markdown emitted FIRST, adjacent, same turn, BEFORE tool call. A checkpoint ask without immediately preceding `## Sub-agent Result` markdown is INVALID and will be blocked. (ENFORCEMENT RETIRED 2026-09-04: historic blocking wording kept for compat — runtime is advise-only passthrough; follow Ask contract in delegation doc.)
 
 Additional rules:
-1. Emit synthesis after EVERY delegated sub-agent and STOP for human decision when checkpoint; do NOT silently continue without synthesis even in auto mode for non-checkpoint.
+1. `interactive`: emit full synthesis and STOP for human decision on checkpoint. `auto`: 3-line recap (decision/outcome/next) and continue without stopping on happy path; full template only before a real checkpoint question.
 2. Use lossless blocking-prompt route when native UI available and representable; otherwise emit COMPLETE envelope as plain chat and STOP. REMINDER: synthesis markdown is separate chat markdown emitted FIRST in same turn, adjacent, before the tool call. Do NOT put synthesis inside the tool's question param.
-3. Never auto-continue without human confirmation, except when user said `auto` in Session Preflight (still surface gate failures). For non-SDD delegated work, checkpoint is always interactive — no auto bypass.
+3. In `auto`, never interrupt on happy path — gatekeeper validates autonomously, user sees interruption only on gate failure. In `interactive`, pause per phase.
 
 #### Pending Question Persistence (biggz-ai.pending-question/v1)
 
@@ -58,8 +60,8 @@ MUST persist pending-question dual-write (BigMem `sdd/{change}/pending-question`
 ### Language Boundary
 
 Generated technical artifacts default to English regardless of active persona. Subagent prompts in English by default; preserve exact quotes/UI copy.
-Match user's language in reply only. See `internal/assets/pi/biggz-synthesis-gate.js:isCheckpointAsk` + `hasOptions(2-4)` / `internal/sdd/synthesis_gate.go:HasOptions` for checkpoint + option-bearing gate — any ask with 2-4 options requires synthesis (120s window). Persona Scope (HOW YOU TALK ≠ WHAT YOU BUILD) lives in `biggz-persona.md`; do not duplicate it here.
-Synthesis content is localized per human language (`languageHint` / `Human language: es|en — render synthesis content in that language, keep markers English, keep paths/code English`); harness prompts stay English. Markers (`## Sub-agent Result:`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`, `| Topic | Decision |`) and technical identifiers (paths, `sdd/...`, `ORDER BY`, code, branches) stay English — gate `b0d2fc1` (`HasSynthesis`/`isCheckpointAsk`) validates verbatim English markers; whitelist via `sanitizePlain` never translates them. Fallback at render: `DetectLanguage(lastHumanMessage)` or `en` if hint empty.
+Match user's language in reply only. See `internal/assets/pi/biggz-synthesis-gate.js:isCheckpointAsk` + `hasOptions(2-4)` / `internal/sdd/synthesis_gate.go:HasOptions` for checkpoint-only advise (REQ-DG-1) — only IsCheckpointAsk advises; HasOptions alone never blocks. Persona Scope (HOW YOU TALK ≠ WHAT YOU BUILD) lives in `biggz-persona.md`; do not duplicate it here.
+Synthesis content is localized per human language (`languageHint` / `Human language: es|en — render synthesis content in that language, keep markers English, keep paths/code English`); harness prompts stay English. Markers (`## Sub-agent Result:`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`, `| Topic | Decision |`) and technical identifiers (paths, `sdd/...`, `ORDER BY`, code, branches) stay English — helpers (`HasSynthesis`/`isCheckpointAsk`) check verbatim English markers as advise (enforcement retired 2026-09-04); whitelist via `sanitizePlain` never translates them. Fallback at render: `DetectLanguage(lastHumanMessage)` or `en` if hint empty.
 
 ### Delegation Quick Pointer
 

@@ -32,13 +32,13 @@ Before routing, continuing, applying, verifying, or archiving, determine artifac
 - If `nextRecommended` is planning token (`propose`, `spec`, `design`, `tasks`), launch that planning phase.
 - If binary unavailable, fall back to manual BigMem schema (`biggz_mem_search` + `biggz_mem_get_observation` on `sdd/{change}/...` topic keys).
 
-## Mandatory Pre-Delegation Reads (HARD GATE)
+## Mandatory Pre-Delegation Reads (LAZY, on-demand)
 
-Before routing, continuing, or delegating ANY SDD request, orchestrator MUST read `biggz-orchestrator-workflow.md` (workflow, graph, dispatcher, gates, ledger, recall) and `biggz-orchestrator-delegation.md` (ladder, rules, authority, surfaces) via file read and evidence reads in the launch prompt (`## Skills to load before work` + workflow/delegation context). Skipped, unreadable, or unevidenced reads MUST fail-closed and block routing/delegation — do not infer SDD intent from free text and do not launch `sdd-*` without both docs evidenced. This gate is fail-closed and precedes Work Routing Ladder evaluation.
+Before routing, continuing, or delegating an SDD request, read lazily on demand: `biggz-orchestrator-workflow.md` when handling `/sdd-*`/SDD continuation, `biggz-orchestrator-delegation.md` on routing/delegation triggers. Evidence reads in the launch prompt (`## Skills to load before work` + workflow/delegation context). If unreadable, warn and continue with `biggz sdd-status --json --instructions` as authority — do not infer SDD intent from free text and do not launch `sdd-*` without the relevant doc.
 
-## Session Boot Recall (HARD GATE)
+## Session Boot Recall (HARD GATE — best-effort in `auto`)
 
-Before SDD Session Preflight, perform Session Recall to restore context. This gate is BLOCKING.
+Before SDD Session Preflight, perform Session Recall to restore context. This gate is HARD GATE by default; in `auto` it is best-effort with fallback and never blocks the chain.
 
 > For recency use `bigmem search --query "" ORDER BY updated_at DESC` or `biggz recall`; never use FTS term search for 'latest'.
 > FTS rank is for relevance, not recency.
@@ -76,7 +76,7 @@ Wired in `internal/sdd/status.go` (`deriveChangeStatus` + `deriveChangeStatusWit
 
 ## Human Language Detection — `languageHint` (MANDATORY before synthesis)
 
-Detect human language before every synthesis and before injecting `sdd-*` prompts. Use `internal/sdd/synthesis.go:DetectLanguage` heuristic: diacritics `á/é/í/ó/ú/ñ/¿/¡` → `es`; keywords `que/en/por/con/para/continua/dale/procede` vs `hello/continue/proceed/adjust/stop`; short `hi/ok/go/dale` → `en` default (ambiguous → `en`, fallback `DetectLanguage(lastHumanMessage)` or `en`). Store as `languageHint` in session and persist dual-write `pending_question.languageHint` (`BigMem sdd/{change}/pending-question` + `openspec/changes/{change}/state.yaml pending_question`) via `SavePendingDualWrite` / `pending.go` (`biggz-ai.pending-question/v1`). Inject `Human language: es|en — render synthesis content in that language, keep markers English, keep paths/code English` into every `sdd-*` prompt (`sdd-propose`/`sdd-spec`/`sdd-design`/`sdd-tasks`/`sdd-apply`/`sdd-verify`/`sdd-archive`). Synthesis content follows `languageHint`; markers (`## Sub-agent Result:`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`, `| Topic | Decision |`) and technical identifiers (paths, `sdd/...`, `ORDER BY`, `Search`, code, branches, topic_keys) stay English — gate `b0d2fc1` (`HasSynthesis`/`isCheckpointAsk`) validates verbatim English markers; whitelist via `sanitizePlain` never translates. Fallback at render: `RenderSynthesisLocalized(r, languageHint)` or `DetectLanguage(lastHumanMessage)` if hint empty, else `en`.
+Detect human language before every synthesis and before injecting `sdd-*` prompts. Use `internal/sdd/synthesis.go:DetectLanguage` heuristic: diacritics `á/é/í/ó/ú/ñ/¿/¡` → `es`; keywords `que/en/por/con/para/continua/dale/procede` vs `hello/continue/proceed/adjust/stop`; short `hi/ok/go/dale` → `en` default (ambiguous → `en`, fallback `DetectLanguage(lastHumanMessage)` or `en`). Store as `languageHint` in session and persist dual-write `pending_question.languageHint` (`BigMem sdd/{change}/pending-question` + `openspec/changes/{change}/state.yaml pending_question`) via `SavePendingDualWrite` / `pending.go` (`biggz-ai.pending-question/v1`). Inject `Human language: es|en — render synthesis content in that language, keep markers English, keep paths/code English` into every `sdd-*` prompt (`sdd-propose`/`sdd-spec`/`sdd-design`/`sdd-tasks`/`sdd-apply`/`sdd-verify`/`sdd-archive`). Synthesis content follows `languageHint`; markers (`## Sub-agent Result:`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`, `| Topic | Decision |`) and technical identifiers (paths, `sdd/...`, `ORDER BY`, `Search`, code, branches, topic_keys) stay English — helpers (`HasSynthesis`/`isCheckpointAsk`) check verbatim English markers as advise (enforcement retired 2026-09-04); whitelist via `sanitizePlain` never translates. Fallback at render: `RenderSynthesisLocalized(r, languageHint)` or `DetectLanguage(lastHumanMessage)` if hint empty, else `en`.
 
 ## SDD Session Preflight (HARD GATE)
 
@@ -178,6 +178,10 @@ Provider-owned Git-common-dir runtime ledger is single attempt/budget authority 
 2. Launch only when acquire returns `state: proceed`; retain opaque `token`. `blocked`/`complete` stops launch.
 3. After run: `biggz sdd-attempt settle --cwd <repo> --change <change> --token <token> --request-id <settle-id> --outcome <failed|interrupted|passed> --evidence-revision <sha256:...> --diagnosis <text> --harness-disposition <reused|invalidated> --cleanup-evidence <text> --process-evidence <text>` with distinct request-id per operation. `evidence_revision` (sha256) is ledger-bound and never `none`; settle derives binding/remediation inputs. Pass `--successor-lineage` only for distinct approved successor.
 4. Route only from settle's `proceed`/`blocked`/`complete`. `status|begin|finish|reset` are diagnostic; `reset` requires explicit maintainer decision and is never automatic.
+
+## Authority Boundary (native vs external gentle-ai)
+
+`biggz sdd-attempt` is the sole authority inside biggz-ai. Do NOT mix runtimes in one change: never combine biggz ledger tokens with a `gentle-ai` binary ledger, never mirror counters/tokens in artifacts/prompts/Pi state. If a `gentle-ai` binary is present on PATH, treat it as a separate runtime — pick one per change (default: biggz native) and stay on it through `archive`. Interop is file-level only (`openspec/changes/`, BigMem topic keys), never token-level.
 
 ## Artifact Store Policy
 

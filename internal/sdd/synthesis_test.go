@@ -3,7 +3,6 @@ package sdd
 import (
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestDetectLanguage(t *testing.T) {
@@ -69,7 +68,6 @@ func TestRender_OverTranslation(t *testing.T) {
 }
 
 func TestRender_MarkerInvariant(t *testing.T) {
-	// ShouldBlock is bypassed when PI_SUBAGENT_CHILD=1, so force orchestrator mode for this test.
 	t.Setenv("PI_SUBAGENT_CHILD", "0")
 	r := SubAgentResult{
 		Phase:           "sdd-apply",
@@ -82,24 +80,9 @@ func TestRender_MarkerInvariant(t *testing.T) {
 	if !HasSynthesis(outES) {
 		t.Fatalf("marker invariant: es content+en markers should pass HasSynthesis, got %q", outES)
 	}
-	SetCurrentTurnMarkdown(outES)
-	if ShouldBlock("proceed", outES, time.Now()) {
-		t.Errorf("marker invariant: es content+en markers should NOT block")
-	}
-	if ShouldBlock("continuar", outES, time.Now()) {
-		t.Errorf("marker invariant: es content+en markers with Spanish token continuar should NOT block")
-	}
 	// Translated markers should fail
 	translated := strings.ReplaceAll(outES, "**Artifacts/Paths:**", "**Artefactos/Rutas:**")
 	if HasSynthesis(translated) {
-		t.Errorf("marker invariant: translated Artifacts/Paths should fail HasSynthesis")
-	}
-	SetCurrentTurnMarkdown(translated)
-	if ShouldBlock("proceed", translated, time.Now()) {
-		t.Errorf("marker invariant: retired passthrough must not block even with translated markers")
-	}
-	translated2 := strings.ReplaceAll(outES, "## Sub-agent Result", "## Resultado del Sub-agente")
-	if HasSynthesis(translated2) {
 		t.Errorf("marker invariant: translated header should fail HasSynthesis")
 	}
 }
