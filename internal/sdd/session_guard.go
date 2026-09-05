@@ -104,16 +104,7 @@ func HasSessionSummary(ctx context.Context, proj, sessionID string) (bool, error
 
 	// 1) sessions table: any ended session with summary
 	if sessions, sErr := store.SessionContextCtx(ctx, 5); sErr == nil && len(sessions) > 0 {
-		for _, s := range sessions {
-			if s.EndTime.IsZero() || strings.TrimSpace(s.Summary) == "" {
-				continue
-			}
-			if proj != "" && s.Project != "" && !strings.EqualFold(s.Project, proj) {
-				continue
-			}
-			if sessionID != "" && s.ID != sessionID {
-				continue
-			}
+		if matchEndedSession(sessions, proj, sessionID) {
 			return true, nil
 		}
 	}
@@ -124,17 +115,46 @@ func HasSessionSummary(ctx context.Context, proj, sessionID string) (bool, error
 	}
 	results, rErr := store.SearchCtx(ctx, "", opts)
 	if rErr == nil && len(results) > 0 {
-		for _, o := range results {
-			if o.Type != "session_summary" {
-				continue
-			}
-			if sessionID != "" && o.SessionID != "" && o.SessionID != sessionID {
-				continue
-			}
+		if matchSummaryObservation(results, sessionID) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+// matchEndedSession reports whether any session is ended, has a summary,
+// and matches the project/session filters. Extracted from HasSessionSummary
+// to keep the gate entrypoint under the complexity budget.
+func matchEndedSession(sessions []bigmem.Session, proj, sessionID string) bool {
+	for _, s := range sessions {
+		if s.EndTime.IsZero() || strings.TrimSpace(s.Summary) == "" {
+			continue
+		}
+		if proj != "" && s.Project != "" && !strings.EqualFold(s.Project, proj) {
+			continue
+		}
+		if sessionID != "" && s.ID != sessionID {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// matchSummaryObservation reports whether any observation is a
+// session_summary matching the session filter. Extracted from
+// HasSessionSummary to keep the gate entrypoint under the complexity budget.
+func matchSummaryObservation(results []*bigmem.Observation, sessionID string) bool {
+	for _, o := range results {
+		if o.Type != "session_summary" {
+			continue
+		}
+		if sessionID != "" && o.SessionID != "" && o.SessionID != sessionID {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // VerifySessionSummary verifies via context(5)+Search and reports whether session_summary is present.

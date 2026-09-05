@@ -269,31 +269,7 @@ func (gr *GatekeeperResult) checkNoDrift(openspecRoot, changeName, completedPhas
 		if !ok {
 			continue
 		}
-		found := false
-		for _, pattern := range patterns {
-			re, err := regexp.Compile(pattern)
-			if err != nil {
-				continue
-			}
-			// Walk change directory to find matching files
-			filepath.Walk(changeDir, func(path string, info os.FileInfo, err error) error {
-				if err != nil || info.IsDir() {
-					return nil
-				}
-				relPath, _ := filepath.Rel(changeDir, path)
-				if re.MatchString(relPath) {
-					// Check file has content (not just empty)
-					if info.Size() > 10 { // Minimum: header + newline
-						found = true
-					}
-				}
-				return nil
-			})
-			if found {
-				break
-			}
-		}
-		if !found {
+		if !dirHasArtifactPattern(changeDir, patterns) {
 			missing = append(missing, prereq)
 		}
 	}
@@ -304,6 +280,37 @@ func (gr *GatekeeperResult) checkNoDrift(openspecRoot, changeName, completedPhas
 	}
 
 	gr.Details = append(gr.Details, check)
+}
+
+// dirHasArtifactPattern reports whether changeDir contains a non-trivial file
+// matching any of the patterns. Extracted from checkNoDrift to keep it
+// under the cognitive complexity budget.
+func dirHasArtifactPattern(changeDir string, patterns []string) bool {
+	for _, pattern := range patterns {
+		re, err := regexp.Compile(pattern)
+		if err != nil {
+			continue
+		}
+		found := false
+		// Walk change directory to find matching files
+		filepath.Walk(changeDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			relPath, _ := filepath.Rel(changeDir, path)
+			if re.MatchString(relPath) {
+				// Check file has content (not just empty)
+				if info.Size() > 10 { // Minimum: header + newline
+					found = true
+				}
+			}
+			return nil
+		})
+		if found {
+			return true
+		}
+	}
+	return false
 }
 
 // checkRouting validates that next_recommended is a valid transition.

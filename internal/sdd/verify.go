@@ -909,6 +909,13 @@ func verifyPreflightAt(workspaceRoot, change string) error {
 	if len(result.Reasons) > 0 {
 		reason = strings.Join(result.Reasons, "; ")
 	}
+	return classifyGateReason(reason)
+}
+
+// classifyGateReason maps a gate reason to the typed preflight error.
+// Extracted from verifyPreflightAt to keep the gate entrypoint under
+// the complexity budget; matching is substring-based and case-insensitive.
+func classifyGateReason(reason string) error {
 	lower := strings.ToLower(reason)
 	if strings.Contains(lower, "missing persisted") || strings.Contains(lower, "no events") || strings.Contains(lower, "empty") || strings.Contains(lower, "no receipt") || strings.Contains(lower, "missing") && strings.Contains(lower, "receipt") {
 		return fmt.Errorf("rdd_receipt_missing: %s; hint: run `biggz review` and receipt flow", reason)

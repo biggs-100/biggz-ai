@@ -201,7 +201,20 @@ func renderSynthesisWithWidth(r SubAgentResult, lang string, width int) string {
 	b.WriteString("## Sub-agent Result: " + sanitizeForWidth(phase, width) + "\n")
 	// What was done as table + checklist
 	b.WriteString("**What was done:**\n")
-	rows, checklist := parseWhatDoneRows(r.WhatDone, budget)
+	renderWhatDoneSection(&b, r.WhatDone, budget, width, none)
+	// lifecycle one-line
+	b.WriteString(lifecycle + "\n")
+	b.WriteString("**Artifacts/Paths:** " + sanitizePlain(arts) + "\n")
+	b.WriteString("**Risks / Open Questions:** " + sanitizePlain(risks) + "\n")
+	b.WriteString("**Next Recommended:** " + sanitizePlain(next) + "\n")
+	renderDetailSections(&b, r, lang, width, none)
+	return b.String()
+}
+
+// renderWhatDoneSection writes the WhatDone table plus checklist items.
+// Extracted from renderSynthesisWithWidth to keep it under the complexity budget.
+func renderWhatDoneSection(b *strings.Builder, whatDone string, budget, width int, none string) {
+	rows, checklist := parseWhatDoneRows(whatDone, budget)
 	// Ensure at least header present
 	if len(rows) == 0 {
 		rows = [][]string{{none, none}}
@@ -209,20 +222,22 @@ func renderSynthesisWithWidth(r SubAgentResult, lang string, width int) string {
 	// Render table chunked — width-aware budget (cellBudget(width)) fixes 34 vs 37 mismatch
 	tableMD := renderTable(rows, width)
 	b.WriteString(tableMD)
-	if len(checklist) > 0 {
-		for _, item := range checklist {
-			// sanitize checklist item but keep prefix
-			sanitized := sanitizePlain(item)
-			// per-item truncate to width
-			sanitized = truncateToWidth(sanitized, width)
-			b.WriteString(sanitized + "\n")
-		}
+	if len(checklist) == 0 {
+		return
 	}
-	// lifecycle one-line
-	b.WriteString(lifecycle + "\n")
-	b.WriteString("**Artifacts/Paths:** " + sanitizePlain(arts) + "\n")
-	b.WriteString("**Risks / Open Questions:** " + sanitizePlain(risks) + "\n")
-	b.WriteString("**Next Recommended:** " + sanitizePlain(next) + "\n")
+	for _, item := range checklist {
+		// sanitize checklist item but keep prefix
+		sanitized := sanitizePlain(item)
+		// per-item truncate to width
+		sanitized = truncateToWidth(sanitized, width)
+		b.WriteString(sanitized + "\n")
+	}
+}
+
+// renderDetailSections writes preview, diff, decisions, commands, validation
+// and failure sections. Extracted from renderSynthesisWithWidth to keep it
+// under the complexity budget.
+func renderDetailSections(b *strings.Builder, r SubAgentResult, lang string, width int, none string) {
 	// Preview sanitized 300 (width-aware cell budget only; preview stays 300)
 	previewRaw := strings.TrimSpace(r.Preview)
 	if previewRaw == "" {
@@ -256,7 +271,6 @@ func renderSynthesisWithWidth(r SubAgentResult, lang string, width int) string {
 		}
 		b.WriteString("**Failure:** " + sanitizeForWidth(human, width) + "\n")
 	}
-	return b.String()
 }
 
 func RenderSynthesis(r SubAgentResult) string {
@@ -339,20 +353,44 @@ func DetectLanguage(text string) string {
 	// This handles "ok", "hi", "dale", "go" as en, but "que" alone should be es.
 	// So check if single token is Spanish strong and not ambiguous -> es.
 	if len(words) == 1 {
-		if _, ok := spanishKeywords[words[0]]; ok && !isAmbiguousShort(words[0]) {
-			// except single "en"? "en" is length 2 and Spanish, treat as es
-			return "es"
-		}
-		if _, ok := englishKeywords[words[0]]; ok {
-			return "en"
-		}
-		// unknown single short word defaults en
-		if len(words[0]) <= 3 {
-			return "en"
+		if lang, ok := classifySingleWord(words[0]); ok {
+			return lang
 		}
 	}
-	spanishCount := 0
-	englishCount := 0
+	spanishCount, englishCount := scoreKeywords(words)
+	if spanishCount > englishCount {
+		return "es"
+	}
+	if englishCount > spanishCount {
+		return "en"
+	}
+	// tie: if any Spanish keyword present, prefer es when text contains Spanish diacritic-like pattern already handled;
+	// otherwise default en (spec PS5 short ambiguous -> en)
+	return "en"
+}
+
+// classifySingleWord resolves a single-token input to es/en when the token
+// is decisive (strong keyword or short unknown). It reports false when the
+// caller must fall through to multi-word scoring. Extracted from
+// DetectLanguage to keep it under the complexity budget.
+func classifySingleWord(w string) (string, bool) {
+	if _, ok := spanishKeywords[w]; ok && !isAmbiguousShort(w) {
+		// except single "en"? "en" is length 2 and Spanish, treat as es
+		return "es", true
+	}
+	if _, ok := englishKeywords[w]; ok {
+		return "en", true
+	}
+	// unknown single short word defaults en
+	if len(w) <= 3 {
+		return "en", true
+	}
+	return "", false
+}
+
+// scoreKeywords counts Spanish vs English keyword hits, skipping ambiguous
+// short tokens. Extracted from DetectLanguage to keep it under budget.
+func scoreKeywords(words []string) (spanishCount, englishCount int) {
 	for _, w := range words {
 		if isAmbiguousShort(w) {
 			continue
@@ -364,15 +402,7 @@ func DetectLanguage(text string) string {
 			englishCount++
 		}
 	}
-	if spanishCount > englishCount {
-		return "es"
-	}
-	if englishCount > spanishCount {
-		return "en"
-	}
-	// tie: if any Spanish keyword present, prefer es when text contains Spanish diacritic-like pattern already handled;
-	// otherwise default en (spec PS5 short ambiguous -> en)
-	return "en"
+	return spanishCount, englishCount
 }
 
 func extractWordsLower(s string) []string {

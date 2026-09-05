@@ -476,24 +476,8 @@ func deriveChangeStatusWithForcedStoreCtx(ctx context.Context, cs *ChangeStatus,
 	if err != nil {
 		return err
 	}
-	coreReady := artifacts["proposal"] == ArtifactDone && artifacts["specs"] == ArtifactDone &&
-		artifacts["design"] == ArtifactDone && artifacts["tasks"] == ArtifactDone && taskProgress.Total > 0
-	applyState := resolveApplyState(coreReady, taskProgress)
-	blockedReasons := artifactBlockedReasons(artifacts, taskProgress)
-	allowedEditRoots := make([]string, 0, 1+len(cs.GrantedRoots))
-	allowedEditRoots = append(allowedEditRoots, workspaceRoot)
-	allowedEditRoots = append(allowedEditRoots, cs.GrantedRoots...)
-	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, tasksContent, workspaceRoot, allowedEditRoots)
-	if tasksContent != "" && coreReady {
-		memo := make(map[string]string)
-		foreignRoots := foreignRuntimeTopologyRoots(tasksContent, workspaceRoot, allowedEditRoots, memo)
-		if len(foreignRoots) > 0 {
-			if applyState != ApplyBlocked {
-				applyState = ApplyBlocked
-			}
-			blockedReasons.genuine = append(blockedReasons.genuine, "cross_common_dir_runtime_target: tasks.md references repositories outside planning common dir: "+strings.Join(foreignRoots, ", "))
-		}
-	}
+	coreReady, applyState, blockedReasons, allowedEditRoots := prepareCoreState(artifacts, taskProgress, tasksContent, workspaceRoot, cs.GrantedRoots)
+	applyState = applyTopologyGuard(tasksContent, workspaceRoot, allowedEditRoots, coreReady, applyState, &blockedReasons)
 	verifyReportCurrent := artifacts["verifyReport"] == ArtifactDone
 	remediationState, staleDecision, remediationComplete, _, err := buildRemediationState(changeDir, cs.Name, workspaceRoot, artifacts, applyState, verifyResult, &blockedReasons)
 	if err != nil {
@@ -507,32 +491,7 @@ func deriveChangeStatusWithForcedStoreCtx(ctx context.Context, cs *ChangeStatus,
 		blockedReasons.genuine = append(blockedReasons.genuine, r)
 	}
 	dependencies = applyStaleDecisionRouting(dependencies, staleDecision)
-	// RDD gate before verify: when enabled, block verify without valid receipt.
-	// Only when the change is past planning (coreReady && applyState==all_done) and verify is the next phase.
-	// Planning routes (propose/spec/design/tasks) must not be blocked by RDD.
-	if applyState == ApplyAllDone && coreReady {
-		if blocked, reason := rddGateBlocked(workspaceRoot, cs.Name); blocked {
-			if dependencies.Verify != DependencyBlocked {
-				dependencies.Verify = DependencyBlocked
-			}
-			if dependencies.Archive == DependencyReady {
-				dependencies.Archive = DependencyBlocked
-			}
-			blockedReasons.genuine = append(blockedReasons.genuine, reason)
-		}
-	}
-	// Session guard before done/batch-close (REQ-SD-B1/S1).
-	if applyState == ApplyAllDone && coreReady {
-		if blocked, reason := IsSessionSummaryBlocked(ctx, workspaceRoot, cs.Name); blocked {
-			if dependencies.Verify == DependencyReady {
-				dependencies.Verify = DependencyBlocked
-			}
-			if dependencies.Archive == DependencyReady {
-				dependencies.Archive = DependencyBlocked
-			}
-			blockedReasons.genuine = append(blockedReasons.genuine, reason)
-		}
-	}
+	applyTerminalGateBlocks(ctx, workspaceRoot, cs.Name, applyState, coreReady, &dependencies, &blockedReasons)
 	nextRecommended := resolveNextRecommended(dependencies, applyState, verifyReportCurrent, remediationState)
 	cs.SchemaName = StatusSchemaName
 	cs.SchemaVersion = StatusSchemaVersion
@@ -750,27 +709,8 @@ func deriveChangeStatusCtx(ctx context.Context, cs *ChangeStatus, changeDir, wor
 	if err != nil {
 		return err
 	}
-	coreReady := artifacts["proposal"] == ArtifactDone && artifacts["specs"] == ArtifactDone &&
-		artifacts["design"] == ArtifactDone && artifacts["tasks"] == ArtifactDone && taskProgress.Total > 0
-	applyState := resolveApplyState(coreReady, taskProgress)
-	blockedReasons := artifactBlockedReasons(artifacts, taskProgress)
-	allowedEditRoots := make([]string, 0, 1+len(cs.GrantedRoots))
-	allowedEditRoots = append(allowedEditRoots, workspaceRoot)
-	allowedEditRoots = append(allowedEditRoots, cs.GrantedRoots...)
-	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, tasksContent, workspaceRoot, allowedEditRoots)
-	// Topology guard: foreign common-dir check memoized per Status, block only apply/verify/remediate
-	if tasksContent != "" && coreReady {
-		memo := make(map[string]string)
-		foreignRoots := foreignRuntimeTopologyRoots(tasksContent, workspaceRoot, allowedEditRoots, memo)
-		if len(foreignRoots) > 0 {
-			// Only block when eligible for apply/verify/remediate (i.e., not already blocked by missing artifacts)
-			// coreReady ensures planning complete, so next would be apply/verify etc.
-			if applyState != ApplyBlocked {
-				applyState = ApplyBlocked
-			}
-			blockedReasons.genuine = append(blockedReasons.genuine, "cross_common_dir_runtime_target: tasks.md references repositories outside planning common dir: "+strings.Join(foreignRoots, ", "))
-		}
-	}
+	coreReady, applyState, blockedReasons, allowedEditRoots := prepareCoreState(artifacts, taskProgress, tasksContent, workspaceRoot, cs.GrantedRoots)
+	applyState = applyTopologyGuard(tasksContent, workspaceRoot, allowedEditRoots, coreReady, applyState, &blockedReasons)
 	verifyReportCurrent := artifacts["verifyReport"] == ArtifactDone
 	remediationState, staleDecision, remediationComplete, _, err := buildRemediationState(changeDir, cs.Name, workspaceRoot, artifacts, applyState, verifyResult, &blockedReasons)
 	if err != nil {
@@ -791,33 +731,7 @@ func deriveChangeStatusCtx(ctx context.Context, cs *ChangeStatus, changeDir, wor
 	// Apply the stale-decision native routing to dependencies: free
 	// verify/archive when the probe says the decision block is stale.
 	dependencies = applyStaleDecisionRouting(dependencies, staleDecision)
-	// RDD gate before verify: when enabled, block verify without valid receipt.
-	// Only when the change is past planning (coreReady && applyState==all_done) and verify is the next phase.
-	// Planning routes (propose/spec/design/tasks) must not be blocked by RDD.
-	if applyState == ApplyAllDone && coreReady {
-		if blocked, reason := rddGateBlocked(workspaceRoot, cs.Name); blocked {
-			if dependencies.Verify != DependencyBlocked {
-				dependencies.Verify = DependencyBlocked
-			}
-			if dependencies.Archive == DependencyReady {
-				dependencies.Archive = DependencyBlocked
-			}
-			blockedReasons.genuine = append(blockedReasons.genuine, reason)
-		}
-	}
-	// Session guard before done/batch-close: block verify/archive when session_summary missing (REQ-SD-B1/S1).
-	// Only for biggz-ai project to keep matrix tests green; real repo is biggz-ai via git remote.
-	if applyState == ApplyAllDone && coreReady {
-		if blocked, reason := IsSessionSummaryBlocked(ctx, workspaceRoot, cs.Name); blocked {
-			if dependencies.Verify == DependencyReady {
-				dependencies.Verify = DependencyBlocked
-			}
-			if dependencies.Archive == DependencyReady {
-				dependencies.Archive = DependencyBlocked
-			}
-			blockedReasons.genuine = append(blockedReasons.genuine, reason)
-		}
-	}
+	applyTerminalGateBlocks(ctx, workspaceRoot, cs.Name, applyState, coreReady, &dependencies, &blockedReasons)
 	nextRecommended := resolveNextRecommended(dependencies, applyState, verifyReportCurrent, remediationState)
 
 	cs.SchemaName = StatusSchemaName
@@ -920,6 +834,73 @@ func isRDDEnabled(workspaceRoot string, opts ...StatusOptions) bool {
 		return true
 	}
 	return status.EffectiveMode == review.RDDModeEnabled
+}
+
+// prepareCoreState derives planning readiness: coreReady, applyState with
+// edit-authority applied, blocked reasons and allowed edit roots. Shared by
+// both derive entrypoints to keep them under the complexity budget.
+func prepareCoreState(artifacts map[string]ArtifactState, taskProgress TaskProgress, tasksContent, workspaceRoot string, grantedRoots []string) (bool, ApplyState, blockerReasons, []string) {
+	coreReady := artifacts["proposal"] == ArtifactDone && artifacts["specs"] == ArtifactDone &&
+		artifacts["design"] == ArtifactDone && artifacts["tasks"] == ArtifactDone && taskProgress.Total > 0
+	applyState := resolveApplyState(coreReady, taskProgress)
+	blockedReasons := artifactBlockedReasons(artifacts, taskProgress)
+	allowedEditRoots := make([]string, 0, 1+len(grantedRoots))
+	allowedEditRoots = append(allowedEditRoots, workspaceRoot)
+	allowedEditRoots = append(allowedEditRoots, grantedRoots...)
+	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, tasksContent, workspaceRoot, allowedEditRoots)
+	return coreReady, applyState, blockedReasons, allowedEditRoots
+}
+
+// applyTopologyGuard blocks apply when tasks.md targets repositories outside
+// the planning common dir. Shared by both derive entrypoints.
+func applyTopologyGuard(tasksContent, workspaceRoot string, allowedEditRoots []string, coreReady bool, applyState ApplyState, blockedReasons *blockerReasons) ApplyState {
+	if tasksContent == "" || !coreReady {
+		return applyState
+	}
+	// Topology guard: foreign common-dir check memoized per Status, block only apply/verify/remediate.
+	// coreReady ensures planning complete, so next would be apply/verify etc.
+	memo := make(map[string]string)
+	foreignRoots := foreignRuntimeTopologyRoots(tasksContent, workspaceRoot, allowedEditRoots, memo)
+	if len(foreignRoots) == 0 {
+		return applyState
+	}
+	// Only block when eligible for apply/verify/remediate (i.e., not already blocked by missing artifacts).
+	if applyState != ApplyBlocked {
+		applyState = ApplyBlocked
+	}
+	blockedReasons.genuine = append(blockedReasons.genuine, "cross_common_dir_runtime_target: tasks.md references repositories outside planning common dir: "+strings.Join(foreignRoots, ", "))
+	return applyState
+}
+
+// applyTerminalGateBlocks runs the RDD receipt gate and the session-summary
+// guard once planning is done. Both force verify/archive to blocked and
+// record the reason. Shared by both derive entrypoints to keep them under
+// the complexity budget.
+func applyTerminalGateBlocks(ctx context.Context, workspaceRoot, changeName string, applyState ApplyState, coreReady bool, dependencies *Dependencies, blockedReasons *blockerReasons) {
+	if applyState != ApplyAllDone || !coreReady {
+		return
+	}
+	// RDD gate before verify: when enabled, block verify without valid receipt.
+	// Planning routes (propose/spec/design/tasks) must not be blocked by RDD.
+	if blocked, reason := rddGateBlocked(workspaceRoot, changeName); blocked {
+		if dependencies.Verify != DependencyBlocked {
+			dependencies.Verify = DependencyBlocked
+		}
+		if dependencies.Archive == DependencyReady {
+			dependencies.Archive = DependencyBlocked
+		}
+		blockedReasons.genuine = append(blockedReasons.genuine, reason)
+	}
+	// Session guard before done/batch-close (REQ-SD-B1/S1).
+	if blocked, reason := IsSessionSummaryBlocked(ctx, workspaceRoot, changeName); blocked {
+		if dependencies.Verify == DependencyReady {
+			dependencies.Verify = DependencyBlocked
+		}
+		if dependencies.Archive == DependencyReady {
+			dependencies.Archive = DependencyBlocked
+		}
+		blockedReasons.genuine = append(blockedReasons.genuine, reason)
+	}
 }
 
 // rddGateBlocked reports whether the RDD gate blocks verify for the change.
