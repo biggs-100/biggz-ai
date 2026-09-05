@@ -10,9 +10,9 @@ Route authorized work through exactly ONE of three implementation routes based o
 |---|---|---|
 | **Direct inline** | Understand/verify from 1–3 files; or one mechanical, already-understood file with no research or unresolved design decision | Inline edit. No artifacts. No delegation. No SDD. |
 | **Delegated direct** | Understand needs 4+ files; reading prepares a write; broad research needed; or writer touches 2+ non-trivial files | One scout or one writer. Bounded. No SDD artifacts. |
-| **Optional SDD** | Substantial ambiguity where durable proposal/spec/design/tasks materially reduce uncertainty | Propose SDD. Selected only by explicit request or accepted proposal. |
+| **Optional SDD** | Substantial ambiguity where durable proposal/spec/design/tasks materially reduce uncertainty, OR large/critical change (see SDD recommendation triggers) | MUST recommend SDD via explicit choice + STOP. Selected only by explicit request or accepted proposal. |
 
-**SIZE NEVER SELECTS SDD.** File counts describe context needed for the current action, not a risk score and not an SDD threshold. Risk may strengthen native verification, but it never forces SDD.
+**SIZE NEVER SELECTS SDD.** File counts describe context needed for the current action, not a risk score and not an SDD threshold. Size/risk never auto-launch SDD — but large/critical signals MUST trigger an explicit SDD recommendation question + STOP. Risk may strengthen native verification, but it never forces SDD.
 
 **Per-action delegation does not change route.** Tests, builds, installs, and native review actors may use fresh workers without changing the selected route or creating SDD state.
 
@@ -56,7 +56,11 @@ Parent-orchestrator routing boundaries. Use smallest useful topology and keep sa
 3. **Write rule**: keep one mechanical, already-understood file inline only when it needs no research/unresolved design; delegate one writer for 2+ non-trivial files.
 4. **Context rule**: delegate reading that prepares a write and broad research/context compression.
 5. **Per-action rule**: tests, builds, installs, and native review actors may use fresh workers without changing implementation route or creating SDD state.
-6. **Optional SDD rule**: propose SDD only when durable proposal/spec/design/tasks materially reduce substantial ambiguity. Select SDD only after explicit request or accepted proposal; risk alone never forces SDD.
+6. **Optional SDD rule**: propose SDD when durable proposal/spec/design/tasks materially reduce substantial ambiguity, and MUST recommend SDD when SDD recommendation triggers hit. Select SDD only after explicit request or accepted proposal; size/risk alone never auto-select SDD — they trigger a recommendation question + STOP. On acceptance, MUST run Session Recall + SDD Session Preflight (workflow HARD GATE: pace/artifacts/PRs/review) before any `sdd-*` launch, never in the same turn.
+
+#### SDD recommendation triggers (MANDATORY)
+
+MUST recommend SDD (question + STOP, never auto-launch) when ANY holds: estimated >400 lines or 5+ files or 2+ non-trivial files with unclear acceptance; new public interface / new domain / new external dependency; touches golden tests, visual theme, full UI rewrite, or critical packages; cross-cutting (e.g. app + views + theme) or "done" is ambiguous. Declined → proceed direct/delegated without nagging; accepted → Session Recall + Preflight, then `sdd-new`/`sdd-continue`.
 
 **Long-session nuance (~20 tool calls):** if accumulating work is no longer clearly local — roughly 20 tool calls, 5 exploratory file reads, or 2 non-mechanical edits without delegation — pause and delegate remaining work instead of silently continuing monolithically.
 
@@ -138,9 +142,9 @@ Use `sdd-explore` and `sdd-verify` only inside SDD.
 
 #### 3. SDD (optional)
 
-SDD never selected by size/file count/risk alone — fail-closed. Suggest organically when durable proposal/spec/design/tasks would materially reduce substantial ambiguity (unclear requirements/acceptance criteria, architectural/product decisions, cross-cutting behavior), and let user decide. Select only when user explicitly asks (`/sdd-new`/`sdd-continue`/natural language ask) or accepts SDD proposal. Once selected, do not jump to implementation; calibrate context, create artifacts, gate for approval.
+SDD never auto-selected by size/file count/risk alone — fail-closed. MUST recommend SDD via explicit question + STOP when SDD recommendation triggers hit, and MAY suggest organically when durable proposal/spec/design/tasks would materially reduce substantial ambiguity (unclear requirements/acceptance criteria, architectural/product decisions, cross-cutting behavior). Select only when user explicitly asks (`/sdd-new`/`sdd-continue`/natural language ask) or accepts SDD proposal. Once selected, MUST run Session Recall + SDD Session Preflight (pace/artifacts/PRs/review) before any `sdd-*` launch; do not jump to implementation; calibrate context, create artifacts, gate for approval.
 
-**Heuristic example (must stay Simple Delegation):** 12 files, 800 lines, no explicit SDD request → Simple Delegation (MAY suggest SDD) — not `sdd-propose`. Explicit SDD request (`use SDD for this feature`) → SDD via preflight/init guards.
+**Heuristic example (must stay Simple Delegation until accepted):** 12 files, 800 lines, no explicit SDD request → Simple Delegation + MUST recommend SDD via question + STOP — not `sdd-propose` until accepted. On acceptance → Session Recall + Preflight, then `sdd-new`. Explicit SDD request (`use SDD for this feature`) → SDD via preflight/init guards.
 
 ### Pi Delegation Bindings & Cost/Context Balance
 
