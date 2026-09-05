@@ -482,6 +482,39 @@ func TestPathCheck_Duplicates(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		binaryName = "biggz.exe"
 	}
+	if err := os.WriteFile(filepath.Join(dir1, binaryName), []byte("data-v1"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir2, binaryName), []byte("data-v2"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	path := dir1 + string(filepath.ListSeparator) + dir2
+	c := NewPathCheckWithCustom(
+		func(key string) string { return path },
+		os.Stat,
+	)
+	result := c.Run(context.Background())
+	if result.Status != StatusWarn {
+		t.Errorf("status = %v, want warn for divergent duplicates", result.Status)
+	}
+	if result.Severity != SeverityWarning {
+		t.Errorf("severity = %s, want WARNING", result.Severity)
+	}
+	if !strings.Contains(result.Message, dir1) {
+		t.Errorf("message should name the winner (first in PATH), got %q", result.Message)
+	}
+}
+
+func TestPathCheck_IdenticalDuplicatesPass(t *testing.T) {
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+
+	binaryName := "biggz"
+	if runtime.GOOS == "windows" {
+		binaryName = "biggz.exe"
+	}
+	// Same build deployed twice (GOBIN + ~/.biggz) is harmless.
 	if err := os.WriteFile(filepath.Join(dir1, binaryName), []byte("data"), 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -495,11 +528,11 @@ func TestPathCheck_Duplicates(t *testing.T) {
 		os.Stat,
 	)
 	result := c.Run(context.Background())
-	if result.Status != StatusWarn {
-		t.Errorf("status = %v, want warn for duplicates", result.Status)
+	if result.Status != StatusPass {
+		t.Errorf("status = %v, want pass for identical duplicates", result.Status)
 	}
-	if result.Severity != SeverityWarning {
-		t.Errorf("severity = %s, want WARNING", result.Severity)
+	if !strings.Contains(result.Message, "identical") {
+		t.Errorf("message should note identical copies, got %q", result.Message)
 	}
 }
 

@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -18,10 +19,13 @@ const (
 
 // PathCheck scans the PATH environment variable for duplicate biggz or
 // biggz-mcp binaries. If the same binary name appears in multiple PATH
-// directories, the first one wins — duplicates are a WARNING.
+// directories with different content, the first one wins — divergent
+// duplicates are a WARNING. Byte-identical duplicates are harmless (same
+// build deployed twice, e.g. GOBIN + ~/.biggz) and only noted as INFO.
 type PathCheck struct {
 	getenvFn func(string) string
 	statFn   func(string) (os.FileInfo, error)
+	readFn   func(string) ([]byte, error)
 }
 
 // NewPathCheck creates a PathCheck using the default environment.
@@ -29,6 +33,7 @@ func NewPathCheck() *PathCheck {
 	return &PathCheck{
 		getenvFn: os.Getenv,
 		statFn:   os.Stat,
+		readFn:   os.ReadFile,
 	}
 }
 
@@ -37,7 +42,41 @@ func NewPathCheckWithCustom(getenvFn func(string) string, statFn func(string) (o
 	return &PathCheck{
 		getenvFn: getenvFn,
 		statFn:   statFn,
+		readFn:   os.ReadFile,
 	}
+}
+
+// NewPathCheckWithFullCustom creates a PathCheck with injected functions for
+// testing, including file reads for byte-identity comparison.
+func NewPathCheckWithFullCustom(getenvFn func(string) string, statFn func(string) (os.FileInfo, error), readFn func(string) ([]byte, error)) *PathCheck {
+	return &PathCheck{
+		getenvFn: getenvFn,
+		statFn:   statFn,
+		readFn:   readFn,
+	}
+}
+
+// sameBytes reports whether all paths have byte-identical content.
+// Unreadable files count as different (fail-closed toward WARNING).
+func (c *PathCheck) sameBytes(paths []string) bool {
+	if len(paths) < 2 {
+		return true
+	}
+	read := c.readFn
+	if read == nil {
+		read = os.ReadFile
+	}
+	first, err := read(paths[0])
+	if err != nil {
+		return false
+	}
+	for _, p := range paths[1:] {
+		b, err := read(p)
+		if err != nil || !bytes.Equal(first, b) {
+			return false
+		}
+	}
+	return true
 }
 
 // ID returns the check identifier.
@@ -142,8 +181,12 @@ func (c *PathCheck) Run(ctx context.Context) *Result {
 		}
 	}
 
-	// Check for duplicates.
+	// Check for duplicates. Byte-identical copies are harmless (same build in
+	// two locations, e.g. GOBIN for dev + ~/.biggz for absolute-path agent
+	// refs); only divergent copies shadow each other dangerously. Dirs iterate
+	// in PATH order, so paths[0] is the winner.
 	var duplicates []string
+	var identical []string
 	var missing []string
 
 	for _, name := range targets {
@@ -157,7 +200,11 @@ func (c *PathCheck) Run(ctx context.Context) *Result {
 			for i, loc := range locs {
 				paths[i] = filepath.Join(loc.dir, loc.name)
 			}
-			duplicates = append(duplicates, fmt.Sprintf("%s found in %d locations: %s", name, len(locs), strings.Join(paths, ", ")))
+			if c.sameBytes(paths) {
+				identical = append(identical, fmt.Sprintf("%s identical in %d locations", name, len(locs)))
+				continue
+			}
+			duplicates = append(duplicates, fmt.Sprintf("%s found in %d locations: %s (winner, first in PATH: %s — rebuild/reinstall to sync copies)", name, len(locs), strings.Join(paths, ", "), paths[0]))
 		}
 	}
 
@@ -173,8 +220,12 @@ func (c *PathCheck) Run(ctx context.Context) *Result {
 
 	// All clear — but note if some binaries aren't on PATH at all.
 	msg := "PATH check OK"
+	notes := append([]string{}, identical...)
 	if len(missing) > 0 {
-		msg = fmt.Sprintf("PATH check OK (%s not on PATH)", strings.Join(missing, ", "))
+		notes = append(notes, fmt.Sprintf("%s not on PATH", strings.Join(missing, ", ")))
+	}
+	if len(notes) > 0 {
+		msg = fmt.Sprintf("PATH check OK (%s)", strings.Join(notes, "; "))
 	}
 
 	return &Result{
