@@ -1,0 +1,14 @@
+name: enforce-session-close-summary
+created: "2026-09-07T02:51:10Z"
+phase: explore
+description: "biggz-ai issue #9: session-close summary unenforced outside SDD, agents claim inability without trying bash fallback. BigMem session-close protocol (biggz_mem_session_summary mandatory before ending session) has no enforcement outside SDD done/apply gate. Real incident: agent without biggz_mem_* MCP tools claimed saving impossible and closed with chat-only summary, while documented bash fallback (biggz bigmem save --type session_summary) worked first try. Expected: session close routes through same guard pattern as SDD (internal/sdd/session_guard.go HasSessionSummary + SaveSessionSummaryWithFallback + VerifySessionSummary): verify recency, auto-route to bash fallback if missing, block/declare if both fail. Constraint: no pi session-end/stop hook found in C:/Users/USER/.pi/agent/extensions/ or internal/assets/pi/, enforcement mechanism needs design."
+status: active
+issue: "9"
+repo: C:/Users/USER/Desktop/biggz-ai
+upstream: Gentleman-Programming/gentle-pi (fork biggs-100/biggz-ai)
+preflight:
+  pace: interactive
+  artifacts: openspec
+  prs: auto-chain
+  review_budget_lines: 400
+  language: es
