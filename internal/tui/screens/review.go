@@ -7,9 +7,9 @@ import (
 
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sergi/go-diff/diffmatchpatch"
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 func isReviewDiffPretty() bool {

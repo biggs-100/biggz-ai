@@ -30,9 +30,9 @@ type SkillsStep struct {
 	FS       fs.FS
 	Deployed int
 
-	tracker     *tracker
-	PrepareErr  error
-	FailAfter   int // inject failure after N files (0 = no fail)
+	tracker      *tracker
+	PrepareErr   error
+	FailAfter    int // inject failure after N files (0 = no fail)
 	filesWritten int
 }
 
@@ -184,8 +184,8 @@ func (s *SkillsStep) deployToDir(ctx context.Context, ch pipeline.ProgressChan, 
 			select {
 			case ch <- ev:
 			default:
-				}
 			}
+		}
 		return nil
 	})
 	return count, err

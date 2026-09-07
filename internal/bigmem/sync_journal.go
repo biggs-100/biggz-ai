@@ -294,7 +294,7 @@ func (s *Store) ReplayDeferredForScope(scope string) error {
 	defer rows.Close()
 	type r struct {
 		sid, proj, ent, key, pl string
-		att                      int
+		att                     int
 	}
 	var list []r
 	for rows.Next() {
@@ -484,6 +484,7 @@ func (s *Store) AckSyncMutation(seq int64) error {
 	_, _ = s.db.Exec(`INSERT OR IGNORE INTO sync_enrolled_projects (project, enrolled_at) VALUES (?, ?)`, proj, now)
 	return nil
 }
+
 // QuarantineIrreparable deterministically quarantines an irreparable mutation.
 // Sets disposition='quarantined', stores evidence JSON, advances cursor (last_acked_seq),
 // and marks sync_state degraded+reason_code. Idempotent and deterministic.

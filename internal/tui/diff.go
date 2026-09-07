@@ -4,9 +4,9 @@ import (
 	"os"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/sergi/go-diff/diffmatchpatch"
-	"github.com/biggs-100/biggz-ai/internal/tui/styles"
 )
 
 const diffCap = 1 << 20

@@ -20,7 +20,7 @@ import (
 const sharedSpinnerInterval = 80 * time.Millisecond
 
 var (
-	sharedSpinnerFrame atomic.Int64
+	sharedSpinnerFrame  atomic.Int64
 	sharedSpinnerTicker *time.Ticker
 	sharedSpinnerMu     sync.Mutex
 	sharedSpinnerDone   chan struct{}
@@ -130,11 +130,11 @@ func isLiveState(state string) bool {
 
 // FleetRowInput holds data for a 2-line fleet row.
 type FleetRowInput struct {
-	Glyph       string
-	Agent       string
-	Model       string
-	State       string
-	ElapsedSec  int
+	Glyph        string
+	Agent        string
+	Model        string
+	State        string
+	ElapsedSec   int
 	WindowTokens int
 	SpentTokens  int
 	Tool         string
@@ -207,13 +207,13 @@ func RenderFleetRow(width int, in FleetRowInput) (string, string, int) {
 
 // WorkflowRowInput holds workflow hierarchy data.
 type WorkflowRowInput struct {
-	Name         string
-	State        string
-	Gate         string
-	Next         string
-	Output       string
-	Failure      string
-	NestedLevel  int
+	Name        string
+	State       string
+	Gate        string
+	Next        string
+	Output      string
+	Failure     string
+	NestedLevel int
 }
 
 // RenderWorkflowRow renders workflow 2-line per POLISH-TUI-02 with │ dim guide.
@@ -271,13 +271,13 @@ func RenderWorkflowRow(width int, in WorkflowRowInput) (string, string, int) {
 
 // HeaderInput for collapsed header 2 groups.
 type HeaderInput struct {
-	Running   int
-	Queued    int
-	CapUsed   int
-	CapLimit  int
-	PaneWarn  bool
-	ElapsedSec int
-	TokensSpent int
+	Running      int
+	Queued       int
+	CapUsed      int
+	CapLimit     int
+	PaneWarn     bool
+	ElapsedSec   int
+	TokensSpent  int
 	TokensWindow int
 }
 

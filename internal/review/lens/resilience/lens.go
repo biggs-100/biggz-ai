@@ -180,19 +180,19 @@ func analyzeFileResilience(path, content, lensID string) ([]lens.LensFinding, []
 func resilienceFindingForLine(path string, lineNum int, scanLine, combined, lensID string) (lens.LensFinding, string, bool) {
 	if checkTimeout(scanLine, combined) {
 		f := makeFinding(lensID, path, lineNum, "timeout", fmt.Sprintf("resilience: %s may lack timeout configuration — verify http.Client Timeout or context timeout", path)) //lint:ignore no-fmtSprintf
-		return f, fmt.Sprintf("timeout pattern at %s:%d", path, lineNum), true                                           //lint:ignore no-fmtSprintf
+		return f, fmt.Sprintf("timeout pattern at %s:%d", path, lineNum), true                                                                                                 //lint:ignore no-fmtSprintf
 	}
 	if checkContext(scanLine, combined) {
 		f := makeFinding(lensID, path, lineNum, "context", fmt.Sprintf("resilience: %s may miss context cancellation propagation — verify context.Context usage", path)) //lint:ignore no-fmtSprintf
-		return f, fmt.Sprintf("context pattern at %s:%d", path, lineNum), true                                            //lint:ignore no-fmtSprintf
+		return f, fmt.Sprintf("context pattern at %s:%d", path, lineNum), true                                                                                           //lint:ignore no-fmtSprintf
 	}
 	if isConcurrencyHit(scanLine, combined) {
 		f := makeFinding(lensID, path, lineNum, "concurrency", fmt.Sprintf("resilience: %s uses concurrency without clear wait/cleanup — verify sync.WaitGroup or errgroup", path)) //lint:ignore no-fmtSprintf
-		return f, fmt.Sprintf("concurrency pattern at %s:%d", path, lineNum), true                                              //lint:ignore no-fmtSprintf
+		return f, fmt.Sprintf("concurrency pattern at %s:%d", path, lineNum), true                                                                                                  //lint:ignore no-fmtSprintf
 	}
 	if isCleanupHit(scanLine, combined) {
 		f := makeFinding(lensID, path, lineNum, "cleanup", fmt.Sprintf("resilience: %s acquires resource without visible defer cleanup — verify defer Close", path)) //lint:ignore no-fmtSprintf
-		return f, fmt.Sprintf("cleanup pattern at %s:%d", path, lineNum), true                                           //lint:ignore no-fmtSprintf
+		return f, fmt.Sprintf("cleanup pattern at %s:%d", path, lineNum), true                                                                                       //lint:ignore no-fmtSprintf
 	}
 	return lens.LensFinding{}, "", false
 }
@@ -287,5 +287,3 @@ func isCleanupHit(scanLine, combined string) bool {
 	_ = combined
 	return false
 }
-
-

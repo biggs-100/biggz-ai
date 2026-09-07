@@ -119,7 +119,12 @@ func TestLeaseSplitBrain(t *testing.T) {
 	target2 := "proj-lease-concurrent"
 	wg.Add(2)
 	go func() { defer wg.Done(); ok, _ := s.AcquireSyncLease(target2, "owner1", time.Minute); res[0] = ok }()
-	go func() { defer wg.Done(); time.Sleep(10 * time.Millisecond); ok, _ := s.AcquireSyncLease(target2, "owner2", time.Minute); res[1] = ok }()
+	go func() {
+		defer wg.Done()
+		time.Sleep(10 * time.Millisecond)
+		ok, _ := s.AcquireSyncLease(target2, "owner2", time.Minute)
+		res[1] = ok
+	}()
 	wg.Wait()
 	if res[0] == res[1] {
 		t.Fatalf("concurrent exactly one should succeed %v", res)
@@ -159,7 +164,7 @@ func TestLeaseBackoff(t *testing.T) {
 		t.Fatalf("reset %v", st3)
 	}
 }
-func TestQuarantine(t *testing.T) { TestQuarantineLogBlocked(t) }
-func TestLease(t *testing.T) { TestLeaseSplitBrain(t) }
-func TestLogBlocked(t *testing.T) { TestQuarantineLogBlocked(t) }
+func TestQuarantine(t *testing.T)    { TestQuarantineLogBlocked(t) }
+func TestLease(t *testing.T)         { TestLeaseSplitBrain(t) }
+func TestLogBlocked(t *testing.T)    { TestQuarantineLogBlocked(t) }
 func TestPayloadTamper(t *testing.T) { TestQuarantinePayloadTamper(t) }

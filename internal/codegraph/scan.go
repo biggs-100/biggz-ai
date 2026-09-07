@@ -358,8 +358,8 @@ func scanWithParser(root string, relFiles []string) (*ScanResult, error) {
 		imports map[string]string // alias or base -> import path
 	}
 	var infos []fileInfo
-	funcDefs := make(map[string][]string)         // func name -> files
-	pkgToFiles := make(map[string][]string)       // pkg name -> files
+	funcDefs := make(map[string][]string)          // func name -> files
+	pkgToFiles := make(map[string][]string)        // pkg name -> files
 	importPathToFiles := make(map[string][]string) // import path -> files (not known without module)
 
 	fset := token.NewFileSet()

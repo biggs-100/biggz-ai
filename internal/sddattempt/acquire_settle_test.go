@@ -318,8 +318,8 @@ func TestSettle_ProgressMultiUnitSingleFinalSettle(t *testing.T) {
 	final, err := Settle(SettleParams{
 		ChangeName: "ch-acq-multi", RepoRoot: "r", Token: acq2.Token,
 		RequestID: "req-multi-settle-2", Outcome: "passed",
-		EvidenceRevision:   "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-		Diagnosis:          "done", HarnessDisposition: "reused",
+		EvidenceRevision: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+		Diagnosis:        "done", HarnessDisposition: "reused",
 		CleanupEvidence: "c", ProcessEvidence: "p",
 	})
 	if err != nil {

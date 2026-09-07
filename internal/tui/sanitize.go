@@ -10,7 +10,7 @@ import (
 )
 
 func ReplaceTabs(s string) string { return strings.ReplaceAll(s, "\t", "    ") }
-func VisibleWidth(s string) int { return runewidth.StringWidth(ansi.Strip(s)) }
+func VisibleWidth(s string) int   { return runewidth.StringWidth(ansi.Strip(s)) }
 
 // compactK formats tokens compactly: 4100→4.1k, 2250→2.2k, 3000→3k, 600→600.
 // For 1k–10k shows one decimal unless divisible by 1000, >10k shows integer k.

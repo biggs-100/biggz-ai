@@ -29,8 +29,8 @@ func TestGuardSD(t *testing.T) {
 
 func TestGuardSDAgentAuthority_SDPhases(t *testing.T) {
 	cases := []struct {
-		phase string
-		agent string
+		phase  string
+		agent  string
 		wantOK bool
 	}{
 		{"propose", "general", false},
@@ -40,7 +40,7 @@ func TestGuardSDAgentAuthority_SDPhases(t *testing.T) {
 		{"apply", "general", false},
 		{"verify", "general", false},
 		{"archive", "general", false},
-		{"explore", "explore", false},  // SDD explore via explore must be blocked, use sdd-explore
+		{"explore", "explore", false}, // SDD explore via explore must be blocked, use sdd-explore
 		{"research", "explore", false},
 		{"propose", "sdd-propose", true},
 		{"spec", "sdd-spec", true},

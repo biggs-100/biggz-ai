@@ -10,16 +10,16 @@ import (
 
 // fakeStep records calls for pipeline orchestration tests.
 type fakeStep struct {
-	name       string
-	prepareErr error
-	applyErr   error
+	name        string
+	prepareErr  error
+	applyErr    error
 	rollbackErr error
 
-	mu            sync.Mutex
-	prepareCalled int
-	applyCalled   int
+	mu             sync.Mutex
+	prepareCalled  int
+	applyCalled    int
 	rollbackCalled int
-	rollbackOrder *[]string
+	rollbackOrder  *[]string
 
 	// for burst test
 	burst int
@@ -59,13 +59,13 @@ func (f *fakeStep) Rollback(_ context.Context) error {
 
 // idempotentStep ensures Rollback twice is safe.
 type idempotentStep struct {
-	name     string
-	mu       sync.Mutex
-	applied  bool
-	rolled   int
+	name    string
+	mu      sync.Mutex
+	applied bool
+	rolled  int
 }
 
-func (s *idempotentStep) Name() string { return s.name }
+func (s *idempotentStep) Name() string                    { return s.name }
 func (s *idempotentStep) Prepare(_ context.Context) error { return nil }
 func (s *idempotentStep) Apply(_ context.Context, ch ProgressChan) error {
 	s.mu.Lock()

@@ -284,9 +284,9 @@ func TestWizardBatch2ViewsGuards(t *testing.T) {
 	for i, v := range views {
 		for _, b := range banned {
 			if strings.Contains(v, b) {
-			t.Errorf("view %d contains banned token %q", i, b)
+				t.Errorf("view %d contains banned token %q", i, b)
+			}
 		}
-	}
 		if strings.Contains(v, "\x1b[") {
 			t.Errorf("view %d contains ANSI under TERM=dumb", i)
 		}

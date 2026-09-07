@@ -22,18 +22,18 @@ var (
 
 // Sources.
 const (
-	SourceConfig                               = "config"
-	SourceGitRemote                            = "git_remote"
-	SourceGitRoot                              = "git_root"
-	SourceGitChild                             = "git_child"
-	SourceDirBasename                          = "dir_basename"
-	SourceAmbiguous                            = "ambiguous"
-	SourceExplicitOverride                     = "explicit_override"
-	SourceUserSelectedAfterAmbiguousProject    = "user_selected_after_ambiguous_project"
-	SourceSessionProject                       = "session"
-	SourceRequestBody                          = "request_body"
-	SourceAllProjects                          = "all_projects"
-	SourceProcessOverride                      = "process_override"
+	SourceConfig                            = "config"
+	SourceGitRemote                         = "git_remote"
+	SourceGitRoot                           = "git_root"
+	SourceGitChild                          = "git_child"
+	SourceDirBasename                       = "dir_basename"
+	SourceAmbiguous                         = "ambiguous"
+	SourceExplicitOverride                  = "explicit_override"
+	SourceUserSelectedAfterAmbiguousProject = "user_selected_after_ambiguous_project"
+	SourceSessionProject                    = "session"
+	SourceRequestBody                       = "request_body"
+	SourceAllProjects                       = "all_projects"
+	SourceProcessOverride                   = "process_override"
 )
 
 // Env precedence for SourceConfig: BIGMEM_PROJECT > BIGGZ_PROJECT > ENGRAM_PROJECT.

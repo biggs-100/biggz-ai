@@ -84,7 +84,10 @@ func Start(projectRoot string, ctx context.Context) (*Watcher, error) {
 	}
 	tm := time.NewTimer(WatchDebounceMS)
 	if !tm.Stop() {
-		select { case <-tm.C: default: }
+		select {
+		case <-tm.C:
+		default:
+		}
 	}
 	w := &Watcher{watcher: fsW, timer: tm, active: active, root: projectRoot, lastFP: lastFP}
 	setGlobalWatcher(w)
@@ -125,7 +128,10 @@ func (w *Watcher) loop(ctx context.Context) {
 			w.mu.Lock()
 			if w.timer != nil {
 				if !w.timer.Stop() {
-					select { case <-w.timer.C: default: }
+					select {
+					case <-w.timer.C:
+					default:
+					}
 				}
 				w.timer.Reset(WatchDebounceMS)
 			}
@@ -191,7 +197,10 @@ func (w *Watcher) Close() error {
 		defer w.mu.Unlock()
 		if w.timer != nil {
 			if !w.timer.Stop() {
-				select { case <-w.timer.C: default: }
+				select {
+				case <-w.timer.C:
+				default:
+				}
 			}
 		}
 		if w.ticker != nil {

@@ -21,13 +21,13 @@ import (
 // filemerge.WriteFileAtomic under a file lock, preserving unknown fields.
 // It supports dry-run (Prepare preview only, zero writes) and rollback.
 type StateStep struct {
-	HomeDir  string
-	Adapter  plugin.AgentAdapter
-	AgentID  string // explicit override; if empty, Adapter.ID() is used
-	DryRun   bool
-	tracker  *tracker
-	orig     map[string][]byte // path -> original bytes (nil means absent)
-	order    []string
+	HomeDir    string
+	Adapter    plugin.AgentAdapter
+	AgentID    string // explicit override; if empty, Adapter.ID() is used
+	DryRun     bool
+	tracker    *tracker
+	orig       map[string][]byte // path -> original bytes (nil means absent)
+	order      []string
 	PrepareErr error
 }
 

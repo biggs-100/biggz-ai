@@ -143,15 +143,15 @@ func publishCloneMirror(mirrorDir, filename string, data []byte, relocatedPath s
 	mirrorPath := filepath.Join(mirrorDir, filename)
 	if err := rddPublishImmutable(mirrorPath, data); err != nil {
 		return &RDDModeStatus{
-			Reach:      ReachThisBuild,
-			Revision:   gen.Revision,
-			Generation: genNum,
-			RecordedAt: gen.RecordedAt,
-		}, &RDDModePartialApplyError{
-			RelocatedPath: relocatedPath,
-			MirrorPath:    mirrorPath,
-			Cause:         err,
-		}
+				Reach:      ReachThisBuild,
+				Revision:   gen.Revision,
+				Generation: genNum,
+				RecordedAt: gen.RecordedAt,
+			}, &RDDModePartialApplyError{
+				RelocatedPath: relocatedPath,
+				MirrorPath:    mirrorPath,
+				Cause:         err,
+			}
 	}
 	return &RDDModeStatus{
 		Reach:      ReachMachine,

@@ -112,17 +112,17 @@ func (d *LaunchDedup) Phases() []string {
 // formatting differences, while still distinguishing different tasks.
 func ComputeFingerprint(taskDescription string) string {
 	normalized := normalizeTaskDescription(taskDescription)
-	
+
 	// Extract artifact references for fingerprint
 	artifacts := extractArtifactRefs(normalized)
-	
+
 	// Combine phase-relevant content
 	fingerprint := normalized
 	if len(artifacts) > 0 {
 		// Use artifacts as the primary fingerprint component
 		fingerprint = strings.Join(artifacts, "|")
 	}
-	
+
 	// Hash it
 	hash := sha256.Sum256([]byte(fingerprint))
 	return hex.EncodeToString(hash[:])[:12] // Truncate to 12 chars
@@ -132,11 +132,11 @@ func ComputeFingerprint(taskDescription string) string {
 func normalizeTaskDescription(s string) string {
 	// Trim and lowercase
 	s = strings.TrimSpace(strings.ToLower(s))
-	
+
 	// Collapse whitespace
 	spaceRe := regexp.MustCompile(`\s+`)
 	s = spaceRe.ReplaceAllString(s, " ")
-	
+
 	return s
 }
 

@@ -8,8 +8,8 @@ import (
 
 	"github.com/biggs-100/biggz-ai/internal/pipeline"
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
-	"github.com/charmbracelet/x/ansi"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const installingBarWidth = 30

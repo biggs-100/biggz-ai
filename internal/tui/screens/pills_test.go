@@ -11,7 +11,11 @@ import (
 func strip(s string) string { return ansi.Strip(s) }
 
 func TestPillCollapse(t *testing.T) {
-	t.Setenv("BIGGZ_PRETTY", ""); t.Setenv("PI_SUBAGENT_CHILD", ""); t.Setenv("TERM", "xterm-256color"); t.Setenv("BIGGZ_NO_ANIMATION", ""); t.Setenv("GENTLE_AI_NO_ANIMATION", "")
+	t.Setenv("BIGGZ_PRETTY", "")
+	t.Setenv("PI_SUBAGENT_CHILD", "")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("BIGGZ_NO_ANIMATION", "")
+	t.Setenv("GENTLE_AI_NO_ANIMATION", "")
 	pills := []Pill{{Label: "a"}, {Label: "b"}, {Label: "c"}, {Label: "d"}, {Label: "e"}}
 	vis, suffix := CollapsePills(pills, 3)
 	if len(vis) != 3 || vis[0].Label != "a" || vis[2].Label != "c" || suffix != "… +2 hidden" {
@@ -38,7 +42,11 @@ func TestPillCollapse(t *testing.T) {
 }
 
 func TestPillSpinnerStatic(t *testing.T) {
-	t.Setenv("BIGGZ_PRETTY", ""); t.Setenv("PI_SUBAGENT_CHILD", ""); t.Setenv("TERM", "xterm-256color"); t.Setenv("GENTLE_AI_NO_ANIMATION", ""); t.Setenv("BIGGZ_NO_ANIMATION", "1")
+	t.Setenv("BIGGZ_PRETTY", "")
+	t.Setenv("PI_SUBAGENT_CHILD", "")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("GENTLE_AI_NO_ANIMATION", "")
+	t.Setenv("BIGGZ_NO_ANIMATION", "1")
 	if GetSpinnerFrame() != "·" || IsSpinnerPrettyEnabled() {
 		t.Fatalf("NO_ANIMATION should be static")
 	}
@@ -50,7 +58,8 @@ func TestPillSpinnerStatic(t *testing.T) {
 	if !strings.Contains(plain, "·") || strings.Contains(plain, "⠋") {
 		t.Fatalf("running pill static failed %q", plain)
 	}
-	t.Setenv("BIGGZ_NO_ANIMATION", ""); t.Setenv("GENTLE_AI_NO_ANIMATION", "1")
+	t.Setenv("BIGGZ_NO_ANIMATION", "")
+	t.Setenv("GENTLE_AI_NO_ANIMATION", "1")
 	if GetSpinnerFrame() != "·" {
 		t.Fatalf("gentle compat should freeze")
 	}
@@ -61,7 +70,10 @@ func TestPillSpinnerStatic(t *testing.T) {
 }
 
 func TestPillPrettyAndDumb(t *testing.T) {
-	t.Setenv("BIGGZ_PRETTY", "0"); t.Setenv("PI_SUBAGENT_CHILD", ""); t.Setenv("TERM", "xterm-256color"); t.Setenv("BIGGZ_NO_ANIMATION", "")
+	t.Setenv("BIGGZ_PRETTY", "0")
+	t.Setenv("PI_SUBAGENT_CHILD", "")
+	t.Setenv("TERM", "xterm-256color")
+	t.Setenv("BIGGZ_NO_ANIMATION", "")
 	pills := []Pill{{Label: "READ", State: "running"}, {Label: "WRITE", State: "complete"}}
 	rendered := RenderPills(pills)
 	if strings.Contains(rendered, "\x1b[") {
@@ -73,7 +85,8 @@ func TestPillPrettyAndDumb(t *testing.T) {
 	if strings.Contains(styles.PillStyle("running").Render("x"), "\x1b[") {
 		t.Fatalf("PillStyle pretty off should be plain")
 	}
-	t.Setenv("BIGGZ_PRETTY", ""); t.Setenv("TERM", "dumb")
+	t.Setenv("BIGGZ_PRETTY", "")
+	t.Setenv("TERM", "dumb")
 	rendered = RenderPills(pills)
 	if strings.Contains(rendered, "\x1b[") || strings.Contains(rendered, "⠋") || strings.Contains(rendered, "✓") {
 		t.Fatalf("dumb should strip %q", rendered)
@@ -87,5 +100,8 @@ func TestPillPrettyAndDumb(t *testing.T) {
 			t.Fatalf("PillIcon %q empty", st)
 		}
 	}
-	_ = styles.PillRunning; _ = styles.PillQueued; _ = styles.PillComplete; _ = styles.PillFailed
+	_ = styles.PillRunning
+	_ = styles.PillQueued
+	_ = styles.PillComplete
+	_ = styles.PillFailed
 }

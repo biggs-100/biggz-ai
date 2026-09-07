@@ -753,5 +753,3 @@ func writeFile(path string, m RDDMode, recordedAt string) error {
 	}
 	return SyncReviewDirectory(dir)
 }
-
-

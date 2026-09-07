@@ -222,28 +222,28 @@ func TestParseGateRequest_Invalid(t *testing.T) {
 
 func TestGateResultSummary(t *testing.T) {
 	tests := []struct {
-		name   string
-		resp   *GateResponse
+		name     string
+		resp     *GateResponse
 		contains string
 	}{
 		{
-			name: "allow",
-			resp: &GateResponse{Result: GateAllow, Gate: GatePostApply, Reason: "passed"},
+			name:     "allow",
+			resp:     &GateResponse{Result: GateAllow, Gate: GatePostApply, Reason: "passed"},
 			contains: "ALLOW",
 		},
 		{
-			name: "invalidated",
-			resp: &GateResponse{Result: GateInvalidated, Gate: GatePreCommit, Reason: "failed"},
+			name:     "invalidated",
+			resp:     &GateResponse{Result: GateInvalidated, Gate: GatePreCommit, Reason: "failed"},
 			contains: "INVALIDATED",
 		},
 		{
-			name: "escalated",
-			resp: &GateResponse{Result: GateEscalated, Gate: GatePrePush, Reason: "needs authority"},
+			name:     "escalated",
+			resp:     &GateResponse{Result: GateEscalated, Gate: GatePrePush, Reason: "needs authority"},
 			contains: "ESCALATED",
 		},
 		{
-			name: "scope_changed",
-			resp: &GateResponse{Result: GateScopeChanged, Gate: GatePrePR, Reason: "scope changed"},
+			name:     "scope_changed",
+			resp:     &GateResponse{Result: GateScopeChanged, Gate: GatePrePR, Reason: "scope changed"},
 			contains: "SCOPE_CHANGED",
 		},
 	}

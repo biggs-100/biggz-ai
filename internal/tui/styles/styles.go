@@ -89,26 +89,26 @@ var (
 // Hex values below match ansi256ToHex(244)=#808080, 70=#5faf00, 178=#d7af00, 39=#00afff, 205=#ff5faf
 // so styles and theme engine stay unified (no divergent palettes).
 var (
-	ColorStatusLineBg      = lipgloss.Color("#121212") // DarkPalette.StatusLineBg via theme.go (single source)
-	ColorStatusLineFg      = ColorText
-	ColorStatusLineSep     = lipgloss.Color("#808080") // 244 → #808080 via theme.go DarkPalette
-	ColorStatusLineModel   = lipgloss.Color("#d787af")
-	ColorStatusLinePath    = lipgloss.Color("#00afaf")
-	ColorStatusLineGitClean = lipgloss.Color("#5faf5f")
-	ColorStatusLineGitDirty = lipgloss.Color("#d7af5f")
-	ColorStatusLineContext = lipgloss.Color("#8787af")
-	ColorStatusLineSpend   = lipgloss.Color("#5fafaf")
-	ColorStatusLineStaged  = lipgloss.Color("#5faf00")   // 70 → #5faf00 via theme.go
-	ColorStatusLineDirty   = lipgloss.Color("#d7af00")   // 178 → #d7af00 via theme.go
+	ColorStatusLineBg        = lipgloss.Color("#121212") // DarkPalette.StatusLineBg via theme.go (single source)
+	ColorStatusLineFg        = ColorText
+	ColorStatusLineSep       = lipgloss.Color("#808080") // 244 → #808080 via theme.go DarkPalette
+	ColorStatusLineModel     = lipgloss.Color("#d787af")
+	ColorStatusLinePath      = lipgloss.Color("#00afaf")
+	ColorStatusLineGitClean  = lipgloss.Color("#5faf5f")
+	ColorStatusLineGitDirty  = lipgloss.Color("#d7af5f")
+	ColorStatusLineContext   = lipgloss.Color("#8787af")
+	ColorStatusLineSpend     = lipgloss.Color("#5fafaf")
+	ColorStatusLineStaged    = lipgloss.Color("#5faf00") // 70 → #5faf00 via theme.go
+	ColorStatusLineDirty     = lipgloss.Color("#d7af00") // 178 → #d7af00 via theme.go
 	ColorStatusLineUntracked = lipgloss.Color("#00afff") // 39 → #00afff via theme.go
-	ColorStatusLineOutput  = lipgloss.Color("#ff5faf")   // 205 → #ff5faf via theme.go
-	ColorStatusLineCost    = lipgloss.Color("#ff5faf")   // 205
-	ColorStatusLineSubagents = ColorLavender // accent alias, theme accent is #febc38
-	ColorToolPendingBg     = lipgloss.Color("#1d2129")   // DarkPalette.ToolPendingBg
-	ColorToolSuccessBg     = lipgloss.Color("#161a1f")   // DarkPalette.ToolSuccessBg
-	ColorToolErrorBg       = lipgloss.Color("#291d1d")   // DarkPalette.ToolErrorBg
-	ColorToolTitle         = ColorText
-	ColorAccent            = lipgloss.Color("#febc38")   // DarkPalette.Accent
+	ColorStatusLineOutput    = lipgloss.Color("#ff5faf") // 205 → #ff5faf via theme.go
+	ColorStatusLineCost      = lipgloss.Color("#ff5faf") // 205
+	ColorStatusLineSubagents = ColorLavender             // accent alias, theme accent is #febc38
+	ColorToolPendingBg       = lipgloss.Color("#1d2129") // DarkPalette.ToolPendingBg
+	ColorToolSuccessBg       = lipgloss.Color("#161a1f") // DarkPalette.ToolSuccessBg
+	ColorToolErrorBg         = lipgloss.Color("#291d1d") // DarkPalette.ToolErrorBg
+	ColorToolTitle           = ColorText
+	ColorAccent              = lipgloss.Color("#febc38") // DarkPalette.Accent
 )
 
 var (
@@ -117,31 +117,31 @@ var (
 			Foreground(ColorStatusLineFg)
 
 	StatusLineModelStyle = lipgloss.NewStyle().
-			Foreground(ColorStatusLineModel).
-			Bold(true)
+				Foreground(ColorStatusLineModel).
+				Bold(true)
 
 	StatusLinePathStyle = lipgloss.NewStyle().
-			Foreground(ColorStatusLinePath)
+				Foreground(ColorStatusLinePath)
 
 	StatusLineGitCleanStyle = lipgloss.NewStyle().
-			Foreground(ColorStatusLineGitClean)
+				Foreground(ColorStatusLineGitClean)
 
 	StatusLineGitDirtyStyle = lipgloss.NewStyle().
-			Foreground(ColorStatusLineGitDirty)
+				Foreground(ColorStatusLineGitDirty)
 
 	StatusLineContextStyle = lipgloss.NewStyle().
-			Foreground(ColorStatusLineContext)
+				Foreground(ColorStatusLineContext)
 
 	StatusLineCostStyle = lipgloss.NewStyle().
-			Foreground(ColorStatusLineCost)
+				Foreground(ColorStatusLineCost)
 
 	ToolPendingStyle = lipgloss.NewStyle().
-			Background(ColorToolPendingBg).
-			Foreground(ColorText)
+				Background(ColorToolPendingBg).
+				Foreground(ColorText)
 
 	ToolSuccessStyle = lipgloss.NewStyle().
-			Background(ColorToolSuccessBg).
-			Foreground(ColorText)
+				Background(ColorToolSuccessBg).
+				Foreground(ColorText)
 )
 
 // ── PR2: Pill tokens with icon/color/spinner per state ─────────────────────

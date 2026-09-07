@@ -9,14 +9,14 @@ import (
 
 func TestLoadTDDConfig_FileBased(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create .biggz/tdd.json
 	configDir := filepath.Join(tmpDir, ".biggz")
 	os.MkdirAll(configDir, 0755)
-	
+
 	data := []byte(`{"strict_tdd":true,"test_command":"go test ./...","test_runner":"go"}`)
 	os.WriteFile(filepath.Join(configDir, "tdd.json"), data, 0644)
-	
+
 	// Load config
 	loaded, err := LoadTDDConfig(tmpDir, "test-project")
 	if err != nil {
@@ -32,7 +32,7 @@ func TestLoadTDDConfig_FileBased(t *testing.T) {
 
 func TestLoadTDDConfig_NotFound(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Load config - should return default
 	loaded, err := LoadTDDConfig(tmpDir, "test-project")
 	if err != nil {
@@ -74,7 +74,7 @@ func TestBuildTDDInstructions(t *testing.T) {
 		TestCommand: "npm test",
 	}
 	instructions := buildTDDInstructions(config)
-	
+
 	if instructions == "" {
 		t.Error("expected non-empty instructions")
 	}
@@ -88,13 +88,13 @@ func TestBuildTDDInstructions(t *testing.T) {
 
 func TestForwardTDDToSubAgent_Apply(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create config
 	configDir := filepath.Join(tmpDir, ".biggz")
 	os.MkdirAll(configDir, 0755)
 	data := []byte(`{"strict_tdd":true,"test_command":"go test ./..."}`)
 	os.WriteFile(filepath.Join(configDir, "tdd.json"), data, 0644)
-	
+
 	// Forward for apply phase
 	instructions := ForwardTDDToSubAgent(tmpDir, "test", "apply")
 	if instructions == "" {
@@ -104,13 +104,13 @@ func TestForwardTDDToSubAgent_Apply(t *testing.T) {
 
 func TestForwardTDDToSubAgent_Verify(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create config
 	configDir := filepath.Join(tmpDir, ".biggz")
 	os.MkdirAll(configDir, 0755)
 	data := []byte(`{"strict_tdd":true,"test_command":"go test ./..."}`)
 	os.WriteFile(filepath.Join(configDir, "tdd.json"), data, 0644)
-	
+
 	// Forward for verify phase
 	instructions := ForwardTDDToSubAgent(tmpDir, "test", "verify")
 	if instructions == "" {
@@ -120,13 +120,13 @@ func TestForwardTDDToSubAgent_Verify(t *testing.T) {
 
 func TestForwardTDDToSubAgent_OtherPhase(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create config
 	configDir := filepath.Join(tmpDir, ".biggz")
 	os.MkdirAll(configDir, 0755)
 	data := []byte(`{"strict_tdd":true}`)
 	os.WriteFile(filepath.Join(configDir, "tdd.json"), data, 0644)
-	
+
 	// Forward for spec phase - should be empty
 	instructions := ForwardTDDToSubAgent(tmpDir, "test", "spec")
 	if instructions != "" {
@@ -136,13 +136,13 @@ func TestForwardTDDToSubAgent_OtherPhase(t *testing.T) {
 
 func TestForwardTDDToSubAgent_Disabled(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	// Create config with strict_tdd: false
 	configDir := filepath.Join(tmpDir, ".biggz")
 	os.MkdirAll(configDir, 0755)
 	data := []byte(`{"strict_tdd":false}`)
 	os.WriteFile(filepath.Join(configDir, "tdd.json"), data, 0644)
-	
+
 	// Forward for apply phase - should be empty
 	instructions := ForwardTDDToSubAgent(tmpDir, "test", "apply")
 	if instructions != "" {
@@ -152,30 +152,30 @@ func TestForwardTDDToSubAgent_Disabled(t *testing.T) {
 
 func TestSaveTDDConfig(t *testing.T) {
 	tmpDir := t.TempDir()
-	
+
 	config := &TDDConfig{
 		StrictTDD:   true,
 		TestCommand: "pytest",
 		TestRunner:  "python",
 	}
-	
+
 	err := SaveTDDConfig(tmpDir, config)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	
+
 	// Verify file exists
 	configPath := filepath.Join(tmpDir, ".biggz", "tdd.json")
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		t.Error("expected config file to exist")
 	}
-	
+
 	// Verify content
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	
+
 	var loaded TDDConfig
 	if err := json.Unmarshal(data, &loaded); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -187,18 +187,18 @@ func TestSaveTDDConfig(t *testing.T) {
 
 func TestTDDForwardingSummary(t *testing.T) {
 	tests := []struct {
-		name   string
-		result *TDDForwardingResult
+		name     string
+		result   *TDDForwardingResult
 		contains string
 	}{
 		{
-			name: "enabled",
-			result: &TDDForwardingResult{Enabled: true, Source: "config"},
+			name:     "enabled",
+			result:   &TDDForwardingResult{Enabled: true, Source: "config"},
 			contains: "ENABLED",
 		},
 		{
-			name: "disabled",
-			result: &TDDForwardingResult{Enabled: false},
+			name:     "disabled",
+			result:   &TDDForwardingResult{Enabled: false},
 			contains: "DISABLED",
 		},
 	}

@@ -16,7 +16,7 @@ import (
 )
 
 func ReplaceTabs(s string) string { return strings.ReplaceAll(s, "\t", "    ") }
-func VisibleWidth(s string) int { return runewidth.StringWidth(ansi.Strip(s)) }
+func VisibleWidth(s string) int   { return runewidth.StringWidth(ansi.Strip(s)) }
 
 func compactK(n int) string {
 	if n < 0 {
@@ -72,6 +72,7 @@ func RowLeftBudget(width int) int {
 	}
 	return b
 }
+
 const FixedRightWidth = 16
 
 func coalesceSGR(s string) string {

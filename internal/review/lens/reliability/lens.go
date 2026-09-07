@@ -247,7 +247,7 @@ func analyzeFileReliability(path string, hunk []byte, lensID string, startIdx in
 		}
 		lineNum := lineIdx + 1
 		proof := fmt.Sprintf("%s:%d", path, lineNum)                                                              //lint:ignore no-fmtSprintf
-		id := fmt.Sprintf("R3-error-token-%03d", startIdx+len(findings)+1)                                         //lint:ignore no-fmtSprintf
+		id := fmt.Sprintf("R3-error-token-%03d", startIdx+len(findings)+1)                                        //lint:ignore no-fmtSprintf
 		msg := fmt.Sprintf("reliability: %s contains error-handling token %q — verify error handling", path, hit) //lint:ignore no-fmtSprintf
 		finding := lens.LensFinding{
 			ID:        id,

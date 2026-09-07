@@ -15,9 +15,9 @@ import (
 	"github.com/biggs-100/biggz-ai/internal/install/steps"
 	"github.com/biggs-100/biggz-ai/internal/pipeline"
 	"github.com/biggs-100/biggz-ai/internal/tui/styles"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/biggs-100/biggz-ai/plugin"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // installStep tracks the guided installation flow.
@@ -61,13 +61,13 @@ type InstallModel struct {
 	installing InstallingModel
 	progressCh pipeline.ProgressChan
 	// Wizard state (PR1 foundation; consumed by PR2+ screens).
-	wizardStep     installStep
-	selectedAgents []string
-	persona        string
-	preset         string
+	wizardStep      installStep
+	selectedAgents  []string
+	persona         string
+	preset          string
 	selectedDepTree []string
-	selectedSkills []string
-	useLegacy      bool
+	selectedSkills  []string
+	useLegacy       bool
 }
 
 // isLegacyInstall reports whether the lean 6-state flow is forced via
@@ -375,7 +375,10 @@ func doInstall(adapter plugin.AgentAdapter) tea.Msg {
 	plan := pipeline.NewPlan(skillsStep, overlayStep, piStep)
 	orch := &pipeline.Orchestrator{Policy: pipeline.RollbackOnFailure}
 	// Drain channel concurrently to keep lossless channel non-blocking (cap 32) until Apply closes it
-	go func() { for range ch {} }()
+	go func() {
+		for range ch {
+		}
+	}()
 	// Orchestrator.Run uses internal ProgressChan(32) and handles close + rollback; RunWithChan variant streams to TUI ch
 	result, err := orch.Run(ctx, plan)
 	if err != nil {

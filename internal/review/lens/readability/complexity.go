@@ -228,8 +228,6 @@ func findFuncAtLine(path string, src []byte, targetLine int) (string, int, bool)
 	return "", 0, false
 }
 
-
-
 // resolveContentForPath resolves file content and changed ranges for a path.
 // Returns content, ranges, warnings, and whether the file should be skipped.
 func resolveContentForPath(path string, input lens.LensInput) ([]byte, []lineRange, []string, bool) {

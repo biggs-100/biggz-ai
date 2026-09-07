@@ -210,7 +210,9 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		}
 		result.MCPDeployed = true
 		if adapter.ID() == agents.AgentPi {
-			if provisioner, ok := adapter.(interface{ ProvisionBigMemMCP(string) (bool, []string, error) }); ok {
+			if provisioner, ok := adapter.(interface {
+				ProvisionBigMemMCP(string) (bool, []string, error)
+			}); ok {
 				if _, _, err := provisioner.ProvisionBigMemMCP(homeDir); err != nil {
 					return result, fmt.Errorf("provision bigmem mcp: %w", err)
 				}

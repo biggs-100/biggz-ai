@@ -100,7 +100,13 @@ func TestDigest(t *testing.T) {
 		t.Fatalf("canonical %q", d1)
 	}
 	type ce struct {
-		Path string `json:"path"`; Status string `json:"status"`; OldMode string `json:"old_mode"`; NewMode string `json:"new_mode"`; Deleted bool `json:"deleted"`; TypeChanged bool `json:"type_changed"`; ModeOnly bool `json:"mode_only"`
+		Path        string `json:"path"`
+		Status      string `json:"status"`
+		OldMode     string `json:"old_mode"`
+		NewMode     string `json:"new_mode"`
+		Deleted     bool   `json:"deleted"`
+		TypeChanged bool   `json:"type_changed"`
+		ModeOnly    bool   `json:"mode_only"`
 	}
 	b, _ := json.Marshal([]ce{{Path: "a.txt", Status: "A", OldMode: "000000", NewMode: "100644"}, {Path: "b.txt", Status: "M", OldMode: "100644", NewMode: "100644"}})
 	s := sha256.Sum256(b)

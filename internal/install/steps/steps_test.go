@@ -292,7 +292,7 @@ type failingStep struct {
 	called    int
 }
 
-func (f *failingStep) Name() string { return f.name }
+func (f *failingStep) Name() string                      { return f.name }
 func (f *failingStep) Prepare(ctx context.Context) error { return nil }
 func (f *failingStep) Apply(ctx context.Context, ch pipeline.ProgressChan) error {
 	f.called++

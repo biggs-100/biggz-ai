@@ -60,8 +60,8 @@ type BlockingOption struct {
 
 // BlockingPromptValidation is the result of validating a blocking prompt.
 type BlockingPromptValidation struct {
-	Valid   bool     `json:"valid"`
-	Errors  []string `json:"errors,omitempty"`
+	Valid    bool     `json:"valid"`
+	Errors   []string `json:"errors,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
 }
 

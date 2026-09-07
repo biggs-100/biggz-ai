@@ -15,14 +15,14 @@ import (
 
 // PiExtensionsStep deploys pi-native agents and extensions.
 type PiExtensionsStep struct {
-	HomeDir string
-	Adapter plugin.AgentAdapter
-	DryRun  bool
-	FS      fs.FS
-	Deployed int
-	tracker *tracker
+	HomeDir    string
+	Adapter    plugin.AgentAdapter
+	DryRun     bool
+	FS         fs.FS
+	Deployed   int
+	tracker    *tracker
 	PrepareErr error
-	FailAfter int
+	FailAfter  int
 }
 
 func NewPiExtensionsStep(homeDir string, adapter plugin.AgentAdapter, dryRun bool) *PiExtensionsStep {
@@ -436,4 +436,3 @@ func (p *PiExtensionsStep) Rollback(ctx context.Context) error {
 	_ = ctx
 	return p.tracker.rollback()
 }
-

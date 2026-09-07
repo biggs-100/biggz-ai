@@ -723,4 +723,3 @@ func TestGhostWAL_ProbeOExcl(t *testing.T) {
 		t.Error("probe should succeed after lock removed")
 	}
 }
-

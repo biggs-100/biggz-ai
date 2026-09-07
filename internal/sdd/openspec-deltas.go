@@ -36,8 +36,8 @@ type ParseResult struct {
 }
 
 var (
-	deltaSectionRe      = regexp.MustCompile(`(?m)^##\s+(ADDED|MODIFIED|REMOVED|RENAMED)\b`)
-	deltaSectionExactRe = regexp.MustCompile(`(?m)^##\s+(ADDED|MODIFIED|REMOVED|RENAMED)(?:\s+Requirements)?\s*$`)
+	deltaSectionRe       = regexp.MustCompile(`(?m)^##\s+(ADDED|MODIFIED|REMOVED|RENAMED)\b`)
+	deltaSectionExactRe  = regexp.MustCompile(`(?m)^##\s+(ADDED|MODIFIED|REMOVED|RENAMED)(?:\s+Requirements)?\s*$`)
 	requirementHeadingRe = regexp.MustCompile(`(?m)^###\s+Requirement:\s+(.+?)\s*$`)
 	requirementAltRe     = regexp.MustCompile(`(?m)^###\s+REQ-[0-9]+:\s+\S`)
 )

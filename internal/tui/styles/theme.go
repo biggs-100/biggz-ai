@@ -471,11 +471,11 @@ func bgAnsi(value interface{}, mode ColorMode) string {
 // ── Theme JSON schema (subset) ─────────────────────────────────────────────
 
 type ThemeJSON struct {
-	Name   string            `json:"name"`
-	Vars   map[string]interface{} `json:"vars"`
-	Colors map[string]interface{} `json:"colors"`
-	Export map[string]interface{} `json:"export,omitempty"`
-	Symbols *ThemeSymbolsJSON `json:"symbols,omitempty"`
+	Name    string                 `json:"name"`
+	Vars    map[string]interface{} `json:"vars"`
+	Colors  map[string]interface{} `json:"colors"`
+	Export  map[string]interface{} `json:"export,omitempty"`
+	Symbols *ThemeSymbolsJSON      `json:"symbols,omitempty"`
 }
 
 type ThemeSymbolsJSON struct {
@@ -509,73 +509,73 @@ func DetectColorMode() ColorMode {
 // ── ThemePalette (resolved 40+ tokens) ─────────────────────────────────────
 
 type ThemePalette struct {
-	Accent             string
-	Border             string
-	BorderAccent       string
-	BorderMuted        string
-	Success            string
-	Error              string
-	Warning            string
-	Muted              string
-	Dim                string
-	Text               string
-	ThinkingText       string
-	SelectedBg         string
-	UserMessageBg      string
-	UserMessageText    string
-	CustomMessageBg    string
-	CustomMessageText  string
-	CustomMessageLabel string
-	ToolPendingBg      string
-	ToolSuccessBg      string
-	ToolErrorBg        string
-	ToolTitle          string
-	ToolOutput         string
-	MdHeading          string
-	MdLink             string
-	MdLinkUrl          string
-	MdCode             string
-	MdCodeBlock        string
-	MdCodeBlockBorder  string
-	MdQuote            string
-	MdQuoteBorder      string
-	MdHr               string
-	MdListBullet       string
-	ToolDiffAdded      string
-	ToolDiffRemoved    string
-	ToolDiffContext    string
-	Link               string
-	SyntaxComment      string
-	SyntaxKeyword      string
-	SyntaxFunction     string
-	SyntaxVariable     string
-	SyntaxString       string
-	SyntaxNumber       string
-	SyntaxType         string
-	SyntaxOperator     string
-	SyntaxPunctuation  string
-	ThinkingOff        string
-	ThinkingMinimal    string
-	ThinkingLow        string
-	ThinkingMedium     string
-	ThinkingHigh       string
-	ThinkingXHigh      string
-	ThinkingMax        string
-	BashMode           string
-	PythonMode         string
-	StatusLineBg       string
-	StatusLineSep      string
-	StatusLineModel    string
-	StatusLinePath     string
-	StatusLineGitClean string
-	StatusLineGitDirty string
-	StatusLineContext  string
-	StatusLineSpend    string
-	StatusLineStaged   string
-	StatusLineDirty    string
+	Accent              string
+	Border              string
+	BorderAccent        string
+	BorderMuted         string
+	Success             string
+	Error               string
+	Warning             string
+	Muted               string
+	Dim                 string
+	Text                string
+	ThinkingText        string
+	SelectedBg          string
+	UserMessageBg       string
+	UserMessageText     string
+	CustomMessageBg     string
+	CustomMessageText   string
+	CustomMessageLabel  string
+	ToolPendingBg       string
+	ToolSuccessBg       string
+	ToolErrorBg         string
+	ToolTitle           string
+	ToolOutput          string
+	MdHeading           string
+	MdLink              string
+	MdLinkUrl           string
+	MdCode              string
+	MdCodeBlock         string
+	MdCodeBlockBorder   string
+	MdQuote             string
+	MdQuoteBorder       string
+	MdHr                string
+	MdListBullet        string
+	ToolDiffAdded       string
+	ToolDiffRemoved     string
+	ToolDiffContext     string
+	Link                string
+	SyntaxComment       string
+	SyntaxKeyword       string
+	SyntaxFunction      string
+	SyntaxVariable      string
+	SyntaxString        string
+	SyntaxNumber        string
+	SyntaxType          string
+	SyntaxOperator      string
+	SyntaxPunctuation   string
+	ThinkingOff         string
+	ThinkingMinimal     string
+	ThinkingLow         string
+	ThinkingMedium      string
+	ThinkingHigh        string
+	ThinkingXHigh       string
+	ThinkingMax         string
+	BashMode            string
+	PythonMode          string
+	StatusLineBg        string
+	StatusLineSep       string
+	StatusLineModel     string
+	StatusLinePath      string
+	StatusLineGitClean  string
+	StatusLineGitDirty  string
+	StatusLineContext   string
+	StatusLineSpend     string
+	StatusLineStaged    string
+	StatusLineDirty     string
 	StatusLineUntracked string
-	StatusLineOutput   string
-	StatusLineCost     string
+	StatusLineOutput    string
+	StatusLineCost      string
 	StatusLineSubagents string
 }
 
@@ -584,88 +584,88 @@ type ThemeColor string
 type ThemeBg string
 
 const (
-	ThemeColorAccent             ThemeColor = "accent"
-	ThemeColorBorder             ThemeColor = "border"
-	ThemeColorBorderAccent       ThemeColor = "borderAccent"
-	ThemeColorBorderMuted        ThemeColor = "borderMuted"
-	ThemeColorSuccess            ThemeColor = "success"
-	ThemeColorError              ThemeColor = "error"
-	ThemeColorWarning            ThemeColor = "warning"
-	ThemeColorMuted              ThemeColor = "muted"
-	ThemeColorDim                ThemeColor = "dim"
-	ThemeColorText               ThemeColor = "text"
-	ThemeColorThinkingText       ThemeColor = "thinkingText"
-	ThemeColorCustomMessageLabel ThemeColor = "customMessageLabel"
-	ThemeColorToolTitle          ThemeColor = "toolTitle"
-	ThemeColorToolOutput         ThemeColor = "toolOutput"
-	ThemeColorMdHeading          ThemeColor = "mdHeading"
-	ThemeColorMdLink             ThemeColor = "mdLink"
-	ThemeColorMdLinkUrl          ThemeColor = "mdLinkUrl"
-	ThemeColorMdCode             ThemeColor = "mdCode"
-	ThemeColorMdCodeBlock        ThemeColor = "mdCodeBlock"
-	ThemeColorMdCodeBlockBorder  ThemeColor = "mdCodeBlockBorder"
-	ThemeColorMdQuote            ThemeColor = "mdQuote"
-	ThemeColorMdQuoteBorder      ThemeColor = "mdQuoteBorder"
-	ThemeColorMdHr               ThemeColor = "mdHr"
-	ThemeColorMdListBullet       ThemeColor = "mdListBullet"
-	ThemeColorToolDiffAdded      ThemeColor = "toolDiffAdded"
-	ThemeColorToolDiffRemoved    ThemeColor = "toolDiffRemoved"
-	ThemeColorToolDiffContext    ThemeColor = "toolDiffContext"
-	ThemeColorLink               ThemeColor = "link"
-	ThemeColorSyntaxComment      ThemeColor = "syntaxComment"
-	ThemeColorSyntaxKeyword      ThemeColor = "syntaxKeyword"
-	ThemeColorSyntaxFunction     ThemeColor = "syntaxFunction"
-	ThemeColorSyntaxVariable     ThemeColor = "syntaxVariable"
-	ThemeColorSyntaxString       ThemeColor = "syntaxString"
-	ThemeColorSyntaxNumber       ThemeColor = "syntaxNumber"
-	ThemeColorSyntaxType         ThemeColor = "syntaxType"
-	ThemeColorSyntaxOperator     ThemeColor = "syntaxOperator"
-	ThemeColorSyntaxPunctuation  ThemeColor = "syntaxPunctuation"
-	ThemeColorThinkingOff        ThemeColor = "thinkingOff"
-	ThemeColorThinkingMinimal    ThemeColor = "thinkingMinimal"
-	ThemeColorThinkingLow        ThemeColor = "thinkingLow"
-	ThemeColorThinkingMedium     ThemeColor = "thinkingMedium"
-	ThemeColorThinkingHigh       ThemeColor = "thinkingHigh"
-	ThemeColorThinkingXHigh      ThemeColor = "thinkingXhigh"
-	ThemeColorThinkingMax        ThemeColor = "thinkingMax"
-	ThemeColorBashMode           ThemeColor = "bashMode"
-	ThemeColorPythonMode         ThemeColor = "pythonMode"
-	ThemeColorStatusLineSep      ThemeColor = "statusLineSep"
-	ThemeColorStatusLineModel    ThemeColor = "statusLineModel"
-	ThemeColorStatusLinePath     ThemeColor = "statusLinePath"
-	ThemeColorStatusLineGitClean ThemeColor = "statusLineGitClean"
-	ThemeColorStatusLineGitDirty ThemeColor = "statusLineGitDirty"
-	ThemeColorStatusLineContext  ThemeColor = "statusLineContext"
-	ThemeColorStatusLineSpend    ThemeColor = "statusLineSpend"
-	ThemeColorStatusLineStaged   ThemeColor = "statusLineStaged"
-	ThemeColorStatusLineDirty    ThemeColor = "statusLineDirty"
+	ThemeColorAccent              ThemeColor = "accent"
+	ThemeColorBorder              ThemeColor = "border"
+	ThemeColorBorderAccent        ThemeColor = "borderAccent"
+	ThemeColorBorderMuted         ThemeColor = "borderMuted"
+	ThemeColorSuccess             ThemeColor = "success"
+	ThemeColorError               ThemeColor = "error"
+	ThemeColorWarning             ThemeColor = "warning"
+	ThemeColorMuted               ThemeColor = "muted"
+	ThemeColorDim                 ThemeColor = "dim"
+	ThemeColorText                ThemeColor = "text"
+	ThemeColorThinkingText        ThemeColor = "thinkingText"
+	ThemeColorCustomMessageLabel  ThemeColor = "customMessageLabel"
+	ThemeColorToolTitle           ThemeColor = "toolTitle"
+	ThemeColorToolOutput          ThemeColor = "toolOutput"
+	ThemeColorMdHeading           ThemeColor = "mdHeading"
+	ThemeColorMdLink              ThemeColor = "mdLink"
+	ThemeColorMdLinkUrl           ThemeColor = "mdLinkUrl"
+	ThemeColorMdCode              ThemeColor = "mdCode"
+	ThemeColorMdCodeBlock         ThemeColor = "mdCodeBlock"
+	ThemeColorMdCodeBlockBorder   ThemeColor = "mdCodeBlockBorder"
+	ThemeColorMdQuote             ThemeColor = "mdQuote"
+	ThemeColorMdQuoteBorder       ThemeColor = "mdQuoteBorder"
+	ThemeColorMdHr                ThemeColor = "mdHr"
+	ThemeColorMdListBullet        ThemeColor = "mdListBullet"
+	ThemeColorToolDiffAdded       ThemeColor = "toolDiffAdded"
+	ThemeColorToolDiffRemoved     ThemeColor = "toolDiffRemoved"
+	ThemeColorToolDiffContext     ThemeColor = "toolDiffContext"
+	ThemeColorLink                ThemeColor = "link"
+	ThemeColorSyntaxComment       ThemeColor = "syntaxComment"
+	ThemeColorSyntaxKeyword       ThemeColor = "syntaxKeyword"
+	ThemeColorSyntaxFunction      ThemeColor = "syntaxFunction"
+	ThemeColorSyntaxVariable      ThemeColor = "syntaxVariable"
+	ThemeColorSyntaxString        ThemeColor = "syntaxString"
+	ThemeColorSyntaxNumber        ThemeColor = "syntaxNumber"
+	ThemeColorSyntaxType          ThemeColor = "syntaxType"
+	ThemeColorSyntaxOperator      ThemeColor = "syntaxOperator"
+	ThemeColorSyntaxPunctuation   ThemeColor = "syntaxPunctuation"
+	ThemeColorThinkingOff         ThemeColor = "thinkingOff"
+	ThemeColorThinkingMinimal     ThemeColor = "thinkingMinimal"
+	ThemeColorThinkingLow         ThemeColor = "thinkingLow"
+	ThemeColorThinkingMedium      ThemeColor = "thinkingMedium"
+	ThemeColorThinkingHigh        ThemeColor = "thinkingHigh"
+	ThemeColorThinkingXHigh       ThemeColor = "thinkingXhigh"
+	ThemeColorThinkingMax         ThemeColor = "thinkingMax"
+	ThemeColorBashMode            ThemeColor = "bashMode"
+	ThemeColorPythonMode          ThemeColor = "pythonMode"
+	ThemeColorStatusLineSep       ThemeColor = "statusLineSep"
+	ThemeColorStatusLineModel     ThemeColor = "statusLineModel"
+	ThemeColorStatusLinePath      ThemeColor = "statusLinePath"
+	ThemeColorStatusLineGitClean  ThemeColor = "statusLineGitClean"
+	ThemeColorStatusLineGitDirty  ThemeColor = "statusLineGitDirty"
+	ThemeColorStatusLineContext   ThemeColor = "statusLineContext"
+	ThemeColorStatusLineSpend     ThemeColor = "statusLineSpend"
+	ThemeColorStatusLineStaged    ThemeColor = "statusLineStaged"
+	ThemeColorStatusLineDirty     ThemeColor = "statusLineDirty"
 	ThemeColorStatusLineUntracked ThemeColor = "statusLineUntracked"
-	ThemeColorStatusLineOutput   ThemeColor = "statusLineOutput"
-	ThemeColorStatusLineCost     ThemeColor = "statusLineCost"
+	ThemeColorStatusLineOutput    ThemeColor = "statusLineOutput"
+	ThemeColorStatusLineCost      ThemeColor = "statusLineCost"
 	ThemeColorStatusLineSubagents ThemeColor = "statusLineSubagents"
-	ThemeColorUserMessageText    ThemeColor = "userMessageText"
-	ThemeColorCustomMessageText  ThemeColor = "customMessageText"
+	ThemeColorUserMessageText     ThemeColor = "userMessageText"
+	ThemeColorCustomMessageText   ThemeColor = "customMessageText"
 )
 
 const (
-	BgSelectedBg    ThemeBg = "selectedBg"
-	BgUserMessageBg ThemeBg = "userMessageBg"
+	BgSelectedBg      ThemeBg = "selectedBg"
+	BgUserMessageBg   ThemeBg = "userMessageBg"
 	BgCustomMessageBg ThemeBg = "customMessageBg"
-	BgToolPendingBg ThemeBg = "toolPendingBg"
-	BgToolSuccessBg ThemeBg = "toolSuccessBg"
-	BgToolErrorBg   ThemeBg = "toolErrorBg"
-	BgStatusLineBg  ThemeBg = "statusLineBg"
+	BgToolPendingBg   ThemeBg = "toolPendingBg"
+	BgToolSuccessBg   ThemeBg = "toolSuccessBg"
+	BgToolErrorBg     ThemeBg = "toolErrorBg"
+	BgStatusLineBg    ThemeBg = "statusLineBg"
 )
 
 // ── Theme struct (Go port of theme-class.ts Theme) ─────────────────────────
 
 type Theme struct {
-	Name                  string
-	Mode                  ColorMode
-	SymbolPreset          SymbolPreset
-	Palette               ThemePalette
-	IsLightCache          bool
-	StatusLineLuminance   *float64
+	Name                    string
+	Mode                    ColorMode
+	SymbolPreset            SymbolPreset
+	Palette                 ThemePalette
+	IsLightCache            bool
+	StatusLineLuminance     *float64
 	StatusContrastLuminance *float64
 
 	fgAnsiMap map[ThemeColor]string
@@ -1007,73 +1007,73 @@ func themeJSONToPalette(j ThemeJSON) ThemePalette {
 	}
 	// Normalize empty text fallback handling: ResolveToHex will handle at Theme creation, keep "" as is.
 	return ThemePalette{
-		Accent:             get("accent"),
-		Border:             get("border"),
-		BorderAccent:       get("borderAccent"),
-		BorderMuted:        get("borderMuted"),
-		Success:            get("success"),
-		Error:              get("error"),
-		Warning:            get("warning"),
-		Muted:              get("muted"),
-		Dim:                get("dim"),
-		Text:               get("text"),
-		ThinkingText:       get("thinkingText"),
-		SelectedBg:         get("selectedBg"),
-		UserMessageBg:      get("userMessageBg"),
-		UserMessageText:    get("userMessageText"),
-		CustomMessageBg:    get("customMessageBg"),
-		CustomMessageText:  get("customMessageText"),
-		CustomMessageLabel: get("customMessageLabel"),
-		ToolPendingBg:      get("toolPendingBg"),
-		ToolSuccessBg:      get("toolSuccessBg"),
-		ToolErrorBg:        get("toolErrorBg"),
-		ToolTitle:          get("toolTitle"),
-		ToolOutput:         get("toolOutput"),
-		MdHeading:          get("mdHeading"),
-		MdLink:             get("mdLink"),
-		MdLinkUrl:          get("mdLinkUrl"),
-		MdCode:             get("mdCode"),
-		MdCodeBlock:        get("mdCodeBlock"),
-		MdCodeBlockBorder:  get("mdCodeBlockBorder"),
-		MdQuote:            get("mdQuote"),
-		MdQuoteBorder:      get("mdQuoteBorder"),
-		MdHr:               get("mdHr"),
-		MdListBullet:       get("mdListBullet"),
-		ToolDiffAdded:      get("toolDiffAdded"),
-		ToolDiffRemoved:    get("toolDiffRemoved"),
-		ToolDiffContext:    get("toolDiffContext"),
-		Link:               get("link"),
-		SyntaxComment:      get("syntaxComment"),
-		SyntaxKeyword:      get("syntaxKeyword"),
-		SyntaxFunction:     get("syntaxFunction"),
-		SyntaxVariable:     get("syntaxVariable"),
-		SyntaxString:       get("syntaxString"),
-		SyntaxNumber:       get("syntaxNumber"),
-		SyntaxType:         get("syntaxType"),
-		SyntaxOperator:     get("syntaxOperator"),
-		SyntaxPunctuation:  get("syntaxPunctuation"),
-		ThinkingOff:        get("thinkingOff"),
-		ThinkingMinimal:    get("thinkingMinimal"),
-		ThinkingLow:        get("thinkingLow"),
-		ThinkingMedium:     get("thinkingMedium"),
-		ThinkingHigh:       get("thinkingHigh"),
-		ThinkingXHigh:      get("thinkingXhigh"),
-		ThinkingMax:        get("thinkingMax"),
-		BashMode:           get("bashMode"),
-		PythonMode:         get("pythonMode"),
-		StatusLineBg:       get("statusLineBg"),
-		StatusLineSep:      get("statusLineSep"),
-		StatusLineModel:    get("statusLineModel"),
-		StatusLinePath:     get("statusLinePath"),
-		StatusLineGitClean: get("statusLineGitClean"),
-		StatusLineGitDirty: get("statusLineGitDirty"),
-		StatusLineContext:  get("statusLineContext"),
-		StatusLineSpend:    get("statusLineSpend"),
-		StatusLineStaged:   get("statusLineStaged"),
-		StatusLineDirty:    get("statusLineDirty"),
+		Accent:              get("accent"),
+		Border:              get("border"),
+		BorderAccent:        get("borderAccent"),
+		BorderMuted:         get("borderMuted"),
+		Success:             get("success"),
+		Error:               get("error"),
+		Warning:             get("warning"),
+		Muted:               get("muted"),
+		Dim:                 get("dim"),
+		Text:                get("text"),
+		ThinkingText:        get("thinkingText"),
+		SelectedBg:          get("selectedBg"),
+		UserMessageBg:       get("userMessageBg"),
+		UserMessageText:     get("userMessageText"),
+		CustomMessageBg:     get("customMessageBg"),
+		CustomMessageText:   get("customMessageText"),
+		CustomMessageLabel:  get("customMessageLabel"),
+		ToolPendingBg:       get("toolPendingBg"),
+		ToolSuccessBg:       get("toolSuccessBg"),
+		ToolErrorBg:         get("toolErrorBg"),
+		ToolTitle:           get("toolTitle"),
+		ToolOutput:          get("toolOutput"),
+		MdHeading:           get("mdHeading"),
+		MdLink:              get("mdLink"),
+		MdLinkUrl:           get("mdLinkUrl"),
+		MdCode:              get("mdCode"),
+		MdCodeBlock:         get("mdCodeBlock"),
+		MdCodeBlockBorder:   get("mdCodeBlockBorder"),
+		MdQuote:             get("mdQuote"),
+		MdQuoteBorder:       get("mdQuoteBorder"),
+		MdHr:                get("mdHr"),
+		MdListBullet:        get("mdListBullet"),
+		ToolDiffAdded:       get("toolDiffAdded"),
+		ToolDiffRemoved:     get("toolDiffRemoved"),
+		ToolDiffContext:     get("toolDiffContext"),
+		Link:                get("link"),
+		SyntaxComment:       get("syntaxComment"),
+		SyntaxKeyword:       get("syntaxKeyword"),
+		SyntaxFunction:      get("syntaxFunction"),
+		SyntaxVariable:      get("syntaxVariable"),
+		SyntaxString:        get("syntaxString"),
+		SyntaxNumber:        get("syntaxNumber"),
+		SyntaxType:          get("syntaxType"),
+		SyntaxOperator:      get("syntaxOperator"),
+		SyntaxPunctuation:   get("syntaxPunctuation"),
+		ThinkingOff:         get("thinkingOff"),
+		ThinkingMinimal:     get("thinkingMinimal"),
+		ThinkingLow:         get("thinkingLow"),
+		ThinkingMedium:      get("thinkingMedium"),
+		ThinkingHigh:        get("thinkingHigh"),
+		ThinkingXHigh:       get("thinkingXhigh"),
+		ThinkingMax:         get("thinkingMax"),
+		BashMode:            get("bashMode"),
+		PythonMode:          get("pythonMode"),
+		StatusLineBg:        get("statusLineBg"),
+		StatusLineSep:       get("statusLineSep"),
+		StatusLineModel:     get("statusLineModel"),
+		StatusLinePath:      get("statusLinePath"),
+		StatusLineGitClean:  get("statusLineGitClean"),
+		StatusLineGitDirty:  get("statusLineGitDirty"),
+		StatusLineContext:   get("statusLineContext"),
+		StatusLineSpend:     get("statusLineSpend"),
+		StatusLineStaged:    get("statusLineStaged"),
+		StatusLineDirty:     get("statusLineDirty"),
 		StatusLineUntracked: get("statusLineUntracked"),
-		StatusLineOutput:   get("statusLineOutput"),
-		StatusLineCost:     get("statusLineCost"),
+		StatusLineOutput:    get("statusLineOutput"),
+		StatusLineCost:      get("statusLineCost"),
 		StatusLineSubagents: get("statusLineSubagents"),
 	}
 }
@@ -1082,143 +1082,143 @@ func themeJSONToPalette(j ThemeJSON) ThemePalette {
 // Rose Pine remains dark default for biggz-ai TUI; these mirror oh-my-pi dark.json/light.json resolved vars.
 
 var DarkPalette = ThemePalette{
-	Accent:             "#febc38",
-	Border:             "#178fb9",
-	BorderAccent:       "#0088fa",
-	BorderMuted:        "#3d424a",
-	Success:            "#89d281",
-	Error:              "#fc3a4b",
-	Warning:            "#e4c00f",
-	Muted:              "#777d88",
-	Dim:                "#5f6673",
-	Text:               "",
-	ThinkingText:       "#777d88",
-	SelectedBg:         "#31363f",
-	UserMessageBg:      "#221d1a",
-	UserMessageText:    "",
-	CustomMessageBg:    "#2a2530",
-	CustomMessageText:  "",
-	CustomMessageLabel: "#b281d6",
-	ToolPendingBg:      "#1d2129",
-	ToolSuccessBg:      "#161a1f",
-	ToolErrorBg:        "#291d1d",
-	ToolTitle:          "",
-	ToolOutput:         "#777d88",
-	MdHeading:          "#febc38",
-	MdLink:             "#0088fa",
-	MdLinkUrl:          "#5f6673",
-	MdCode:             "#e5c1ff",
-	MdCodeBlock:        "#9CDCFE",
-	MdCodeBlockBorder:  "#777d88",
-	MdQuote:            "#777d88",
-	MdQuoteBorder:      "#3d424a",
-	MdHr:               "#3d424a",
-	MdListBullet:       "#febc38",
-	ToolDiffAdded:      "#89d281",
-	ToolDiffRemoved:    "#fc3a4b",
-	ToolDiffContext:    "#777d88",
-	Link:               "#0088fa",
-	SyntaxComment:      "#6A9955",
-	SyntaxKeyword:      "#569CD6",
-	SyntaxFunction:     "#DCDCAA",
-	SyntaxVariable:     "#9CDCFE",
-	SyntaxString:       "#CE9178",
-	SyntaxNumber:       "#B5CEA8",
-	SyntaxType:         "#4EC9B0",
-	SyntaxOperator:     "#D4D4D4",
-	SyntaxPunctuation:  "#D4D4D4",
-	ThinkingOff:        "#3d424a",
-	ThinkingMinimal:    "#5f6673",
-	ThinkingLow:        "#178fb9",
-	ThinkingMedium:     "#0088fa",
-	ThinkingHigh:       "#b281d6",
-	ThinkingXHigh:      "#e5c1ff",
-	ThinkingMax:        "#e5c1ff",
-	BashMode:           "#0088fa",
-	PythonMode:         "#e4c00f",
-	StatusLineBg:       "#121212",
-	StatusLineSep:      "#808080", // 244 → #808080
-	StatusLineModel:    "#d787af",
-	StatusLinePath:     "#00afaf",
-	StatusLineGitClean: "#5faf5f",
-	StatusLineGitDirty: "#d7af5f",
-	StatusLineContext:  "#8787af",
-	StatusLineSpend:    "#5fafaf",
-	StatusLineStaged:   "#5faf00", // 70 → #5faf00
-	StatusLineDirty:    "#d7af00", // 178 → #d7af00
+	Accent:              "#febc38",
+	Border:              "#178fb9",
+	BorderAccent:        "#0088fa",
+	BorderMuted:         "#3d424a",
+	Success:             "#89d281",
+	Error:               "#fc3a4b",
+	Warning:             "#e4c00f",
+	Muted:               "#777d88",
+	Dim:                 "#5f6673",
+	Text:                "",
+	ThinkingText:        "#777d88",
+	SelectedBg:          "#31363f",
+	UserMessageBg:       "#221d1a",
+	UserMessageText:     "",
+	CustomMessageBg:     "#2a2530",
+	CustomMessageText:   "",
+	CustomMessageLabel:  "#b281d6",
+	ToolPendingBg:       "#1d2129",
+	ToolSuccessBg:       "#161a1f",
+	ToolErrorBg:         "#291d1d",
+	ToolTitle:           "",
+	ToolOutput:          "#777d88",
+	MdHeading:           "#febc38",
+	MdLink:              "#0088fa",
+	MdLinkUrl:           "#5f6673",
+	MdCode:              "#e5c1ff",
+	MdCodeBlock:         "#9CDCFE",
+	MdCodeBlockBorder:   "#777d88",
+	MdQuote:             "#777d88",
+	MdQuoteBorder:       "#3d424a",
+	MdHr:                "#3d424a",
+	MdListBullet:        "#febc38",
+	ToolDiffAdded:       "#89d281",
+	ToolDiffRemoved:     "#fc3a4b",
+	ToolDiffContext:     "#777d88",
+	Link:                "#0088fa",
+	SyntaxComment:       "#6A9955",
+	SyntaxKeyword:       "#569CD6",
+	SyntaxFunction:      "#DCDCAA",
+	SyntaxVariable:      "#9CDCFE",
+	SyntaxString:        "#CE9178",
+	SyntaxNumber:        "#B5CEA8",
+	SyntaxType:          "#4EC9B0",
+	SyntaxOperator:      "#D4D4D4",
+	SyntaxPunctuation:   "#D4D4D4",
+	ThinkingOff:         "#3d424a",
+	ThinkingMinimal:     "#5f6673",
+	ThinkingLow:         "#178fb9",
+	ThinkingMedium:      "#0088fa",
+	ThinkingHigh:        "#b281d6",
+	ThinkingXHigh:       "#e5c1ff",
+	ThinkingMax:         "#e5c1ff",
+	BashMode:            "#0088fa",
+	PythonMode:          "#e4c00f",
+	StatusLineBg:        "#121212",
+	StatusLineSep:       "#808080", // 244 → #808080
+	StatusLineModel:     "#d787af",
+	StatusLinePath:      "#00afaf",
+	StatusLineGitClean:  "#5faf5f",
+	StatusLineGitDirty:  "#d7af5f",
+	StatusLineContext:   "#8787af",
+	StatusLineSpend:     "#5fafaf",
+	StatusLineStaged:    "#5faf00", // 70 → #5faf00
+	StatusLineDirty:     "#d7af00", // 178 → #d7af00
 	StatusLineUntracked: "#00afff", // 39 → #00afff
-	StatusLineOutput:   "#ff5faf", // 205
-	StatusLineCost:     "#ff5faf",
+	StatusLineOutput:    "#ff5faf", // 205
+	StatusLineCost:      "#ff5faf",
 	StatusLineSubagents: "#febc38",
 }
 
 var LightPalette = ThemePalette{
-	Accent:             "#5a8080",
-	Border:             "#547da7",
-	BorderAccent:       "#5a8080",
-	BorderMuted:        "#b0b0b0",
-	Success:            "#588458",
-	Error:              "#aa5555",
-	Warning:            "#9a7326",
-	Muted:              "#6c6c6c",
-	Dim:                "#767676",
-	Text:               "",
-	ThinkingText:       "#6c6c6c",
-	SelectedBg:         "#d0d0e0",
-	UserMessageBg:      "#e8e8e8",
-	UserMessageText:    "",
-	CustomMessageBg:    "#ede7f6",
-	CustomMessageText:  "",
-	CustomMessageLabel: "#7e57c2",
-	ToolPendingBg:      "#e8e8f0",
-	ToolSuccessBg:      "#e8f0e8",
-	ToolErrorBg:        "#f0e8e8",
-	ToolTitle:          "",
-	ToolOutput:         "#6c6c6c",
-	MdHeading:          "#9a7326",
-	MdLink:             "#547da7",
-	MdLinkUrl:          "#767676",
-	MdCode:             "#5a8080",
-	MdCodeBlock:        "#588458",
-	MdCodeBlockBorder:  "#6c6c6c",
-	MdQuote:            "#6c6c6c",
-	MdQuoteBorder:      "#6c6c6c",
-	MdHr:               "#6c6c6c",
-	MdListBullet:       "#588458",
-	ToolDiffAdded:      "#588458",
-	ToolDiffRemoved:    "#aa5555",
-	ToolDiffContext:    "#6c6c6c",
-	SyntaxComment:      "#008000",
-	SyntaxKeyword:      "#0000FF",
-	SyntaxFunction:     "#795E26",
-	SyntaxVariable:     "#001080",
-	SyntaxString:       "#A31515",
-	SyntaxNumber:       "#098658",
-	SyntaxType:         "#267F99",
-	SyntaxOperator:     "#000000",
-	SyntaxPunctuation:  "#000000",
-	ThinkingOff:        "#b0b0b0",
-	ThinkingMinimal:    "#767676",
-	ThinkingLow:        "#547da7",
-	ThinkingMedium:     "#5a8080",
-	ThinkingHigh:       "#875f87",
-	ThinkingXHigh:      "#8b008b",
-	ThinkingMax:        "#8b008b",
-	BashMode:           "#588458",
-	PythonMode:         "#9a7326",
-	StatusLineBg:       "#e0e0e0",
-	StatusLineSep:      "#808080",
-	StatusLineModel:    "#875f87",
-	StatusLinePath:     "#005f87",
-	StatusLineGitClean: "#005f00",
-	StatusLineGitDirty: "#af5f00",
-	StatusLineContext:  "#5f5f87",
-	StatusLineSpend:    "#005f5f",
-	StatusLineStaged:   "#008700", // 28 → #008700
-	StatusLineDirty:    "#af8700", // 136 → #af8700
+	Accent:              "#5a8080",
+	Border:              "#547da7",
+	BorderAccent:        "#5a8080",
+	BorderMuted:         "#b0b0b0",
+	Success:             "#588458",
+	Error:               "#aa5555",
+	Warning:             "#9a7326",
+	Muted:               "#6c6c6c",
+	Dim:                 "#767676",
+	Text:                "",
+	ThinkingText:        "#6c6c6c",
+	SelectedBg:          "#d0d0e0",
+	UserMessageBg:       "#e8e8e8",
+	UserMessageText:     "",
+	CustomMessageBg:     "#ede7f6",
+	CustomMessageText:   "",
+	CustomMessageLabel:  "#7e57c2",
+	ToolPendingBg:       "#e8e8f0",
+	ToolSuccessBg:       "#e8f0e8",
+	ToolErrorBg:         "#f0e8e8",
+	ToolTitle:           "",
+	ToolOutput:          "#6c6c6c",
+	MdHeading:           "#9a7326",
+	MdLink:              "#547da7",
+	MdLinkUrl:           "#767676",
+	MdCode:              "#5a8080",
+	MdCodeBlock:         "#588458",
+	MdCodeBlockBorder:   "#6c6c6c",
+	MdQuote:             "#6c6c6c",
+	MdQuoteBorder:       "#6c6c6c",
+	MdHr:                "#6c6c6c",
+	MdListBullet:        "#588458",
+	ToolDiffAdded:       "#588458",
+	ToolDiffRemoved:     "#aa5555",
+	ToolDiffContext:     "#6c6c6c",
+	SyntaxComment:       "#008000",
+	SyntaxKeyword:       "#0000FF",
+	SyntaxFunction:      "#795E26",
+	SyntaxVariable:      "#001080",
+	SyntaxString:        "#A31515",
+	SyntaxNumber:        "#098658",
+	SyntaxType:          "#267F99",
+	SyntaxOperator:      "#000000",
+	SyntaxPunctuation:   "#000000",
+	ThinkingOff:         "#b0b0b0",
+	ThinkingMinimal:     "#767676",
+	ThinkingLow:         "#547da7",
+	ThinkingMedium:      "#5a8080",
+	ThinkingHigh:        "#875f87",
+	ThinkingXHigh:       "#8b008b",
+	ThinkingMax:         "#8b008b",
+	BashMode:            "#588458",
+	PythonMode:          "#9a7326",
+	StatusLineBg:        "#e0e0e0",
+	StatusLineSep:       "#808080",
+	StatusLineModel:     "#875f87",
+	StatusLinePath:      "#005f87",
+	StatusLineGitClean:  "#005f00",
+	StatusLineGitDirty:  "#af5f00",
+	StatusLineContext:   "#5f5f87",
+	StatusLineSpend:     "#005f5f",
+	StatusLineStaged:    "#008700", // 28 → #008700
+	StatusLineDirty:     "#af8700", // 136 → #af8700
 	StatusLineUntracked: "#0087af", // 31 → #0087af
-	StatusLineOutput:   "#af5faf", // 133 → #af5faf
-	StatusLineCost:     "#af5faf",
+	StatusLineOutput:    "#af5faf", // 133 → #af5faf
+	StatusLineCost:      "#af5faf",
 	StatusLineSubagents: "#5a8080",
 }
 
@@ -1233,7 +1233,7 @@ var currentTheme *Theme
 var themeEpoch atomic.Int64
 var colorBlindEnabled bool
 
-func GetThemeEpoch() int64 { return themeEpoch.Load() }
+func GetThemeEpoch() int64    { return themeEpoch.Load() }
 func GetColorBlindMode() bool { return colorBlindEnabled }
 func SetColorBlindMode(enabled bool) {
 	if colorBlindEnabled == enabled {
@@ -1243,7 +1243,7 @@ func SetColorBlindMode(enabled bool) {
 	BumpThemeEpoch()
 }
 func IsColorBlindMode() bool { return colorBlindEnabled }
-func BumpThemeEpoch() int64 { return themeEpoch.Add(1) }
+func BumpThemeEpoch() int64  { return themeEpoch.Add(1) }
 
 // IsPrettyEnabled guards TUI theming (mirrors JS BIGGZ_PRETTY / PI_SUBAGENT_CHILD).
 func IsPrettyEnabled() bool {

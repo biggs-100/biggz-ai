@@ -40,12 +40,12 @@ type GatekeeperCheck struct {
 // PhaseResult is the minimum contract a phase output must satisfy.
 // The orchestrator parses the phase's return into this struct for validation.
 type PhaseResult struct {
-	Status          string         `json:"status"`
+	Status           string        `json:"status"`
 	ExecutiveSummary string        `json:"executive_summary"`
-	Artifacts       []ArtifactRef  `json:"artifacts"`
-	NextRecommended string         `json:"next_recommended"`
-	Risks           []RiskRef      `json:"risks,omitempty"`
-	SkillResolution string         `json:"skill_resolution,omitempty"`
+	Artifacts        []ArtifactRef `json:"artifacts"`
+	NextRecommended  string        `json:"next_recommended"`
+	Risks            []RiskRef     `json:"risks,omitempty"`
+	SkillResolution  string        `json:"skill_resolution,omitempty"`
 }
 
 // ArtifactRef is a declared artifact from a phase result.
@@ -90,14 +90,14 @@ var phaseArtifactPatterns = map[string][]string{
 
 // nextPhaseValid maps valid next_recommended values per phase.
 var nextPhaseValid = map[string][]string{
-	"explore":  {"propose", "spec"}, // explore can lead to propose or directly to spec
-	"propose":  {"spec", "design"},
-	"spec":     {"design"},
-	"design":   {"tasks"},
-	"tasks":    {"apply"},
-	"apply":    {"apply", "verify", "tasks"}, // apply can loop or move to verify
-	"verify":   {"verify", "archive", "apply"}, // verify can loop or remediate
-	"archive":  {},
+	"explore": {"propose", "spec"}, // explore can lead to propose or directly to spec
+	"propose": {"spec", "design"},
+	"spec":    {"design"},
+	"design":  {"tasks"},
+	"tasks":   {"apply"},
+	"apply":   {"apply", "verify", "tasks"},   // apply can loop or move to verify
+	"verify":  {"verify", "archive", "apply"}, // verify can loop or remediate
+	"archive": {},
 }
 
 // Gatekeeper validates a completed phase's result before launching the next phase.

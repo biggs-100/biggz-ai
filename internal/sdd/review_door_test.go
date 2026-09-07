@@ -7,7 +7,7 @@ import (
 
 func TestReviewOfferForVerify_RDDDisabled(t *testing.T) {
 	ResetReviewEntryHookCallCount()
-	
+
 	ctx := context.Background()
 	offer, err := ReviewOfferForVerify(ctx, "/tmp/workspace", false)
 	if err != nil {
@@ -26,7 +26,7 @@ func TestReviewOfferForVerify_RDDDisabled(t *testing.T) {
 
 func TestReviewOfferForVerify_RDDEnabled(t *testing.T) {
 	ResetReviewEntryHookCallCount()
-	
+
 	ctx := context.Background()
 	offer, err := ReviewOfferForVerify(ctx, "/tmp/workspace", true)
 	if err != nil {
@@ -45,10 +45,10 @@ func TestReviewOfferForVerify_RDDEnabled(t *testing.T) {
 
 func TestReviewOfferForVerify_ContextCancelled(t *testing.T) {
 	ResetReviewEntryHookCallCount()
-	
+
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	
+
 	_, err := ReviewOfferForVerify(ctx, "/tmp/workspace", true)
 	if err == nil {
 		t.Error("expected error for cancelled context")
@@ -65,10 +65,10 @@ func TestReviewOfferForVerify_HookFires(t *testing.T) {
 		hookCalled = true
 	})
 	defer ResetReviewEntryHook()
-	
+
 	ctx := context.Background()
 	ReviewOfferForVerify(ctx, "/tmp/workspace", true)
-	
+
 	if !hookCalled {
 		t.Error("expected hook to be called")
 	}
@@ -76,12 +76,12 @@ func TestReviewOfferForVerify_HookFires(t *testing.T) {
 
 func TestReviewOfferForVerify_MultipleCalls(t *testing.T) {
 	ResetReviewEntryHookCallCount()
-	
+
 	ctx := context.Background()
 	for i := 0; i < 5; i++ {
 		ReviewOfferForVerify(ctx, "/tmp/workspace", true)
 	}
-	
+
 	if ReviewEntryHookCallCount() != 5 {
 		t.Errorf("expected hook to be called 5 times, got %d", ReviewEntryHookCallCount())
 	}
@@ -89,16 +89,16 @@ func TestReviewOfferForVerify_MultipleCalls(t *testing.T) {
 
 func TestResetReviewEntryHookCallCount(t *testing.T) {
 	ResetReviewEntryHookCallCount()
-	
+
 	ctx := context.Background()
 	ReviewOfferForVerify(ctx, "/tmp/workspace", true)
-	
+
 	if ReviewEntryHookCallCount() != 1 {
 		t.Errorf("expected 1, got %d", ReviewEntryHookCallCount())
 	}
-	
+
 	ResetReviewEntryHookCallCount()
-	
+
 	if ReviewEntryHookCallCount() != 0 {
 		t.Errorf("expected 0 after reset, got %d", ReviewEntryHookCallCount())
 	}

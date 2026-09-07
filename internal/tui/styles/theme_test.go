@@ -251,15 +251,15 @@ func TestDarkJsonLoadable(t *testing.T) {
 		// fallback: check absolute via repo root relative to this file using runtime trick
 		// try direct path used by theme.go runtime caller
 		candidates := []string{
-				filepath.Join("internal", "assets", "pi", "themes", "dark.json"),
-				filepath.Join("..", "..", "assets", "pi", "themes", "dark.json"),
-			}
+			filepath.Join("internal", "assets", "pi", "themes", "dark.json"),
+			filepath.Join("..", "..", "assets", "pi", "themes", "dark.json"),
+		}
 		for _, c := range candidates {
 			if _, err := os.Stat(c); err == nil {
 				found = true
 				break
 			}
-			}
+		}
 	}
 	if !found {
 		t.Logf("dark.json not found via candidateThemePaths — using hardcoded fallback (acceptable in CI)")

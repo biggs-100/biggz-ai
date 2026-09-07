@@ -190,23 +190,23 @@ func TestValidateChainStrategy(t *testing.T) {
 
 func TestWorkloadGuardSummary(t *testing.T) {
 	tests := []struct {
-		name   string
-		result *WorkloadGuardResult
+		name     string
+		result   *WorkloadGuardResult
 		contains string
 	}{
 		{
-			name: "allow",
-			result: &WorkloadGuardResult{Action: GuardAllow, Reason: "test reason"},
+			name:     "allow",
+			result:   &WorkloadGuardResult{Action: GuardAllow, Reason: "test reason"},
 			contains: "ALLOW",
 		},
 		{
-			name: "ask",
-			result: &WorkloadGuardResult{Action: GuardAsk, Reason: "test reason"},
+			name:     "ask",
+			result:   &WorkloadGuardResult{Action: GuardAsk, Reason: "test reason"},
 			contains: "ASK",
 		},
 		{
-			name: "block",
-			result: &WorkloadGuardResult{Action: GuardBlock, Reason: "test reason"},
+			name:     "block",
+			result:   &WorkloadGuardResult{Action: GuardBlock, Reason: "test reason"},
 			contains: "BLOCK",
 		},
 	}

@@ -10,8 +10,16 @@ import (
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
 )
 
-func eqPending(a, b PendingQuestion) bool { ab, _ := json.Marshal(a); bb, _ := json.Marshal(b); return string(ab) == string(bb) }
-func setupPendingWS(t *testing.T, ws, ch string) { t.Helper(); _ = os.MkdirAll(filepath.Join(ws, "openspec", "changes", ch), 0o755); _ = os.WriteFile(filepath.Join(ws, "openspec", "changes", ch, "state.yaml"), []byte("phases:\n  propose: pending\n"), 0o644) }
+func eqPending(a, b PendingQuestion) bool {
+	ab, _ := json.Marshal(a)
+	bb, _ := json.Marshal(b)
+	return string(ab) == string(bb)
+}
+func setupPendingWS(t *testing.T, ws, ch string) {
+	t.Helper()
+	_ = os.MkdirAll(filepath.Join(ws, "openspec", "changes", ch), 0o755)
+	_ = os.WriteFile(filepath.Join(ws, "openspec", "changes", ch, "state.yaml"), []byte("phases:\n  propose: pending\n"), 0o644)
+}
 
 func TestPendingDualWriteEquality(t *testing.T) {
 	ws, sr := t.TempDir(), t.TempDir()

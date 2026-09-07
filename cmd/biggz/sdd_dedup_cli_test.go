@@ -20,10 +20,10 @@ func TestSddDedupCLI_Help(t *testing.T) {
 
 func TestSddDedupCLI_RecordAndCheck(t *testing.T) {
 	tmpFile := t.TempDir() + "/dedup_state.json"
-	
+
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	
+
 	// First call: record
 	code := runSddDedup([]string{"spec", "Create spec for feature X", "--record", "--state", tmpFile}, stdout, stderr)
 	if code != 0 {
@@ -32,7 +32,7 @@ func TestSddDedupCLI_RecordAndCheck(t *testing.T) {
 	if !strings.Contains(stdout.String(), "OK (recorded)") {
 		t.Errorf("expected OK (recorded), got: %s", stdout.String())
 	}
-	
+
 	// Second call: should be blocked
 	stdout.Reset()
 	stderr.Reset()
@@ -47,13 +47,13 @@ func TestSddDedupCLI_RecordAndCheck(t *testing.T) {
 
 func TestSddDedupCLI_DifferentTask(t *testing.T) {
 	tmpFile := t.TempDir() + "/dedup_state.json"
-	
+
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	
+
 	// Record first task
 	runSddDedup([]string{"spec", "Create spec for feature X", "--record", "--state", tmpFile}, stdout, stderr)
-	
+
 	// Different task should not be blocked
 	stdout.Reset()
 	stderr.Reset()
@@ -91,13 +91,13 @@ func TestSddDedupCLI_NoState(t *testing.T) {
 	// Without --state, each call is independent (no persistence)
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
-	
+
 	// First call
 	code := runSddDedup([]string{"spec", "Create spec for feature X", "--record"}, stdout, stderr)
 	if code != 0 {
 		t.Errorf("expected exit code 0, got %d", code)
 	}
-	
+
 	// Second call without state should NOT be blocked
 	stdout.Reset()
 	stderr.Reset()

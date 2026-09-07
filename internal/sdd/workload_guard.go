@@ -79,19 +79,19 @@ type ReviewWorkloadForecast struct {
 
 // WorkloadGuardResult is the outcome of the workload guard evaluation.
 type WorkloadGuardResult struct {
-	Action     GuardAction     `json:"action"`
-	Reason     string          `json:"reason,omitempty"`
-	Strategy   DeliveryStrategy `json:"strategy"`
-	ChainStrategy ChainStrategy `json:"chain_strategy,omitempty"`
-	Forecast   ReviewWorkloadForecast `json:"forecast"`
+	Action        GuardAction            `json:"action"`
+	Reason        string                 `json:"reason,omitempty"`
+	Strategy      DeliveryStrategy       `json:"strategy"`
+	ChainStrategy ChainStrategy          `json:"chain_strategy,omitempty"`
+	Forecast      ReviewWorkloadForecast `json:"forecast"`
 	// Exception records the size exception if approved.
 	Exception *SizeException `json:"exception,omitempty"`
 }
 
 // SizeException records that a size exception was approved.
 type SizeException struct {
-	Approved bool   `json:"approved"`
-	Reason   string `json:"reason,omitempty"`
+	Approved   bool   `json:"approved"`
+	Reason     string `json:"reason,omitempty"`
 	ApprovedBy string `json:"approved_by,omitempty"`
 }
 
@@ -144,7 +144,7 @@ func WorkloadGuard(forecast *ReviewWorkloadForecast, strategy DeliveryStrategy, 
 	case AskOnRisk:
 		result.Action = GuardAsk
 		result.Reason = buildAskReason(forecast)
-		
+
 	case AutoChain:
 		if chainStrategy == "" {
 			// Need chain strategy
@@ -154,16 +154,16 @@ func WorkloadGuard(forecast *ReviewWorkloadForecast, strategy DeliveryStrategy, 
 			result.Action = GuardAllow
 			result.Reason = fmt.Sprintf("auto-chain with %s strategy", chainStrategy)
 		}
-		
+
 	case SinglePR:
 		result.Action = GuardBlock
 		result.Reason = "single-pr requires size:exception for changes exceeding 400 lines"
-		
+
 	case ExceptionOK:
 		result.Action = GuardAllow
 		result.Exception = &SizeException{Approved: true, Reason: "exception-ok strategy"}
 		result.Reason = "exception-ok: size exception recorded"
-		
+
 	default:
 		result.Action = GuardBlock
 		result.Reason = fmt.Sprintf("invalid delivery_strategy: %q", strategy)

@@ -57,10 +57,10 @@ type RuntimeStore struct {
 	NextAction       string `json:"next_action,omitempty"` // "begin", "continue", "finish", "complete", ""
 
 	// Objective scope
-	ObjectiveID string `json:"objective_id,omitempty"`
-	MaxAttempts int    `json:"max_attempts,omitempty"`
-	MaxLines    int    `json:"max_changed_lines,omitempty"`
-	CumulativeChangedLines int `json:"cumulative_changed_lines,omitempty"`
+	ObjectiveID            string `json:"objective_id,omitempty"`
+	MaxAttempts            int    `json:"max_attempts,omitempty"`
+	MaxLines               int    `json:"max_changed_lines,omitempty"`
+	CumulativeChangedLines int    `json:"cumulative_changed_lines,omitempty"`
 
 	// Evidence tracking
 	WorkUnit     string `json:"work_unit,omitempty"`
@@ -277,14 +277,14 @@ type SettleObligation struct {
 
 // RuntimeStatus is the public-facing status response.
 type RuntimeStatus struct {
-	ChangeName       string `json:"change_name"`
-	Revision         string `json:"revision"`
-	ActiveAttempt    int    `json:"active_attempt"`
-	DecisionRequired bool   `json:"decision_required"`
-	Complete         bool   `json:"complete"`
-	NextAction       string `json:"next_action"`
-	AttemptCount     int    `json:"attempt_count"`
-	CumulativeChangedLines int `json:"cumulative_changed_lines,omitempty"`
+	ChangeName             string `json:"change_name"`
+	Revision               string `json:"revision"`
+	ActiveAttempt          int    `json:"active_attempt"`
+	DecisionRequired       bool   `json:"decision_required"`
+	Complete               bool   `json:"complete"`
+	NextAction             string `json:"next_action"`
+	AttemptCount           int    `json:"attempt_count"`
+	CumulativeChangedLines int    `json:"cumulative_changed_lines,omitempty"`
 
 	// Migrated is true when this access imported the legacy home-dir
 	// ledger into the clone-scoped store (reported once).
@@ -550,7 +550,7 @@ type BeginParams struct {
 	EvidenceGoal string
 	MaxAttempts  int
 	MaxLines     int
-	ChangedLines int `json:"changed_lines,omitempty"`
+	ChangedLines int    `json:"changed_lines,omitempty"`
 	RequestID    string // idempotency key: if the same request_id is already recorded, return it
 }
 

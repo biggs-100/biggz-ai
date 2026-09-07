@@ -200,15 +200,15 @@ func TestV2AuthorityFree(t *testing.T) {
 				Proposal: DependencyAllDone, Specs: DependencyAllDone, Design: DependencyAllDone,
 				Tasks: DependencyAllDone, Apply: DependencyReady, Verify: DependencyBlocked, Archive: DependencyBlocked,
 			},
-			ApplyState:       ApplyReady,
-			ActionContext:    ActionContext{Mode: "repo-local", WorkspaceRoot: "/repo", AllowedEditRoots: []string{"/repo"}},
-			Relationships:    Relationships{},
-			RemediationState: RemediationState{},
-			BlockedReasons:   []string{"blocked(edit_authority_missing): tasks.md targets repositories outside the authorized edit roots: \"/other\"; edit tasks.md so every work unit stays inside the authorized edit roots, or grant this change edit authority for those repositories"},
-			NextRecommended:  "resolve-blockers",
-			GrantedRoots:     []string{"/other"},
+			ApplyState:           ApplyReady,
+			ActionContext:        ActionContext{Mode: "repo-local", WorkspaceRoot: "/repo", AllowedEditRoots: []string{"/repo"}},
+			Relationships:        Relationships{},
+			RemediationState:     RemediationState{},
+			BlockedReasons:       []string{"blocked(edit_authority_missing): tasks.md targets repositories outside the authorized edit roots: \"/other\"; edit tasks.md so every work unit stays inside the authorized edit roots, or grant this change edit authority for those repositories"},
+			NextRecommended:      "resolve-blockers",
+			GrantedRoots:         []string{"/other"},
 			EditAuthorityBlocked: true,
-			MissingRoots:     []string{"/other"},
+			MissingRoots:         []string{"/other"},
 		}
 		projected, err := ProjectStatusV2(cs)
 		if err != nil {
