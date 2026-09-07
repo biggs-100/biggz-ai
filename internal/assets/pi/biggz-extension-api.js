@@ -8,6 +8,13 @@
  * @param {import("@earendil-works/pi-coding-agent").ExtensionAPI} pi
  */
 
+// ── session-close guard (Cut 2: enforce-session-close-summary) ──
+// APPLY-DECIDE Q3: static ESM import, same extensions dir. Precedent:
+// biggz-footer.js statically imports ./biggz-extension-api.js and pi resolves
+// it (jiti). Import direction is one-way (extension-api → tool-interception,
+// never reverse) to avoid cycles. Pure delegation: no pending/CLI logic here.
+import { checkSessionStop } from "./biggz-tool-interception.js";
+
 // ── Rank1: Status-line presets (mirrors oh-my-pi presets.ts) ──
 // Guard note: BIGGZ_PRETTY=0 check lives at top of biggzExtensionAPI() below; keep it there for single-file revert.
 export const STATUS_LINE_PRESETS = Object.freeze({
@@ -451,11 +458,6 @@ export default function biggzExtensionAPI(pi) {
 		pi.on("tool_result", async () => {
 			// observability-only, no mutate, no block
 		});
-		pi.on("session_stop", async () => {
-			const pending = parseInt(process.env.BIGGZ_PENDING_FINDINGS || "0", 10);
-			const lenses = parseInt(process.env.BIGGZ_PENDING_LENSES || "0", 10);
-			if (pending > 0 || lenses > 0) return { block: true, reason: "CanStopSession blocked: pending work" };
-			return undefined;
-		});
+		pi.on("session_stop", async () => checkSessionStop());
 	} catch {}
 }
