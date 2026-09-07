@@ -52,7 +52,68 @@ func (p *PiExtensionsStep) Prepare(ctx context.Context) error {
 	if err != nil {
 		// not fatal for prepare, just ensure FS readable
 	}
+	if err := validatePiExtensionsFactory(fsys); err != nil {
+		return err
+	}
 	_ = ctx
+	return nil
+}
+
+// piExtensionsDeployList returns the canonical deploy list for pi extensions.
+// Keep in sync with internal/assets/pi/biggz-pi-extensions-factory.test.mjs.
+func piExtensionsDeployList() []struct{ asset, target string } {
+	list := []struct{ asset, target string }{
+		{"pi/biggz-thinking-wrap.js", "biggz-thinking-wrap.js"},
+		{"pi/biggz-memory-chrome.js", "biggz-memory-chrome.js"},
+		{"pi/biggz-tool-interception.js", "biggz-tool-interception.js"},
+		{"pi/biggz-extension-api.js", "biggz-extension-api.js"},
+		{"pi/biggz-session-guard.js", "biggz-session-guard.js"},
+		{"pi/biggz-last-model.js", "biggz-last-model.js"},
+		{"pi/biggz-synthesis-gate.js", "biggz-synthesis-gate.js"},
+		{"pi/biggz-wait-pretty.js", "biggz-wait-pretty.js"},
+		{"pi/biggz-footer.js", "biggz-footer.js"},
+		{"pi/biggz-tool-pills.js", "biggz-tool-pills.js"},
+		{"pi/biggz-web-search.js", "biggz-web-search.js"},
+		{"pi/biggz-question-mouse.js", "biggz-question-mouse.js"},
+	}
+	list = append(list, []struct{ asset, target string }{
+		{"pi/ask-user-choice.ts", "ask-user-choice.ts"},
+		{"pi/codegraph-tools.ts", "codegraph-tools.ts"},
+		{"pi/skill-registry.ts", "skill-registry.ts"},
+	}...)
+	return list
+}
+
+// validatePiExtensionsFactory ensures every JS pi extension asset that will be
+// deployed as a pi extension exports a valid factory. pi loader requires every
+// .js in ~/.pi/agent/extensions to export `export default function(pi)` —
+// otherwise pi crashes with "Extension does not export a valid factory function".
+// This is a cheap string-contains check gated to JS targets only; TS assets are
+// skill-registry and not pi factories.
+func validatePiExtensionsFactory(fsys fs.FS) error {
+	if fsys == nil {
+		fsys = assets.FS
+	}
+	for _, e := range piExtensionsDeployList() {
+		if !strings.HasSuffix(e.target, ".js") {
+			continue
+		}
+		data, err := fs.ReadFile(fsys, e.asset)
+		if err != nil {
+			// Missing file is not a factory error — test stubs may provide
+			// partial FS. Real embedded assets always exist; missing there
+			// would be caught by deploy loop's silent continue, but we prefer
+			// to surface it as validation when possible.
+			continue
+		}
+		content := string(data)
+		if !strings.Contains(content, "export default") {
+			return fmt.Errorf("pi extension %s missing factory: must contain 'export default' (pi requires valid factory) — %s will crash pi with 'Extension does not export a valid factory function'", e.asset, e.target)
+		}
+		if !strings.Contains(content, "export default function") {
+			return fmt.Errorf("pi extension %s missing factory function: must contain 'export default function' (pi loader expects factory function) — %s", e.asset, e.target)
+		}
+	}
 	return nil
 }
 func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) error {
@@ -74,6 +135,11 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 	if fsys == nil {
 		fsys = assets.FS
 	}
+	// Fail fast if any JS extension lacks a valid factory — prevents
+	// deploying a broken extension that would crash pi on startup.
+	if err := validatePiExtensionsFactory(fsys); err != nil {
+		return err
+	}
 	// Deploy pi subagents.
 	n, err := p.deploySubAgents(ctx, fsys)
 	if err != nil {
@@ -89,21 +155,7 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 		}
 	}
 	// Deploy pi extensions list.
-	extensions := []struct{ asset, target string }{
-		{"pi/biggz-thinking-wrap.js", "biggz-thinking-wrap.js"},
-		{"pi/biggz-memory-chrome.js", "biggz-memory-chrome.js"},
-		{"pi/biggz-tool-interception.js", "biggz-tool-interception.js"},
-		{"pi/biggz-extension-api.js", "biggz-extension-api.js"},
-		{"pi/biggz-session-guard.js", "biggz-session-guard.js"},
-		{"pi/biggz-last-model.js", "biggz-last-model.js"},
-		{"pi/biggz-synthesis-gate.js", "biggz-synthesis-gate.js"},
-		{"pi/biggz-wait-pretty.js", "biggz-wait-pretty.js"},
-		{"pi/biggz-footer.js", "biggz-footer.js"},
-		{"pi/biggz-tool-pills.js", "biggz-tool-pills.js"},
-		{"pi/biggz-web-search.js", "biggz-web-search.js"},
-		{"pi/biggz-question-mouse.js", "biggz-question-mouse.js"},
-	}
-	// gentle-pi extensions (TypeScript).
+	extensions := piExtensionsDeployList()
 	// NOTE: gentle-ai.ts, quiet-tools.ts and sdd-init.ts were removed from
 	// internal/assets/pi (2026-09-04): they imported from ../lib/*
 	// (sdd-preflight, gentle-ai-binary, review-*, terminal-theme, ...), a
@@ -112,11 +164,6 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 	// module '../lib/sdd-preflight.ts'"). Their features are covered
 	// natively by biggz-synthesis-gate.js, biggz-tool-pills.js,
 	// skill-registry.ts and the biggz review/SDD CLI commands.
-	extensions = append(extensions, []struct{ asset, target string }{
-		{"pi/ask-user-choice.ts", "ask-user-choice.ts"},
-		{"pi/codegraph-tools.ts", "codegraph-tools.ts"},
-		{"pi/skill-registry.ts", "skill-registry.ts"},
-	}...)
 	extCount := 0
 	for i, e := range extensions {
 		select {
