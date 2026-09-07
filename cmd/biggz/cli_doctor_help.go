@@ -43,6 +43,7 @@ func printHelp() {
 	fmt.Fprintln(os.Stderr, "  pr create <change>       Auto-generate branch and PR from SDD apply")
 	fmt.Fprintln(os.Stderr, "  rdd enable|disable|status  RDD kill switch")
 	fmt.Fprintln(os.Stderr, "  recovery list|show|generate|validate|export|import|delete  Recovery trace ledger")
+	fmt.Fprintln(os.Stderr, "  session-close (--check-only | --save \"text\") [--cwd <dir>] [--json]  Verify/persist session summary (exits 0 verified, 1 blocked/degraded)")
 	fmt.Fprintln(os.Stderr, "  mcp                        Start MCP server")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "Without arguments: open interactive TUI")
