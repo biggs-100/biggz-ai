@@ -47,6 +47,7 @@ Steps (all mandatory):
 1. `biggz_mem_context(limit=5)` — recent sessions (or `biggz recall --limit 5 --json` / `Search("", opts)` → `ORDER BY updated_at DESC` @1801)
 2. `biggz recall` / `biggz bigmem recent` / `Search("", opts)` — latest observations ordered by `updated_at DESC` for "en que nos quedamos?" — MUST NOT use FTS `search --query "session"` or `ORDER BY rank` (@1844) for latest
 3. `biggz_mem_search(query:"sdd {project}" limit=10)` — SDD artifacts for project (relevance, not recency)
+4. `biggz rdd status` — read the user-owned quality-regime switch (read-only, cheap). Carry `enabled` vs `disabled/unmanaged` forward; it bounds what guarantees you may claim for the whole session.
 4. Inject summary: synthesize top observations/sessions into short recap (fresh `2026-09-01` before stale `2026-08-27`)
 5. Fallback: if BigMem empty/unavailable, run `git log --oneline -15` + `biggz sdd-status --json --instructions` and note fallback (ban FTS for latest even in fallback)
 
@@ -58,6 +59,7 @@ Required markdown after the three calls, before preflight:
 **Project:** {project}
 **Recent Summaries:** {summaries or "none"}
 **Fallback Used:** {yes/no — if yes, why}
+**Regime:** {RDD enabled | RDD disabled/unmanaged — from `biggz rdd status`}
 ```
 
 REMINDER: Session Recall markdown is separate chat markdown emitted FIRST, adjacent, same turn, before preflight question.
@@ -339,6 +341,8 @@ Every phase returns: `status` (`success`/`partial`/`blocked`), `executive_summar
 ## Review-Driven Development (RDD)
 
 User-owned kill switch: `biggz rdd enable|disable|status`.
+
+**Regime declaration (MANDATORY, first turn):** the rdd-defect-workflow skill only loads on RDD vocabulary, so without this gate the switch is never checked and the regime is silently assumed — that omission is a discipline failure. After Session Boot Recall, run `biggz rdd status` (read-only) and declare the operating regime in the first substantive reply, one line, no questionnaire: `Regime: {SDD|direct}, RDD {enabled|disabled/unmanaged}` (localize to human language, keep the `Regime:` marker in English). Never operate under an undeclared regime; never invent receipts or PASS while disabled.
 
 - `status` read-only; `disable` stops review-driven development immediately — do not work around it
 - While disabled, implement organically without reviews; never invent PASS
