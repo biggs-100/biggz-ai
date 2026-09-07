@@ -99,6 +99,7 @@ func doctorRun() int {
 			doctor.NewGlobalDriftCheck(),
 			doctor.NewLocalOverrideCheck(),
 			doctor.NewSkillRegistryCheck(),
+			doctor.NewStaleBranchesCheck(),
 		},
 	}
 

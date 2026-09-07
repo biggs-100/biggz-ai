@@ -158,6 +158,26 @@ openspec/changes/{change-name}/
 
 Use today's date in ISO format (e.g., `2026-02-16`).
 
+### Step 3b: Post-Archive Hygiene (branch/worktree cleanup)
+
+Only after `ArchiveChange` succeeded via `os.Rename` (pure rename, no git).
+
+**IF mode is `none` or `engram`:** Skip hygiene — no filesystem archive.
+
+**IF mode is `openspec` or `hybrid`:**
+
+If stdin/stdout is non-TTY (CI), skip preview and prompt, delete nothing, exit 0 with hint `use --dry-run on CI`.
+
+Otherwise:
+
+1. `FetchPrune` — `git -C <cwd> fetch --prune` warn-only; on failure log warning and continue.
+2. `ListGoneBranches` — `git -C <cwd> branch -vv` parse `[gone]`; `IsMergedTo` via `merge-base --is-ancestor` to `origin/HEAD`→`origin/main` fallback.
+3. `ListWorktrees` — `git -C <cwd> worktree list --porcelain` parse `worktree/path`, `branch`, `prunable`, `locked`.
+4. Filter candidates via `IsCandidate` predicate `gone && !protected && !current && (name==change || HasPrefix(change+"-") || merged)`; `master`/`main`/`HEAD` excluded; never substring; never `branch -D` without second confirm.
+5. Render preview `Table` of candidates.
+6. Prompt `Prune (delete) / Keep (retain)` consent.
+7. On `Prune`: delete branches via `git -C <cwd> branch -d <name>` only (merged succeeds, unmerged fails without `-D`); prune eligible clean worktrees via `git -C <cwd> worktree prune` only when `prunable` or candidate-linked and `git -C <wt> status --porcelain` is empty; dirty worktree reports `dirty worktree - skipping` and is not pruned; `locked` worktrees skipped. On `Keep` or non-TTY retain all. `.biggz-instance` must remain inside `archive/YYYY-MM-DD-{change}/.biggz-instance` via `os.Rename` preservation (never deleted).
+
 ### Step 4: Verify Archive
 
 **IF mode is `openspec` or `hybrid`:** Confirm:
@@ -166,6 +186,8 @@ Use today's date in ISO format (e.g., `2026-02-16`).
 - [ ] Archive contains all artifacts (proposal, specs, design, tasks)
 - [ ] Archived `tasks.md` has no unchecked implementation tasks, unless the orchestrator explicitly approved archive-time stale-checkbox reconciliation backed by apply-progress/verify-report proof
 - [ ] Active changes directory no longer has this change
+- [ ] `.biggz-instance` preserved in archive if present
+- [ ] Hygiene Step 3b completed or correctly skipped (non-TTY/Keep)
 
 **IF mode is `engram`:** Confirm all artifact observation IDs are recorded in the archive report and the tasks observation has no unchecked implementation tasks unless the orchestrator explicitly approved archive-time stale-checkbox reconciliation backed by apply-progress/verify-report proof.
 

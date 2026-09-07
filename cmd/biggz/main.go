@@ -122,6 +122,8 @@ func main() {
 			os.Exit(hooksRun())
 		case "recovery":
 			os.Exit(recoveryRun())
+		case "cleanup":
+			os.Exit(cleanupRun())
 		case "session-close":
 			os.Exit(sessionCloseRun())
 		case "version", "--version", "-v":
