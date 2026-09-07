@@ -94,6 +94,7 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 		{"pi/biggz-memory-chrome.js", "biggz-memory-chrome.js"},
 		{"pi/biggz-tool-interception.js", "biggz-tool-interception.js"},
 		{"pi/biggz-extension-api.js", "biggz-extension-api.js"},
+		{"pi/biggz-session-guard.js", "biggz-session-guard.js"},
 		{"pi/biggz-last-model.js", "biggz-last-model.js"},
 		{"pi/biggz-synthesis-gate.js", "biggz-synthesis-gate.js"},
 		{"pi/biggz-wait-pretty.js", "biggz-wait-pretty.js"},

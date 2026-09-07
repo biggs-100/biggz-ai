@@ -1,0 +1,5 @@
+name: single-source-session-guard
+created: "2026-09-07T17:26:23Z"
+phase: apply
+description: "Extract duplicated session_stop summary guard into single shared ES module internal/assets/pi/biggz-session-guard.js; both pi extensions import from it one-way with no cycles; register new file in pi extensions deploy list; repoint biggz-session-stop.test.mjs imports; zero behavior change, all 10 existing JS tests must pass unmodified in intent."
+status: active
