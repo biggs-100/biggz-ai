@@ -271,7 +271,18 @@ func (a *Adapter) biggzMCPPath() string { return a.BiggzMCPPath() }
 
 // BiggzMCPPath is the exported fallback-aware resolver for the biggz-mcp
 // binary path. Used by install fallback when DeployMCPBinaryToHomeDir yields "".
+// Priority: ~/.biggz first (stable home copy written by DeployMCPBinaryToHomeDir,
+// survives git clean / repo moves), then PATH, then the running binary's dir.
+// The exe-dir check comes last because repo-local bin/ is gitignored and fragile.
 func (a *Adapter) BiggzMCPPath() string {
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		for _, name := range []string{"biggz-mcp", "biggz-mcp.exe"} {
+			cand := filepath.Join(home, ".biggz", name)
+			if _, err := os.Stat(cand); err == nil {
+				return cand
+			}
+		}
+	}
 	if p, err := a.lookPath("biggz-mcp"); err == nil && p != "" {
 		return p
 	}
@@ -282,14 +293,6 @@ func (a *Adapter) BiggzMCPPath() string {
 		dir := filepath.Dir(exe)
 		for _, name := range []string{"biggz-mcp", "biggz-mcp.exe"} {
 			cand := filepath.Join(dir, name)
-			if _, err := os.Stat(cand); err == nil {
-				return cand
-			}
-		}
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		for _, name := range []string{"biggz-mcp", "biggz-mcp.exe"} {
-			cand := filepath.Join(home, ".biggz", name)
 			if _, err := os.Stat(cand); err == nil {
 				return cand
 			}
