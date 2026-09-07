@@ -7,7 +7,7 @@ import {
 	checkSessionStop,
 	SESSION_STOP_TIMEOUT_MS,
 	_setSessionStopExecForTest,
-} from './biggz-tool-interception.js';
+} from './biggz-session-guard.js';
 import toolInterception from './biggz-tool-interception.js';
 import extensionAPI from './biggz-extension-api.js';
 

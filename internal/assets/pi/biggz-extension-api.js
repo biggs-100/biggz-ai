@@ -11,9 +11,9 @@
 // ── session-close guard (Cut 2: enforce-session-close-summary) ──
 // APPLY-DECIDE Q3: static ESM import, same extensions dir. Precedent:
 // biggz-footer.js statically imports ./biggz-extension-api.js and pi resolves
-// it (jiti). Import direction is one-way (extension-api → tool-interception,
+// it (jiti). Import direction is one-way (extension-api → session-guard,
 // never reverse) to avoid cycles. Pure delegation: no pending/CLI logic here.
-import { checkSessionStop } from "./biggz-tool-interception.js";
+import { checkSessionStop } from "./biggz-session-guard.js";
 
 // ── Rank1: Status-line presets (mirrors oh-my-pi presets.ts) ──
 // Guard note: BIGGZ_PRETTY=0 check lives at top of biggzExtensionAPI() below; keep it there for single-file revert.
