@@ -63,6 +63,10 @@ Required markdown after the three calls, before preflight:
 ```
 
 REMINDER: Session Recall markdown is separate chat markdown emitted FIRST, adjacent, same turn, before preflight question.
+REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
+REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
+REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
+REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
 
 ## Pre-Done Session Summary Hook (REQ-SD-S1/S2/S3/S5 — PR2 `internal/sdd/session_guard.go`)
 
@@ -78,7 +82,7 @@ Wired in `internal/sdd/status.go` (`deriveChangeStatus` + `deriveChangeStatusWit
 
 ## Human Language Detection — `languageHint` (MANDATORY before synthesis)
 
-Detect human language before every synthesis and before injecting `sdd-*` prompts. Use `internal/sdd/synthesis.go:DetectLanguage` heuristic: diacritics `á/é/í/ó/ú/ñ/¿/¡` → `es`; keywords `que/en/por/con/para/continua/dale/procede` vs `hello/continue/proceed/adjust/stop`; short `hi/ok/go/dale` → `en` default (ambiguous → `en`, fallback `DetectLanguage(lastHumanMessage)` or `en`). Store as `languageHint` in session and persist dual-write `pending_question.languageHint` (`BigMem sdd/{change}/pending-question` + `openspec/changes/{change}/state.yaml pending_question`) via `SavePendingDualWrite` / `pending.go` (`biggz-ai.pending-question/v1`). Inject `Human language: es|en — render synthesis content in that language, keep markers English, keep paths/code English` into every `sdd-*` prompt (`sdd-propose`/`sdd-spec`/`sdd-design`/`sdd-tasks`/`sdd-apply`/`sdd-verify`/`sdd-archive`). Synthesis content follows `languageHint`; markers (`## Sub-agent Result:`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`, `| Topic | Decision |`) and technical identifiers (paths, `sdd/...`, `ORDER BY`, `Search`, code, branches, topic_keys) stay English — helpers (`HasSynthesis`/`isCheckpointAsk`) check verbatim English markers as advise (enforcement retired 2026-09-04); whitelist via `sanitizePlain` never translates. Fallback at render: `RenderSynthesisLocalized(r, languageHint)` or `DetectLanguage(lastHumanMessage)` if hint empty, else `en`.
+Detect human language before every synthesis and before injecting `sdd-*` prompts. Use `internal/sdd/synthesis.go:DetectLanguage` heuristic: diacritics `á/é/í/ó/ú/ñ/¿/¡` → `es`; keywords `que/en/por/con/para/continua/dale/procede` vs `hello/continue/proceed/adjust/stop`; short `hi/ok/go/dale` → `en` default (ambiguous → `en`, fallback `DetectLanguage(lastHumanMessage)` or `en`). Store as `languageHint` in session and persist dual-write `pending_question.languageHint` (`BigMem sdd/{change}/pending-question` + `openspec/changes/{change}/state.yaml pending_question`) via `SavePendingDualWrite` / `pending.go` (`biggz-ai.pending-question/v1`). Inject `Human language: es|en — render synthesis content in that language, keep markers English, keep paths/code English` into every `sdd-*` prompt (`sdd-propose`/`sdd-spec`/`sdd-design`/`sdd-tasks`/`sdd-apply`/`sdd-verify`/`sdd-archive`). Synthesis content follows `languageHint`; markers (`## Sub-agent Result:`, `**Artifacts/Paths:**`, `**Risks / Open Questions:**`, `**Next Recommended:**`, `| Topic | Decision |`) and technical identifiers (paths, `sdd/...`, `ORDER BY`, `Search`, code, branches, topic_keys) stay English — gate `b0d2fc1` (`HasSynthesis`/`isCheckpointAsk`) validates verbatim English markers; whitelist via `sanitizePlain` never translates them. Fallback at render: `RenderSynthesisLocalized(r, languageHint)` or `DetectLanguage(lastHumanMessage)` if hint empty, else `en`. A checkpoint ask without immediately preceding `## Sub-agent Result` markdown is INVALID and will be blocked. Self-check: Before invoking `question`/`ask_user_choice`, re-read ONLY the question text + options and confirm a reader who never saw this chat could decide correctly.
 
 ## SDD Session Preflight (HARD GATE)
 
@@ -149,6 +153,9 @@ Never emit a blocking question the human must decide blind. The questionnaire mo
 - Every option carries a substantive `description` explaining what choosing it means (tradeoffs included). Bare labels are rejected fail-closed by `internal/sdd/question.go:ValidateQuestionEnvelope`.
 - When options need richer comparison (mockups, snippets, diffs, configs), attach `preview` per option (side-by-side layout, single-select only); it is persisted verbatim by `FormatFallback`.
 - Shortcuts (2–4 options, ≤60-char labels, ≤16-char headers) still apply; synthesis markdown stays FIRST and adjacent before any checkpoint ask.
+- Self-check: Before invoking the question tool, re-read ONLY the question text + options and confirm a reader who never saw this chat could decide correctly. If not, rewrite — do not call.
+REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
+REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
 
 ## Automatic Mode Gatekeeper (MANDATORY)
 

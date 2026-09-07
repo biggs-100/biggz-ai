@@ -1,12 +1,6 @@
-# SDD Discipline Gates Specification
+# Delta for sdd-discipline-gates
 
-## Purpose
-
-Fail-closed code gates for two SDD discipline gaps: synthesis-gate
-over-blocking (swallowed questions) and silent preflight defaults
-(ungated phase launch). Go canonical, JS mirror. Installer TUI untouched.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: REQ-DG-1 — Checkpoint-scoped synthesis block
 
@@ -96,52 +90,7 @@ On block, Go `BuildBlockedEnvelope` and JS `blockedEnvelope` MUST emit same-turn
 - WHEN handler evaluates
 - THEN it MUST return `{block:true}`
 
-
-### Requirement: REQ-DG-3 — Explicit-preflight admission
-
-`HasExplicitPreflight(cwd)` MUST distinguish explicit prefs (cache hit or
-disk read success) from silent defaults; `ResolvePreflightPrefs` MUST keep
-returning defaults but callers MUST check explicitness first. Until
-explicit, the dispatcher (`sdd-status` / `continue`) MUST return
-`blocked(preflight_missing)` with `nextRecommended: resolve-blockers` and
-MUST NOT launch any phase.
-
-#### Scenario: No explicit preflight blocks dispatch
-
-- GIVEN no cached prefs and no preflight file on disk
-- WHEN the dispatcher receives an SDD phase entry
-- THEN it returns `blocked(preflight_missing)` + `resolve-blockers`, no launch
-
-#### Scenario: Explicit preflight admits dispatch
-
-- GIVEN cached prefs or a readable disk preflight file
-- WHEN the dispatcher receives an SDD phase entry
-- THEN it proceeds to normal phase routing
-
-#### Scenario: Defaults alone do not admit
-
-- GIVEN only `ResolvePreflightPrefs` silent defaults (no cache, no disk)
-- WHEN explicitness is checked
-- THEN `HasExplicitPreflight` returns false
-
-### Requirement: REQ-DG-4 — Parity and regression guard
-
-Existing checkpoint behavior MUST remain unchanged (synthesis-first
-checkpoints still pass; missing-synthesis checkpoints still block), and the
-installer TUI MUST be untouched (zero files changed under installer/TUI
-screens).
-
-#### Scenario: Valid checkpoint still passes
-
-- GIVEN a checkpoint ask preceded same-turn by valid synthesis markdown
-- WHEN the gate evaluates it
-- THEN `ShouldBlock` returns false
-
-#### Scenario: Installer TUI untouched
-
-- GIVEN the completed change diff
-- WHEN installer/TUI screen files are listed
-- THEN the list is empty
+## ADDED Requirements
 
 ### Requirement: REQ-DG-5 — Transcript lint regression
 

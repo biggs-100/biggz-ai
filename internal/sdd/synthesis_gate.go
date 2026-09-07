@@ -1,14 +1,12 @@
-// synthesis_gate — advise library for Post-Delegation Human Checkpoint.
-//
-// ENFORCEMENT RETIRED (2026-09-04): blocking proved unfulfillable from the
-// agent side (same-turn side-channel + body-text false positives) and is now
-// removed. Context-before-question is governed by the explicit agent
-// contract in docs (Ask contract, no blocking gate), not by code.
-//
-// This file keeps only pure advise helpers: HasSynthesis, IsCheckpointAsk,
-// HasOptions, HasSessionRecall, IsChildBypass, plus renderLifecycle used by
-// RenderSynthesis. No blocking, no turn state, no envelopes.
-// See internal/assets/pi/biggz-synthesis-gate.js for JS counterpart (advise-only).
+// synthesis_gate — enforces Post-Delegation Human Checkpoint (checkpoint + option-bearing).
+// Ensures orchestrator emits synthesis markdown with ## Sub-agent Result + Artifacts/Paths + Risks + Next
+// BEFORE calling ask_user_choice (Pi closed single-select, 2-4 ordered options) / ask_user_question (Pi open/free-text) / question (OpenCode).
+// IsCheckpointAsk alone requires synthesis (REQ-DG-1); HasOptions alone never blocks.
+// IsCheckpointAsk scans ONLY option label/value/id/name/title (parity with biggz-synthesis-gate.js); body text never signals.
+// Gate is tool-agnostic: ShouldBlock checks HasSynthesis + 120s window + IsCheckpointAsk, not tool name.
+// Free-text without options is allowed; checkpoint asks require synthesis in same turn within 120s.
+// synthesis after EVERY sub-agent (SDD or non-SDD) is enforced via orchestrator prompt (gentle-pi parity).
+// See internal/assets/pi/biggz-synthesis-gate.js for JS counterpart that wraps ask_user_choice/ask_user_question/question.
 
 package sdd
 
@@ -17,7 +15,24 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
+
+var synthesisMarkers = []string{
+	"## Sub-agent Result",
+	"**What was done:**",
+	"**Artifacts/Paths:**",
+	"**Risks / Open Questions:**",
+	"**Next Recommended:**",
+}
+
+var currentTurnMarkdown = ""
+var currentTurnTime time.Time
+
+func SetCurrentTurnMarkdown(md string) {
+	currentTurnMarkdown = md
+	currentTurnTime = time.Now()
+}
 
 func HasSynthesis(md string) bool {
 	required := []string{
@@ -144,6 +159,85 @@ func envelopeHasCheckpointLabel(s string) bool {
 	return false
 }
 
+// ShouldBlock blocks checkpoint asks without synthesis (REQ-DG-1).
+// Only IsCheckpointAsk gates: HasOptions alone NEVER blocks, so free-text
+// asks and Session Preflight option-asks always pass the gate.
+// When IsCheckpointAsk, requires HasSynthesis in current turn within 120s window.
+// Strict same-turn 120s: missing or expired MUST block. Go is canonical for JS mirror.
+func ShouldBlock(question string, md string, now time.Time) bool {
+	if IsChildBypass() {
+		return false
+	}
+	if HasSessionRecall(md) {
+		return false
+	}
+	if !IsCheckpointAsk(question) {
+		return false
+	}
+	if !HasSynthesis(md) {
+		return true
+	}
+	if now.Sub(currentTurnTime) > 120*time.Second {
+		return true
+	}
+	return false
+}
+
+func CheckSynthesisPrecondition(question string, md string) (bool, string) {
+	if ShouldBlock(question, md, time.Now()) {
+		return false, "synthesis required: missing ## Sub-agent Result with 4 markers in current turn (120s window)"
+	}
+	return true, ""
+}
+
+// BlockedFallbackEnvelope is the REQ-DG-2 same-turn plain-chat payload.
+// On block it carries the attempted context plus the full question text
+// (via FormatFallback) so nothing is swallowed. Go is canonical for the
+// JS mirror (blockedEnvelope in biggz-synthesis-gate.js).
+type BlockedFallbackEnvelope struct {
+	Block    bool
+	Reason   string
+	Context  string
+	Fallback string
+}
+
+// BuildBlockedEnvelope returns Block:false when the gate allows the ask.
+// When ShouldBlock is true it returns Block:true with Reason (same text
+// as CheckSynthesisPrecondition), Context (attempted ask summary carrying
+// the full question string), and Fallback (FormatFallback of env, prompt
+// and options verbatim). ShouldBlock itself is unchanged (REQ-DG-1).
+func BuildBlockedEnvelope(question string, md string, now time.Time, env QuestionEnvelope) BlockedFallbackEnvelope {
+	if !ShouldBlock(question, md, now) {
+		return BlockedFallbackEnvelope{Block: false}
+	}
+	return BlockedFallbackEnvelope{
+		Block:    true,
+		Reason:   "synthesis required: missing ## Sub-agent Result with 4 markers in current turn (120s window)",
+		Context:  "synthesis required before checkpoint ask: " + question,
+		Fallback: FormatFallback(env),
+	}
+}
+
+// ShouldBlockApplyAdmission is the write-admission gate: admission to the
+// apply phase (the phase that writes) requires a human checkpoint/proceed
+// with synthesis even in auto mode and even in a child subagent. Unlike
+// ShouldBlock, it honors neither the PI_SUBAGENT_CHILD bypass nor the
+// Session Recall bypass, so auto back-to-back phases cannot self-validate
+// their own entry into writing. It touches only write admission: every
+// other phase keeps the ShouldBlock contract (child/recall bypasses intact).
+func ShouldBlockApplyAdmission(question string, md string, now time.Time) bool {
+	if !IsCheckpointAsk(question) && !HasOptions(question) {
+		return false
+	}
+	if !HasSynthesis(md) {
+		return true
+	}
+	if now.Sub(currentTurnTime) > 120*time.Second {
+		return true
+	}
+	return false
+}
+
 // renderLifecycle renders one-line lifecycle ◆ Phase · Status · Next with color.
 // Colors: success/éxito=green, warning/atención=yellow, error=red.
 // Keeps 4-marker invariant and is used by RenderSynthesis. Single line, no empty dim trailer.
@@ -164,16 +258,16 @@ func renderLifecycle(phase, status, next string) string {
 	low := strings.ToLower(status)
 	switch low {
 	case "success", "pass", "done", "ok", "éxito", "exito":
-		color = "[32m"
+		color = "\x1b[32m"
 	case "warning", "warn", "pending", "partial", "atención", "atencion":
-		color = "[33m"
+		color = "\x1b[33m"
 	case "error", "fail", "failed", "blocked", "missing":
-		color = "[31m"
+		color = "\x1b[31m"
 	default:
 		// default to success green for unknown but non-error
-		color = "[32m"
+		color = "\x1b[32m"
 	}
-	reset := "[0m"
+	reset := "\x1b[0m"
 	line := fmt.Sprintf("◆ %s · %s · %s", phase, status, next)
 	return color + line + reset
 }

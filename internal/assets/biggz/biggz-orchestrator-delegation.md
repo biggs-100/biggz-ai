@@ -86,7 +86,7 @@ When sub-agent or tool returns user-facing blocking prompt/menu, preserve comple
 - Fallback: if native UI unavailable/denied/noninteractive or envelope oversized/unrepresentable, emit COMPLETE choice envelope as plain chat/terminal response with required answer syntax and why input blocks progress. Then STOP — do not choose/default/infer/launch dependent work. Native-tool-only wording elsewhere never disables fallback.
 - Answer validation: accept answer only when each response belongs to exact allowed-answer domain. Permit free text/multi-select only when original prompt allowed it. For closed single-select, trim whitespace and compare labels case-insensitively; accept only inputs matching EXACTLY ONE presented option; reject zero/multiple matches and map single matched option to canonical token once. Accepted ordinal aliases: bare numeral `N` and phrases `la N`/`opción N`; `first` additionally for index 1. Each alias accepted only when maps unambiguously to single index. Question about block itself (why required, what choice means, what happens next) is request for information, not candidate answer: answer directly from envelope held, without selecting/recommending/resolving, then re-present complete envelope and keep waiting. If invalid/ambiguous, emit complete envelope and STOP again. Return valid answer to same blocked actor exactly once.
 
-The synthesis markdown is separate from choice envelope — emit it FIRST, adjacent, same turn, before tool call.
+The synthesis markdown is separate from choice envelope — emit it FIRST, adjacent, same turn, before tool call. REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
 
 ### Provider Defect Handoff (MANDATORY)
 
@@ -170,10 +170,14 @@ After tooling/worktree incident: `stop writes → parent captures git status →
 
 For selected SDD work, use delivery strategy, chain strategy, workload forecast, and approval gates in `biggz-orchestrator-workflow.md`. Direct/delegated work do not create SDD artifacts.
 
-### Ask contract (no blocking gate)
+A checkpoint ask without immediately preceding `## Sub-agent Result` markdown is INVALID and will be blocked. REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
+REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
+REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
+REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
 
-Enforcement retired (2026-09-04): no code blocks question tools. The agent
-owns context-before-question. Three rules:
+### Ask contract (blocking — synthesis required)
+
+The agent owns context-before-question; gate blocks if missing synthesis (120s window). A checkpoint ask without immediately preceding `## Sub-agent Result` markdown is INVALID and will be blocked. Three rules:
 
 1. THE QUESTION ENVELOPE IS THE ONLY DECISION SURFACE. The popup shows
    only the tool call — never the chat. Therefore the `question` text MUST
