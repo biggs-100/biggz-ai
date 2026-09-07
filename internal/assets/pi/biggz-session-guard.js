@@ -54,3 +54,19 @@ export async function checkSessionStop(opts = {}) {
 		return undefined;
 	}
 }
+
+/**
+ * pi ExtensionAPI factory — required so pi treats this file as a valid extension.
+ * Without `export default function(pi)` pi throws "Extension does not export a valid factory".
+ * This module is also imported as a library by biggz-extension-api.js / biggz-tool-interception.js,
+ * so we expose both: named checkSessionStop for importers + default factory for pi loader.
+ * @param {import("@earendil-works/pi-coding-agent").ExtensionAPI} pi
+ */
+export default function biggzSessionGuard(pi) {
+	if (process.env.PI_SUBAGENT_CHILD === "1") return;
+	if (process.env.BIGGZ_PRETTY === "0") return;
+	if (typeof pi?.on !== "function") return;
+	try {
+		pi.on("session_stop", async () => checkSessionStop());
+	} catch {}
+}
