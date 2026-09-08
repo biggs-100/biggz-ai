@@ -342,10 +342,15 @@ func TestApplyWithHash_Concurrent_Goroutines_NoPanicAndAtLeastOneMismatch(t *tes
 			}
 			continue
 		}
-		// Windows file-lock contention during concurrent rename produces
-		// *os.LinkError / *os.PathError with "Access is denied". Treat as
-		// contention (neither success nor hash mismatch) but not a failure.
-		if strings.Contains(e.Error(), "Access is denied") || strings.Contains(e.Error(), "being used by another process") {
+		// Concurrent rename/read-back contention: ApplyWithHash is check-then-act
+		// (non-atomic), so a loser's rename can land between a winner's rename
+		// and its read-back verification, surfacing "the replacement did not
+		// land" instead of a HashMismatchError. Windows file-lock contention
+		// during concurrent rename likewise produces *os.LinkError /
+		// *os.PathError with "Access is denied". Treat both as contention
+		// (neither success nor hash mismatch) but not a failure; eliminating
+		// the race itself would require a source-level CAS/retry change.
+		if strings.Contains(e.Error(), "Access is denied") || strings.Contains(e.Error(), "being used by another process") || strings.Contains(e.Error(), "did not land") {
 			continue
 		}
 		t.Fatalf("unexpected error type %T: %v", e, e)

@@ -396,8 +396,19 @@ func TestWorktreeCommonDir(t *testing.T) {
 	if out, err := exec.Command("git", "-C", main, "worktree", "add", "-q", wt).CombinedOutput(); err != nil {
 		t.Skipf("worktree %v %s", err, out)
 	}
-	a, _ := resolveStore("ch-wt", main)
-	b, _ := resolveStore("ch-wt", wt)
+	// Canonicalize both inputs: on macOS t.TempDir() sits under symlinked
+	// /var -> /private/var, and git reports the canonical common dir, so raw
+	// strings would mismatch despite naming one repo.
+	mainCanon, err := filepath.EvalSymlinks(main)
+	if err != nil {
+		mainCanon = main
+	}
+	wtCanon, err := filepath.EvalSymlinks(wt)
+	if err != nil {
+		wtCanon = wt
+	}
+	a, _ := resolveStore("ch-wt", mainCanon)
+	b, _ := resolveStore("ch-wt", wtCanon)
 	if a.Dir != b.Dir {
 		t.Fatalf("worktree Dir mismatch %q vs %q", a.Dir, b.Dir)
 	}

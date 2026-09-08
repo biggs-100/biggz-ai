@@ -54,6 +54,12 @@ func TestResolvePackageBinForms(t *testing.T) {
 				t.Skip("symlink permissions vary on Windows")
 			}
 			root := t.TempDir()
+			// Canonicalize: ResolvePackageBin returns EvalSymlinks paths;
+			// macOS TMPDIR lives under /var->/private/var.
+			root, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				t.Fatalf("EvalSymlinks: %v", err)
+			}
 			want := writeTarget(t, root, tc.target, 0o755)
 			if tc.link != "" {
 				bin := filepath.Join(root, "bin", "gentle-pi-models")
