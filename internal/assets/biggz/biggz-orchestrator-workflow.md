@@ -63,10 +63,6 @@ Required markdown after the three calls, before preflight:
 ```
 
 REMINDER: Session Recall markdown is separate chat markdown emitted FIRST, adjacent, same turn, before preflight question.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
 
 ## Pre-Done Session Summary Hook (REQ-SD-S1/S2/S3/S5 — PR2 `internal/sdd/session_guard.go`)
 
@@ -154,8 +150,6 @@ Never emit a blocking question the human must decide blind. The questionnaire mo
 - When options need richer comparison (mockups, snippets, diffs, configs), attach `preview` per option (side-by-side layout, single-select only); it is persisted verbatim by `FormatFallback`.
 - Shortcuts (2–4 options, ≤60-char labels, ≤16-char headers) still apply; synthesis markdown stays FIRST and adjacent before any checkpoint ask.
 - Self-check: Before invoking the question tool, re-read ONLY the question text + options and confirm a reader who never saw this chat could decide correctly. If not, rewrite — do not call.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
 
 ## Automatic Mode Gatekeeper (MANDATORY)
 
