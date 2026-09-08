@@ -351,6 +351,10 @@ func (a *Adapter) mergePiSettingsBigMem(path, mcpBinary string) (filemerge.Write
 	}
 	obj["mcpServers"] = servers
 
+	// directTools — same allowlist-prune as mcp.json: drop removed BigMem
+	// names, preserve foreign entries. Atomic via WriteFileAtomic below.
+	obj["directTools"] = mergePiDirectTools(obj["directTools"])
+
 	encoded, err := json.MarshalIndent(obj, "", "  ")
 	if err != nil {
 		return filemerge.WriteResult{}, fmt.Errorf("marshal pi settings %q: %w", path, err)
@@ -394,9 +398,10 @@ func (a *Adapter) mergePiMCPFileBigMem(path, mcpBinary string) (filemerge.WriteR
 }
 
 // piDirectTools are BigMem tools promoted to top-level via pi-mcp-adapter directTools.
-// Slim 10-tool allowlist (pi-footprint-slim): halves the model function surface to
-// relieve 429 pressure. Promotion-only trim — cmd/biggz-mcp ProfileAgent still
-// exposes all 20 via --tools=agent; the 10 removed stay callable server-side.
+// Slim 11-tool allowlist (pi-footprint-slim): relieves 429 pressure while keeping
+// current_project (recommended first call per bigmem-protocol). Promotion-only
+// trim — cmd/biggz-mcp ProfileAgent still exposes all 20 via --tools=agent;
+// the 9 removed stay callable server-side.
 // biggz_ prefix from --prefix=biggz.
 var piDirectTools = []string{
 	"biggz_mem_save",
@@ -409,15 +414,15 @@ var piDirectTools = []string{
 	"biggz_mem_timeline",
 	"biggz_mem_review",
 	"biggz_mem_judge",
+	"biggz_mem_current_project",
 }
 
-// removedPiDirectTools are the 10 BigMem tools dropped from promotion by
+// removedPiDirectTools are the 9 BigMem tools dropped from promotion by
 // pi-footprint-slim. mergePiDirectTools prunes exactly these names so
 // reinstall converges existing installs; all other entries are preserved.
 var removedPiDirectTools = map[string]struct{}{
 	"biggz_mem_capture_passive":   {},
 	"biggz_mem_compare":           {},
-	"biggz_mem_current_project":   {},
 	"biggz_mem_delete":            {},
 	"biggz_mem_pin":               {},
 	"biggz_mem_session_end":       {},
@@ -474,8 +479,8 @@ func mergePiDirectTools(existing any) []any {
 		seen[v] = struct{}{}
 		out = append(out, v)
 	}
-	// Allowlist-prune: drop the 10 removed BigMem names so reinstall
-	// converges existing installs to the 10-tool allowlist; preserve all
+	// Allowlist-prune: drop the 9 removed BigMem names so reinstall
+	// converges existing installs to the 11-tool allowlist; preserve all
 	// foreign (non-BigMem or still-allowlisted) entries.
 	keep := func(s string) bool {
 		if _, dropped := removedPiDirectTools[s]; dropped {

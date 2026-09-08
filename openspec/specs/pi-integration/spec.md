@@ -175,17 +175,17 @@ The system MUST gate mouse support via `BIGGZ_MOUSE=1` opt-in using `enableMouse
 
 ### Requirement: Pi BigMem MCP Provisioning via Adapter
 
-The system MUST provision `mcpServers.bigmem` with `command=BiggzMCPPath()`, `args=["--tools=agent","--prefix=biggz"]`, `type="local"` plus `imports:["opencode"]` and `directTools` equal to exactly the 10-tool allowlist (`save`, `search`, `get_observation`, `context`, `session_summary`, `save_prompt`, `update`, `timeline`, `review`, `judge`) via `ProvisionBigMemMCP` into BOTH `~/.pi/agent/settings.json` and `~/.pi/agent/mcp.json` atomically via `filemerge.WriteFileAtomic`, preserving other servers; merge MUST be allowlist-prune (drop the 10 removed BigMem names when present, preserve foreign entries); project `.pi/mcp.json` overlays global but `bigmem` MUST stay authoritative; server `ProfileAgent` MUST stay at 20 tools.
+The system MUST provision `mcpServers.bigmem` with `command=BiggzMCPPath()`, `args=["--tools=agent","--prefix=biggz"]`, `type="local"` plus `imports:["opencode"]` and `directTools` equal to exactly the 11-tool allowlist (`save`, `search`, `get_observation`, `context`, `session_summary`, `save_prompt`, `update`, `timeline`, `review`, `judge`, `current_project`) via `ProvisionBigMemMCP` into BOTH `~/.pi/agent/settings.json` and `~/.pi/agent/mcp.json` atomically via `filemerge.WriteFileAtomic`, preserving other servers; merge MUST be allowlist-prune (drop the 9 removed BigMem names when present, preserve foreign entries); project `.pi/mcp.json` overlays global but `bigmem` MUST stay authoritative; server `ProfileAgent` MUST stay at 20 tools.
 
-#### Scenario: Fresh provision is 10 tools
+#### Scenario: Fresh provision is 11 tools
 - GIVEN no Pi MCP config exists
 - WHEN `ProvisionBigMemMCP` executes
-- THEN `directTools` MUST equal exactly the 10 allowlist in both files
+- THEN `directTools` MUST equal exactly the 11 allowlist in both files
 
-#### Scenario: Reinstall prunes stale 10
+#### Scenario: Reinstall prunes stale 9
 - GIVEN `mcp.json` with all 20 `directTools`
 - WHEN reinstall merges
-- THEN the 10 removed names MUST be dropped, 10 allowlist MUST remain
+- THEN the 9 removed names MUST be dropped, 11 allowlist MUST remain
 
 #### Scenario: Foreign entries preserved atomically
 - GIVEN `settings.json` with `mcpServers.other` plus foreign `directTools`
@@ -204,12 +204,12 @@ The system MUST provision `mcpServers.bigmem` with `command=BiggzMCPPath()`, `ar
 
 ### Requirement: Slim APPEND_SYSTEM Generation
 
-The system MUST generate `APPEND_SYSTEM.md` with a single REMINDER block, all `<!-- biggz:* -->` markers, gate template, and `{{BIGGZ_BACKGROUND_POLICY}}` plus other template tokens intact, with zero semantic change (prose/example trim only).
+The system MUST generate `APPEND_SYSTEM.md` with a single REMINDER block, all `<!-- biggz:* -->` markers, and gate template intact, with zero semantic change (prose/example trim only). `{{BIGGZ_BACKGROUND_POLICY}}` lives in `biggz-orchestrator-delegation.md` (on-demand delegation contract, read at delegation time), NOT inlined into `APPEND_SYSTEM.md` which carries zero literal `{{...}}` tokens by design.
 
 #### Scenario: Single REMINDER with markers intact
 - GIVEN asset trim applied
 - WHEN `APPEND_SYSTEM.md` is generated
-- THEN exactly one REMINDER MUST exist and all markers/template/tokens MUST be present
+- THEN exactly one REMINDER MUST exist and all markers/template MUST be present (background-policy token lives in the delegation asset, not `APPEND_SYSTEM.md`)
 
 #### Scenario: Reinstall does not reduplicate REMINDER
 - GIVEN existing slim `APPEND_SYSTEM.md`
@@ -218,12 +218,12 @@ The system MUST generate `APPEND_SYSTEM.md` with a single REMINDER block, all `<
 
 ### Requirement: Reinstall Convergence and Rollback
 
-The system MUST converge fresh and existing installs to the 10-tool `directTools` plus slim prompt on every `biggz install --agent pi`; revert of sources plus reinstall MUST restore 20-tool promotion and full prompt with no migration.
+The system MUST converge fresh and existing installs to the 11-tool `directTools` plus slim prompt on every `biggz install --agent pi`; revert of sources plus reinstall MUST restore 20-tool promotion and full prompt with no migration.
 
 #### Scenario: Existing install converges
 - GIVEN deployed fat 20-tool `mcp.json`
 - WHEN `biggz install --agent pi` re-runs
-- THEN `directTools` MUST equal the 10 allowlist
+- THEN `directTools` MUST equal the 11 allowlist
 
 #### Scenario: Rollback restores fat state
 - GIVEN slim sources reverted
