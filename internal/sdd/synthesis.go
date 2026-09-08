@@ -244,7 +244,7 @@ func renderWhatDoneSection(b *strings.Builder, whatDone string, budget, width in
 // and failure sections. Extracted from renderSynthesisWithWidth to keep it
 // under the complexity budget.
 // Visual design (cognitive-doc-design): chunked sections with ### headers +
-/// consistent icons (🔍 Preview & Changes, 💡 Decisions & Commands, ✅ Validation, ❌ Failure),
+// / consistent icons (🔍 Preview & Changes, 💡 Decisions & Commands, ✅ Validation, ❌ Failure),
 // progressive disclosure (happy path What/Deliverables/Next first, details after),
 // scannable hierarchy — verbatim English markers preserved for HasSynthesis gate.
 func renderDetailSections(b *strings.Builder, r SubAgentResult, lang string, width int, none string) {

@@ -72,7 +72,7 @@ func TestTranscriptLint_BranchWorktreeCleanup_7Blocks(t *testing.T) {
 	// Explicit: phase0 valid+checkpoint allow, phases1-6 missing block, phase7 missing block (final synthesis emitted AFTER checkpoint)
 	// Total syntheses in transcript =2 (explore + final) but only 1 same-turn satisfies =>7 blocks
 	turns := []transcriptTurn{
-		{markdown: valid, question: checkpoint, nowDelta: 30 * time.Second},  // phase0 explore: synthesis present -> allow
+		{markdown: valid, question: checkpoint, nowDelta: 30 * time.Second},   // phase0 explore: synthesis present -> allow
 		{markdown: missing, question: checkpoint, nowDelta: 30 * time.Second}, // phase1 propose missing -> block
 		{markdown: missing, question: checkpoint, nowDelta: 30 * time.Second}, // phase2 spec missing -> block
 		{markdown: missing, question: checkpoint, nowDelta: 30 * time.Second}, // phase3 design missing -> block

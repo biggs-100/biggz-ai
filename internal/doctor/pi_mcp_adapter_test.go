@@ -335,7 +335,7 @@ func TestPiMCPAdapterCheck_RealFS_TmpHomeHealthy(t *testing.T) {
 	mcpPath := filepath.Join(home, ".pi", "agent", "mcp.json")
 	mcpObj := map[string]any{
 		"mcpServers": map[string]any{"bigmem": map[string]any{"command": biggzMCP, "args": []string{"--tools=agent", "--prefix=biggz"}, "type": "local"}},
-		"imports": []string{"opencode"},
+		"imports":    []string{"opencode"},
 	}
 	bs, _ := json.Marshal(mcpObj)
 	if err := os.WriteFile(mcpPath, bs, 0644); err != nil {
