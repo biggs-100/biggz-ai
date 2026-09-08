@@ -212,7 +212,8 @@ func printSyncHelp() {
 // snapshots managed state, extracts the binary, and replaces the current
 // executable.
 func upgradeRun() int {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	// Parse flags
 	dryRun := false

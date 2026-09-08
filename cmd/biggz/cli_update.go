@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/doctor"
 	"github.com/biggs-100/biggz-ai/internal/update"
@@ -38,7 +39,8 @@ func discoverRelease(ctx context.Context, ch update.Channel, explicitVersion str
 // It discovers the latest release matching BIGGZ_CHANNEL and reports whether
 // an upgrade is available without downloading or mutating any files.
 func updateRun() int {
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
 	// Parse flags: check-only has minimal surface. Keep --version as query.
 	explicitVersion := ""

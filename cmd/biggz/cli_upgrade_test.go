@@ -107,9 +107,13 @@ func TestUpdate_CheckOnlyDoesNotCreateBackup(t *testing.T) {
 		t.Errorf("update --help should not create backup, found %d entries in %s", len(entries), backupDir)
 	}
 	cmd2 := goRunBiggz(t, "update")
+	// Hermetic: fake release server instead of live api.github.com (Slice B).
+	releases := []update.Release{{TagName: "v9.9.9"}}
+	srv := fakeReleasesServer(t, releases)
 	cmd2.Env = append(os.Environ(),
 		"HOME="+tmpHome,
 		"USERPROFILE="+tmpHome,
+		"BIGGZ_GITHUB_API_BASE="+srv.URL,
 	)
 	var stdout2, stderr2 bytes.Buffer
 	cmd2.Stdout = &stdout2
@@ -141,9 +145,13 @@ func TestUpgrade_DryRunDoesNotMutate(t *testing.T) {
 		t.Errorf("upgrade --help should not create backup, found %d entries", len(entries))
 	}
 	cmd2 := goRunBiggz(t, "upgrade", "--dry-run")
+	// Hermetic: fake release server instead of live api.github.com (Slice B).
+	releases := []update.Release{{TagName: "v9.9.9"}}
+	srv := fakeReleasesServer(t, releases)
 	cmd2.Env = append(os.Environ(),
 		"HOME="+tmpHome,
 		"USERPROFILE="+tmpHome,
+		"BIGGZ_GITHUB_API_BASE="+srv.URL,
 	)
 	var stdout2, stderr2 bytes.Buffer
 	cmd2.Stdout = &stdout2
