@@ -19,6 +19,8 @@ jobs:
           go-version: stable
       - name: Check formatting
         run: |
+          go version
+          gofmt -d internal/review/rdd_helpers.go | head -n 40
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then
             echo "Unformatted files:"
