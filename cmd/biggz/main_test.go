@@ -25,42 +25,11 @@ func moduleRoot(t *testing.T) string {
 
 // goRunBiggz builds the `go run ./cmd/biggz` invocation rooted at the module
 // root, so the binary resolves regardless of the test's working directory.
-// It pins GOMODCACHE/GOCACHE to the ambient process values so per-test
-// HOME overrides (t.TempDir) do not drag the module/build cache into the
-// temp dir (slow re-downloads + TempDir cleanup permission failures).
 func goRunBiggz(t *testing.T, args ...string) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command("go", append([]string{"run", "./cmd/biggz"}, args...)...)
 	cmd.Dir = moduleRoot(t)
-	cmd.Env = append(os.Environ(),
-		"GOMODCACHE="+goEnvCached(t, "GOMODCACHE"),
-		"GOCACHE="+goEnvCached(t, "GOCACHE"),
-	)
 	return cmd
-}
-
-// pinTestHomeEnv points cmd at an isolated HOME/USERPROFILE while keeping the
-// module/build caches pinned to ambient values (see goRunBiggz). Replaces
-// the bare append(os.Environ(), "HOME="+...) pattern, which drops the pins.
-func pinTestHomeEnv(t *testing.T, cmd *exec.Cmd, tmpHome string) {
-	t.Helper()
-	if cmd.Env == nil {
-		cmd.Env = os.Environ()
-	}
-	cmd.Env = append(cmd.Env,
-		"HOME="+tmpHome,
-		"USERPROFILE="+tmpHome,
-		"GOMODCACHE="+goEnvCached(t, "GOMODCACHE"),
-		"GOCACHE="+goEnvCached(t, "GOCACHE"),
-	)
-}
-func goEnvCached(t *testing.T, name string) string {
-	t.Helper()
-	out, err := exec.Command("go", "env", name).Output()
-	if err != nil {
-		t.Fatalf("go env %s: %v", name, err)
-	}
-	return strings.TrimSpace(string(out))
 }
 
 // runGit is a shared helper that runs a git command in the given directory.

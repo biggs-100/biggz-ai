@@ -92,7 +92,10 @@ func TestUpgrade_HelpPrintsUsage(t *testing.T) {
 func TestUpdate_CheckOnlyDoesNotCreateBackup(t *testing.T) {
 	tmpHome := t.TempDir()
 	cmd := goRunBiggz(t, "update", "--help")
-	pinTestHomeEnv(t, cmd, tmpHome)
+	cmd.Env = append(os.Environ(),
+		"HOME="+tmpHome,
+		"USERPROFILE="+tmpHome,
+	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -107,8 +110,9 @@ func TestUpdate_CheckOnlyDoesNotCreateBackup(t *testing.T) {
 	// Hermetic: fake release server instead of live api.github.com (Slice B).
 	releases := []update.Release{{TagName: "v9.9.9"}}
 	srv := fakeReleasesServer(t, releases)
-	pinTestHomeEnv(t, cmd2, tmpHome)
-	cmd2.Env = append(cmd2.Env,
+	cmd2.Env = append(os.Environ(),
+		"HOME="+tmpHome,
+		"USERPROFILE="+tmpHome,
 		"BIGGZ_GITHUB_API_BASE="+srv.URL,
 	)
 	var stdout2, stderr2 bytes.Buffer
@@ -127,7 +131,10 @@ func TestUpdate_CheckOnlyDoesNotCreateBackup(t *testing.T) {
 func TestUpgrade_DryRunDoesNotMutate(t *testing.T) {
 	tmpHome := t.TempDir()
 	cmd := goRunBiggz(t, "upgrade", "--help")
-	pinTestHomeEnv(t, cmd, tmpHome)
+	cmd.Env = append(os.Environ(),
+		"HOME="+tmpHome,
+		"USERPROFILE="+tmpHome,
+	)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -141,8 +148,9 @@ func TestUpgrade_DryRunDoesNotMutate(t *testing.T) {
 	// Hermetic: fake release server instead of live api.github.com (Slice B).
 	releases := []update.Release{{TagName: "v9.9.9"}}
 	srv := fakeReleasesServer(t, releases)
-	pinTestHomeEnv(t, cmd2, tmpHome)
-	cmd2.Env = append(cmd2.Env,
+	cmd2.Env = append(os.Environ(),
+		"HOME="+tmpHome,
+		"USERPROFILE="+tmpHome,
 		"BIGGZ_GITHUB_API_BASE="+srv.URL,
 	)
 	var stdout2, stderr2 bytes.Buffer
@@ -165,8 +173,9 @@ func TestUpgrade_DryRunPrintsPendingWhenUpdateAvailable(t *testing.T) {
 	srv := fakeReleasesServer(t, releases)
 	tmpHome := t.TempDir()
 	cmd := goRunBiggz(t, "upgrade", "--dry-run")
-	pinTestHomeEnv(t, cmd, tmpHome)
-	cmd.Env = append(cmd.Env,
+	cmd.Env = append(os.Environ(),
+		"HOME="+tmpHome,
+		"USERPROFILE="+tmpHome,
 		"BIGGZ_GITHUB_API_BASE="+srv.URL,
 	)
 	var stdout, stderr bytes.Buffer
@@ -202,8 +211,9 @@ func TestUpdate_CheckPrintsAvailableWithFakeRelease(t *testing.T) {
 	srv := fakeReleasesServer(t, releases)
 	tmpHome := t.TempDir()
 	cmd := goRunBiggz(t, "update")
-	pinTestHomeEnv(t, cmd, tmpHome)
-	cmd.Env = append(cmd.Env,
+	cmd.Env = append(os.Environ(),
+		"HOME="+tmpHome,
+		"USERPROFILE="+tmpHome,
 		"BIGGZ_GITHUB_API_BASE="+srv.URL,
 	)
 	var stdout, stderr bytes.Buffer

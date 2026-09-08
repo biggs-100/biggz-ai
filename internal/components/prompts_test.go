@@ -96,7 +96,6 @@ func TestExtractModelSectionGoldenCapableNotEqualSmall(t *testing.T) {
 
 // TestSharedPromptDir verifies the expected directory path is returned.
 func TestSharedPromptDir(t *testing.T) {
-	t.Setenv("XDG_CONFIG_HOME", "")
 	want := filepath.FromSlash("/home/testuser/.config/opencode/prompts/sdd")
 	got := SharedPromptDir(filepath.FromSlash("/home/testuser"))
 	if got != want {
