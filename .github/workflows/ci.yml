@@ -430,7 +430,8 @@ jobs:
       - name: Verify BuildVersion
         run: |
           set -e
-          bin=$(find dist -type f -name "biggz" | head -n 1)
+          bin=$(find dist -type f -path "*linux*" -name "biggz" | head -n 1)
+          if [ -z "$bin" ]; then bin=$(find dist -type f -name "biggz" | head -n 1); fi
           echo "Found binary: $bin"
           if [ -z "$bin" ]; then
             archive=$(ls dist/*linux*.tar.gz 2>/dev/null | head -n 1)
