@@ -3,6 +3,7 @@ package skillregistry
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -127,13 +128,16 @@ func TestRefresh_ForwardSlashes(t *testing.T) {
 	if !strings.Contains(content, "forward-test") {
 		t.Errorf("registry missing forward-test")
 	}
-	// Windows-specific: simulate backslash path handling
-	winPath := "..\\..\\.config\\opencode\\skills\\test\\SKILL.md"
-	normalized := filepath.ToSlash(winPath)
-	if strings.Contains(normalized, "\\") {
-		t.Errorf("ToSlash should remove backslashes")
-	}
-	if !strings.Contains(normalized, "/") {
-		t.Errorf("normalized path should contain forward slash")
+	// Backslash handling is meaningful only on Windows: on Unix filepath.ToSlash
+	// is a no-op for '\\' (separator is '/'), so these assertions gate to Windows.
+	if runtime.GOOS == "windows" {
+		winPath := "..\\..\\.config\\opencode\\skills\\test\\SKILL.md"
+		normalized := filepath.ToSlash(winPath)
+		if strings.Contains(normalized, "\\") {
+			t.Errorf("ToSlash should remove backslashes")
+		}
+		if !strings.Contains(normalized, "/") {
+			t.Errorf("normalized path should contain forward slash")
+		}
 	}
 }

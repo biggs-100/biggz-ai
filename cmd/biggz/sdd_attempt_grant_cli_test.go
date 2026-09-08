@@ -56,6 +56,10 @@ func TestSDDAttemptGrantPersistsAndReplaysThroughCLI(t *testing.T) {
 	change := "cli-grant"
 	instance := "cli-grant-instance-token"
 	sibling := filepath.Clean(t.TempDir())
+	sibling, err := filepath.EvalSymlinks(sibling)
+	if err != nil {
+		t.Fatalf("EvalSymlinks sibling: %v", err)
+	}
 
 	grantArgs := []string{
 		"grant", change, "--root", sibling, "--change-instance", instance,
@@ -114,6 +118,10 @@ func TestSDDAttemptGrantPersistsAndReplaysThroughCLI(t *testing.T) {
 	// deduplicates the repeat. The root arrives shell-quoted to prove the
 	// CLI tolerates quoted values from the consent envelope invocation.
 	second := filepath.Clean(t.TempDir())
+	second, err = filepath.EvalSymlinks(second)
+	if err != nil {
+		t.Fatalf("EvalSymlinks second: %v", err)
+	}
 	code, stdout, stderr = runSDDAttemptCLI(t,
 		"grant", change,
 		"--expected-revision", granted.Revision,

@@ -590,6 +590,14 @@ func TestDiskCheck_SufficientSpace(t *testing.T) {
 		return 10 * 1024 * 1024 * 1024, 100 * 1024 * 1024 * 1024, nil // 10 GB free
 	})
 	result := c.Run(context.Background())
+	if runtime.GOOS != "windows" {
+		// Non-Windows DiskCheck is an unsupported-platform stub that always
+		// returns warn regardless of injected free space.
+		if result.Status != StatusWarn {
+			t.Errorf("status = %v, want warn (disk check unsupported on %s)", result.Status, runtime.GOOS)
+		}
+		return
+	}
 	if result.Status != StatusPass {
 		t.Errorf("status = %v, want pass", result.Status)
 	}

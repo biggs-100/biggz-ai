@@ -17,6 +17,9 @@ func fixtureRepo(t *testing.T) (string, string) {
 	t.Helper()
 	repo := t.TempDir()
 	gitRun(t, repo, "init")
+	// Hermetic identity: CI runners have no global git user configured.
+	gitRun(t, repo, "config", "user.email", "test@biggz.ai")
+	gitRun(t, repo, "config", "user.name", "biggz-test")
 	writeFile(t, filepath.Join(repo, "base.txt"), "base\n")
 	gitRun(t, repo, "add", ".")
 	gitRun(t, repo, "commit", "-m", "base")

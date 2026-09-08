@@ -1,0 +1,6 @@
+name: ci-debt-repair
+created: 2026-09-08T19:00:21Z
+phase: explore
+description: "Triage and repair pre-existing CI debt now visible after PR #22 unblocked ci.yml: skill-lint token overruns, ubuntu-only test failures (components/contracts green locally), e2e failures, release smoke. Out of scope: workflow redesign."
+status: active
+linked_issue: 24

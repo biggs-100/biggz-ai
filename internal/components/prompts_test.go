@@ -96,6 +96,7 @@ func TestExtractModelSectionGoldenCapableNotEqualSmall(t *testing.T) {
 
 // TestSharedPromptDir verifies the expected directory path is returned.
 func TestSharedPromptDir(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	want := filepath.FromSlash("/home/testuser/.config/opencode/prompts/sdd")
 	got := SharedPromptDir(filepath.FromSlash("/home/testuser"))
 	if got != want {
@@ -152,6 +153,7 @@ func TestWriteSharedPromptFilesCreates10Files(t *testing.T) {
 
 // TestWriteSharedPromptFilesIdempotent verifies that calling twice returns changed=false on second call.
 func TestWriteSharedPromptFilesIdempotent(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	home := t.TempDir()
 	first, err := WriteSharedPromptFiles(home, nil)
 	if err != nil {

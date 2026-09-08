@@ -500,10 +500,17 @@ func TestReplaceHint_Windows(t *testing.T) {
 }
 
 func TestReplaceHint_ModulePath(t *testing.T) {
-	// On both platforms, the module path should appear somewhere.
+	// ReplaceHint's contract is per-platform by build tag: Windows embeds the
+	// module path (go install fallback), Unix reports the atomic replacement.
 	hint := update.ReplaceHint("github.com/biggs-100/biggz-ai")
-	if !strings.Contains(hint, "github.com/biggs-100/biggz-ai") {
-		t.Errorf("ReplaceHint should include module path, got: %s", hint)
+	if runtime.GOOS == "windows" {
+		if !strings.Contains(hint, "github.com/biggs-100/biggz-ai") {
+			t.Errorf("ReplaceHint should include module path, got: %s", hint)
+		}
+		return
+	}
+	if !strings.Contains(hint, "replaced successfully") {
+		t.Errorf("ReplaceHint on Unix should mention success, got: %s", hint)
 	}
 }
 
