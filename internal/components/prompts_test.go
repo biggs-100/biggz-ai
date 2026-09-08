@@ -153,6 +153,7 @@ func TestWriteSharedPromptFilesCreates10Files(t *testing.T) {
 
 // TestWriteSharedPromptFilesIdempotent verifies that calling twice returns changed=false on second call.
 func TestWriteSharedPromptFilesIdempotent(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", "")
 	home := t.TempDir()
 	first, err := WriteSharedPromptFiles(home, nil)
 	if err != nil {
