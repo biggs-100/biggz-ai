@@ -433,7 +433,8 @@ jobs:
           bin=$(find dist -type f -name "biggz" | head -n 1)
           echo "Found binary: $bin"
           if [ -z "$bin" ]; then
-            archive=$(ls dist/*.tar.gz | head -n 1)
+            archive=$(ls dist/*linux*.tar.gz 2>/dev/null | head -n 1)
+            if [ -z "$archive" ]; then archive=$(ls dist/*.tar.gz | head -n 1); fi
             echo "No binary found, extracting $archive"
             mkdir -p /tmp/biggz-smoke
             tar -xzf "$archive" -C /tmp/biggz-smoke
