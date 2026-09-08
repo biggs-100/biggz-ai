@@ -67,6 +67,7 @@ MUST recommend SDD (question + STOP, never auto-launch) when ANY holds: estimate
 ### Allowed edit surfaces (MANDATORY)
 
 Bounded writer refuses to write outside exact allowed edit surfaces and stops with `status: interaction_required` when missing. Parent owns input. Deriving it is part of planning delegation, not writer/human task.
+Never authorize deletion of untracked root build artifacts (e.g. `biggz.exe`) as "cleanup" — workers have deleted the orchestrator's own toolchain binary this way. Build outputs are removed only by explicit human instruction.
 
 Before launching bounded writer (`general`/`explore` fallback), derive allowed edit surface from delegated task — files planned change must touch, plus directories where task authorizes new files — and pass in delegated prompt under `## Allowed edit surfaces` heading, in same exact-path form as `## Skills to load before work`:
 

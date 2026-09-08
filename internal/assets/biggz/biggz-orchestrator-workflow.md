@@ -169,6 +169,8 @@ Cost-aware validation:
 
 On PASS: continue to next phase. On FAIL: re-run same phase once with corrective feedback naming specific failures. Re-validate; if fails again, STOP chain and report phase, both attempts, recommended fix. Never advance on failed gate.
 
+Gate evidence MUST be re-verified fresh before every synthesis that claims external state (CI runs, check suites, run IDs): re-read via API at report time. Stale IDs (expired/404 runs, superseded payloads) have been cited as green before — treat any evidence older than the latest state as suspect until re-read.
+
 One-rerun quality rule is subordinate to Native Runtime Attempt Authority: every rerun still requires fresh `sdd-attempt acquire`; if provider returns `blocked`/`complete`, stop.
 
 A terminal `sdd_task_result_empty`/`sdd_task_result_malformed` (`BIGGZ_AI_SDD_FAILURE` + `biggz-ai.sdd-task-result-failure/v1` JSON) is transport failure, not gate failure: preserve JSON, run `continuation` once, surface typed failure and wait for user decision. Later launch receives `sdd_task_dispatch_latched` — never dispatched; start new session.
