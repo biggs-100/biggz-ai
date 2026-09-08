@@ -59,6 +59,11 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: windows-latest
+            test_timeout: 300s
+    env:
+      BIGGZ_TEST_TIMEOUT: ${{ matrix.test_timeout }}
     steps:
       - name: Require successful format
         if: needs.format.result != 'success'
@@ -82,8 +87,10 @@ jobs:
 
       # -short skips the e2e suite (it needs the prebuilt binary and runs in
       # its own matrix job below) and a slow store integration test.
+      # Windows runners are markedly slower (cold build cache + Defender);
+      # the package timeout follows BIGGZ_TEST_TIMEOUT (300s on windows).
       - name: Test
-        run: go test ./... -short -count=1 -timeout 180s
+        run: go test ./... -short -count=1 -timeout ${BIGGZ_TEST_TIMEOUT:-180s}
 
   complexity:
     name: Complexity
@@ -430,7 +437,8 @@ jobs:
       - name: Verify BuildVersion
         run: |
           set -e
-          bin=$(find dist -type f -path "*linux*" -name "biggz" | head -n 1)
+          bin=$(find dist -type f -path "*linux_amd64*" -name "biggz" | head -n 1)
+          if [ -z "$bin" ]; then bin=$(find dist -type f -path "*linux*" -name "biggz" | head -n 1); fi
           if [ -z "$bin" ]; then bin=$(find dist -type f -name "biggz" | head -n 1); fi
           echo "Found binary: $bin"
           if [ -z "$bin" ]; then
