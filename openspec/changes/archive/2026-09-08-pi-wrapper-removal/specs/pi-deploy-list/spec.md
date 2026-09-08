@@ -1,12 +1,6 @@
-# Pi Deploy List Specification
+# Delta for pi-deploy-list
 
-## Purpose
-
-The new guard module MUST ship with pi: `internal/install/steps/pi_extensions.go`
-MUST list it for deploy so the static ESM imports resolve in the deployed
-`~/.pi/agent/extensions/` directory.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Guard Registered for Deploy
 
@@ -30,6 +24,8 @@ The system MUST include `{"pi/biggz-session-guard.js", "biggz-session-guard.js"}
 - GIVEN the updated deploy list
 - WHEN running `go build ./...` and deploying extensions
 - THEN build MUST pass, deployed dir MUST contain `biggz-session-guard.js` and MUST NOT contain either wrapper
+
+## ADDED Requirements
 
 ### Requirement: Stale Wrapper Self-Heal on Upgrade
 

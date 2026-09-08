@@ -501,10 +501,10 @@ Before marking any SDD/review change green, run the three synthesis/review gate 
 ```bash
 go vet ./...
 go test ./... -count=1 -timeout 180s
-node --test internal/assets/pi/biggz-synthesis-gate.test.mjs
+node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs
 ```
 
-Expected: `go vet` clean, `go test` green (including `TestLedgerRegression`, `TestContracts*`, `TestSynthesis*`), and `node --test` green (checkpoint-gated blocking, thin advise, child bypass, same-turn race, preflight allowance). CI enforces the same three commands plus `node --check internal/assets/pi/biggz-synthesis-gate.js`.
+Expected: `go vet` clean, `go test` green (including `TestLedgerRegression`, `TestContracts*`, `TestSynthesis*`), and `node --test` green (deployed-list factory shape). CI enforces the same three commands plus `node --check` on remaining pi extensions. (`pi-wrapper-removal`: `biggz-synthesis-gate.test.mjs` retired with the wrapper; Go canonical gate covered by `go test ./internal/sdd`.)
 
 ## Success Criteria
 

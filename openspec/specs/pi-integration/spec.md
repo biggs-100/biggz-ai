@@ -31,14 +31,13 @@ The Pi Integration domain covers biggz-ai runtime behavior when hosted inside th
 
 ### Requirement: Synthesis Gate Verification and CI
 
-`biggz-synthesis-gate.test.mjs` MUST cover 4 gates + `orchestrator.test.go`; MUST cover >50KB loop, envelope reject, pending equality, engram alias. CI MUST run `go vet`, `go test`, `node --test` green.
-(Previously: 4 gates only; now adds loop/envelope/pending.)
+Go `internal/sdd/synthesis_gate_test.go` + `transcript_lint_test.go` MUST cover the canonical gate, and `internal/assets/biggz/orchestrator_test.go` MUST cover the orchestrator prompt markers; `biggz-pi-extensions-factory.test.mjs` MUST cover the deployed pi extension list. CI MUST run `go vet`, `go test` green. (Previously: `biggz-synthesis-gate.test.mjs` covered the Pi-side gate; retired with the wrapper in `pi-wrapper-removal` — Pi-side enforcement no longer deployed, Go canonical is the enforced gate.)
 
 #### Scenario: Gate tests pass
 
-- GIVEN `node --test biggz-synthesis-gate.test.mjs`
+- GIVEN the remaining gate suites (`go test ./internal/sdd`, `go test ./internal/assets/biggz`, `node --test biggz-pi-extensions-factory.test.mjs`)
 - WHEN fixtures run
-- THEN MUST pass and block asserts `isError:true`
+- THEN MUST pass and Go block asserts `isError:true`
 
 ### Requirement: Question Envelope Validation
 

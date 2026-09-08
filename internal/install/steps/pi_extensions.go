@@ -61,16 +61,17 @@ func (p *PiExtensionsStep) Prepare(ctx context.Context) error {
 
 // piExtensionsDeployList returns the canonical deploy list for pi extensions.
 // Keep in sync with internal/assets/pi/biggz-pi-extensions-factory.test.mjs.
-// PR2 retains biggz-memory-chrome.js + biggz-synthesis-gate.js wrappers one release gated on !pi.getTool("biggz_mem_save") (adapter-aware fallback).
+// biggz-memory-chrome.js + biggz-synthesis-gate.js wrappers are excluded:
+// the adapter-aware fallback is retired, native /mcp via pi-mcp-adapter@^2 is
+// the only memory path. JS sources stay on disk until the Phase-2 stability
+// gate + one-release soak allows deletion.
 func piExtensionsDeployList() []struct{ asset, target string } {
 	list := []struct{ asset, target string }{
 		{"pi/biggz-thinking-wrap.js", "biggz-thinking-wrap.js"},
-		{"pi/biggz-memory-chrome.js", "biggz-memory-chrome.js"},
 		{"pi/biggz-tool-interception.js", "biggz-tool-interception.js"},
 		{"pi/biggz-extension-api.js", "biggz-extension-api.js"},
 		{"pi/biggz-session-guard.js", "biggz-session-guard.js"},
 		{"pi/biggz-last-model.js", "biggz-last-model.js"},
-		{"pi/biggz-synthesis-gate.js", "biggz-synthesis-gate.js"},
 		{"pi/biggz-wait-pretty.js", "biggz-wait-pretty.js"},
 		{"pi/biggz-footer.js", "biggz-footer.js"},
 		{"pi/biggz-tool-pills.js", "biggz-tool-pills.js"},
@@ -163,8 +164,12 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 	// tree that was never ported, and they bound to the gentle-ai binary
 	// instead of biggz. Deploying them crashed pi on startup ("Cannot find
 	// module '../lib/sdd-preflight.ts'"). Their features are covered
-	// natively by biggz-synthesis-gate.js, biggz-tool-pills.js,
+	// natively by the Go synthesis gate (internal/sdd/synthesis_gate.go),
+	// biggz-session-guard.js, biggz-tool-pills.js,
 	// skill-registry.ts and the biggz review/SDD CLI commands.
+	// (2026-09-08 pi-wrapper-removal: biggz-synthesis-gate.js no longer
+	// deployed either — excluded from piExtensionsDeployList with stale
+	// self-heal; native /mcp via pi-mcp-adapter@^2 is the only memory path.)
 	extCount := 0
 	for i, e := range extensions {
 		select {
@@ -230,6 +235,12 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 		// crash pi on startup with "Cannot find module '../lib/...'".
 		extDir := piExtensionsDir(p.HomeDir)
 		for _, stale := range []string{"gentle-ai.ts", "quiet-tools.ts", "sdd-init.ts", "startup-banner.ts"} {
+			_ = os.Remove(filepath.Join(extDir, stale))
+		}
+		// Self-heal retired wrappers: stale biggz-memory-chrome.js +
+		// biggz-synthesis-gate.js copies keep enforcing the duplicate gate.
+		// Absent files are a silent no-op (os.Remove error ignored).
+		for _, stale := range []string{"biggz-memory-chrome.js", "biggz-synthesis-gate.js"} {
 			_ = os.Remove(filepath.Join(extDir, stale))
 		}
 		_ = os.RemoveAll(filepath.Join(extDir, "_disabled_broken_backup"))

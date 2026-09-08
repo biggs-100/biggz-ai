@@ -1,0 +1,5 @@
+name: pi-wrapper-removal
+created: "2026-09-08T15:30:27Z"
+phase: explore
+description: "Remove Pi JS wrappers biggz-memory-chrome.js (14KB) and biggz-synthesis-gate.js (53KB) after validating native /mcp stable (pi-mcp-adapter@2, ProvisionBigMemMCP, doctor PiMCPAdapterCheck, pi list OK). Keep fail-closed synthesis gate behavior and session-guard factory intact."
+status: active
