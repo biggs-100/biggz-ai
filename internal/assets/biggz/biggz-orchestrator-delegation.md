@@ -170,10 +170,7 @@ After tooling/worktree incident: `stop writes → parent captures git status →
 
 For selected SDD work, use delivery strategy, chain strategy, workload forecast, and approval gates in `biggz-orchestrator-workflow.md`. Direct/delegated work do not create SDD artifacts.
 
-A checkpoint ask without immediately preceding `## Sub-agent Result` markdown is INVALID and will be blocked. REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
+A checkpoint ask without immediately preceding `## Sub-agent Result` markdown is INVALID and will be blocked.
 
 ### Ask contract (blocking — synthesis required)
 
@@ -189,10 +186,7 @@ The agent owns context-before-question; gate blocks if missing synthesis (120s w
    Before invoking the question tool, re-read ONLY the question text +
    options and confirm a reader who never saw this chat could decide
    correctly. If not, rewrite — do not call.
-   BAD: "Spec lista. ¿Vamos a design?"
-   GOOD: "Spec SDD2 lista (6 reqs, 9 escenarios, Store *Ctx + filtro SQL).
-   Design resolverá cap-50, firma ctx y key-only (riesgo: key-only puede
-   exigir método Store nuevo). Proceed lanza sdd-design ahora."
+   GOOD: "Spec SDD2 lista (6 reqs, 9 escenarios). Proceed lanza sdd-design ahora."
 2. Checkpoint meaning lives in option labels: offer proceed/adjust/stop
    (or continue/correct) only for real post-delegation checkpoints.
 3. Respect the tool's own envelope limits (header ≤16, label ≤60, 2-4

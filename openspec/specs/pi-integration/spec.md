@@ -175,36 +175,128 @@ The system MUST gate mouse support via `BIGGZ_MOUSE=1` opt-in using `enableMouse
 
 ### Requirement: Pi BigMem MCP Provisioning via Adapter
 
-The system MUST provision `mcpServers.bigmem` with `command=BiggzMCPPath()`, `args=["--tools=agent","--prefix=biggz"]`, `type="local"` plus `imports:["opencode"]` and `directTools` via `ProvisionBigMemMCP` into BOTH `~/.pi/agent/settings.json` and `~/.pi/agent/mcp.json` atomically via `filemerge.WriteFileAtomic`, preserving other servers; project `.pi/mcp.json` overlays global but `bigmem` MUST stay authoritative.
+The system MUST provision `mcpServers.bigmem` with `command=BiggzMCPPath()`, `args=["--tools=agent","--prefix=biggz"]`, `type="local"` plus `imports:["opencode"]` and `directTools` equal to exactly the 10-tool allowlist (`save`, `search`, `get_observation`, `context`, `session_summary`, `save_prompt`, `update`, `timeline`, `review`, `judge`) via `ProvisionBigMemMCP` into BOTH `~/.pi/agent/settings.json` and `~/.pi/agent/mcp.json` atomically via `filemerge.WriteFileAtomic`, preserving other servers; merge MUST be allowlist-prune (drop the 10 removed BigMem names when present, preserve foreign entries); project `.pi/mcp.json` overlays global but `bigmem` MUST stay authoritative; server `ProfileAgent` MUST stay at 20 tools.
 
-#### Scenario: Fresh provision correct shape
+#### Scenario: Fresh provision is 10 tools
 - GIVEN no Pi MCP config exists
 - WHEN `ProvisionBigMemMCP` executes
-- THEN `settings.json` MUST have `mcpServers.bigmem` with `--prefix=biggz` and `mcp.json` MUST have `mcpServers.bigmem` + `imports:["opencode"]` + `directTools`
+- THEN `directTools` MUST equal exactly the 10 allowlist in both files
 
-#### Scenario: Merge preserves others atomically
-- GIVEN `settings.json` with `mcpServers.other`
+#### Scenario: Reinstall prunes stale 10
+- GIVEN `mcp.json` with all 20 `directTools`
+- WHEN reinstall merges
+- THEN the 10 removed names MUST be dropped, 10 allowlist MUST remain
+
+#### Scenario: Foreign entries preserved atomically
+- GIVEN `settings.json` with `mcpServers.other` plus foreign `directTools`
 - WHEN merge runs
-- THEN `other` MUST be preserved, `bigmem` added/updated, failed write MUST leave target unchanged
+- THEN `other` and foreign entries MUST be preserved; failed write MUST leave target unchanged
 
 #### Scenario: Global vs project precedence
 - GIVEN global and project `mcp.json` exist
 - WHEN adapter resolves
 - THEN project MUST overlay global but `bigmem` MUST win in both files
 
-### Requirement: Adapter-Aware Wrapper Fallback
+#### Scenario: Server stays at 20
+- GIVEN `--tools=agent` server profile
+- WHEN `tools/list` runs
+- THEN `ProfileAgent` MUST still expose all 20 tools
 
-Wrappers `biggz-memory-chrome`/`biggz-synthesis-gate` MUST gate on `!pi.getTool("biggz_mem_save")` to avoid double-render; when absent MUST fallback for one release; `PI_SUBAGENT_CHILD=1` bypass preserved.
+### Requirement: Slim APPEND_SYSTEM Generation
 
-#### Scenario: Adapter present suppresses wrapper
-- GIVEN `pi.getTool("biggz_mem_save")` returns native tool
-- WHEN wrapper handler fires
-- THEN it MUST no-op without pill duplication or re-block
+The system MUST generate `APPEND_SYSTEM.md` with a single REMINDER block, all `<!-- biggz:* -->` markers, gate template, and `{{BIGGZ_BACKGROUND_POLICY}}` plus other template tokens intact, with zero semantic change (prose/example trim only).
 
-#### Scenario: Adapter absent retains wrapper
-- GIVEN `pi.getTool("biggz_mem_save")` falsy
-- WHEN handlers fire
-- THEN wrappers MUST render pill and enforce gate as before
+#### Scenario: Single REMINDER with markers intact
+- GIVEN asset trim applied
+- WHEN `APPEND_SYSTEM.md` is generated
+- THEN exactly one REMINDER MUST exist and all markers/template/tokens MUST be present
+
+#### Scenario: Reinstall does not reduplicate REMINDER
+- GIVEN existing slim `APPEND_SYSTEM.md`
+- WHEN reinstall regenerates
+- THEN REMINDER count MUST stay one
+
+### Requirement: Reinstall Convergence and Rollback
+
+The system MUST converge fresh and existing installs to the 10-tool `directTools` plus slim prompt on every `biggz install --agent pi`; revert of sources plus reinstall MUST restore 20-tool promotion and full prompt with no migration.
+
+#### Scenario: Existing install converges
+- GIVEN deployed fat 20-tool `mcp.json`
+- WHEN `biggz install --agent pi` re-runs
+- THEN `directTools` MUST equal the 10 allowlist
+
+#### Scenario: Rollback restores fat state
+- GIVEN slim sources reverted
+- WHEN `biggz install --agent pi` re-runs
+- THEN 20-tool promotion and full prompt MUST return
+
+### Requirement: Native-Only Pi Memory Path
+
+The system MUST serve `biggz_mem_*` via native `/mcp` (`pi-mcp-adapter@^2`) with no wrapper fallback. Provisioning and annotations requirements stay unchanged.
+
+#### Scenario: Fresh install serves tools without wrappers
+
+- GIVEN fresh install with both wrappers excluded
+- WHEN operator runs `pi list` or `/mcp`
+- THEN native `biggz_mem_*` (at least `biggz_mem_save`) MUST appear
+
+#### Scenario: Doctor gate passes natively
+
+- GIVEN provisioned `settings.json` + `mcp.json`
+- WHEN `biggz doctor` runs `pi-mcp-adapter` check
+- THEN result MUST be PASS (dir present, version `2.x`, `bigmem` valid, `biggz-mcp --help` exit 0)
+
+#### Scenario: Native tool handle truthy in harness
+
+- GIVEN Pi harness with native adapter loaded
+- WHEN extension calls `pi.getTool("biggz_mem_save")`
+- THEN result MUST be truthy and wrappers MUST stay no-op/absent
+
+#### Scenario: Session-guard factory intact
+
+- GIVEN wrappers removed from deploy list
+- WHEN Pi starts and loads `biggz-session-guard.js` factory
+- THEN Pi MUST start without `Extension does not export a valid factory function`
+
+### Requirement: Phase-2 Stability Gate
+
+The system MUST delete wrapper sources only when ALL criteria pass after one-release soak with zero fallback-firing reports.
+
+| # | Criterion |
+|---|-----------|
+| 1 | `doctor pi-mcp-adapter` PASS |
+| 2 | `pi.getTool("biggz_mem_save")` truthy, `pi list` shows `biggz_mem_*` |
+| 3 | `settings.json`+`mcp.json` carry command/args/type/imports/directTools |
+| 4 | `go vet` + `go test` + `node --check` green |
+| 5 | One-release soak, zero fallback reports |
+
+#### Scenario: All criteria pass allows Phase 2
+
+- GIVEN all five criteria verified after soak
+- WHEN release manager approves source deletion
+- THEN deletion of both JS sources MAY proceed
+
+#### Scenario: Any criterion fails blocks Phase 2
+
+- GIVEN any single criterion failing or soak incomplete
+- WHEN Phase 2 deletion evaluated
+- THEN sources MUST be retained and deploy-list exclusion stays
+
+### Requirement: Single-Commit Rollback
+
+The system MUST support single-commit revert restoring wrappers, plus reinstall and remedy paths.
+
+#### Scenario: Revert restores wrappers
+
+- GIVEN Phase 1 commit reverted
+- WHEN `biggz install --agent pi` re-runs
+- THEN both wrappers MUST redeploy and `pi list` MUST show them
+
+#### Scenario: Remedy re-provisions native path
+
+- GIVEN native adapter missing or stale
+- WHEN operator runs remedy `pi install npm:pi-mcp-adapter@^2`
+- THEN `doctor pi-mcp-adapter` MUST return to PASS
 
 ### Requirement: BigMem MCP Tool Annotations
 

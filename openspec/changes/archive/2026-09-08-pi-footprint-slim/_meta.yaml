@@ -1,0 +1,5 @@
+name: pi-footprint-slim
+created: 2026-09-08T17:23:06Z
+phase: explore
+description: "Port the proven deployed 429 relief into repo sources so reinstall preserves it: ProvisionBigMemMCP directTools 20 to 10 (biggz_mem_save, search, get_observation, context, session_summary, save_prompt, update, timeline, review, judge), slim APPEND_SYSTEM generation (dedupe REMINDER x5 to x1, trim verbose examples, zero semantic change, keep all markers/template), update mirror tests, reinstall, verify 429 relief."
+status: active

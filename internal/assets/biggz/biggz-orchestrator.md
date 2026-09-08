@@ -65,13 +65,9 @@ The checkpoint ask_user_choice/ask_user_question/question call MUST follow this 
 
 Additional rules:
 1. Emit synthesis after EVERY delegated sub-agent and STOP for human decision when checkpoint; do NOT silently continue without synthesis even in auto mode for non-checkpoint.
-2. Use lossless blocking-prompt route when native UI available and representable; otherwise emit COMPLETE envelope as plain chat and STOP. REMINDER: synthesis markdown is separate chat markdown emitted FIRST in same turn, adjacent, before the tool call. Do NOT put synthesis inside the tool's question param.
+2. Use lossless blocking-prompt route when native UI available and representable; otherwise emit COMPLETE envelope as plain chat and STOP. Note: synthesis markdown is separate chat markdown emitted FIRST in same turn, adjacent, before the tool call. Do NOT put synthesis inside the tool's question param.
 3. Never auto-continue without human confirmation, except when user said `auto` in Session Preflight (still surface gate failures). For non-SDD delegated work, checkpoint is always interactive — no auto bypass.
 
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
-REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
 REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
 
 #### Pending Question Persistence (biggz-ai.pending-question/v1)
