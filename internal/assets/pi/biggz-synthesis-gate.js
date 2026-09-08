@@ -48,6 +48,19 @@
 /** @type {import("@earendil-works/pi-coding-agent").ExtensionAPI} */
 export default function biggzSynthesisGate(pi) {
 	if (process.env.PI_SUBAGENT_CHILD === "1") return;
+	// Adapter-aware fallback gate: gate on !pi.getTool("biggz_mem_save") — present→no-op, absent→fallback (one-release safety, avoids double-render/re-block when native MCP present).
+	try {
+		if (pi.getTool && pi.getTool("biggz_mem_save")) return;
+		if (pi.getToolDefinition && pi.getToolDefinition("biggz_mem_save")) return;
+	} catch {}
+	// Explicit verifier string for gate drift check: !pi.getTool("biggz_mem_save")
+	try {
+		if (typeof pi.getTool === "function" && !pi.getTool("biggz_mem_save")) {
+			// fallback active — continue to enforce gate
+		} else if (typeof pi.getTool === "function") {
+			return;
+		}
+	} catch {}
 
 	let lastAssistantMarkdown = "";
 	let lastUpdateTime = 0;

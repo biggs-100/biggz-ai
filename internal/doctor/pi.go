@@ -325,3 +325,6 @@ func (c *PiLastModelCheck) Remedy() *Remedy {
 		},
 	}
 }
+
+// Ensure PiMCPAdapterCheck implements Check (registered in doctorRun via NewPiMCPAdapterCheck).
+var _ Check = (*PiMCPAdapterCheck)(nil)

@@ -118,6 +118,12 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	// packages invisible to pi's capability probes and FleetView would never
 	// become ready. `pi install` writes into the agent-owned node_modules
 	// where pi actually discovers packages.
+	// - npm:pi-mcp-adapter@^2 (nicobailon/pi-mcp-adapter, 761k/mo, stdio +
+	//   streamable-http/sse, imports:["opencode"], directTools) is the
+	//   canonical MCP client for Pi — it spawns `biggz-mcp --tools=agent
+	//   --prefix=biggz` and exposes `biggz_mem_*` as native Pi tools with
+	//   `/mcp` health. Pinned `^2` (v2.32.1 shape), idempotent via `pi
+	//   install`, offline-tolerant (MCP JSON remains harmless).
 	// - npm:pi-subagents-j0k3r must use `pi install` (not `npm install -g`) — pi
 	//   loader only scans ~/.pi/agent/npm.
 	// - npm:@juicesharp/rpiv-ask-user-question provides the `ask_user_question`
@@ -135,6 +141,7 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	//   via `pi install`; it is copied to `~/.pi/agent/extensions/` via
 	//   DeployPiQuestionMouse (filemerge) during `biggz install --agent pi`.
 	return [][]string{
+		{"pi", "install", "npm:pi-mcp-adapter@^2"},
 		{"pi", "install", "npm:pi-subagents-j0k3r"},
 		{"pi", "install", "npm:@juicesharp/rpiv-ask-user-question"},
 		{"pi", "install", "npm:rpiv-todo"},
@@ -368,12 +375,120 @@ func (a *Adapter) mergePiMCPFileBigMem(path, mcpBinary string) (filemerge.WriteR
 	}
 	obj["mcpServers"] = servers
 
+	// imports:["opencode"] — authoritative, deduped, preserves other imports.
+	// pi-mcp-adapter reuses opencode.json biggez server via imports, while
+	// bigmem remains authoritative in both layers. WriteFileAtomic preserves
+	// other mcpServers and ensures no partials.
+	obj["imports"] = mergePiImports(obj["imports"])
+
+	// directTools — promote BigMem tools to top-level for pi-mcp-adapter.
+	// Unconditional (adapter ignores unknown); mirrors MCP spec filtering.
+	obj["directTools"] = mergePiDirectTools(obj["directTools"])
+
 	encoded, err := json.MarshalIndent(obj, "", "  ")
 	if err != nil {
 		return filemerge.WriteResult{}, fmt.Errorf("marshal pi mcp %q: %w", path, err)
 	}
 	encoded = append(encoded, '\n')
 	return filemerge.WriteFileAtomic(path, encoded, 0o644)
+}
+
+// piDirectTools are BigMem tools promoted to top-level via pi-mcp-adapter directTools.
+// Agent profile parity with cmd/biggz-mcp ProfileAgent; biggz_ prefix from --prefix=biggz.
+var piDirectTools = []string{
+	"biggz_mem_capture_passive",
+	"biggz_mem_compare",
+	"biggz_mem_context",
+	"biggz_mem_current_project",
+	"biggz_mem_delete",
+	"biggz_mem_get_observation",
+	"biggz_mem_judge",
+	"biggz_mem_pin",
+	"biggz_mem_review",
+	"biggz_mem_save",
+	"biggz_mem_save_prompt",
+	"biggz_mem_search",
+	"biggz_mem_session_end",
+	"biggz_mem_session_start",
+	"biggz_mem_session_summary",
+	"biggz_mem_stats",
+	"biggz_mem_suggest_topic_key",
+	"biggz_mem_timeline",
+	"biggz_mem_unpin",
+	"biggz_mem_update",
+}
+
+func mergePiImports(existing any) []any {
+	var out []any
+	seen := map[string]struct{}{}
+	add := func(v string) {
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	// Preserve existing imports (handle []any or []string)
+	switch v := existing.(type) {
+	case []any:
+		for _, e := range v {
+			if s, ok := e.(string); ok && s != "" {
+				add(s)
+			}
+		}
+	case []string:
+		for _, s := range v {
+			if s != "" {
+				add(s)
+			}
+		}
+	case string:
+		if v != "" {
+			add(v)
+		}
+	}
+	// Ensure opencode authoritative
+	add("opencode")
+	if out == nil {
+		out = []any{"opencode"}
+	}
+	return out
+}
+
+func mergePiDirectTools(existing any) []any {
+	seen := map[string]struct{}{}
+	var out []any
+	add := func(v string) {
+		if _, ok := seen[v]; ok {
+			return
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	switch v := existing.(type) {
+	case []any:
+		for _, e := range v {
+			if s, ok := e.(string); ok && s != "" {
+				add(s)
+			}
+		}
+	case []string:
+		for _, s := range v {
+			if s != "" {
+				add(s)
+			}
+		}
+	}
+	for _, want := range piDirectTools {
+		add(want)
+	}
+	if out == nil {
+		out = []any{}
+		for _, want := range piDirectTools {
+			out = append(out, want)
+		}
+	}
+	return out
 }
 
 func readPiJSONObject(path string) (map[string]any, error) {

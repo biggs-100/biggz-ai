@@ -183,6 +183,8 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	result.PromptsDeployed = overlayStep.PromptsDeployed
 	result.PiAgentsDeployed = piStep.Deployed
 	// MCP binary + config (post-pipeline, not yet in steps).
+	// PR2 ordering: DeployMCPBinaryToHomeDir → ProvisionBigMemMCP (settings.json+mcp.json atomically via WriteFileAtomic, args --prefix=biggz, imports opencode) → pi install (pi-mcp-adapter@^2).
+	// Wrappers retained one release gated on !pi.getTool("biggz_mem_save"); --dry-run zero writes outside TempDir.
 	if !cfg.DryRun {
 		mcpBinPath, err := DeployMCPBinaryToHomeDir(homeDir, cfg.DryRun)
 		if err != nil {
@@ -1324,7 +1326,7 @@ func deployMCPConfigFile(adapter plugin.AgentAdapter, homeDir, mcpBinaryPath str
 	}
 	servers["bigmem"] = map[string]any{
 		"command": mcpBinaryPath,
-		"args":    []string{"--tools=agent"},
+		"args":    []string{"--tools=agent", "--prefix=biggz"},
 		"type":    "local",
 	}
 	existing["mcpServers"] = servers

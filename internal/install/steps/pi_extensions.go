@@ -61,6 +61,7 @@ func (p *PiExtensionsStep) Prepare(ctx context.Context) error {
 
 // piExtensionsDeployList returns the canonical deploy list for pi extensions.
 // Keep in sync with internal/assets/pi/biggz-pi-extensions-factory.test.mjs.
+// PR2 retains biggz-memory-chrome.js + biggz-synthesis-gate.js wrappers one release gated on !pi.getTool("biggz_mem_save") (adapter-aware fallback).
 func piExtensionsDeployList() []struct{ asset, target string } {
 	list := []struct{ asset, target string }{
 		{"pi/biggz-thinking-wrap.js", "biggz-thinking-wrap.js"},

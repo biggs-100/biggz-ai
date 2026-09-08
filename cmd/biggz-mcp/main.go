@@ -1343,6 +1343,25 @@ func buildToolList(profile string) []map[string]any {
 	return filtered
 }
 
+func toolAnnotations(name string) map[string]any {
+	// MCP annotations for adapter filtering — openWorld always false (local SQLite).
+	// readOnly true for search/get-like tools, false for mutating tools (REQ-Annotations).
+	switch name {
+	case "mem_search", "mem_get_observation", "mem_context", "mem_timeline", "mem_stats", "mem_current_project", "mem_suggest_topic_key", "mem_doctor", "mem_compare", "bigmem_branch_list", "bigmem_branch_get":
+		return map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+	case "mem_delete":
+		return map[string]any{"readOnlyHint": false, "destructiveHint": true, "idempotentHint": true, "openWorldHint": false}
+	case "mem_merge_projects":
+		return map[string]any{"readOnlyHint": false, "destructiveHint": true, "idempotentHint": false, "openWorldHint": false}
+	case "mem_save", "mem_save_prompt", "mem_capture_passive", "mem_session_start", "mem_session_end", "mem_session_summary", "bigmem_branch_create":
+		return map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false}
+	case "mem_update", "mem_pin", "mem_unpin", "mem_judge", "mem_review":
+		return map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+	default:
+		return map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": false, "openWorldHint": false}
+	}
+}
+
 func toolDef(name, desc string, props map[string]any, required []string) map[string]any {
 	t := map[string]any{"name": name, "description": desc}
 	req := required
@@ -1354,6 +1373,7 @@ func toolDef(name, desc string, props map[string]any, required []string) map[str
 	} else {
 		t["inputSchema"] = map[string]any{"type": "object", "properties": map[string]any{}, "required": req}
 	}
+	t["annotations"] = toolAnnotations(name)
 	return t
 }
 

@@ -95,6 +95,7 @@ func doctorRun() int {
 			doctor.NewPiSubagentsCheck(),
 			doctor.NewPiLastModelCheck(),
 			doctor.NewPiWebSearchCheck(),
+			doctor.NewPiMCPAdapterCheck(),
 			doctor.NewComplexityCheck(),
 			doctor.NewGlobalDriftCheck(),
 			doctor.NewLocalOverrideCheck(),
