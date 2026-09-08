@@ -1,6 +1,6 @@
 ---
 name: _shared
-description: Shared SDD references for installed skills. Not invokable.
+description: "Shared SDD references for installed skills. Trigger: orchestrator injects sdd-phase-common."
 disable-model-invocation: true
 user-invocable: false
 license: MIT

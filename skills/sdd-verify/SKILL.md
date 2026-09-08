@@ -10,51 +10,32 @@ metadata:
   delegate_only: true
 ---
 <!-- section:model-capable -->
-## Language Domain Contract
+## Language
 
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Artifacts default to English (neutral Spanish only if explicitly requested for that artifact). Replies match the user's language; comments follow the target context language.
 
 ## Activation Contract
 
-Run when the orchestrator launches verification for an SDD change. You are the quality gate: prove completion with source inspection plus real execution evidence.
+Quality gate: prove completion with source inspection plus real execution evidence.
 
-The orchestrator should provide structured status from `_shared/sdd-status-contract.md`. Use its `schemaName`, `planningHome`, `changeRoot`, `artifactPaths`, `contextFiles`, task progress, dependency states, and `actionContext` before judging artifacts.
+Use structured status from `_shared/sdd-status-contract.md` (`schemaName`, `planningHome`, `changeRoot`, `artifactPaths`, `contextFiles`, progress, dependencies, `actionContext`) before judging.
 
 ## Hard Rules
 
-- Read all available status `contextFiles` before judging implementation. Full spec-driven verification reads proposal, specs, design, and tasks; partial artifact sets degrade as described below.
-- Run full verification only after all tasks are complete. If any task is pending, return `blocked` without running the full suite.
-- Execute relevant tests; static analysis alone is never verification.
-- A spec scenario is compliant only when a covering test passed at runtime.
-- Compare specs first, design second, task completion third.
-- Do not fix issues; report them for the orchestrator/user.
-- Build the complete report as exact candidate bytes, then run `biggz sdd-verify-validate` with authoritative spec counts before any OpenSpec or Engram write. If the validator is unavailable or denies admission, make zero writes and leave the prior report untouched; otherwise persist the same bytes, including a valid `fail`.
-- Persist `verify-report` according to mode: Engram, openspec file, hybrid both, or inline-only for `none`.
-- If Strict TDD is active, load `strict-tdd-verify.md`; if inactive, never load it.
-- Return the Section D envelope from `_shared/sdd-phase-common.md`.
-- Count the actual requirements and scenarios from the retrieved specs; never invent envelope totals.
-- Record current test/build commands, exit codes, and `test_output_hash` / `build_output_hash` values in the strict envelope.
-- Model/provider/profile/effort selection remains user-owned and is never changed by verification.
-- This is the one independent requirements/runtime final verification. A contradiction or new failing check returns FAIL/escalation; it never starts 4R, Judgment Day, a refuter, another correction, or scoped validation.
-- For native final verification, consume only the authoritative preterminal transaction plus the preserved policy and canonical ledger preimages. Do not require `receipt.json`, `chain-bundle.json`, `gate-context.json`, or any terminal-only artifact: final verification must complete before those artifacts can exist.
-- Return and preserve the exact canonical verification-evidence bytes, not only their hash. The parent hashes that preimage for the final-verification completion step and retains the same bytes for the later gate request; hashes cannot reconstruct artifact content.
-- MUST use the ledger-bound evidence path: run `biggz sdd-attempt acquire <name> --request-id <uuid> --work-unit verify --evidence-goal "verify X req Y scen" --max-attempts 3 --max-lines 400` via bash before tests, capture test output hash via `sha256sum` (e.g. `go test ./... 2>&1 | tee /tmp/verify.out; sha256sum /tmp/verify.out`), then `biggz sdd-attempt settle --token <token> --request-id <uuid2> --outcome <passed|failed> --evidence-revision sha256:<hash> --diagnosis "<d>" --harness-disposition <d> --cleanup-evidence <e> --process-evidence <e>` before writing the verify report. The `evidence_revision` in the persisted `verify-report.md` / Engram envelope MUST equal the settled `sha256:<hash>`. Manual edits to the hash after settle are forbidden and will be detected as invalid `evidence_revision` (ledger trust anchor).
-- If authoritative preflight alone denies verification because review authority is missing, persist a failed strict envelope with the fields below. Both declared commands must not be executed: record exit `125` for each, hash their exact empty output, and bind the observed authority revision from that preflight. Do not use this envelope for substantive failures or command failures.
-
-```yaml
-authority_only_failure: true
-missing_review_authority: true
-substantive_failure: false
-command_failed: false
-observed_authority_revision: sha256:{observed-authority-revision}
-test_exit_code: 125
-build_exit_code: 125
-```
-- Modern Go guidelines check: if tasks or apply-progress touched any `*.go` files, verify that the `use-modern-go` `list` guidance was considered. The verify-report MUST mention that `sh "<skill-dir>/scripts/run-tool.sh" list --file-path <path>` (or `--go-version 1.25`) was consulted for Go changes; if no evidence of that consultation exists, record a WARNING (CRITICAL if clear modernization opportunity was missed without `explain` justification).
+- Read all status `contextFiles` first (proposal/specs/design/tasks; partial sets degrade per Graceful Handling).
+- Full verification only when all tasks complete; else `blocked` without the suite.
+- Run tests — static analysis is never verification; a scenario is compliant only with a passing covering test.
+- Compare specs → design → task completion. Report issues; never fix them.
+- Build the report as exact candidate bytes, then `biggz sdd-verify-validate` before any write. On validator denial/unavailability: zero writes, prior report untouched.
+- Persist `verify-report` per mode (Engram / openspec file / hybrid both / inline-only `none`); return the Section D envelope.
+- Strict TDD active → load `strict-tdd-verify.md`; else never load it.
+- Count real requirements/scenarios (never invent totals); record commands, exit codes, output hashes.
+- Model/provider/profile/effort selection is user-owned; verification never changes it.
+- Contradictions/failing checks return FAIL/escalation — never another review loop. Native final verification consumes only the preterminal transaction + policy + ledger preimages (never terminal-only artifacts).
+- Return and preserve exact canonical verification-evidence bytes (hashes can't reconstruct content).
+- Ledger evidence (mandatory): `sdd-attempt acquire` before tests → `sha256sum` output → `sdd-attempt settle --evidence-revision sha256:<hash>` before the report. Persisted `evidence_revision` MUST equal the settled hash — never hand-edit.
+- Preflight-only denial (missing review authority) → failed strict envelope with `authority_only_failure/missing_review_authority: true`, `test/build_exit_code: 125`, observed authority revision. Never for substantive failures.
+- Modern Go check: `*.go` touched → report MUST note `use-modern-go` `list` consulted; else WARNING (CRITICAL if an obvious fix was missed without `explain`).
 
 ## Decision Gates
 
@@ -63,46 +44,43 @@ build_exit_code: 125
 | Orchestrator says `STRICT TDD MODE IS ACTIVE` | Treat as authoritative. |
 | Cached/config `strict_tdd: true` and runner exists | Strict TDD verify; load module. |
 | Strict TDD false or no runner | Standard verify; skip TDD checks. |
-| `actionContext.mode: workspace-planning` | STOP; full workspace implementation verification is not supported in this slice. |
-| Only tasks artifact exists | Verify task completion only; skip spec/design correctness and record skipped checks. |
-| Tasks + specs exist | Verify completeness and correctness; skip design coherence and record skipped checks. |
-| Proposal/specs/design/tasks exist | Verify all dimensions. |
+| `actionContext.mode: workspace-planning` | STOP — unsupported in this slice. |
+| Only tasks exist | Task completion only; record skipped dimensions. |
+| Tasks + specs exist | Completeness + correctness; skip design coherence. |
+| Full artifacts exist | Verify all dimensions. |
 | Task incomplete | CRITICAL for core task, WARNING for cleanup task. |
 | Test command exits non-zero | CRITICAL. |
 | Spec scenario has no passing covering test | CRITICAL `UNTESTED` or `FAILING`. |
 | Design deviation exists | WARNING unless it breaks a spec. |
-| Go changes lack modern-guidelines evidence | WARNING (record in verify-report whether `use-modern-go` list was consulted); escalate to CRITICAL if missed modernization clearly applies. |
+| Go changes lack modern-guidelines evidence | WARNING (CRITICAL if an obvious modernization was missed). |
 
 ## Execution Steps
 
-1. Load relevant skills via shared SDD Section A.
-2. Retrieve artifacts via shared Section B for the active persistence mode, or read the concrete `contextFiles` from structured status.
-3. Resolve testing/TDD mode from cached capabilities, config, or project files.
-4. Count completed and incomplete tasks. Any unchecked task blocks full verification; focused checks remain an apply work-unit responsibility.
-5. If specs exist, map each spec requirement/scenario to implementation evidence and tests.
-6. If design exists, check design decisions against changed code. If design is missing, skip design coherence and record why.
-7. Run test, build/type-check, and coverage commands when available. For full spec verification, preserve stricter runtime evidence: source inspection alone does not prove spec scenario compliance.
-7a. Ledger gate (mandatory): before any test execution, `acquire` the verify attempt via bash (`biggz sdd-attempt acquire ...` as in Hard Rules) and retain the returned `token`/`revision`; after tests, compute the evidence hash (`sha256sum` of the combined test output) and `settle` via bash (`biggz sdd-attempt settle --token <token> ... --evidence-revision sha256:<hash>`). The `evidence_revision` written to the verify report MUST match the settled hash; do not hand-edit the hash after settle.
-7b. Modern Go check: if tasks/apply-progress touched `*.go`, confirm `use-modern-go` list was consulted (inspect verify evidence or apply-progress notes); ensure verify-report explicitly notes that modern Go guidelines were considered, or record a WARNING with the missing evidence.
-8. Build the behavioral compliance matrix from actual test results when specs/scenarios exist.
-9. Persist and return the verification report, including skipped dimensions for missing artifacts.
+1. Load skills via Section A; retrieve artifacts via Section B (or `contextFiles` from status).
+2. Resolve TDD mode from capabilities/config/project files.
+3. Count tasks — any unchecked blocks full verification.
+4. Map each spec requirement/scenario to implementation + covering test; check design vs code (skip + record if design missing).
+5. Run test/build/coverage commands — inspection alone never proves compliance.
+7a. Ledger gate (mandatory): `acquire` before tests, `sha256sum` the output, `settle` with that hash — report `evidence_revision` MUST match; never hand-edit.
+7b. Modern Go check: confirm `use-modern-go` list was consulted for `*.go` changes or record WARNING.
+8. Build the compliance matrix from actual test results; persist + return the report with skipped dimensions.
 
 ## Output Contract
 
-Return `## Verification Report` with change, mode, completeness table, build/tests/coverage evidence, spec compliance matrix, correctness table, design coherence table, issues grouped as CRITICAL/WARNING/SUGGESTION, and final verdict `PASS`, `PASS WITH WARNINGS`, or `FAIL`.
+Return `## Verification Report`: change, mode, completeness, build/test/coverage evidence, spec + correctness + coherence tables, CRITICAL/WARNING/SUGGESTION issues, verdict `PASS` / `PASS WITH WARNINGS` / `FAIL`.
 
 ## Graceful Artifact Handling
 
-- **Tasks only**: verify objective task completion only. Do not claim spec correctness or design coherence. If all tasks are checked and no runtime evidence is available, verdict may be `PASS WITH WARNINGS` for task completion only.
-- **Tasks + specs**: verify task completeness and requirement/scenario correctness. Runtime test evidence is still required for full spec scenario compliance; missing covering tests are CRITICAL for required scenarios unless project config explicitly allows manual verification.
-- **Full artifacts**: verify completeness, correctness, and coherence.
-- **Unchecked tasks**: always remain CRITICAL, even when other artifacts are missing or warnings-only.
+- **Tasks only**: completion only (`PASS WITH WARNINGS` max without runtime evidence); never claim spec/design correctness.
+- **Tasks + specs**: completeness + correctness; missing covering tests are CRITICAL unless config allows manual verification.
+- **Full artifacts**: completeness, correctness, coherence.
+- **Unchecked tasks**: always CRITICAL.
 
 ## References
 
-- [references/report-format.md](references/report-format.md) — full report template, compliance statuses, and command evidence fields.
-- [strict-tdd-verify.md](strict-tdd-verify.md) — load only when Strict TDD is active.
-- `_shared/sdd-phase-common.md` — skill loading, retrieval, persistence, and return envelope.
+- [references/report-format.md](references/report-format.md) — report template + evidence fields.
+- [strict-tdd-verify.md](strict-tdd-verify.md) — only when Strict TDD is active.
+- `_shared/sdd-phase-common.md` — loading, retrieval, persistence, envelope.
 <!-- /section:model-capable -->
 
 <!-- section:model-small -->
@@ -120,13 +98,9 @@ metadata:
 
 > **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
 
-## Language Domain Contract
+## Language
 
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Artifacts default to English (neutral Spanish only if explicitly requested for that artifact). Replies match the user's language.
 
 ## Purpose
 
@@ -134,26 +108,19 @@ You are a VERIFY sub-agent. You check implementation matches spec acceptance cri
 
 ## Hard Rules
 
-- Read spec acceptance criteria only; count actual requirements/scenarios
-- Inspect only changed files listed in apply-progress/tasks (max 3 files at a time)
-- Use structured status; stop on workspace-planning
-- Run the provided test and build commands; static analysis alone is never verification
-- Record command, exit code, `test_output_hash` and `build_output_hash` in the strict envelope
-- Do not fix issues; a contradiction or failing check escalates, never starts another review loop
-- If Go files were changed, ensure verify-report notes that modern Go guidelines were considered (`use-modern-go` list consulted); otherwise record WARNING
+- Spec acceptance criteria only; count real requirements/scenarios; inspect only changed files (max 3 at a time)
+- Structured status; stop on workspace-planning. Run test + build commands — never inspection-only
+- Strict envelope records command, exit code, `test_output_hash`, `build_output_hash`
+- Report issues; never fix or re-loop. Go changes need `use-modern-go` evidence or WARNING
 
 ## Steps
 
-1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
-2. Retrieve artifacts via Section B for the active mode or concrete `contextFiles` from status
-3. Resolve TDD mode from cached capabilities/config/project files; load `strict-tdd-verify.md` only if active
-4. Count completed vs incomplete tasks; any unchecked blocks full verification — return `blocked`
-5. Map each spec requirement/scenario to implementation and covering test
-6. Check design coherence if design exists; else skip and record why
-7. Run test, build/type-check, coverage commands; preserve runtime evidence
-7a. If Go files were changed, verify `use-modern-go` list was consulted and note it in the report; otherwise record WARNING
-8. Build minimal compliance checks and persist `verify-report` per mode (Engram/openspec/hybrid/none); validate via `biggz sdd-verify-validate` before writes
-9. Return minimal JSON report plus Section D envelope.
+1. Load ≤2 orchestrator-passed SKILL.md paths (only these); retrieve artifacts via Section B (or `contextFiles`)
+2. Resolve TDD mode; load `strict-tdd-verify.md` only if active
+3. Count tasks — any unchecked returns `blocked`
+4. Map each requirement/scenario to implementation + covering test; check design coherence (skip + record if absent)
+5. Run test/build/coverage; confirm `use-modern-go` evidence for Go changes (else WARNING)
+6. Persist `verify-report` per mode after `biggz sdd-verify-validate`; return minimal JSON + Section D envelope.
 
 ## References
 

@@ -10,13 +10,9 @@ metadata:
   delegate_only: true
 ---
 <!-- section:model-capable -->
-## Language Domain Contract
+## Language
 
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Artifacts default to English (neutral Spanish only if explicitly requested for that artifact). Replies match the user's language; comments follow the target context language.
 
 ## Purpose
 
@@ -73,7 +69,7 @@ INVESTIGATE:
 └── Identify dependencies and coupling
 ```
 
-> **Optional — BigMem graph (cost-aware):** When artifact store is `engram`/`hybrid` and `sdd-init/{project}` shows >20 observations or `biggz_mem_search` returns many `topic_keys`, optionally run `biggz bigmem graph --project <project> --format json --limit 20` (or `--format ascii --limit 20`) to visualize `topic_key` hierarchy and `memory_relations` (`related`/`compatible`/`scoped`/`conflicts_with`/`supersedes`) and avoid duplication. CLI-only; skip if ≤20 observations.
+> **Optional — BigMem graph (cost-aware, CLI-only):** if `engram`/`hybrid` with >20 observations, optionally run `biggz bigmem graph --project <project> --format json --limit 20` to avoid duplication; skip if ≤20.
 
 ### Step 4: Analyze Options
 
@@ -155,13 +151,9 @@ metadata:
 
 > **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
 
-## Language Domain Contract
+## Language
 
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Artifacts default to English (neutral Spanish only if explicitly requested for that artifact). Replies match the user's language.
 
 ## Purpose
 
@@ -182,7 +174,7 @@ You are an EXPLORATION sub-agent. You investigate the codebase, compare approach
 1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
 2. Parse the request: feature, bug fix, or refactor and its domain
 3. Investigate codebase (max 3 files): entry points, related functionality, tests, patterns, dependencies
-   - Optional — BigMem graph (cost-aware, CLI-only): if `engram`/`hybrid` and `sdd-init/{project}` shows >20 observations or `biggz_mem_search` returns many `topic_keys`, optionally run `biggz bigmem graph --project <project> --format json --limit 20` (or `--format ascii --limit 20`) to visualize `topic_key` hierarchy and `memory_relations` and avoid duplication; skip if ≤20.
+   - Optional BigMem graph (cost-aware, CLI-only): `biggz bigmem graph --project <project> --format json --limit 20` if >20 observations; skip if ≤20.
 4. Identify affected areas with file paths and why
 5. Compare approaches in a table: Approach | Pros | Cons | Complexity
 6. Assess risks and constraints

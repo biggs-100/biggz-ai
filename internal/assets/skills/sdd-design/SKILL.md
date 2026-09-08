@@ -10,13 +10,9 @@ metadata:
   delegate_only: true
 ---
 <!-- section:model-capable -->
-## Language Domain Contract
+## Language
 
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Artifacts default to English (neutral Spanish only if explicitly requested for that artifact). Replies match the user's language; comments follow the target context language.
 
 ## Purpose
 
@@ -30,12 +26,7 @@ From the orchestrator:
 
 ## Execution and Persistence Contract
 
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `_shared/sdd-phase-common.md`.
-
-- **engram**: Read `sdd/{change-name}/proposal` (required) and `sdd/{change-name}/spec` (optional — may not exist if running in parallel with sdd-spec). Save as `sdd/{change-name}/design`.
-- **openspec**: Read and follow `_shared/openspec-convention.md`.
-- **hybrid**: Follow BOTH conventions — persist to Engram AND write `design.md` to filesystem. Retrieve dependencies from Engram (primary) with filesystem fallback.
-- **none**: Return result only. Never create or modify project files.
+Sections B (retrieval) + C (persistence) from `_shared/sdd-phase-common.md`: `engram` reads proposal (required) + spec (optional), saves `sdd/{change}/design`; `openspec` follows `openspec-convention.md`; `hybrid` both (Engram primary, filesystem fallback); `none` returns inline, never touches files.
 
 ## What to Do
 
@@ -44,15 +35,11 @@ Follow **Section A** from `_shared/sdd-phase-common.md`.
 
 ### Step 2: Read the Codebase
 
-Before designing, read the actual code that will be affected:
-- Entry points and module structure
-- Existing patterns and conventions
-- Dependencies and interfaces
-- Test infrastructure (if any)
+Read affected code first: entry points, patterns, dependencies/interfaces, test infra.
 
-### Step 2a: Applicability-Driven Threat Matrix
+### Step 2a: Threat Matrix
 
-If the design changes routing, shell commands, subprocesses, VCS/PR automation, executable-file classification, or process integration, read `references/threat-matrix.md` and include its matrix in the design. Mark every row `Applicable` or explicit `N/A` with a reason. Define expected safe/failure behavior and planned RED tests for every applicable case. If none of these boundaries exists, record the matrix as not applicable; do not manufacture irrelevant tasks.
+If the design touches routing/shell/subprocess/VCS/executable-classification/process integration, include the `references/threat-matrix.md` matrix (every row `Applicable` or `N/A` + reason, safe/failure behavior + RED tests per applicable row). Otherwise record `N/A`; never manufacture tasks.
 
 ### Step 3: Write design.md
 
@@ -79,26 +66,13 @@ How does this map to the proposal's approach? Reference specs.}
 
 ## Architecture Decisions
 
-### Decision: {Decision Title}
+### Decision: {Title} (repeat per decision)
 
-**Choice**: {What we chose}
-**Alternatives considered**: {What we rejected}
-**Rationale**: {Why this choice over alternatives}
-
-### Decision: {Decision Title}
-
-**Choice**: {What we chose}
-**Alternatives considered**: {What we rejected}
-**Rationale**: {Why this choice over alternatives}
+**Choice**: {chosen} / **Alternatives**: {rejected} / **Rationale**: {why}
 
 ## Data Flow
 
-{Describe how data moves through the system for this change.
-Use ASCII diagrams when helpful.}
-
-    Component A ──→ Component B ──→ Component C
-         │                              │
-         └──────── Store ───────────────┘
+{How data moves through the system; ASCII diagram when helpful.}
 
 ## File Changes
 
@@ -110,8 +84,7 @@ Use ASCII diagrams when helpful.}
 
 ## Interfaces / Contracts
 
-{Define any new interfaces, API contracts, type definitions, or data structures.
-Use code blocks with the project's language.}
+{New interfaces, API contracts, or types in the project's language.}
 
 ## Testing Strategy
 
@@ -123,12 +96,11 @@ Use code blocks with the project's language.}
 
 ## Threat Matrix
 
-{For routing/shell/process integration, include the applicability matrix from `references/threat-matrix.md`. Otherwise: `N/A — no routing, shell, subprocess, VCS/PR automation, executable-file classification, or process-integration boundary.`}
+{Applicability matrix from `references/threat-matrix.md`, or `N/A — no routing/shell/subprocess/VCS/executable/process boundary.`}
 
 ## Migration / Rollout
 
-{If this change requires data migration, feature flags, or phased rollout, describe the plan.
-If not applicable, state "No migration required."}
+{Migration/flag/rollout plan, or "No migration required."}
 
 ## Open Questions
 
@@ -156,10 +128,8 @@ Return to the orchestrator:
 **Location**: `openspec/changes/{change-name}/design.md` (openspec/hybrid) | Engram `sdd/{change-name}/design` (engram) | inline (none)
 
 ### Summary
-- **Approach**: {one-line technical approach}
-- **Key Decisions**: {N decisions documented}
-- **Files Affected**: {N new, M modified, K deleted}
-- **Testing Strategy**: {unit/integration/e2e coverage planned}
+- **Approach / Decisions / Files**: {one line each}
+- **Testing Strategy**: {unit/integration/e2e planned}
 
 ### Open Questions
 {List any unresolved questions, or "None"}
@@ -171,13 +141,10 @@ Ready for tasks (sdd-tasks).
 ## Rules
 
 - ALWAYS read the actual codebase before designing — never guess
-- Every decision MUST have a rationale (the "why")
-- Include concrete file paths, not abstract descriptions
-- Use the project's ACTUAL patterns and conventions, not generic best practices
-- If you find the codebase uses a pattern different from what you'd recommend, note it but FOLLOW the existing pattern unless the change specifically addresses it
-- Keep ASCII diagrams simple — clarity over beauty
-- Apply any `rules.design` from `openspec/config.yaml`
-- If you have open questions that BLOCK the design, say so clearly — don't guess
+- Every decision MUST have a rationale plus concrete file paths
+- FOLLOW existing project patterns unless the change addresses them
+- Keep ASCII diagrams simple; apply `rules.design` from `openspec/config.yaml`
+- Blocking open questions: say so clearly — don't guess
 - **Size budget**: Design artifact MUST be under 800 words. Architecture decisions as tables (option | tradeoff | decision). Code snippets only for non-obvious patterns.
 - Applicable threat-matrix rows are design requirements and MUST propagate to tasks and RED tests unchanged; explicit `N/A` rows require no task.
 - Return envelope per **Section D** from `_shared/sdd-phase-common.md`.
@@ -202,13 +169,9 @@ metadata:
 
 > **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
 
-## Language Domain Contract
+## Language
 
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Artifacts default to English (neutral Spanish only if explicitly requested for that artifact). Replies match the user's language.
 
 ## Purpose
 
@@ -229,14 +192,11 @@ You are a DESIGN sub-agent. You produce `design.md` with architecture decisions,
 ## Steps
 
 1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
-2. Read proposal (required) and spec (optional) via Section B
-3. Read affected codebase files (max 3): entry points, patterns, dependencies
-4. Evaluate threat matrix if routing/shell/subprocess/VCS boundary exists; mark each row Applicable/N/A with RED tests
-5. Write design.md (or compose in memory for engram/none): Technical Approach, 2-3 Architecture Decisions, Data Flow, File Changes, Interfaces, Testing Strategy, Threat Matrix, Migration
-6. Follow size budget: under 800 words, decisions as tables, snippets only for non-obvious patterns
-7. Persist artifact via Section C (`sdd/{change}/design`, type `architecture`)
-8. Verify persisted content before returning
-9. Return summary: approach, key decisions, files affected, open questions, next `sdd-tasks`.
+2. Read proposal (required) + spec (optional) via Section B; read affected code (max 3 files)
+3. Evaluate threat matrix if a routing/shell/subprocess/VCS boundary exists (Applicable/N/A + RED tests)
+4. Write design.md (compose in memory for engram/none): approach, 2-3 decisions, data flow, file changes, interfaces, testing, threat matrix, migration — under 800 words, decisions as tables, snippets only for non-obvious patterns
+5. Persist via Section C (`sdd/{change}/design`, type `architecture`); verify persisted content
+6. Return summary: approach, decisions, files affected, open questions, next `sdd-tasks`.
 
 ## Return Envelope
 
