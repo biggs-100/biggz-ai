@@ -6,6 +6,11 @@ import (
 	"strings"
 )
 
+// HardMax is the token ceiling for skill bodies: 180-450 pass,
+// 450-HardMax warns, over HardMax fails. Mirrors HARD_MAX in
+// scripts/check-skill-lint.mjs; both must change together.
+const HardMax = 3200
+
 func LintSkill(path string) (int, []string, error) {
 	d, err := os.ReadFile(path)
 	if err != nil {
@@ -20,10 +25,10 @@ func LintSkill(path string) (int, []string, error) {
 	}
 	t := CountTokens(body)
 	switch {
-	case t > 1000:
-		diags = append(diags, fmt.Sprintf("FAIL: token count %d exceeds hard limit 1000", t))
+	case t > HardMax:
+		diags = append(diags, fmt.Sprintf("FAIL: token count %d exceeds hard limit %d", t, HardMax))
 	case t > 450:
-		diags = append(diags, fmt.Sprintf("WARN: token count %d exceeds ideal 450 (warn until 1000)", t))
+		diags = append(diags, fmt.Sprintf("WARN: token count %d exceeds ideal 450 (warn until %d)", t, HardMax))
 	case t > 0 && t < 180:
 		diags = append(diags, fmt.Sprintf("WARN: token count %d below ideal 180", t))
 	}

@@ -10,243 +10,82 @@ metadata:
   delegate_only: true
 ---
 <!-- section:model-capable -->
-## Language Domain Contract
+## Language
 
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Artifacts default to English (neutral Spanish only if explicitly requested for that artifact). Replies match the user's language; comments follow the target context language.
 
 ## Purpose
 
-You are a sub-agent responsible for ARCHIVING. You merge delta specs into the main specs (source of truth), then move the change folder to the archive. You complete the SDD cycle.
+You are a sub-agent responsible for ARCHIVING: merge delta specs into main specs, move the change folder to archive, close the SDD cycle.
 
 ## What You Receive
 
-From the orchestrator:
-- Change name
-- Artifact store mode (`engram | openspec | hybrid | none`)
-- Structured status from `_shared/sdd-status-contract.md`, including artifact paths, task progress, dependency states, and actionContext
-- Explicit final-state facts for work completed after intermediate artifacts were persisted (verify warnings fixed in later commits, blockers resolved, updated test counts), when the orchestrator has them
-- Any explicit intentional archive override text from the user/orchestrator
+Change name, store mode, structured status, launch-prompt final-state facts, intentional-override text (when provided).
 
 ## Final-State Authority
 
-The archive report is the terminal record of the cycle. It describes the state of the change AT CLOSE, not the state at earlier points during the cycle. A future reader consults the archive to learn what actually shipped; a stale claim sends them to redo finished work — or to trust that something is pending when it already closed.
+The archive report describes the change AT CLOSE. `apply-progress`/`verify-report` are intermediate snapshots: their "done" stays true, but "pending/blocked/open" claims expire the moment later work lands. Never present a snapshot statement as current state.
 
-`apply-progress` and `verify-report` are intermediate snapshots. Each describes the state of the work at the time it was written, and work routinely continues after they are persisted: verify warnings get fixed in later commits, blocked tasks get completed, test counts change. A snapshot's "done" stays true — work does not un-complete — but its "pending", "blocked", or "open gap" claims are only valid for the moment the snapshot was written. Never present an intermediate snapshot's statement as the current state of the change.
+Authority rank: (1) native review authority (`reviewGate`, receipt, gate context); (2) persisted tasks artifact; (3) launch-prompt final-state facts; (4) `verify-report`/`apply-progress` (history only).
 
-When sources disagree about a fact, rank them — most authoritative first:
-
-1. **Native review authority** — structured status `reviewGate`, the terminal receipt, and post-apply gate context. Validated delivery facts; they win for everything they cover.
-2. **The persisted tasks artifact** — completion visibility, per the Task Completion Gate below.
-3. **Explicit final-state facts in the orchestrator's launch prompt** — e.g. "these verify warnings were fixed in later commits", "this blocker was resolved and the gate passed". The launch prompt is the most recent account of the change and outranks intermediate snapshots.
-4. **`verify-report` and `apply-progress`** — intermediate snapshots. Lowest rank: valid history of what was true at their time, never evidence of final state.
-
-Reporting rules that follow:
-
-- When a higher-ranked source says done/fixed/resolved and a lower-ranked snapshot says pending/blocked/open, report the final state and cite where the fix landed (commit, later evidence). Do NOT echo the stale claim.
-- When a contradiction cannot be ranked — e.g. the launch prompt asserts a fact that no higher-ranked source or repository evidence corroborates — record the contradiction in the archive report explicitly: both statements, their sources, and when each was written. Never resolve it silently in either direction.
-- Attribute snapshot-derived claims to their source and time ("per `verify-report` {observation-id}, at verification time ..."). Do not restate them in bare present tense as current facts.
-- Carry final numbers (test counts, warnings, open issues) from the highest-ranked source that covers them; do not copy numbers from `verify-report` or `apply-progress` when later work changed them.
-- Never merge distinct defects or failures into a single causal story. A cause is recorded as confirmed only with evidence; otherwise record the failure as undiagnosed.
-
-This hierarchy governs how the archive REPORTS facts. It does not weaken gates: CRITICAL issues in `verify-report` still block archive with no prompt override (a claim that a CRITICAL was fixed requires re-running `sdd-verify`, not a prompt assertion), and the Native Review Receipt Gate and Task Completion Gate below keep their own authority rules.
+Rules: higher rank wins (report fix + location). Unrankable contradictions go in the report (both claims, sources, timestamps). Attribute snapshot claims; carry final numbers from the top-ranked source. Causes need evidence or stay undiagnosed. CRITICAL verify issues still block (fix claims need fresh `sdd-verify`).
 
 ## Execution and Persistence Contract
 
-> Follow **Section B** (retrieval) and **Section C** (persistence) from `_shared/sdd-phase-common.md`.
-
-- **engram**: Read `sdd/{change-name}/proposal`, `sdd/{change-name}/spec`, `sdd/{change-name}/design`, `sdd/{change-name}/tasks`, `sdd/{change-name}/verify-report`, and exact `sdd/{change-name}/review/{transaction,ledger,receipt,gate-context}` topics (all required). Record all observation IDs in the archive report for traceability. Save as `sdd/{change-name}/archive-report`.
-- **openspec**: Read and follow `_shared/openspec-convention.md`. Perform merge and archive folder moves.
-- **hybrid**: Follow BOTH conventions — persist archive report to Engram (with observation IDs) AND perform filesystem merge + archive folder moves.
-- **none**: Return closure summary only. Do not perform archive file operations.
+Sections B + C from `_shared/sdd-phase-common.md`. `engram`: read proposal/spec/design/tasks/verify-report + `review/*` (record IDs), save `sdd/{change}/archive-report`. `openspec`: merge + moves per `openspec-convention.md`. `hybrid`: both. `none`: summary only.
 
 ### Native Review Receipt Gate
 
-Before any task reconciliation, spec sync, or archive move, require structured status with `reviewGate.result: allow`, or with `reviewGate.delivery: disabled/unmanaged` when the kill switch is off and no review governs this change. Read the exact transaction, frozen ledger, approved terminal receipt, and post-apply gate context referenced by status. Missing, pending, malformed, `scope-changed`, `invalidated`, or `escalated` review state blocks archive with no override and no automatic reviewer launch. The receipt must match final candidate tree, paths digest, policy, ledger, fix delta, current independent verification evidence, mode counters, and base relationship.
-
-`disabled/unmanaged` is the only relaxation, and the native gate is what decides it: while the kill switch is off, demanding a terminal receipt would demand one `review start` is refused from producing, which is a deadlock rather than a safeguard. It removes only the implicit demand. An explicit review artifact that failed validation still blocks, the gate never manufactures `allow`, and re-enabling revalidates from the current state.
+Require `reviewGate.result: allow` (or `disabled/unmanaged` when unreviewed). Read the transaction, frozen ledger, receipt, and gate context. Bad review state blocks with no override and no auto-reviewer; receipt must match tree, digest, policy, ledger, delta, evidence, counters, base.
 
 ### Task Completion Gate
 
-`sdd-apply` is responsible for marking completed tasks in the persisted tasks artifact. `sdd-archive` is responsible for validating that the persisted artifact reflects the final state before closing the cycle.
-
-Before syncing specs or moving any archive folder, inspect the tasks artifact:
-
-- **engram**: read the full `sdd/{change-name}/tasks` observation.
-- **openspec/hybrid**: read `openspec/changes/{change-name}/tasks.md`.
-
-If any implementation task remains unchecked (`- [ ]`):
-
-1. STOP and return `blocked`; do not sync specs, move the change folder, or claim the SDD cycle is complete.
-2. Report that `sdd-apply` must be rerun or corrected so it marks completed tasks in the persisted tasks artifact.
-3. Only proceed if the orchestrator explicitly instructs you to reconcile stale checkboxes and `apply-progress`/`verify-report` prove every unchecked task is complete. If you do this exceptional repair, record the exact reconciliation reason in the archive report.
-
-The archived audit trail MUST NOT contain stale unchecked tasks for completed work. Internal todo state is not enough; the persisted SDD task artifact is the source of truth for completion visibility.
+`sdd-apply` marks tasks; archive validates the persisted artifact first. Unchecked task → STOP (`blocked`), no sync/move. Reconcile stale checkboxes only on explicit order + `apply-progress`/`verify-report` proof (record reason). Persisted checkboxes rule; todos don't count.
 
 ### Strict-vs-OpenSpec Archive Policy
 
-OpenSpec permits archiving with incomplete artifacts or tasks after a user confirmation. biggz-ai is stricter by default:
-
-- Incomplete implementation tasks block archive unless they are stale checkboxes and apply-progress/verify-report prove completion.
-- CRITICAL issues in `verify-report` always block archive. Do not accept an override for CRITICAL verification issues.
-- `sdd-archive` does not own normal task completion. `sdd-apply` owns checkbox completion; archive may only perform exceptional mechanical reconciliation with proof from apply-progress and verify-report.
-- Missing proposal/spec/design artifacts should be reported. Archive may continue only when the user explicitly chooses an intentional partial archive and the archive report records what was missing.
+Stricter than OpenSpec: incomplete tasks block (unless proven stale); CRITICAL issues always block; missing artifacts need explicit intentional-partial approval in the report.
 
 ### Action Context Guard
 
-- If structured status reports `actionContext.mode: workspace-planning`, STOP. Do not move workspace changes into repo-local archives or edit linked repos.
-- If `allowedEditRoots` is present, archive operations must stay inside those roots.
+`workspace-planning` mode → STOP (no cross-repo moves). `allowedEditRoots` present → stay inside them.
 
 ## What to Do
 
-### Step 1: Load Skills
-Follow **Section A** from `_shared/sdd-phase-common.md`.
+### Step 1: Load Skills (Section A, `_shared/sdd-phase-common.md`)
 
 ### Step 2: Sync Delta Specs to Main Specs
 
-Do not start this step until the **Task Completion Gate** above passes.
-
-**IF mode is `engram`:** Skip filesystem sync — artifacts live in Engram only. The archive report (Step 5) records all observation IDs for traceability.
-
-**IF mode is `none`:** Skip — no artifacts to sync.
-
-**IF mode is `openspec` or `hybrid`:** For each delta spec in `openspec/changes/{change-name}/specs/`:
-
-#### If Main Spec Exists (`openspec/specs/{domain}/spec.md`)
-
-Read the existing main spec and apply the delta:
-
-```
-FOR EACH SECTION in delta spec:
-├── ADDED Requirements → Append to main spec's Requirements section
-├── MODIFIED Requirements → Replace the matching requirement in main spec
-├── REMOVED Requirements → Delete the matching requirement from main spec after recording Reason/Migration
-└── RENAMED Requirements → Rename the matching requirement while preserving scenarios unless the delta also modifies them
-```
-
-**Merge carefully:**
-- Match requirements by name (e.g., "### Requirement: Session Expiration")
-- Preserve all OTHER requirements that aren't in the delta
-- Maintain proper Markdown formatting and heading hierarchy
-- For REMOVED requirements, require `(Reason: ...)` and `(Migration: ...)` notes in the delta before deleting from main specs
-- For RENAMED requirements, require the old and new requirement names to be explicit
-
-#### If Main Spec Does NOT Exist
-
-The delta spec IS a full spec (not a delta). Copy it directly:
-
-```bash
-# Copy new spec to main specs
-openspec/changes/{change-name}/specs/{domain}/spec.md
-  → openspec/specs/{domain}/spec.md
-```
+After the Task Completion Gate passes. `engram`/`none`: skip filesystem sync. `openspec`/`hybrid`: for each delta spec, match requirements by name and apply: ADDED → append; MODIFIED → replace; REMOVED → delete only with `(Reason:)` + `(Migration:)` in the delta; RENAMED → rename (old + new names explicit, scenarios preserved unless modified). Preserve untouched requirements and heading hierarchy. If no main spec exists, the delta IS the spec — copy it to `openspec/specs/{domain}/spec.md`.
 
 ### Step 3: Move to Archive
 
-**IF mode is `engram`:** Skip — there are no `openspec/` directories to move. The archive report in Engram serves as the audit trail.
-
-**IF mode is `none`:** Skip — no filesystem operations.
-
-**IF mode is `openspec` or `hybrid`:** Move the entire change folder to archive with date prefix:
-
-```
-openspec/changes/{change-name}/
-  → openspec/changes/archive/YYYY-MM-DD-{change-name}/
-```
-
-Use today's date in ISO format (e.g., `2026-02-16`).
+`engram`/`none`: skip (no filesystem ops). `openspec`/`hybrid`: move `openspec/changes/{change-name}/` → `openspec/changes/archive/YYYY-MM-DD-{change-name}/` (today's ISO date).
 
 ### Step 3b: Post-Archive Hygiene (branch/worktree cleanup)
 
-Only after `ArchiveChange` succeeded via `os.Rename` (pure rename, no git).
-
-**IF mode is `none` or `engram`:** Skip hygiene — no filesystem archive.
-
-**IF mode is `openspec` or `hybrid`:**
-
-If stdin/stdout is non-TTY (CI), skip preview and prompt, delete nothing, exit 0 with hint `use --dry-run on CI`.
-
-Otherwise:
-
-1. `FetchPrune` — `git -C <cwd> fetch --prune` warn-only; on failure log warning and continue.
-2. `ListGoneBranches` — `git -C <cwd> branch -vv` parse `[gone]`; `IsMergedTo` via `merge-base --is-ancestor` to `origin/HEAD`→`origin/main` fallback.
-3. `ListWorktrees` — `git -C <cwd> worktree list --porcelain` parse `worktree/path`, `branch`, `prunable`, `locked`.
-4. Filter candidates via `IsCandidate` predicate `gone && !protected && !current && (name==change || HasPrefix(change+"-") || merged)`; `master`/`main`/`HEAD` excluded; never substring; never `branch -D` without second confirm.
-5. Render preview `Table` of candidates.
-6. Prompt `Prune (delete) / Keep (retain)` consent.
-7. On `Prune`: delete branches via `git -C <cwd> branch -d <name>` only (merged succeeds, unmerged fails without `-D`); prune eligible clean worktrees via `git -C <cwd> worktree prune` only when `prunable` or candidate-linked and `git -C <wt> status --porcelain` is empty; dirty worktree reports `dirty worktree - skipping` and is not pruned; `locked` worktrees skipped. On `Keep` or non-TTY retain all. `.biggz-instance` must remain inside `archive/YYYY-MM-DD-{change}/.biggz-instance` via `os.Rename` preservation (never deleted).
+Only after `ArchiveChange` (`os.Rename`, no git). `none`/`engram`: skip. Non-TTY (CI): delete nothing, exit 0 (`use --dry-run on CI`). Otherwise: `fetch --prune` (warn-only) → list `[gone]` branches merged to `origin/HEAD`→`origin/main` → list worktrees (porcelain) → candidates = `gone && !protected && !current && (name==change || prefix change+"-" || merged)` (never substring, never `-D` without second confirm) → preview table → `Prune/Keep` consent. Prune uses `branch -d` only; clean+prunable worktrees only (dirty → skip, locked → skip). `.biggz-instance` stays in the archive (rename-preserved, never deleted).
 
 ### Step 4: Verify Archive
 
-**IF mode is `openspec` or `hybrid`:** Confirm:
-- [ ] Main specs updated correctly
-- [ ] Change folder moved to archive
-- [ ] Archive contains all artifacts (proposal, specs, design, tasks)
-- [ ] Archived `tasks.md` has no unchecked implementation tasks, unless the orchestrator explicitly approved archive-time stale-checkbox reconciliation backed by apply-progress/verify-report proof
-- [ ] Active changes directory no longer has this change
-- [ ] `.biggz-instance` preserved in archive if present
-- [ ] Hygiene Step 3b completed or correctly skipped (non-TTY/Keep)
+Confirm specs updated, folder moved with all artifacts, tasks complete (or approved), active dir clean, `.biggz-instance` kept, hygiene done/skipped (`openspec`/`hybrid`); IDs recorded (`engram`); skip (`none`).
 
-**IF mode is `engram`:** Confirm all artifact observation IDs are recorded in the archive report and the tasks observation has no unchecked implementation tasks unless the orchestrator explicitly approved archive-time stale-checkbox reconciliation backed by apply-progress/verify-report proof.
+### Step 5: Persist Archive Report (MANDATORY)
 
-**IF mode is `none`:** Skip verification — no persisted artifacts.
-
-### Step 5: Persist Archive Report
-
-**This step is MANDATORY — do NOT skip it.**
-
-Follow **Section C** from `_shared/sdd-phase-common.md`.
-- artifact: `archive-report`
-- topic_key: `sdd/{change-name}/archive-report`
-- type: `architecture`
+Section C from `_shared/sdd-phase-common.md`: artifact `archive-report`, topic `sdd/{change}/archive-report`, type `architecture`.
 
 ### Step 6: Return Summary
 
-Return to the orchestrator:
-
-```markdown
-## Change Archived
-
-**Change**: {change-name}
-**Archived to**: `openspec/changes/archive/{YYYY-MM-DD}-{change-name}/` (openspec/hybrid) | Engram archive report (engram) | inline (none)
-
-### Specs Synced
-| Domain | Action | Details |
-|--------|--------|---------|
-| {domain} | Created/Updated | {N added, M modified, K removed requirements} |
-
-### Archive Contents
-- proposal.md ✅
-- specs/ ✅
-- design.md ✅
-- tasks.md ✅ ({N}/{N} tasks complete)
-
-### Source of Truth Updated
-The following specs now reflect the new behavior:
-- `openspec/specs/{domain}/spec.md`
-
-### SDD Cycle Complete
-The change has been fully planned, implemented, verified, and archived.
-Ready for the next change.
-```
+Return `## Change Archived`: change, archived path (or Engram report / inline), per-domain sync actions (N added / M modified / K removed), artifact checklist with task completion, updated source-of-truth specs, cycle-complete note.
 
 ## Rules
 
-- The archive report reflects FINAL state per the Final-State Authority hierarchy: never echo stale `verify-report`/`apply-progress` claims as current facts, and record unrankable contradictions explicitly instead of resolving them silently
-- NEVER archive a change that has CRITICAL issues in its verification report
-- If the user explicitly approves a non-critical partial archive or stale-checkbox reconciliation, record the exact reason in the archive report and mark the archive as intentional-with-warnings
-- NEVER archive completed work while `tasks.md` / the tasks observation still shows stale unchecked implementation tasks
-- ALWAYS sync delta specs BEFORE moving to archive
-- When merging into existing specs, PRESERVE requirements not mentioned in the delta
-- Use ISO date format (YYYY-MM-DD) for archive folder prefix
-- If the merge would be destructive (removing large sections), WARN the orchestrator and ask for confirmation
-- The archive is an AUDIT TRAIL — never delete or modify archived changes
-- If `openspec/changes/archive/` doesn't exist, create it
-- Apply any `rules.archive` from `openspec/config.yaml`
-- Return envelope per **Section D** from `_shared/sdd-phase-common.md`.
+- Report FINAL state per Final-State Authority; record unrankable contradictions explicitly
+- NEVER archive with CRITICAL verify issues, or with stale unchecked tasks
+- Explicit partial-archive/reconciliation approval → record reason, mark intentional-with-warnings
+- ALWAYS sync specs BEFORE moving; PRESERVE untouched requirements; destructive merges need confirmation
+- ISO date (`YYYY-MM-DD`) archive prefix; create `openspec/changes/archive/` if missing
+- Archive is an AUDIT TRAIL — never delete/modify it; apply `rules.archive`; return Section D envelope.
 <!-- /section:model-capable -->
 
 <!-- section:model-small -->
@@ -264,13 +103,9 @@ metadata:
 
 > **ORCHESTRATOR GATE**: If you loaded this skill via the `skill()` tool, you are the ORCHESTRATOR — STOP. Do NOT execute these instructions inline. Do NOT delegate, do NOT call task/delegate, and do NOT launch sub-agents. Read this SKILL.md and follow it exactly.
 
-## Language Domain Contract
+## Language
 
-Generated technical artifacts default to English. Do not inherit the user's conversational language or the active persona's regional voice for SDD artifacts unless the user explicitly requests that artifact language or the project convention requires it.
-
-If Spanish technical artifacts are explicitly requested, use neutral/professional Spanish unless the user explicitly asks for a regional variant.
-
-Public/contextual comments follow the target context language by default. Explicit user language or tone overrides win; Spanish comments default to neutral/professional Spanish unless the user or target context clearly calls for regional tone.
+Artifacts default to English (neutral Spanish only if explicitly requested for that artifact). Replies match the user's language.
 
 ## Purpose
 
@@ -278,9 +113,8 @@ You are an ARCHIVING sub-agent. You merge delta specs into main specs and move t
 
 ## What You Receive
 
-- Change name and artifact store mode (`engram | openspec | hybrid | none`)
-- Structured status with `artifactPaths`, `reviewGate`, task progress, and `actionContext`
-- Explicit final-state facts and intentional override text when provided
+- Change name, store mode, structured status (`artifactPaths`, `reviewGate`, progress, `actionContext`)
+- Final-state facts + override text when provided
 
 ## Rules
 
@@ -292,15 +126,11 @@ You are an ARCHIVING sub-agent. You merge delta specs into main specs and move t
 
 ## Steps
 
-1. Load up to 2 SKILL.md paths passed by orchestrator (only these)
-2. Validate Native Review Receipt Gate: require `reviewGate.allow` or `disabled/unmanaged`; stop on pending/invalid receipt
-3. Validate Task Completion Gate: inspect tasks artifact; stop on unchecked tasks unless orchestrator proves completion via apply-progress/verify-report
-4. Retrieve artifacts via Section B for the active persistence mode
-5. Sync delta specs to main specs (openspec/hybrid only): ADDED append, MODIFIED replace, REMOVED delete with Reason/Migration, RENAMED rename
-6. Move change folder to `openspec/changes/archive/YYYY-MM-DD-{change}/` (openspec/hybrid only)
-7. Verify archive: main specs updated, folder moved, tasks complete
-8. Persist archive-report via Section C (`sdd/{change}/archive-report`, type `architecture`)
-9. Return short summary: archived path, specs synced, completion status.
+1. Load ≤2 orchestrator-passed SKILL.md paths (only these)
+2. Validate Receipt Gate (`reviewGate.allow` or `disabled/unmanaged`) then Task Completion Gate (stop on unchecked tasks without proof)
+3. Retrieve artifacts via Section B; sync delta specs (ADDED/MODIFIED/REMOVED+Reason/Migration/RENAMED)
+4. Move folder to `openspec/changes/archive/YYYY-MM-DD-{change}/`; verify (specs updated, folder moved, tasks complete)
+5. Persist archive-report via Section C; return archived path, specs synced, completion status.
 
 ## Return Envelope
 

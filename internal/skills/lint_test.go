@@ -49,7 +49,7 @@ func TestLintSkill_Valid300Pass(t *testing.T) {
 	}
 }
 
-func TestLintSkill_HardLimitFail(t *testing.T) {
+func TestLintSkill_MidBandWarn(t *testing.T) {
 	body := genBodyTokens(1001)
 	content := "---\nname: test-skill\ndescription: \"Trigger: test skill overflow.\"\n---\n" + body + "\n"
 	p := writeSkill(t, content)
@@ -57,8 +57,24 @@ func TestLintSkill_HardLimitFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if HasHardFailure(diags) {
+		t.Fatalf("1001 should warn under HardMax 3200, got FAIL diags %v", diags)
+	}
+	if !HasWarning(diags) {
+		t.Fatalf("1001 should warn, got %v", diags)
+	}
+}
+
+func TestLintSkill_HardLimitFail(t *testing.T) {
+	body := genBodyTokens(HardMax + 1)
+	content := "---\nname: test-skill\ndescription: \"Trigger: test skill overflow.\"\n---\n" + body + "\n"
+	p := writeSkill(t, content)
+	_, diags, err := LintSkill(p)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !HasHardFailure(diags) {
-		t.Fatalf("expected hard fail for 1001 tokens, diags %v", diags)
+		t.Fatalf("expected hard fail for over-HardMax tokens, diags %v", diags)
 	}
 }
 

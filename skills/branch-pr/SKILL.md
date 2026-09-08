@@ -79,65 +79,7 @@ Branch names **must** match this pattern:
 
 ## PR Body Format
 
-The PR body must follow the template at `.github/PULL_REQUEST_TEMPLATE.md`. All sections are required unless marked optional.
-
-```markdown
-## 🔗 Linked Issue
-
-Closes #<N>
-
-## 🏷️ PR Type
-
-- [ ] `type:bug` — Bug fix (non-breaking change that fixes an issue)
-- [ ] `type:feature` — New feature (non-breaking change that adds functionality)
-- [ ] `type:docs` — Documentation only
-- [ ] `type:refactor` — Code refactoring (no functional changes)
-- [ ] `type:chore` — Build, CI, or tooling changes
-- [ ] `type:breaking-change` — Breaking change
-
-## 📝 Summary
-
-<!-- Clear description of what this PR does and why. -->
-
-## 📂 Changes
-
-| File / Area | What Changed |
-|-------------|-------------|
-| `path/to/file` | Brief description |
-
-## 🧪 Test Plan
-
-**Unit Tests**
-\`\`\`bash
-go test ./...
-\`\`\`
-
-**Go Format**
-\`\`\`bash
-go run ./internal/gofmtcheck
-\`\`\`
-
-**E2E Tests** (Docker required)
-\`\`\`bash
-cd e2e && ./docker-test.sh
-\`\`\`
-
-- [ ] Unit tests pass (`go test ./...`)
-- [ ] Go format passes (`go run ./internal/gofmtcheck`)
-- [ ] E2E tests pass (`cd e2e && ./docker-test.sh`)
-- [ ] Manually tested locally
-
-## ✅ Contributor Checklist
-
-- [ ] PR is linked to an issue with `status:approved`
-- [ ] PR stays within 400 changed lines, or I have requested/obtained maintainer-applied `size:exception` with rationale documented
-- [ ] I have added the appropriate `type:*` label to this PR
-- [ ] Unit tests pass (`go test ./...`)
-- [ ] E2E tests pass (`cd e2e && ./docker-test.sh`)
-- [ ] I have updated documentation if necessary
-- [ ] My commits follow Conventional Commits format
-- [ ] My commits do not include `Co-Authored-By` trailers
-```
+Fill every section of `.github/PULL_REQUEST_TEMPLATE.md` (required unless marked optional): Linked Issue (`Closes #<N>`), PR Type (exactly one `type:*` checkbox), Summary, Changes table (`| File / Area | What Changed |`), Test Plan (`go test ./...`, `go run ./internal/gofmtcheck`, `cd e2e && ./docker-test.sh`, manual test), Contributor Checklist (issue link + `status:approved`, 400-line budget or `size:exception`, label, tests green, Conventional Commits, no `Co-Authored-By`).
 
 ---
 
@@ -208,15 +150,8 @@ Breaking changes map to `type:breaking-change` label.
 ```
 feat(tui): add progress bar to installation steps
 fix(agent): correct Claude Code detection on macOS
-docs: update contributing guide
 chore(deps): bump bubbletea to v0.26
-refactor(pipeline): extract step executor
-style: fix linter warnings in catalog package
-perf(system): cache OS detection result
-test(installer): add coverage for catalog step execution
-build: update goreleaser config for arm64
 ci: split unit and e2e test jobs
-revert: undo model picker redesign
 feat(cli)!: change default config path
 ```
 
@@ -238,65 +173,18 @@ git checkout -b fix/<short-description>
 ### Testing Locally
 
 ```bash
-# Unit tests
-go test ./...
-
-# Go format
-go run ./internal/gofmtcheck
-
-# Unit tests — specific package
-go test ./internal/tui/...
-
-# Unit tests — verbose
-go test -v ./...
-
-# E2E tests (Docker must be running)
-cd e2e && ./docker-test.sh
+go test ./...                    # unit tests (add ./internal/<pkg>/... to scope)
+go run ./internal/gofmtcheck     # go format
+cd e2e && ./docker-test.sh      # E2E (Docker must be running)
 ```
 
 ### Open a PR
 
 ```bash
-gh pr create \
-  --repo biggs-100/biggz-ai \
+gh pr create --repo biggs-100/biggz-ai \
   --title "fix(agent): correct Claude Code detection on Linux" \
-  --body "$(cat <<'EOF'
-## 🔗 Linked Issue
-
-Closes #42
-
-## 🏷️ PR Type
-
-- [x] \`type:bug\` — Bug fix (non-breaking change that fixes an issue)
-
-## 📝 Summary
-
-Fixes Claude Code binary detection failing on Linux when HOME is not set.
-
-## 📂 Changes
-
-| File / Area | What Changed |
-|-------------|-------------|
-| \`internal/agents/claude.go\` | Added HOME env var fallback |
-
-## 🧪 Test Plan
-
-- [x] Unit tests pass (\`go test ./...\`)
-- [x] E2E tests pass (\`cd e2e && ./docker-test.sh\`)
-- [x] Manually tested locally
-
-## ✅ Contributor Checklist
-
-- [x] PR is linked to an issue with \`status:approved\`
-- [x] PR stays within 400 changed lines, or I have requested/obtained maintainer-applied \`size:exception\` with rationale documented
-- [x] I have added the appropriate \`type:*\` label to this PR
-- [x] Unit tests pass (\`go test ./...\`)
-- [x] E2E tests pass (\`cd e2e && ./docker-test.sh\`)
-- [x] I have updated documentation if necessary
-- [x] My commits follow Conventional Commits format
-- [x] My commits do not include \`Co-Authored-By\` trailers
-EOF
-)"
+  --body "Closes #42 — $(cat .github/PULL_REQUEST_TEMPLATE.md)"
+# Then fill every template section and add exactly one type:* label.
 ```
 
 ### Check PR Status
