@@ -198,14 +198,20 @@ func renderSynthesisWithWidth(r SubAgentResult, lang string, width int) string {
 	lifecycle := renderLifecycle(phase, status, next)
 
 	var b strings.Builder
-	b.WriteString("## Sub-agent Result: " + sanitizeForWidth(phase, width) + "\n")
-	// What was done as table + checklist
+	b.WriteString("## Sub-agent Result: " + sanitizeForWidth(phase, width) + "\n\n")
+	// Cognitive-doc-design: scannable hierarchy with consistent icons, chunked sections,
+	// progressive disclosure (happy path What→Deliverables→Next first, details after).
+	// All verbatim English markers preserved for gate b0d2fc1 (HasSynthesis).
+	b.WriteString("### 📋 What was done\n")
 	b.WriteString("**What was done:**\n")
 	renderWhatDoneSection(&b, r.WhatDone, budget, width, none)
-	// lifecycle one-line
-	b.WriteString(lifecycle + "\n")
-	b.WriteString("**Artifacts/Paths:** " + sanitizePlain(arts) + "\n")
-	b.WriteString("**Risks / Open Questions:** " + sanitizePlain(risks) + "\n")
+	// lifecycle one-line — visual status immediately after What
+	b.WriteString(lifecycle + "\n\n")
+	b.WriteString("### 📦 Deliverables\n")
+	b.WriteString("**Artifacts/Paths:** " + sanitizePlain(arts) + "\n\n")
+	b.WriteString("### ⚠️ Risks & Open Questions\n")
+	b.WriteString("**Risks / Open Questions:** " + sanitizePlain(risks) + "\n\n")
+	b.WriteString("### ➡️ Next Step\n")
 	b.WriteString("**Next Recommended:** " + sanitizePlain(next) + "\n")
 	renderDetailSections(&b, r, lang, width, none)
 	return b.String()
@@ -237,8 +243,13 @@ func renderWhatDoneSection(b *strings.Builder, whatDone string, budget, width in
 // renderDetailSections writes preview, diff, decisions, commands, validation
 // and failure sections. Extracted from renderSynthesisWithWidth to keep it
 // under the complexity budget.
+// Visual design (cognitive-doc-design): chunked sections with ### headers +
+/// consistent icons (🔍 Preview & Changes, 💡 Decisions & Commands, ✅ Validation, ❌ Failure),
+// progressive disclosure (happy path What/Deliverables/Next first, details after),
+// scannable hierarchy — verbatim English markers preserved for HasSynthesis gate.
 func renderDetailSections(b *strings.Builder, r SubAgentResult, lang string, width int, none string) {
 	// Preview sanitized 300 (width-aware cell budget only; preview stays 300)
+	b.WriteString("\n### 🔍 Preview & Changes\n")
 	previewRaw := strings.TrimSpace(r.Preview)
 	if previewRaw == "" {
 		b.WriteString("**Preview:** " + none + "\n")
@@ -251,11 +262,16 @@ func renderDetailSections(b *strings.Builder, r SubAgentResult, lang string, wid
 	} else {
 		b.WriteString("**Diff:** " + formatDiff(diffRaw) + "\n")
 	}
-	if v := strings.TrimSpace(r.Decisions); v != "" {
-		b.WriteString("**Decisions:** " + sanitizeForWidth(v, width) + "\n")
-	}
-	if v := strings.TrimSpace(r.Commands); v != "" {
-		b.WriteString("**Commands:** " + sanitizeForWidth(v, width) + "\n")
+	decisions := strings.TrimSpace(r.Decisions)
+	commands := strings.TrimSpace(r.Commands)
+	if decisions != "" || commands != "" {
+		b.WriteString("\n### 💡 Decisions & Commands\n")
+		if decisions != "" {
+			b.WriteString("**Decisions:** " + sanitizeForWidth(decisions, width) + "\n")
+		}
+		if commands != "" {
+			b.WriteString("**Commands:** " + sanitizeForWidth(commands, width) + "\n")
+		}
 	}
 	validation := strings.TrimSpace(r.Validation)
 	if validation == "" {
@@ -263,12 +279,14 @@ func renderDetailSections(b *strings.Builder, r SubAgentResult, lang string, wid
 	} else {
 		validation = sanitizeForWidth(validation, width)
 	}
+	b.WriteString("\n### ✅ Validation\n")
 	b.WriteString("**Validation:** " + validation + "\n")
 	if v := strings.TrimSpace(r.Failure); v != "" {
 		human := humanizeFailure(v)
 		if human == "" {
 			human = v
 		}
+		b.WriteString("\n### ❌ Failure\n")
 		b.WriteString("**Failure:** " + sanitizeForWidth(human, width) + "\n")
 	}
 }

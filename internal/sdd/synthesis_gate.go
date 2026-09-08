@@ -7,6 +7,8 @@
 // Free-text without options is allowed; checkpoint asks require synthesis in same turn within 120s.
 // synthesis after EVERY sub-agent (SDD or non-SDD) is enforced via orchestrator prompt (gentle-pi parity).
 // See internal/assets/pi/biggz-synthesis-gate.js for JS counterpart that wraps ask_user_choice/ask_user_question/question.
+// Visual layer (cognitive-doc-design): synthesis.go adds scannable ### headers + consistent icons (📋, 📦, ⚠️, ➡️, 🔍, 💡, ✅, ❌)
+// around verbatim English markers — HasSynthesis checks only the 5 verbatim substrings, so visual headers never break the gate.
 
 package sdd
 

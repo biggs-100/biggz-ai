@@ -22,8 +22,11 @@ Reads MUST be via file read and evidenced in launch prompt; if unreadable, warn 
 Post-Delegation Human Checkpoint — After EVERY delegated sub-agent — SDD (sdd-*) or non-SDD (explore, general/worker, verify) — you MUST emit synthesis markdown BEFORE the next step. Mirrors gentle-pi: human always sees `## Sub-agent Result` to judge. If next step is a checkpoint question (`proceed`/`adjust`/`stop` or `continue`/`correct`) emit synthesis FIRST in SAME turn then ask (gate blocks if missing). If next step is autonomous continuation, still emit synthesis as standalone markdown before continuing. Do NOT silently continue. Synthesize a concise summary in the active conversation language, scannable: decision, outcome, next action. Keep 4 markers verbatim English.
 
 Required markdown (copy-paste, fill all fields — emit as plain markdown, NOT inside ``` at runtime):
+Visual hierarchy per cognitive-doc-design (scannable, chunked, progressive disclosure, consistent icons) — markers verbatim English for gate b0d2fc1:
 ```markdown
 ## Sub-agent Result: {phase/agent}
+
+### 📋 What was done
 **What was done:**
 | Topic | Decision |
 |-------|----------|
@@ -31,14 +34,28 @@ Required markdown (copy-paste, fill all fields — emit as plain markdown, NOT i
 - [x] completed item
 - [ ] pending item
 ◆ {phase} · {status} · {next}
+
+### 📦 Deliverables
 **Artifacts/Paths:** {list from artifacts — BigMem topic_key or filesystem path}
+
+### ⚠️ Risks & Open Questions
 **Risks / Open Questions:** {from risks or "None"}
+
+### ➡️ Next Step
 **Next Recommended:** {from next_recommended}
+
+### 🔍 Preview & Changes
 **Preview:** {optional, omit if empty — first 300 chars of key artifact (truncate with …), or "None" if no artifact}
 **Diff:** {optional, omit if empty — when >0 files changed — e.g. "8 files 293 insertions(+), 54 deletions(-)", or "None"}
+
+### 💡 Decisions & Commands
 **Decisions:** {optional, omit if empty — key decisions}
 **Commands:** {optional, omit if empty — commands run}
+
+### ✅ Validation
 **Validation:** {optional, omit if empty — when commands run — e.g. "go test PASS, go vet PASS, biggz sdd-status verify", or "None"}
+
+### ❌ Failure
 **Failure:** {optional, omit if empty — humanized failure summary}
 ```
 
