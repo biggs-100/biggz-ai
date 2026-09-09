@@ -345,7 +345,9 @@ func TestSettle_InvalidToken(t *testing.T) {
 	}
 	_ = acq
 
-	_, err = Settle(SettleParams{
+	// Default (admissible): unknown token settles with a warning instead of
+	// invalid_continuation.
+	res, err := Settle(SettleParams{
 		ChangeName:         "ch-acq-6",
 		RepoRoot:           "r",
 		Token:              "tok-invalid-token",
@@ -357,8 +359,39 @@ func TestSettle_InvalidToken(t *testing.T) {
 		CleanupEvidence:    "c",
 		ProcessEvidence:    "p",
 	})
+	if err != nil {
+		t.Fatalf("expected admissible settle, got %v", err)
+	}
+	if res.Warning == "" {
+		t.Fatalf("expected non-empty warning for unclaimed settle")
+	}
+
+	// Strict restores the old lock semantics (fresh change so the ledger is
+	// not already complete from the admissible settle above).
+	if _, err := Acquire(AcquireParams{
+		ChangeName:   "ch-acq-6-strict",
+		RepoRoot:     "r",
+		RequestID:    "req-acq-6-strict",
+		WorkUnit:     "w",
+		EvidenceGoal: "goal",
+	}); err != nil {
+		t.Fatalf("Acquire strict change: %v", err)
+	}
+	_, err = Settle(SettleParams{
+		ChangeName:         "ch-acq-6-strict",
+		RepoRoot:           "r",
+		Token:              "tok-invalid-token-2",
+		RequestID:          "req-settle-6-strict",
+		Outcome:            "passed",
+		EvidenceRevision:   "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+		Diagnosis:          "ok",
+		HarnessDisposition: "reused",
+		CleanupEvidence:    "c",
+		ProcessEvidence:    "p",
+		Strict:             true,
+	})
 	if err == nil || !strings.Contains(err.Error(), "does not continue") {
-		t.Fatalf("expected invalid continuation error, got %v", err)
+		t.Fatalf("expected invalid continuation error in strict mode, got %v", err)
 	}
 }
 
@@ -405,5 +438,47 @@ func TestSettle_RequestIDReusedWithDifferentInputs(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "reused with different inputs") {
 		t.Fatalf("expected reuse error, got %v", err)
+	}
+}
+
+func TestSettle_NonActiveAttemptAdmitsWithWarning(t *testing.T) {
+	setStoreRoot(t)
+
+	first, err := Acquire(AcquireParams{
+		ChangeName:   "ch-acq-7",
+		RepoRoot:     "r",
+		RequestID:    "req-acq-7a",
+		WorkUnit:     "w",
+		EvidenceGoal: "goal",
+	})
+	if err != nil {
+		t.Fatalf("Acquire first: %v", err)
+	}
+	// Simulate the orchestrator/subagent incident shape: token is valid for an
+	// unfinished attempt, but the active pointer moved elsewhere.
+	store, _, err := loadStore("ch-acq-7", "r")
+	if err != nil {
+		t.Fatalf("loadStore: %v", err)
+	}
+	store.ActiveAttempt = store.ActiveAttempt + 1
+	if err := saveStore(store, "r"); err != nil {
+		t.Fatalf("saveStore: %v", err)
+	}
+	res, err := Settle(SettleParams{
+		ChangeName:         "ch-acq-7",
+		RepoRoot:           "r",
+		Token:              first.Token,
+		RequestID:          "req-settle-7b",
+		Outcome:            "failed",
+		HarnessDisposition: "reused",
+		Diagnosis:          "late finish",
+		CleanupEvidence:    "c",
+		ProcessEvidence:    "p",
+	})
+	if err != nil {
+		t.Fatalf("expected admissible settle of non-active attempt, got %v", err)
+	}
+	if res.Warning == "" {
+		t.Fatalf("expected non-empty supersede warning")
 	}
 }

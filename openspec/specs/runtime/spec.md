@@ -161,6 +161,22 @@ The system MUST use single typed `RuntimeRecordRejectedError` for all record rej
 - WHEN checking `errors.As(err, *RuntimeRecordRejectedError)`
 - THEN it MUST succeed
 
+### Requirement: Admissible Settle (warn, not block)
+
+`Settle` MUST admit settlements whose token is unknown (recording an unclaimed attempt) or maps to an unfinished non-active attempt, returning the settlement with a non-empty `warning` instead of `invalid_continuation`. `Strict: true` (CLI `--strict`, reserved for prod apply) MUST restore the old block. Fraud and shape errors (finished-attempt double-settle, remediation mismatch, request-id reuse, missing ledger) MUST still block in all modes.
+
+#### Scenario: Unknown token admits with warning
+
+- GIVEN a ledger with no matching token
+- WHEN `Settle` without `Strict`
+- THEN it MUST succeed with `Warning != ""` and a recorded unclaimed attempt
+
+#### Scenario: Strict restores the block
+
+- GIVEN a ledger with no matching token
+- WHEN `Settle` with `Strict: true`
+- THEN it MUST return `BlockedError` with `invalid_continuation`
+
 ### Requirement: Background Subagents 4-Source Policy Resolution
 
 The system MUST resolve background subagents policy via `internal/sdd/background.go` `resolveBackgroundSubagentsPolicy(cwd,opts)` with precedence `project > global > env > default off`. `project` reads `cwd/.biggz/background-subagents.json`, `global` reads `~/.biggz/background-subagents.json` (honoring `GENTLE_PI_CONFIG_HOME`/`BIGGZ_CONFIG_HOME`), `env` reads `BIGGZ_BACKGROUND_SUBAGENTS` (fallback `GENTLE_PI_BACKGROUND_SUBAGENTS`), strict 2-key decode `{"schema":"gentle-pi.background-subagents/v1","policy":"on"|"off"}` where extra keys → malformed → `off` no fallback, `malformed true`. Max 2 JSON reads per resolve. Capability `ready|absent` via `subagent_run` probe.

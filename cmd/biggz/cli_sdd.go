@@ -505,6 +505,7 @@ func sddAttemptRun() int {
 	actor := ""
 	changeInstance := ""
 	token := ""
+	strict := false
 	var roots []string
 
 	for i := 2; i < len(args); i++ {
@@ -623,6 +624,11 @@ func sddAttemptRun() int {
 				i++
 				token = strings.TrimSpace(args[i])
 			}
+		case "--strict":
+			// Strict settle: unknown or non-active tokens block with
+			// invalid_continuation instead of admitting with a warning.
+			// Reserved for flows where mutual exclusion matters (prod apply).
+			strict = true
 		default:
 			fmt.Fprintf(os.Stderr, "error: unknown flag %s\n", args[i])
 			return 1
@@ -898,6 +904,7 @@ func sddAttemptRun() int {
 			CleanupEvidence:            cleanupEv,
 			ProcessEvidence:            processEv,
 			RemediatesEvidenceRevision: remediatesEv,
+			Strict:                     strict,
 		})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
