@@ -12,6 +12,9 @@ invoke them directly — the orchestrator delegates. Ceremony is quiet by defaul
 actions) and memory work is invisible (learnings go into saves, never into
 replies). Register new project skills in this file (see `skill-creator`).
 
+Meta-commands `sdd-new`/`sdd-ff` run inline via the orchestrator (see
+`internal/assets/prompts/sdd/`); they are not loadable skills.
+
 <!-- biggz-compat: sdd-* delegate_only (orchestrator delegates; new SDD work via sdd-new); quiet ceremony (one-line reports; full synthesis plus checkpoint only before irreversible actions); invisible memory (learnings into saves, never replies); every project skill registered below with trigger and exact path. -->
 
 ## Skills
@@ -33,9 +36,9 @@ replies). Register new project skills in this file (see `skill-creator`).
 | `sdd-archive` | Orchestrator launches archive (delegate only) | [`internal/assets/skills/sdd-archive/SKILL.md`](internal/assets/skills/sdd-archive/SKILL.md) |
 | `sdd-design` | Orchestrator launches design (delegate only) | [`internal/assets/skills/sdd-design/SKILL.md`](internal/assets/skills/sdd-design/SKILL.md) |
 | `sdd-explore` | Orchestrator launches exploration (delegate only) | [`internal/assets/skills/sdd-explore/SKILL.md`](internal/assets/skills/sdd-explore/SKILL.md) |
-| `sdd-ff` | Fast-forward through SDD phases | [`internal/assets/skills/sdd-ff/SKILL.md`](internal/assets/skills/sdd-ff/SKILL.md) |
+| `sdd-ff` | Meta-command, inline only (see note above) | [`internal/assets/prompts/sdd/sdd-ff.md`](internal/assets/prompts/sdd/sdd-ff.md) |
 | `sdd-init` | SDD init, project registry and persistence setup | [`internal/assets/skills/sdd-init/SKILL.md`](internal/assets/skills/sdd-init/SKILL.md) |
-| `sdd-new` | Start a new SDD change | [`internal/assets/skills/sdd-new/SKILL.md`](internal/assets/skills/sdd-new/SKILL.md) |
+| `sdd-new` | Meta-command, inline only (see note above) | [`internal/assets/prompts/sdd/sdd-new.md`](internal/assets/prompts/sdd/sdd-new.md) |
 | `sdd-onboard` | Full SDD walkthrough (delegate only) | [`internal/assets/skills/sdd-onboard/SKILL.md`](internal/assets/skills/sdd-onboard/SKILL.md) |
 | `sdd-propose` | Orchestrator launches proposal (delegate only) | [`internal/assets/skills/sdd-propose/SKILL.md`](internal/assets/skills/sdd-propose/SKILL.md) |
 | `sdd-research` | SDD research lanes (delegate only) | [`internal/assets/skills/sdd-research/SKILL.md`](internal/assets/skills/sdd-research/SKILL.md) |

@@ -147,6 +147,10 @@ SDD never auto-selected by size/file count/risk alone — fail-closed. MUST reco
 
 **Heuristic example (must stay Simple Delegation until accepted):** 12 files, 800 lines, no explicit SDD request → Simple Delegation + MUST recommend SDD via question + STOP — not `sdd-propose` until accepted. On acceptance → Session Recall + Preflight, then `sdd-new`. Explicit SDD request (`use SDD for this feature`) → SDD via preflight/init guards.
 
+#### Meta-commands (handled inline, never delegated)
+
+`sdd-new` and `sdd-ff` are meta-commands, not skills: execute them YOURSELF inline in the orchestration thread — never load their SKILL.md, never delegate to a subagent. Follow `internal/assets/prompts/sdd/sdd-new.md` (scaffold change dir, route to explore/propose) and `internal/assets/prompts/sdd/sdd-ff.md` (planning artifacts in sequence, then implementation; requires explicit user acknowledgment that phase reviews are skipped) directly. User slash invocations (`/sdd-new`, `/sdd-ff`) run the same way: run the prompt, don't spawn an agent.
+
 ### Pi Delegation Bindings & Cost/Context Balance
 
 - Use scout/context-builder to compress broad exploration into short handoff instead of many files in parent.
