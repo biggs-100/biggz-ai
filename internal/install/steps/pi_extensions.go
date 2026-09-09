@@ -92,6 +92,14 @@ func piExtensionsDeployList() []struct{ asset, target string } {
 // otherwise pi crashes with "Extension does not export a valid factory function".
 // This is a cheap string-contains check gated to JS targets only; TS assets are
 // skill-registry and not pi factories.
+//
+// Runtime width smoke (future): biggz-footer.js must never exceed visibleWidth>width
+// for fixture branch 25c (chore/agent-lesson-guards) + model 80c at widths 20..120.
+// Currently enforced via JS gate internal/assets/pi/biggz-footer.test.mjs (regression
+// fixture + fuzz 60c/80c/100c combos). Parity with internal/tui/sanitize.go
+// (go-runewidth/StringWidth + TruncateToWidth) per tui-sanitize spec. Not duplicating
+// in Go to avoid over-engineering; installer already validates factory export.
+// This comment is the width-gate anchor for a future Go runtime check if needed.
 func validatePiExtensionsFactory(fsys fs.FS) error {
 	if fsys == nil {
 		fsys = assets.FS

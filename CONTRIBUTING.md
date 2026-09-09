@@ -23,6 +23,12 @@ This project follows **Spec-Driven Development (SDD)**. Every significant change
 9. **Verify** — Run tests, validate against specs.
 10. **Archive** — Move completed change to `openspec/changes/archive/`.
 
+## CI & Stacked PRs
+
+- CI (`ci.yml`) triggers only on pushes to `master`/`main` and PRs **targeting** them. Stacked PRs pointing at each other get PR-validation only; each PR gets full CI when retargeted to `master` during the merge cascade. Plan merges accordingly.
+- `gofmt` authority is the CI toolchain (`stable`), not your local one: `GOTOOLCHAIN` switches the `go` command only, never the `gofmt` binary. When CI flags a file your local `gofmt` calls clean, apply CI's diff verbatim.
+- Never push empty retrigger commits to branches under RDD review — they invalidate review receipts. Prefer label-driven retriggers.
+
 ## Commit Conventions
 
 Use [Conventional Commits](https://www.conventionalcommits.org/):

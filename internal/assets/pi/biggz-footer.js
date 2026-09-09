@@ -180,6 +180,11 @@ export function visibleWidth(str) {
 		if (
 			cp !== undefined &&
 			((cp >= 0x1100 && cp <= 0x115f) ||
+				(cp >= 0x2190 && cp <= 0x21ff) ||
+				(cp >= 0x2300 && cp <= 0x23ff) ||
+				(cp >= 0x2440 && cp <= 0x245f) ||
+				(cp >= 0x2600 && cp <= 0x26ff) ||
+				(cp >= 0x2700 && cp <= 0x27bf) ||
 				(cp >= 0x2e80 && cp <= 0xa4cf) ||
 				(cp >= 0xac00 && cp <= 0xd7a3) ||
 				(cp >= 0xf900 && cp <= 0xfaff) ||
@@ -203,11 +208,24 @@ export function truncateToWidth(text, maxWidth, ellipsis = "…") {
 	let w = 0;
 	const ellW = ellipsis ? 1 : 0;
 	const target = maxWidth - ellW;
-	for (const ch of [...s]) {
+	// ANSI-aware: skip escape sequences without counting width
+	const ansiRe = /^\x1b\[[0-9;]*[A-Za-z]|^\x1b\][^\x07]*\x07|^\x1b\(B/;
+	let i = 0;
+	while (i < s.length) {
+		const remaining = s.slice(i);
+		const m = remaining.match(ansiRe);
+		if (m) {
+			out += m[0];
+			i += m[0].length;
+			continue;
+		}
+		const ch = [...remaining][0];
+		if (ch === undefined) break;
 		const cw = visibleWidth(ch);
 		if (w + cw > target) break;
 		out += ch;
 		w += cw;
+		i += ch.length;
 	}
 	return out + (ellipsis || "");
 }
@@ -517,14 +535,22 @@ export function renderFooterLine(width, theme, segments, ctxArg) {
 			if(totalW<=width){
 				const rendered = joinFooterSections(coloreds, theme, ctx);
 				if(visibleWidth(rendered)<=width) return rendered;
+				// HARDEN: budget passed but actually overflow (Bun vs fallback mismatch) — truncate instead of silently falling through
+				const truncated = truncateToWidth(rendered, width);
+				if(visibleWidth(truncated) <= width) return truncated;
+				return truncateToWidth(stripAnsi(rendered), width);
 			}
 			// if width extremely narrow, try next smaller attempt
 		}
-		// fallback: render whatever fits truncated
+		// fallback: render whatever fits truncated (always width-safe)
 		const allColored = segments.segments || Object.values(segMap).filter(Boolean);
 		const renderedAll = joinFooterSections(allColored, theme, ctx);
 		if(visibleWidth(renderedAll)<=width) return renderedAll;
-		return truncateToWidth(stripAnsi(renderedAll), width);
+		{
+			const t = truncateToWidth(renderedAll, width);
+			if(visibleWidth(t) <= width) return t;
+			return truncateToWidth(stripAnsi(renderedAll), width);
+		}
 	}
 	// Legacy Build attempts like rokiy: try full, then drop least critical (cost) etc., always keep path+branch+model minimal
 	const { pathRaw, branchSeg, tokensSeg, costSeg, contextSeg, modelSeg, raw, widths } = segments;
@@ -595,28 +621,56 @@ export function renderFooterLine(width, theme, segments, ctxArg) {
 
 		const rendered = joinFooterSections(finalColored, theme);
 		if (visibleWidth(rendered) <= width) return rendered;
-		// If path-only attempt still too wide, truncate whole line
-		if (attempt.name === "path-only") {
-			return truncateToWidth(rendered, width);
+		// HARDEN: truncate any overflow, not only path-only (fixes 121>120 crash when budget underestimates by 1)
+		{
+			const truncated = truncateToWidth(rendered, width);
+			if (visibleWidth(truncated) <= width) return truncated;
+			const stripped = truncateToWidth(stripAnsi(rendered), width);
+			if (visibleWidth(stripped) <= width) return stripped;
+			return stripped;
 		}
 	}
 
-	// Fallback: minimal path truncated to width
-	const minimal = renderPath(pathRaw, Math.max(8, width), theme) || truncateToWidth(pathRaw, width);
-	return truncateToWidth(minimal, width);
+	// Fallback: minimal path truncated to width (always width-safe)
+	{
+		const minimal = renderPath(pathRaw, Math.max(8, width), theme) || truncateToWidth(pathRaw, width);
+		const out = truncateToWidth(minimal, width);
+		if (visibleWidth(out) <= width) return out;
+		return truncateToWidth(stripAnsi(out), width);
+	}
 }
 
 export function renderFooter(width, theme, footerData, ctx, pi) {
 	if(!isPrettyEnabled()||isSubagentChild()) return [""];
+	const w = Math.max(0, width|0);
 	if(isDumbTerm()){
 		const segs = buildFooterSegments(theme, footerData, ctx, pi);
-		const line = stripAnsi(renderFooterLine(width, {fg:(_,t)=>t}, segs, ctx));
+		let line = stripAnsi(renderFooterLine(w, {fg:(_,t)=>t}, segs, ctx));
+		line = stripAnsi(line);
+		if(visibleWidth(line) > w){
+			line = truncateToWidth(line, w);
+			if(visibleWidth(line) > w) line = truncateToWidth(stripAnsi(line), w);
+		}
 		return [stripAnsi(line)];
 	}
 	const segs = buildFooterSegments(theme, footerData, ctx, pi);
 	segs.ctx = ctx;
-	const line = renderFooterLine(width, theme, segs, ctx);
-	if(isDumbTerm()) return [stripAnsi(line)];
+	let line = renderFooterLine(w, theme, segs, ctx);
+	// HARDEN: never exceed width even if theme ANSI or width mismatch
+	if(visibleWidth(line) > w){
+		const t = truncateToWidth(line, w);
+		if(visibleWidth(t) <= w) line = t;
+		else line = truncateToWidth(stripAnsi(line), w);
+	}
+	if(isDumbTerm()){
+		line = stripAnsi(line);
+		if(visibleWidth(line) > w) line = truncateToWidth(stripAnsi(line), w);
+		return [stripAnsi(line)];
+	}
+	// final guard before return [line] — TuiMainScreen hard crashes if > width
+	if(visibleWidth(line) > w){
+		line = truncateToWidth(stripAnsi(line), w);
+	}
 	return [line];
 }
 
