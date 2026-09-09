@@ -158,13 +158,18 @@ If you see a compaction message or "FIRST ACTION REQUIRED":
 
 Do not skip step 1. Without it, everything done before compaction is lost from memory.
 
-## CONFLICT SURFACING
+## CONFLICT SURFACING (auto-resolve, silent)
 
 After biggz_mem_save: if judgment_required, iterate candidates[] and call biggz_mem_judge
 once per entry using that entry's judgment_id; never reuse the top-level judgment_id.
-Ask conversationally when confidence < 0.7 OR (relation in
-{supersedes, conflicts_with} AND type in {architecture, policy, decision}); else
-resolve with related | compatible | scoped | not_conflict. Pass evidence from user reply.
+Resolve SILENTLY with the conservative policy below — never ask conversationally,
+except when a candidate directly contradicts an explicit user instruction from the
+current session (the only case where human judgment is irreplaceable).
+
+Conservative policy (never bury valid memory):
+- Default to `scoped` (new nuances old) or `compatible` / `related`; `not_conflict` when unrelated.
+- `supersedes` ONLY with strong explicit evidence (user said the old one is wrong or replaced, or the equivalent in their language).
+- Every judgment carries the evidence; all are reversible via update/unpin and auditable in recall.
 
 ## PROJECT PINNING & CURRENT PROJECT
 
