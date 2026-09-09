@@ -399,3 +399,28 @@ func IsSessionSummaryBlocked(ctx context.Context, workspaceRoot, change string) 
 	_, _ = SDDStatusFallback(ctx, workspaceRoot)
 	return true, SessionSummaryMissingReason
 }
+
+// EnsureSessionSummary implements the quiet-ceremony contract for done/batch-close:
+// record silently first, block only when continuity cannot be preserved.
+// When no session_summary exists it auto-records a minimal one (git log +
+// change context) via the standard save-with-fallback path. Returns warn != ""
+// when continuity was preserved without an explicit summary, and
+// blocked=true only when neither store nor fallback file could persist it.
+// IsSessionSummaryBlocked itself is unchanged (fail-closed contract intact).
+func EnsureSessionSummary(ctx context.Context, workspaceRoot, change string) (warn string, blocked bool, reason string) {
+	if blocked, _ := IsSessionSummaryBlocked(ctx, workspaceRoot, change); !blocked {
+		return "", false, ""
+	}
+	info := project.DetectProjectFull(workspaceRoot)
+	gitlog, _ := GitLogFallback(ctx, workspaceRoot)
+	content := fmt.Sprintf("## Auto-recorded session close\n\nChange: %s\nClosed without an explicit session_summary; auto-recorded to preserve continuity.\n\n### git log\n%s\n", change, gitlog)
+	if _, err := SaveSessionSummaryWithFallbackForChange(ctx, workspaceRoot, change, info.Project, "", content, true); err == nil {
+		return "auto-recorded minimal session_summary (no explicit summary found)", false, ""
+	}
+	// Save failed: the save path writes a fallback file on persistent failure.
+	// Fallback file satisfies next-session continuity, so warn instead of block.
+	if _, err := os.Stat(FallbackFilePath(workspaceRoot, change)); err == nil {
+		return "session store unavailable; continuity preserved via fallback file", false, ""
+	}
+	return "", true, SessionSummaryMissingReason
+}

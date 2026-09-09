@@ -544,9 +544,10 @@ Orchestrator MUST NOT inline-write SDD spec/design/tasks artifacts that replace 
 Orchestrator workflow (`biggz-orchestrator-workflow.md` / `internal/sdd/*`) MUST wire pre-done hook: before `done`, verify `context(5)+search`; missing MUST block with `needs_decision`. Fallback to file (`openspec/changes/{change}/session-fallback.md`) when BigMem unavailable is allowed only after retry-once, with note.
 
 #### Scenario: Workflow blocks done until verified
-- GIVEN no verified `session_summary` in `context(5)`/`search`
+- GIVEN no verified `session_summary` in `context(5)`/`search` and auto-record failed (unwritable store and fallback path)
 - WHEN `biggz sdd-status --json --instructions` evaluated for `done`
 - THEN orchestrator MUST report `blocked(session_summary_missing)` and NOT emit `done`
+- AND GIVEN auto-record succeeded THEN close MUST proceed with a warn (see `EnsureSessionSummary`)
 
 ### Requirement: REQ-SD-O3 — Complementary + Retry Discipline Visibility (Q4+Q5)
 

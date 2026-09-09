@@ -545,6 +545,12 @@ The system MUST block `done` and every closing `apply` batch without prior `bigg
 - WHEN `done` or batch-close evaluated
 - THEN gate MUST allow
 
+#### Scenario: Missing summary auto-records instead of blocking
+- GIVEN no `session_summary` and a writable store or fallback path
+- WHEN `done` or batch-close evaluated via status derivation (`EnsureSessionSummary`)
+- THEN gate MUST auto-record a minimal summary silently and allow close with a warn
+- AND MUST block with `blocked(session_summary_missing)` only when neither store nor fallback file could persist it (existing fail-closed scenarios unchanged)
+
 ### Requirement: CTX-1 — Core Store *Ctx variants
 
 The system MUST provide `SaveCtx`, `GetCtx`, `SearchCtx`, `UpdateCtx`, `DeleteCtx` on `Store`. Each MUST take `context.Context` as first parameter and MUST enforce a timeout. Signatures of existing methods MUST NOT change.

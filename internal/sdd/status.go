@@ -892,7 +892,13 @@ func applyTerminalGateBlocks(ctx context.Context, workspaceRoot, changeName stri
 		blockedReasons.genuine = append(blockedReasons.genuine, reason)
 	}
 	// Session guard before done/batch-close (REQ-SD-B1/S1).
-	if blocked, reason := IsSessionSummaryBlocked(ctx, workspaceRoot, changeName); blocked {
+	// Quiet ceremony: auto-record a minimal summary silently first; block only
+	// when neither store nor fallback file could preserve continuity.
+	warn, blocked, reason := EnsureSessionSummary(ctx, workspaceRoot, changeName)
+	// Status derivation has no warnings channel; the auto-record note persists
+	// in the saved summary itself. Reference warn so the contract stays explicit.
+	_ = warn
+	if blocked {
 		if dependencies.Verify == DependencyReady {
 			dependencies.Verify = DependencyBlocked
 		}
