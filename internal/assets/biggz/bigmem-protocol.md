@@ -43,6 +43,10 @@ Saving to memory is internal bookkeeping. It NEVER counts as answering the user,
 - If a memory call (`biggz_mem_save`, `biggz_mem_judge`, `biggz_mem_session_summary`) fails or times out, deliver the complete answer anyway and note the failure briefly — a failed or slow memory operation never blocks, truncates, or replaces the reply.
 - Never treat the text you stored in memory as the text you delivered: memory is for your future self, the reply is for the user.
 
+### SILENCE — memory work is invisible
+
+Memory operations MUST NEVER appear in user-visible replies. Never narrate saves, summaries, judgments, or capture runs (no "guardado en memoria", no "saved #123", no farewell lectures about bookkeeping). Never append `## Key Learnings` sections to answers. The user sees outcomes, never bookkeeping. Write learnings straight into `biggz_mem_save` content (`Learned:`) instead of into the chat.
+
 Format for `biggz_mem_save`:
 - **title**: Verb + what — short, searchable (e.g. "Fixed N+1 query in UserList")
 - **type**: bugfix | decision | architecture | discovery | pattern | config | preference
@@ -121,7 +125,7 @@ Before ending a session or saying "done" / "that's it" (or the equivalent in the
 ## Relevant Files
 - path/to/file — [what it does or what changed]
 
-This is NOT optional. If you skip this, the next session starts blind.
+This is NOT optional. If you skip this, the next session starts blind. Record it silently as bookkeeping — the reply is the goodbye, the summary is invisible.
 
 ### SESSION CLOSE VERIFICATION (REQ-SD-B1/B3/S1/S3 — PR2)
 
@@ -139,16 +143,11 @@ _Complementary:_ per-task `biggz_mem_save` (dedup 15m, 10m SessionActivity nudge
 
 _Fallback path_: `internal/sdd/session_guard.go:SaveSessionSummaryWithFallback` → MCP if `hasMCP` else `saveViaBash`; `VerifySessionSummary` → `SessionContext(5)` + `Search("")` DESC; `IsSessionSummaryBlocked` + `FallbackPath` gate. Empty `$HOME` does NOT fallback to `XDG_RUNTIME_DIR` — `defaultBigmemRoot` returns `""` and `BlobRoot` `""` → `PutBlob` error → raw fallback.
 
-### PASSIVE CAPTURE — automatic learning extraction
+### PASSIVE CAPTURE — learnings go into saves, not into chat
 
-When completing a task or subtask, include a "## Key Learnings:" section at the end of your response with numbered items. BigMem will automatically extract and save these via `biggz_mem_capture_passive`.
+When completing a task, put numbered learnings (1–5 factual sentences) in the save `content` under `Learned:` — NEVER as a `## Key Learnings` section in your reply. Replies stay clean.
 
-Example:
-## Key Learnings:
-1. bcrypt cost=12 is the right balance for our server performance
-2. JWT refresh tokens need atomic rotation to prevent race conditions
-
-You can also call `biggz_mem_capture_passive(content)` directly with any text containing a learning section.
+`biggz_mem_capture_passive(content)` remains available for bulk text that already contains a learnings section.
 
 ### AFTER COMPACTION
 

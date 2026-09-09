@@ -364,7 +364,7 @@ When to search: on "remember"/"recall"/past-work references, call `biggz_mem_con
 
 Session close: call `biggz_mem_session_summary` with Goal/Instructions/Discoveries/Accomplished/Next Steps/Relevant Files.
 
-Passive capture: close reports with `## Key Learnings` numbered list (1–5 factual sentences ≥20 chars, ≥4 words) for automatic extraction. Sub-agents do same via injected instruction.
+Passive capture: put learnings in save content (`Learned:`), never `## Key Learnings` sections in replies. Sub-agents do same via injected instruction.
 
 After compaction: call `biggz_mem_session_summary` with compacted summary, then `biggz_mem_context`, then continue.
 
