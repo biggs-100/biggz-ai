@@ -1108,6 +1108,11 @@ type SettleParams struct {
 	ProcessEvidence            string
 	RemediatesEvidenceRevision string
 	ChangedLines               int `json:"changed_lines,omitempty"`
+	// Strict restores lock semantics: unknown or non-active tokens block with
+	// invalid_continuation instead of admitting with a warning. Default (false)
+	// is admissible: the ledger logs faithfully without authorizing. Strict is
+	// reserved for flows where mutual exclusion matters (prod apply).
+	Strict bool
 }
 
 // SettleResult describes the result of settling an attempt.
@@ -1118,6 +1123,10 @@ type SettleResult struct {
 	Complete          bool   `json:"complete,omitempty"`
 	Migrated          bool   `json:"migrated,omitempty"`
 	Scope             string `json:"scope,omitempty"`
+	// Warning is set when the settlement was admitted without a prior claim
+	// (unknown token recorded as unclaimed attempt) or against a non-active
+	// attempt. Empty on the strict happy path.
+	Warning string `json:"warning,omitempty"`
 }
 
 // mintAcquireToken derives a deterministic token for an acquire. It is
@@ -1521,6 +1530,10 @@ func Settle(params SettleParams) (*SettleResult, error) {
 		}
 
 		// Lookup token → ordinal.
+		// Admissible settle (default): an unresolvable token is recorded as an
+		// unclaimed attempt with a warning instead of blocking with
+		// invalid_continuation. Strict restores the old lock semantics.
+		var admitWarning string
 		ordinal, ok := store.Tokens[params.Token]
 		if !ok {
 			// Fallback: token may be the revision itself (legacy path where
@@ -1529,22 +1542,42 @@ func Settle(params SettleParams) (*SettleResult, error) {
 			if params.Token == store.Revision && store.ActiveAttempt > 0 {
 				ordinal = store.ActiveAttempt
 				ok = true
-			} else {
+			} else if params.Strict {
 				return &BlockedError{
 					Reason:           BlockedReasonInvalidContinuation,
 					Exit:             fmt.Sprintf("token %q does not continue the attempt currently on record; run sdd-attempt status to see the live token", params.Token),
 					SettleObligation: deriveSettleObligation(store),
 				}
+			} else {
+				// No prior claim: append an unclaimed attempt so the work is
+				// logged faithfully instead of rejected.
+				ordinal = maxAttemptOrdinal(store.Attempts) + 1
+				store.Attempts = append(store.Attempts, RuntimeAttempt{
+					Ordinal:   ordinal,
+					BeganAt:   time.Now().UTC().Format(time.RFC3339),
+					Diagnosis: fmt.Sprintf("admitted without prior acquire (unclaimed token %q)", params.Token),
+				})
+				if store.Tokens == nil {
+					store.Tokens = map[string]int{}
+				}
+				store.Tokens[params.Token] = ordinal
+				admitWarning = fmt.Sprintf("settled without prior acquire (token %q unclaimed); recorded as attempt %d", params.Token, ordinal)
+				ok = true
 			}
 		}
 
 		// The ordinal must be the active attempt and still running.
-		if store.ActiveAttempt != ordinal {
-			return &BlockedError{
-				Reason:           BlockedReasonInvalidContinuation,
-				Exit:             fmt.Sprintf("token %q maps to attempt %d but active attempt is %d", params.Token, ordinal, store.ActiveAttempt),
-				SettleObligation: deriveSettleObligation(store),
+		// Skip this check for freshly admitted unclaimed attempts (their
+		// warning is already set above).
+		if admitWarning == "" && store.ActiveAttempt != ordinal {
+			if params.Strict {
+				return &BlockedError{
+					Reason:           BlockedReasonInvalidContinuation,
+					Exit:             fmt.Sprintf("token %q maps to attempt %d but active attempt is %d", params.Token, ordinal, store.ActiveAttempt),
+					SettleObligation: deriveSettleObligation(store),
+				}
 			}
+			admitWarning = fmt.Sprintf("token %q maps to non-active attempt %d (active: %d); settled with supersede note", params.Token, ordinal, store.ActiveAttempt)
 		}
 		var found bool
 		var idx int
@@ -1649,6 +1682,7 @@ func Settle(params SettleParams) (*SettleResult, error) {
 			DecisionRequired:  store.DecisionRequired,
 			Complete:          store.Complete,
 			Scope:             s.Scope,
+			Warning:           admitWarning,
 		}
 		recordRequest(store, params.RequestID, opSettle, digest, outcome)
 		if params.RequestID != "" {
@@ -1664,6 +1698,7 @@ func Settle(params SettleParams) (*SettleResult, error) {
 			Complete:          store.Complete,
 			Scope:             s.Scope,
 			Migrated:          migrated,
+			Warning:           admitWarning,
 		}
 		return nil
 	})
@@ -1673,6 +1708,17 @@ func Settle(params SettleParams) (*SettleResult, error) {
 	result.Migrated = migrated
 	result.Scope = s.Scope
 	return result, nil
+}
+
+// maxAttemptOrdinal returns the highest attempt ordinal on record (0 when empty).
+func maxAttemptOrdinal(attempts []RuntimeAttempt) int {
+	max := 0
+	for _, a := range attempts {
+		if a.Ordinal > max {
+			max = a.Ordinal
+		}
+	}
+	return max
 }
 
 // findChainFailedAttempt mirrors gentle-ai's runtimeChainFailedAttempt: the
