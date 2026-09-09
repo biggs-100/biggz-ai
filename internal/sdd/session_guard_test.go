@@ -523,3 +523,54 @@ func TestSessionGuard_FailClosedOnStoreError(t *testing.T) {
 	}
 	t.Setenv("BIGGZ_PROJECT", "")
 }
+
+func TestEnsureSessionSummary_AutoRecordsWhenMissing(t *testing.T) {
+	_ = isolatedHomeGuard(t)
+	ctx := context.Background()
+	t.Setenv("BIGGZ_PROJECT", "biggz-ai")
+	ws := t.TempDir()
+	change := "autorecord-change"
+
+	if blocked, _ := IsSessionSummaryBlocked(ctx, ws, change); !blocked {
+		t.Fatalf("precondition: gate must block with no summary")
+	}
+	warn, blocked, reason := EnsureSessionSummary(ctx, ws, change)
+	if blocked {
+		t.Fatalf("auto-record must warn instead of block, got reason %q", reason)
+	}
+	if warn == "" {
+		t.Fatalf("expected non-empty warn describing auto-record")
+	}
+	has, err := HasSessionSummary(ctx, "biggz-ai", "")
+	if err != nil {
+		t.Fatalf("HasSessionSummary err %v", err)
+	}
+	if !has {
+		t.Fatalf("expected auto-recorded summary to satisfy HasSessionSummary")
+	}
+	if blocked, _ := IsSessionSummaryBlocked(ctx, ws, change); blocked {
+		t.Fatalf("gate must clear after auto-record")
+	}
+	t.Setenv("BIGGZ_PROJECT", "")
+}
+
+func TestEnsureSessionSummary_PassthroughWhenPresent(t *testing.T) {
+	_ = isolatedHomeGuard(t)
+	ctx := context.Background()
+	store, err := bigmem.Open("")
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	obs := &bigmem.Observation{Title: "Session summary", Type: "session_summary", Content: "# Summary", Project: "biggz-ai"}
+	if err := store.Save(obs); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	store.Close()
+
+	t.Setenv("BIGGZ_PROJECT", "biggz-ai")
+	warn, blocked, _ := EnsureSessionSummary(ctx, t.TempDir(), "present-change")
+	if blocked || warn != "" {
+		t.Fatalf("expected silent passthrough, got blocked=%v warn=%q", blocked, warn)
+	}
+	t.Setenv("BIGGZ_PROJECT", "")
+}
