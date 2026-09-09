@@ -5,9 +5,11 @@ import (
 )
 
 // VerifyAskUserQuestionPrecededBySynthesis is a lightweight verification hook
-// that detects when ask_user_question/question is called without preceding
-// synthesis markers. It checks that the conversation buffer before the tool
-// call contains artifacts/paths + risks + next and the checkpoint header.
+// that detects when a checkpoint ask (irreversible action) is called without
+// preceding full synthesis markers. It checks that the conversation buffer
+// before the tool call contains the full-block header plus artifacts + risks
+// + next. Routine quiet one-liners carry no full block by design, so this
+// hook applies to checkpoint asks only.
 //
 // Intended for tests: pass the concatenated assistant output preceding the
 // tool call. Returns nil when synthesis is present, error otherwise.
@@ -18,8 +20,8 @@ import (
 // test-only hook; runtime enforcement remains via the orchestrator prompt.
 func VerifyAskUserQuestionPrecededBySynthesis(precedingOutput string) error {
 	required := []string{
-		"Post-Delegation Human Checkpoint",
-		"Synthesize a concise summary",
+		"Post-Delegation Report",
+		"## Sub-agent Result",
 		"artifacts",
 		"risks",
 		"next",

@@ -477,7 +477,7 @@ func TestInstall_VerifiesOrchestratorCheckpoint(t *testing.T) {
 		t.Fatalf("read config: %v", err)
 	}
 	s := string(data)
-	for _, want := range []string{"Post-Delegation Human Checkpoint", "Synthesize a concise summary"} {
+	for _, want := range []string{"Post-Delegation Report", "continue autonomously"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("config missing %q", want)
 		}
@@ -502,7 +502,7 @@ func TestInstall_VerifyCheckpointSynthesisHook(t *testing.T) {
 	if err := install.VerifyCheckpointSynthesis("missing"); err == nil {
 		t.Error("expected error for missing markers")
 	}
-	good := "Post-Delegation Human Checkpoint\nSynthesize a concise summary\nartifacts/paths\nrisks\nnext\n"
+	good := "Post-Delegation Report\n## Sub-agent Result\nartifacts/paths\nrisks\nnext\n"
 	if err := install.VerifyCheckpointSynthesis(good); err != nil {
 		t.Errorf("expected pass for good synthesis: %v", err)
 	}
