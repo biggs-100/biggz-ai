@@ -278,14 +278,17 @@ func verifyCheckpointContent(data []byte, required []string) error {
 	return nil
 }
 
-// VerifyCheckpointSynthesis checks that content contains synthesis markers for the
-// Post-Delegation Human Checkpoint. Used by tests and as a lightweight hook to
-// detect when ask_user_question/question is called without preceding synthesis.
-// It verifies presence of artifacts/paths, risks, next and the checkpoint header.
+// VerifyCheckpointSynthesis checks that content contains the markers for the
+// quiet-by-default Post-Delegation Report contract. Used by tests and as a
+// lightweight hook to detect when a checkpoint ask (irreversible action) is
+// called without preceding full synthesis. Routine quiet one-liners carry no
+// full block by design; this hook verifies the FULL block only.
+// It verifies presence of the report header, the full-block header,
+// artifacts/paths, risks and next.
 func VerifyCheckpointSynthesis(content string) error {
 	required := []string{
-		"Post-Delegation Human Checkpoint",
-		"Synthesize a concise summary",
+		"Post-Delegation Report",
+		"## Sub-agent Result",
 		"artifacts/paths",
 		"risks",
 		"next",
@@ -299,8 +302,8 @@ func VerifyCheckpointSynthesis(content string) error {
 }
 
 // verifyOrchestratorDeployment checks that the orchestrator prompt and permissions
-// were correctly deployed for the given adapter. The checkpoint is deployed to
-// exactly one surface per adapter strategy — settings overlays for
+// were correctly deployed for the given adapter. The quiet-by-default report
+// contract is deployed to exactly one surface per adapter strategy — settings overlays for
 // OpenCode-style agents, the system prompt file for Pi — so verification passes
 // when ANY deployed surface carries the checkpoint markers. Demanding all
 // surfaces would fail agents that legitimately keep the prompt in only one.
@@ -309,8 +312,8 @@ func VerifyCheckpointSynthesis(content string) error {
 // is optional and must NOT block install; only the 4 verbatim markers above are required.
 func verifyOrchestratorDeployment(homeDir string, adapter plugin.AgentAdapter) error {
 	required := []string{
-		"Post-Delegation Human Checkpoint",
-		"Synthesize a concise summary",
+		"Post-Delegation Report",
+		"continue autonomously",
 		"## Sub-agent Result",
 		"Artifacts/Paths",
 	}

@@ -17,9 +17,9 @@ Before handling any /sdd-* or SDD request, read biggz-orchestrator-workflow.md f
 Before delegating, read biggz-orchestrator-delegation.md for Work Routing Ladder, Delegation Rules, Allowed edit surfaces, and SD Agent Authority.
 Reads MUST be via file read and evidenced in launch prompt; if unreadable, warn and continue with dispatcher as authority — lazy on-demand, not fail-closed (see Mandatory Pre-Delegation Reads in workflow).
 
-### Post-Delegation Human Checkpoint (MANDATORY — After EVERY Delegated Sub-agent & BEFORE question)
+### Post-Delegation Report (Quiet by default — full synthesis ONLY before irreversible checkpoints)
 
-Post-Delegation Human Checkpoint — After EVERY delegated sub-agent — SDD (sdd-*) or non-SDD (explore, general/worker, verify) — you MUST emit synthesis markdown BEFORE the next step. Mirrors gentle-pi: human always sees `## Sub-agent Result` to judge. If next step is a checkpoint question (`proceed`/`adjust`/`stop` or `continue`/`correct`) emit synthesis FIRST in SAME turn then ask (gate blocks if missing). If next step is autonomous continuation, still emit synthesis as standalone markdown before continuing. Do NOT silently continue. Synthesize a concise summary in the active conversation language, scannable: decision, outcome, next action. Keep 4 markers verbatim English.
+Post-delegation is QUIET by default. After any delegated sub-agent — SDD (sdd-*) or non-SDD (explore, general/worker, verify) — emit ONE line in the active conversation language: `◆ {phase} · {status} · {next}` plus one decision sentence (outcome + next action), then continue autonomously. Do NOT emit the full synthesis block and do NOT ask a checkpoint question for routine continuation. The full `## Sub-agent Result` synthesis + checkpoint ask (`proceed`/`adjust`/`stop` or `continue`/`correct`) is reserved for IRREVERSIBLE next steps only: merge, PR create, delete/destroy, publish/release, apply to prod, or anything the human cannot undo in one message. Before those, emit synthesis FIRST in SAME turn then ask (gate blocks if missing). Keep 4 markers verbatim English.
 
 Required markdown (copy-paste, fill all fields — emit as plain markdown, NOT inside ``` at runtime):
 Visual hierarchy per cognitive-doc-design (scannable, chunked, progressive disclosure, consistent icons) — markers verbatim English for gate b0d2fc1:
@@ -64,9 +64,9 @@ Visual hierarchy per cognitive-doc-design (scannable, chunked, progressive discl
 The checkpoint ask_user_choice/ask_user_question/question call MUST follow this block with `proceed` / `adjust` / `stop` (or `continue` / `correct`) — localized equivalents are also checkpoint tokens (gate detects bilingual via `internal/sdd/synthesis_gate.go:IsCheckpointAsk` and `biggz-synthesis-gate.js:isCheckpointAsk`). Markdown is NOT tool param — it is separate chat markdown emitted FIRST, adjacent, same turn, BEFORE tool call. A checkpoint ask without immediately preceding `## Sub-agent Result` markdown is INVALID and will be blocked. Self-check: Before invoking `question`/`ask_user_choice`, re-read ONLY the question text + options and confirm a reader who never saw this chat could decide correctly. If not, rewrite — do not call.
 
 Additional rules:
-1. Emit synthesis after EVERY delegated sub-agent and STOP for human decision when checkpoint; do NOT silently continue without synthesis even in auto mode for non-checkpoint.
+1. After each delegated sub-agent emit the quiet one-liner and continue autonomously; STOP for human decision ONLY at irreversible checkpoints (full synthesis FIRST, then ask). Routine work never waits for `proceed`.
 2. Use lossless blocking-prompt route when native UI available and representable; otherwise emit COMPLETE envelope as plain chat and STOP. Note: synthesis markdown is separate chat markdown emitted FIRST in same turn, adjacent, before the tool call. Do NOT put synthesis inside the tool's question param.
-3. Never auto-continue without human confirmation, except when user said `auto` in Session Preflight (still surface gate failures). For non-SDD delegated work, checkpoint is always interactive — no auto bypass.
+3. Auto-continue by default after delegation; human confirmation is required ONLY at irreversible checkpoints. Surface gate failures immediately even while continuing.
 
 REMINDER: synthesis markdown is separate chat markdown emitted FIRST, adjacent, same turn, before tool call.
 
