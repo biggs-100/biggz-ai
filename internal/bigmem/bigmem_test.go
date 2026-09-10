@@ -487,6 +487,94 @@ func TestIsGhostWAL(t *testing.T) {
 	})
 }
 
+func TestIsGhostWAL_Robust(t *testing.T) {
+	t.Parallel()
+	writeSized := func(t *testing.T, path string, size int) {
+		t.Helper()
+		if size == 0 {
+			if err := os.WriteFile(path, []byte{}, 0644); err != nil {
+				t.Fatalf("write %s: %v", path, err)
+			}
+			return
+		}
+		data := make([]byte, size)
+		for i := range data {
+			data[i] = 'z'
+		}
+		if err := os.WriteFile(path, data, 0644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	cases := []struct {
+		name    string
+		setup   func(t *testing.T, dbPath string)
+		want    bool
+		emptyDB bool
+	}{
+		{
+			name: "WAL fresh checkpoint, SHM old is NOT ghost",
+			setup: func(t *testing.T, dbPath string) {
+				writeSized(t, dbPath+"-wal", 0)
+				writeSized(t, dbPath+"-shm", 32768)
+				old := time.Now().Add(-10 * time.Minute)
+				fresh := time.Now().Add(-30 * time.Second)
+				if err := os.Chtimes(dbPath+"-shm", old, old); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(dbPath+"-wal", fresh, fresh); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: false,
+		},
+		{
+			name: "WAL old and SHM old IS ghost",
+			setup: func(t *testing.T, dbPath string) {
+				writeSized(t, dbPath+"-wal", 0)
+				writeSized(t, dbPath+"-shm", 32768)
+				oldWal := time.Now().Add(-10 * time.Minute)
+				oldShm := time.Now().Add(-6 * time.Minute)
+				if err := os.Chtimes(dbPath+"-wal", oldWal, oldWal); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chtimes(dbPath+"-shm", oldShm, oldShm); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: true,
+		},
+		{
+			name: "WAL missing is NOT ghost",
+			setup: func(t *testing.T, dbPath string) {
+				writeSized(t, dbPath+"-shm", 32768)
+				old := time.Now().Add(-10 * time.Minute)
+				if err := os.Chtimes(dbPath+"-shm", old, old); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: false,
+		},
+		{
+			name:    "empty dbPath (empty HOME) is NOT ghost",
+			setup:   func(t *testing.T, dbPath string) {},
+			want:    false,
+			emptyDB: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dbPath := ""
+			if !tc.emptyDB {
+				dbPath = filepath.Join(t.TempDir(), "bigmem.db")
+				tc.setup(t, dbPath)
+			}
+			if got := isGhostWAL(dbPath); got != tc.want {
+				t.Errorf("isGhostWAL(%q) = %v, want %v", dbPath, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestGhostWAL_Stale_Removed(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "bigmem.db")

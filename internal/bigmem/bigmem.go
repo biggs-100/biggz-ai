@@ -247,8 +247,14 @@ func recoveredDBPathForRoot(root string) string {
 }
 
 // isGhostWAL reports whether dbPath has a stale WAL=0 + SHM>0 zombie lock (Windows).
-// REQ-GW1: stale only when wal==0 && shm>0 && Since(ModTime)>5min.
+// REQ-GW1: stale only when wal==0 && shm>0 && Since(SHM ModTime)>5min
+// AND (Since(WAL ModTime)>5min OR SHM newer than WAL).
+// A freshly checkpointed WAL (size 0, recent mtime) is NOT a ghost even if
+// SHM is old. Empty dbPath (e.g. empty HOME with no root) is never a ghost.
 func isGhostWAL(dbPath string) bool {
+	if strings.TrimSpace(dbPath) == "" {
+		return false
+	}
 	walPath := dbPath + "-wal"
 	shmPath := dbPath + "-shm"
 	walInfo, err := os.Stat(walPath)
@@ -260,6 +266,11 @@ func isGhostWAL(dbPath string) bool {
 		return false
 	}
 	if time.Since(shmInfo.ModTime()) <= 5*time.Minute {
+		return false
+	}
+	walStale := time.Since(walInfo.ModTime()) > 5*time.Minute
+	shmNewerThanWal := shmInfo.ModTime().After(walInfo.ModTime())
+	if !walStale && !shmNewerThanWal {
 		return false
 	}
 	return true
