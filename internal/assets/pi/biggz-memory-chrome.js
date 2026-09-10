@@ -256,20 +256,7 @@ export function renderResultText(toolName, result, options = {}) {
 /** @type {import("@earendil-works/pi-coding-agent").ExtensionAPI} */
 export default function biggzMemoryChrome(pi) {
   if (process.env.PI_SUBAGENT_CHILD === "1") return;
-  // Adapter-aware gate: avoid double-render when native MCP present.
-  // Gate on !pi.getTool("biggz_mem_save") — present→no-op, absent→fallback (one-release safety).
-  try {
-    if (pi.getTool && pi.getTool("biggz_mem_save")) return;
-    if (pi.getToolDefinition && pi.getToolDefinition("biggz_mem_save")) return;
-  } catch {}
-  // Explicit verifier string: !pi.getTool("biggz_mem_save")
-  try {
-    if (typeof pi.getTool === "function" && !pi.getTool("biggz_mem_save")) {
-      // fallback active — continue
-    } else if (typeof pi.getTool === "function") {
-      return;
-    }
-  } catch {}
+  // Pretty output always active; opt-out via BIGGZ_PRETTY=0.
   if (process.env.BIGGZ_PRETTY === "0") return;
   // Normalize check for MCP prefix: pi may emit "biggz_mem_save" or "mem_save"
   const isMemoryTool = (name) => {

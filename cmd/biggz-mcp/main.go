@@ -713,8 +713,8 @@ func handleToolCall(id any, name string, args map[string]any) {
 		entries := make([]map[string]any, 0, len(results))
 		anyPreviewTruncated := false
 		for _, r := range results {
-			preview := truncate(r.Content, 300)
-			if len(r.Content) > 300 {
+			preview := truncate(r.Content, 120)
+			if len(r.Content) > 120 {
 				anyPreviewTruncated = true
 			}
 			entry := map[string]any{
@@ -790,7 +790,7 @@ func handleToolCall(id any, name string, args map[string]any) {
 			fmt.Fprintf(os.Stderr, "limit clamped: requested=%d effective=50\n", requestedLimit)
 		}
 		if anyPreviewTruncated {
-			fmt.Fprintln(os.Stderr, "Results above are previews (300 chars). Call biggz_mem_get_observation for full content.")
+			fmt.Fprintln(os.Stderr, "Results above are previews (120 chars). Call biggz_mem_get_observation for full content.")
 		}
 		// Append activity nudge if needed
 		if nudge := sessionActivity.NudgeIfNeeded(sessForActivity); nudge != "" && len(entries) > 0 {
@@ -1014,10 +1014,10 @@ func handleToolCall(id any, name string, args map[string]any) {
 			"project":            info.Project,
 			"project_source":     info.Source,
 			"project_path":       info.Path,
-			"path":               info.Path,
-			"cwd":                cwd,
 			"available_projects": info.AvailableProjects,
 		}
+		// NOTE: duplicate keys "path" (=project_path) and "cwd" removed to trim payload;
+		// wire keys project/project_source/project_path/available_projects unchanged.
 		if info.Warning != "" {
 			result["warning"] = info.Warning
 		}
@@ -1053,7 +1053,17 @@ func handleToolCall(id any, name string, args map[string]any) {
 			writeError(id, err.Error())
 			return
 		}
-		jsonResult(id, stats)
+		// Trim payload: omit by_type unless verbose (wire keys otherwise unchanged).
+		if os.Getenv("BIGGZ_VERBOSE") == "1" {
+			jsonResult(id, stats)
+		} else {
+			jsonResult(id, map[string]any{
+				"total_observations": stats.TotalObservations,
+				"total_sessions":     stats.TotalSessions,
+				"total_prompts":      stats.TotalPrompts,
+				"storage_path":       stats.StoragePath,
+			})
+		}
 
 	case "mem_pin":
 		obsID := getStr(args, "id")

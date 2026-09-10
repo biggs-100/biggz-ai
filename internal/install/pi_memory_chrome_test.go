@@ -212,3 +212,59 @@ check();
 		t.Fatalf("unexpected output: %s", string(out))
 	}
 }
+
+func TestMemoryChromePrettyAlwaysActive_Node(t *testing.T) {
+	// Gate removed: pretty output stays active even when pi.getTool exists.
+	data, err := fs.ReadFile(assets.FS, "pi/biggz-memory-chrome.js")
+	if err != nil {
+		t.Fatalf("read asset: %v", err)
+	}
+	s := string(data)
+	if strings.Contains(s, `if (pi.getTool && pi.getTool("biggz_mem_save")) return`) {
+		t.Errorf("gate still present: pretty output would no-op when MCP tool exists")
+	}
+	if !strings.Contains(s, `BIGGZ_PRETTY`) {
+		t.Errorf("missing BIGGZ_PRETTY=0 opt-out")
+	}
+	node, err := exec.LookPath("node")
+	if err != nil {
+		node, err = exec.LookPath("node.exe")
+		if err != nil {
+			t.Skip("node not found, skipping")
+		}
+	}
+	tmpDir := t.TempDir()
+	tmpFile := filepath.Join(tmpDir, "chrome.mjs")
+	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+		t.Fatalf("write tmp: %v", err)
+	}
+	testScript := filepath.Join(tmpDir, "test2.mjs")
+	script := `
+import chromeDefault, { renderResultText } from "./chrome.mjs";
+function assert(cond, msg) { if (!cond) { console.error("FAIL: "+msg); process.exit(1); } }
+// gate-present still renders: fake pi with getTool returning truthy must still register handlers
+const calls = [];
+const fakePi = { getTool: () => ({}), getToolDefinition: () => ({}), on: (ev) => { calls.push(ev); } };
+chromeDefault(fakePi);
+assert(calls.includes("tool_call") && calls.includes("tool_result"), "handlers not registered with gate-present pi: "+JSON.stringify(calls));
+// 20 items collapsed is a single status line without leaking payload keys
+const items = Array.from({length: 20}, (_, i) => ({id: String(i), project_source: "x", content: "secret"+i}));
+const collapsed = renderResultText("mem_search", { details: { data: items } }, {expanded: false});
+assert(!collapsed.includes("\n"), "collapsed should be 1 line: "+JSON.stringify(collapsed));
+assert(!collapsed.includes("project_source") && !collapsed.includes("secret"), "collapsed leaks payload: "+collapsed);
+assert(collapsed.includes("20 results"), "collapsed should count 20: "+collapsed);
+console.log("PASS2");
+`
+	if err := os.WriteFile(testScript, []byte(script), 0644); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	cmd := exec.Command(node, testScript)
+	cmd.Env = append(os.Environ(), "BIGGZ_PRETTY=", "PI_SUBAGENT_CHILD=")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node gate test failed: %v\noutput: %s", err, string(out))
+	}
+	if !strings.Contains(string(out), "PASS2") {
+		t.Fatalf("unexpected output: %s", string(out))
+	}
+}

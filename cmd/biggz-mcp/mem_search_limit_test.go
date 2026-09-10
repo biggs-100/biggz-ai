@@ -6,6 +6,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -59,5 +61,71 @@ func TestResolveSearchProject(t *testing.T) {
 	dir := t.TempDir()
 	if got := resolveSearchProject("", false, dir); got != "" {
 		t.Logf("autodetect in empty tmp returned %q (allowed: empty or basename)", got)
+	}
+}
+
+func TestSearchPreviewBudget120(t *testing.T) {
+	// Snapshot: search previews must stay at 120 chars (payload trim).
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("read main.go: %v", err)
+	}
+	s := string(src)
+	if !strings.Contains(s, "truncate(r.Content, 120)") {
+		t.Errorf("preview budget changed: want truncate(r.Content, 120)")
+	}
+	if strings.Contains(s, "truncate(r.Content, 300)") {
+		t.Errorf("stale 300-char preview still present")
+	}
+	if !strings.Contains(s, "previews (120 chars)") {
+		t.Errorf("stderr message must say previews (120 chars)")
+	}
+	if got := truncate(strings.Repeat("x", 200), 120); len(got) != 123 {
+		t.Errorf("truncate(200,120) len = %d, want 123", len(got))
+	}
+}
+
+func TestTrimmedPayloads(t *testing.T) {
+	setupStore(t)
+	// mem_current_project: no duplicated path/cwd keys.
+	raw := captureStdout(t, func() {
+		handleToolCall("trim-cp", "mem_current_project", map[string]any{})
+	})
+	r := parseRPC(t, raw)
+	if r.Error != nil {
+		t.Fatalf("current_project error: %v", r.Error)
+	}
+	var envelope struct {
+		Content []struct {
+			JSON map[string]any `json:"json"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(r.Result, &envelope); err != nil {
+		t.Fatalf("unmarshal current_project: %v", err)
+	}
+	if len(envelope.Content) == 0 {
+		t.Fatal("empty content")
+	}
+	payload := envelope.Content[0].JSON
+	if _, ok := payload["path"]; ok {
+		t.Errorf("payload still has duplicate key \"path\"")
+	}
+	if _, ok := payload["cwd"]; ok {
+		t.Errorf("payload still has duplicate key \"cwd\"")
+	}
+	if _, ok := payload["project"]; !ok {
+		t.Errorf("payload missing \"project\"")
+	}
+	// mem_stats: no by_type unless verbose.
+	t.Setenv("BIGGZ_VERBOSE", "")
+	raw = captureStdout(t, func() {
+		handleToolCall("trim-st", "mem_stats", map[string]any{})
+	})
+	r = parseRPC(t, raw)
+	if r.Error != nil {
+		t.Fatalf("stats error: %v", r.Error)
+	}
+	if strings.Contains(string(r.Result), "by_type") {
+		t.Errorf("stats should omit by_type without BIGGZ_VERBOSE=1: %s", string(r.Result))
 	}
 }
