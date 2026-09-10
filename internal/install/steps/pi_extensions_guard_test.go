@@ -15,7 +15,7 @@ import (
 // ~/.pi/agent/extensions to export `export default function(pi)` — missing
 // factory crashes pi with "Extension does not export a valid factory function".
 func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
-	// Must mirror the deploy list in pi_extensions.go (11 JS + 3 TS).
+	// Must mirror the deploy list in pi_extensions.go (12 JS + 3 TS).
 	// TS entries are not pi ExtensionAPI factories and are intentionally skipped.
 	deployList := []struct{ asset, target string }{
 		{"pi/biggz-thinking-wrap.js", "biggz-thinking-wrap.js"},
@@ -29,6 +29,7 @@ func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
 		{"pi/biggz-tool-pills.js", "biggz-tool-pills.js"},
 		{"pi/biggz-web-search.js", "biggz-web-search.js"},
 		{"pi/biggz-question-mouse.js", "biggz-question-mouse.js"},
+		{"pi/biggz-quiet-tools.js", "biggz-quiet-tools.js"},
 		{"pi/ask-user-choice.ts", "ask-user-choice.ts"},
 		{"pi/codegraph-tools.ts", "codegraph-tools.ts"},
 		{"pi/skill-registry.ts", "skill-registry.ts"},
@@ -50,8 +51,8 @@ func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
 			}
 		}
 	}
-	if jsCount != 11 {
-		t.Errorf("deploy list drift: expected 11 JS extensions, got %d — sync with pi_extensions.go and biggz-pi-extensions-factory.test.mjs", jsCount)
+	if jsCount != 12 {
+		t.Errorf("deploy list drift: expected 12 JS extensions, got %d — sync with pi_extensions.go and biggz-pi-extensions-factory.test.mjs", jsCount)
 	}
 	// Also verify our canonical helper lists the same JS count — catches drift
 	// where pi_extensions.go was updated but this test wasn't (or vice versa).

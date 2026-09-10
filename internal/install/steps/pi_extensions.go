@@ -81,6 +81,7 @@ func piExtensionsDeployList() []struct{ asset, target string } {
 		{"pi/biggz-tool-pills.js", "biggz-tool-pills.js"},
 		{"pi/biggz-web-search.js", "biggz-web-search.js"},
 		{"pi/biggz-question-mouse.js", "biggz-question-mouse.js"},
+		{"pi/biggz-quiet-tools.js", "biggz-quiet-tools.js"},
 	}
 	list = append(list, []struct{ asset, target string }{
 		{"pi/ask-user-choice.ts", "ask-user-choice.ts"},

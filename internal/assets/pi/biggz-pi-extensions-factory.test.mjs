@@ -8,7 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Mirrors internal/install/steps/pi_extensions.go deploy list.
-// 11 JS extensions + 3 TS (skill-registry family). TS are not pi ExtensionAPI factories.
+// 12 JS extensions + 3 TS (skill-registry family). TS are not pi ExtensionAPI factories.
 const DEPLOY_LIST = [
   { asset: 'pi/biggz-thinking-wrap.js', target: 'biggz-thinking-wrap.js' },
   { asset: 'pi/biggz-memory-chrome.js', target: 'biggz-memory-chrome.js' },
@@ -21,6 +21,7 @@ const DEPLOY_LIST = [
   { asset: 'pi/biggz-tool-pills.js', target: 'biggz-tool-pills.js' },
   { asset: 'pi/biggz-web-search.js', target: 'biggz-web-search.js' },
   { asset: 'pi/biggz-question-mouse.js', target: 'biggz-question-mouse.js' },
+  { asset: 'pi/biggz-quiet-tools.js', target: 'biggz-quiet-tools.js' },
   // TS — skill-registry family, not pi extension factories (no factory check)
   { asset: 'pi/ask-user-choice.ts', target: 'ask-user-choice.ts' },
   { asset: 'pi/codegraph-tools.ts', target: 'codegraph-tools.ts' },
@@ -57,6 +58,6 @@ describe('pi extensions must export valid factory', () => {
   it('deploy list covers all expected js extensions', () => {
     const jsCount = DEPLOY_LIST.filter((e) => e.target.endsWith('.js')).length;
     // Guard against deploy list drift: if pi_extensions.go adds a new JS, this test must be updated.
-    assert.equal(jsCount, 11, `expected 11 JS extensions in deploy list, got ${jsCount} — sync with pi_extensions.go`);
+    assert.equal(jsCount, 12, `expected 12 JS extensions in deploy list, got ${jsCount} — sync with pi_extensions.go`);
   });
 });
