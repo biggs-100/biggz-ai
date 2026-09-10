@@ -116,6 +116,8 @@ func reviewRun() int {
 		return reviewImportRun()
 	case "repair":
 		return reviewRepairRun()
+	case "reset":
+		return reviewResetRun()
 	case "recover":
 		return reviewRecoverRun()
 	case "reclaim":
@@ -206,6 +208,11 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  reclaim <lineage>              Move orphaned manifests/ and receipts/ artifacts to trash/<ts>/")
 	fmt.Fprintln(os.Stderr, "                                  (never deleted; chain events and referenced artifacts untouched)")
+	fmt.Fprintln(os.Stderr, "")
+	fmt.Fprintln(os.Stderr, "  reset <lineage> --confirm --reason <text>")
+	fmt.Fprintln(os.Stderr, "                                 LAST RESORT: move the whole lineage to trash/reset-<ts>-<lineage>/")
+	fmt.Fprintln(os.Stderr, "                                 (never deleted; audit record written; refuses when locked or unconfirmed)")
+	fmt.Fprintln(os.Stderr, "                                  Try doctor --fix, repair, recover first")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  reconcile-authority <lineage>  Verify BigMem mirror topics sdd/<lineage>/review/* against native state")
 	fmt.Fprintln(os.Stderr, "    [--write]                   Refresh missing/stale mirrors from native state")
@@ -1328,6 +1335,55 @@ func reviewReclaimRun() int {
 	for _, path := range report.Paths {
 		fmt.Printf("  %s\n", path)
 	}
+	fmt.Printf("  %s\n", report.Detail)
+	return 0
+}
+
+// reviewResetRun handles "biggz review reset <lineage> --confirm --reason".
+// LAST RESORT after doctor --fix, repair, and recover: moves the whole
+// lineage to trash with an audit record. Refuses without --confirm and
+// without a non-empty --reason; refuses when the lineage is locked by a
+// live review (same guard as repair).
+func reviewResetRun() int {
+	args := os.Args[3:]
+	var lineageID, reason string
+	confirm := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--confirm":
+			confirm = true
+		case "--reason":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --reason requires a value")
+				return 1
+			}
+			i++
+			reason = args[i]
+		case "--help", "-h":
+			fmt.Fprintln(os.Stderr, "Usage: biggz review reset <lineage> --confirm --reason <text>")
+			return 0
+		default:
+			if lineageID == "" && !strings.HasPrefix(args[i], "--") {
+				lineageID = args[i]
+				continue
+			}
+			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
+			fmt.Fprintln(os.Stderr, "Usage: biggz review reset <lineage> --confirm --reason <text>")
+			return 1
+		}
+	}
+	if lineageID == "" || !confirm || reason == "" {
+		fmt.Fprintln(os.Stderr, "Usage: biggz review reset <lineage> --confirm --reason <text>")
+		fmt.Fprintln(os.Stderr, "Last resort: try doctor --fix, repair, recover first. Nothing is deleted; the lineage moves to trash with an audit record.")
+		return 1
+	}
+	report, err := review.Reset("", lineageID, reason)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	fmt.Printf("Lineage:  %s\n", report.LineageID)
+	fmt.Printf("Reset:    moved to %s\n", report.TrashedTo)
 	fmt.Printf("  %s\n", report.Detail)
 	return 0
 }

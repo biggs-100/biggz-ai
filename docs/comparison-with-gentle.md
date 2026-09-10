@@ -122,7 +122,7 @@ Not absent forever — deferred until the trigger event occurs. Keeping them def
 | Feature (gentle commit) | Trigger to port |
 |---|---|
 | `carrier ratchet` — govern refusal text by carrier (`8a0962a8`) | A `refusal text` leaks through `field carriers` after a fix that left the field but still wrote to stream |
-| `clone-scoped review store reset` (`efa96be3` + `22688369`, `45873da8`) | Someone asks for `review store reset --confirm` to nuke a corrupted `.git/biggz/review-transactions` without manual `rm -rf` |
+| `clone-scoped review store reset` (`efa96be3` + `22688369`, `45873da8`) | ✅ Ported 2026-09-10 as bounded `review reset <lineage> --confirm --reason` (snapshot to trash, audit record, refuses when locked; repair/recover/doctor stay first) — trigger was the owner asking for it |
 | `Windows live lock holder` (`ef6d9297`) | `review gate` says `busy` in Windows CI without naming the PID/lock holder, and you parallelize 2 reviews on the same clone |
 | `Windows RAR repair token control` (`d9c32f85`) | Two concurrent `repair` on Windows race on `LockFileEx` TOCTOU because ownership was decided by path, not token |
 | `widened scope` pair — roll back on escalate (`50d4b3d9`) + honour at gate (`43fda430`) | You use `GrantedRoots` widened for a correction and need the gate to honour it *and* to roll it back when that correction escalates |
