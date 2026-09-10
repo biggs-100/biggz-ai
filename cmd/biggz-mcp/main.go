@@ -1540,10 +1540,14 @@ func textResult(id any, text string) {
 }
 
 func jsonResult(id any, v any) {
-	writeJSON(map[string]any{
-		"jsonrpc": "2.0", "id": id,
-		"result": map[string]any{
-			"content": []map[string]any{{"type": "json", "json": v}},
-		},
-	})
+	// MCP content blocks only allow text/image/audio/resource/resource_link.
+	// "type": "json" is rejected by the Pi validator (invalid_union) and
+	// dumps a huge error in chat. Emit JSON as a text block instead; the
+	// memory chrome parses it back for the collapsed one-line status.
+	data, err := json.Marshal(v)
+	if err != nil {
+		writeError(id, err.Error())
+		return
+	}
+	textResult(id, string(data))
 }

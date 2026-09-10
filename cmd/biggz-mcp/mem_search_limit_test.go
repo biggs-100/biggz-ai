@@ -118,7 +118,8 @@ func TestTrimmedPayloads(t *testing.T) {
 	}
 	var envelope struct {
 		Content []struct {
-			JSON map[string]any `json:"json"`
+			Type string `json:"type"`
+			Text string `json:"text"`
 		} `json:"content"`
 	}
 	if err := json.Unmarshal(r.Result, &envelope); err != nil {
@@ -127,7 +128,13 @@ func TestTrimmedPayloads(t *testing.T) {
 	if len(envelope.Content) == 0 {
 		t.Fatal("empty content")
 	}
-	payload := envelope.Content[0].JSON
+	if envelope.Content[0].Type != "text" {
+		t.Errorf("current_project content type = %q, want text (MCP has no json type)", envelope.Content[0].Type)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(envelope.Content[0].Text), &payload); err != nil {
+		t.Fatalf("unmarshal current_project payload text: %v", err)
+	}
 	if _, ok := payload["path"]; ok {
 		t.Errorf("payload still has duplicate key \"path\"")
 	}

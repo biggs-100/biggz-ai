@@ -1138,4 +1138,12 @@ func TestJsonResult(t *testing.T) {
 	if !strings.Contains(string(r.Result), "count") {
 		t.Errorf("result = %s", string(r.Result))
 	}
+	// MCP content blocks only allow text/image/audio/resource/resource_link.
+	// "type": "json" is rejected by the Pi validator (invalid_union).
+	if !strings.Contains(string(r.Result), `"type":"text"`) {
+		t.Errorf("jsonResult must emit type text, got = %s", string(r.Result))
+	}
+	if strings.Contains(string(r.Result), `"type":"json"`) {
+		t.Errorf("jsonResult must not emit type json, got = %s", string(r.Result))
+	}
 }
