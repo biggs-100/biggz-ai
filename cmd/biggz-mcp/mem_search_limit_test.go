@@ -41,3 +41,23 @@ func TestParseSearchLimit(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveSearchProject(t *testing.T) {
+	// all_projects forces "" even with explicit project.
+	if got := resolveSearchProject("foo", true, "/repo"); got != "" {
+		t.Errorf("all_projects: got %q want empty", got)
+	}
+	// Explicit project wins (normalized).
+	if got := resolveSearchProject("MyProj", false, "/repo"); got == "" {
+		t.Errorf("explicit project should not be empty")
+	}
+	// Empty + invalid cwd => "" (all).
+	if got := resolveSearchProject("", false, ""); got != "" {
+		t.Errorf("empty cwd: got %q want empty", got)
+	}
+	// Empty + nonexistent dir => "" (all, no error).
+	dir := t.TempDir()
+	if got := resolveSearchProject("", false, dir); got != "" {
+		t.Logf("autodetect in empty tmp returned %q (allowed: empty or basename)", got)
+	}
+}

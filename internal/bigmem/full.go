@@ -509,6 +509,38 @@ func (s *Store) SavePromptCtx(ctx context.Context, content, sessionID string) (*
 	return p, nil
 }
 
+// sanitizePromptsFTSValue quotes a value for FTS5 MATCH so special chars
+// (e.g. "a-b:c") are treated as literals. Strips embedded quotes.
+func sanitizePromptsFTSValue(s string) string {
+	return "\"" + strings.ReplaceAll(s, "\"", "") + "\""
+}
+
+// buildPromptsLikeSQL builds a LIKE fallback for SearchPrompts when FTS fails:
+// AND of %term% on content plus an optional direct project filter via
+// sessions (prompts carry no project column; sessions do).
+func buildPromptsLikeSQL(query, project string, limit int) (string, []any) {
+	q := `SELECT p.id, p.content, p.session_id, p.created_at FROM prompts p`
+	var conds []string
+	var args []any
+	for _, t := range strings.Fields(query) {
+		esc := strings.ReplaceAll(t, `\`, `\\`)
+		esc = strings.ReplaceAll(esc, "%", `\%`)
+		esc = strings.ReplaceAll(esc, "_", `\_`)
+		conds = append(conds, `p.content LIKE ? ESCAPE '\'`)
+		args = append(args, "%"+esc+"%")
+	}
+	if strings.TrimSpace(project) != "" {
+		conds = append(conds, `EXISTS (SELECT 1 FROM sessions s WHERE s.id = p.session_id AND s.project = ?)`)
+		args = append(args, project)
+	}
+	if len(conds) > 0 {
+		q += " WHERE " + strings.Join(conds, " AND ")
+	}
+	q += ` ORDER BY p.created_at DESC, p.rowid DESC LIMIT ?`
+	args = append(args, limit)
+	return q, args
+}
+
 // SearchPrompts searches prompts using FTS5.
 func (s *Store) SearchPrompts(query, project string, limit int) ([]SavedPrompt, error) {
 	if limit <= 0 {
@@ -519,9 +551,37 @@ func (s *Store) SearchPrompts(query, project string, limit int) ([]SavedPrompt, 
 		content, project, content='prompts', content_rowid='rowid'
 	)`)
 
+	// Empty query: skip FTS (MATCH '' is a syntax error), filter directly.
+	if strings.TrimSpace(query) == "" {
+		q := `SELECT p.id, p.content, p.session_id, p.created_at FROM prompts p`
+		var args []any
+		if strings.TrimSpace(project) != "" {
+			q += ` WHERE EXISTS (SELECT 1 FROM sessions s WHERE s.id = p.session_id AND s.project = ?)`
+			args = append(args, project)
+		}
+		q += ` ORDER BY p.created_at DESC, p.rowid DESC LIMIT ?`
+		args = append(args, limit)
+		rows, err := s.db.Query(q, args...)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		var results []SavedPrompt
+		for rows.Next() {
+			var p SavedPrompt
+			var ca string
+			if err := rows.Scan(&p.ID, &p.Content, &p.SessionID, &ca); err != nil {
+				continue
+			}
+			p.CreatedAt, _ = time.Parse(time.RFC3339, ca)
+			results = append(results, p)
+		}
+		return results, nil
+	}
+
 	terms := strings.Fields(query)
 	for i, t := range terms {
-		terms[i] = "\"" + strings.ReplaceAll(t, "\"", "") + "\""
+		terms[i] = sanitizePromptsFTSValue(t)
 	}
 	ftsQuery := strings.Join(terms, " AND ")
 
@@ -532,14 +592,19 @@ func (s *Store) SearchPrompts(query, project string, limit int) ([]SavedPrompt, 
 
 	if project != "" {
 		sqlQ += " AND prompts_fts.project MATCH ?"
-		args = append(args, project)
+		args = append(args, sanitizePromptsFTSValue(project))
 	}
 	sqlQ += " ORDER BY rank LIMIT ?"
 	args = append(args, limit)
 
 	rows, err := s.db.Query(sqlQ, args...)
 	if err != nil {
-		return nil, err
+		// FTS error (e.g. syntax or desync) — fallback to LIKE search.
+		likeSQL, likeArgs := buildPromptsLikeSQL(query, project, limit)
+		rows, err = s.db.Query(likeSQL, likeArgs...)
+		if err != nil {
+			return nil, err
+		}
 	}
 	defer rows.Close()
 

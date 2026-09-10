@@ -676,11 +676,9 @@ func handleToolCall(id any, name string, args map[string]any) {
 	case "mem_search":
 		query := getStr(args, "query")
 		allProjects := getBool(args, "all_projects", false)
-		// all_projects true means ignore project filter; scope personal also cross-project
-		project := getStr(args, "project")
-		if allProjects {
-			project = ""
-		}
+		// all_projects true means ignore project filter; scope personal also cross-project.
+		// Empty project autodetects from cwd (CLI parity); ambiguous/error => "" (all).
+		project := resolveSearchProject(getStr(args, "project"), allProjects, currentWorkingDirectory())
 		matchMode := getStr(args, "match_mode")
 		limit, requestedLimit, limitClamped := parseSearchLimit(args)
 		// BM25Floor/Limit override via env (Engram parity MCPConfig)
@@ -1462,6 +1460,30 @@ func getBool(m map[string]any, key string, def bool) bool {
 		return v != 0
 	}
 	return def
+}
+
+// resolveSearchProject returns the effective project filter for mem_search.
+// Explicit project wins (normalized); all_projects forces "" (all).
+// Otherwise autodetects via project.DetectProject(cwd); ambiguous or any
+// error leaves "" (search ALL) so reads never fail on detection.
+func resolveSearchProject(provided string, allProjects bool, cwd string) string {
+	if allProjects {
+		return ""
+	}
+	if strings.TrimSpace(provided) != "" {
+		return project.NormalizeProjectName(provided)
+	}
+	if strings.TrimSpace(cwd) == "" {
+		return ""
+	}
+	info, err := project.DetectProject(cwd)
+	if err != nil {
+		return ""
+	}
+	if strings.TrimSpace(info.Project) == "" || info.Project == "unknown" {
+		return ""
+	}
+	return project.NormalizeProjectName(info.Project)
 }
 
 func truncate(s string, max int) string {

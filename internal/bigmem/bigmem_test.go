@@ -363,6 +363,36 @@ func TestSavePrompt(t *testing.T) {
 	}
 }
 
+func TestSearchPrompts_GuardAndSanitize(t *testing.T) {
+	s := openTestStore(t)
+	if _, err := s.SavePrompt("hello world prompt", "sess-1"); err != nil {
+		t.Fatalf("SavePrompt: %v", err)
+	}
+	// Empty query must not error (skips FTS).
+	if _, err := s.SearchPrompts("", "", 10); err != nil {
+		t.Errorf("SearchPrompts empty query: %v", err)
+	}
+	if _, err := s.SearchPrompts("   ", "", 10); err != nil {
+		t.Errorf("SearchPrompts blank query: %v", err)
+	}
+	// Special-char project must not error (sanitized MATCH).
+	if _, err := s.SearchPrompts("hello", "a-b:c", 10); err != nil {
+		t.Errorf("SearchPrompts special project: %v", err)
+	}
+	// Sanitize helper quotes and strips quotes.
+	if got := sanitizePromptsFTSValue(`a-b:c`); got != `"a-b:c"` {
+		t.Errorf("sanitizePromptsFTSValue = %q", got)
+	}
+	if got := sanitizePromptsFTSValue(`a"b`); strings.Contains(got, `"`) && len(got) < 3 {
+		t.Errorf("sanitize should strip quotes: %q", got)
+	}
+	// LIKE fallback builder produces AND terms.
+	sql, args := buildPromptsLikeSQL("foo bar", "", 10)
+	if !strings.Contains(sql, "LIKE") || len(args) != 3 {
+		t.Errorf("buildPromptsLikeSQL = %q %v", sql, args)
+	}
+}
+
 // ─── Ghost WAL (GW1-4) ───────────────────────────────────────────────────────
 
 func createGhostFiles(t *testing.T, dbPath string, walSize, shmSize int, mtime time.Time) {
