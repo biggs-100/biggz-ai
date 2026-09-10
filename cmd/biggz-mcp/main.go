@@ -31,6 +31,24 @@ var writeQueue = make(chan struct{}, 1)
 // sessionActivity tracks tool calls and nudges (Engram parity SessionActivity).
 var sessionActivity = NewSessionActivity(20)
 
+// prefixMemRefs rewrites bare mem_* tool references (mem_save, …) with the
+// active tool prefix (biggz_mem_save, …) so server instructions and error
+// hints name the tools EXACTLY as registered. Without this, the model obeys
+// the bare names and calls another server's unprefixed tools (wrong database).
+// Already-prefixed refs (biggz_mem_*, bigmem_branch_*) are re-prefixed
+// consistently instead of double-prefixed.
+func prefixMemRefs(text, prefix string) string {
+	if prefix == "" {
+		return text
+	}
+	const guardBiggz, guardBigmem = "\x00G1\x00", "\x00G2\x00"
+	s := strings.ReplaceAll(text, "biggz_mem_", guardBiggz)
+	s = strings.ReplaceAll(s, "bigmem_", guardBigmem)
+	s = strings.ReplaceAll(s, "mem_", prefix+"_mem_")
+	s = strings.ReplaceAll(s, guardBiggz, prefix+"_mem_")
+	return strings.ReplaceAll(s, guardBigmem, prefix+"_bigmem_")
+}
+
 // serverInstructions mirrors Engram's serverInstructions CORE vs DEFERRED (WithDeferLoading parity).
 const serverInstructions = `BigMem provides persistent memory that survives across sessions and compactions.
 
@@ -326,7 +344,7 @@ func writeProjectError(id any, code, msg string, available []string, extra map[s
 	}
 	switch code {
 	case "ambiguous_project":
-		envelope["hint"] = "Ask the user to choose one of available_projects, then retry the same write tool (mem_save, mem_save_prompt, or mem_session_summary) with project and project_choice_reason=user_selected_after_ambiguous_project; alternatively cd into the target repo or add repo .biggz/config.json."
+		envelope["hint"] = prefixMemRefs("Ask the user to choose one of available_projects, then retry the same write tool (mem_save, mem_save_prompt, or mem_session_summary) with project and project_choice_reason=user_selected_after_ambiguous_project; alternatively cd into the target repo or add repo .biggz/config.json.", toolPrefix)
 	case "invalid_project_choice":
 		envelope["hint"] = "Use exactly one of available_projects after asking the user, or cd into the target repo, or add repo .biggz/config.json."
 	case "missing_recovery_token":
@@ -349,7 +367,7 @@ func writeAmbiguousProjectError(id any, available []string, cwdPath, sessionID s
 		"available_projects": available,
 		"recovery_token":     token,
 		"token_ttl_seconds":  int(ambiguousProjectRecoveryTTL.Seconds()),
-		"hint":               "Ask the user to choose one of available_projects, then retry the same write tool (mem_save, mem_save_prompt, or mem_session_summary) with project and project_choice_reason=user_selected_after_ambiguous_project; alternatively cd into the target repo or add repo .biggz/config.json.",
+		"hint":               prefixMemRefs("Ask the user to choose one of available_projects, then retry the same write tool (mem_save, mem_save_prompt, or mem_session_summary) with project and project_choice_reason=user_selected_after_ambiguous_project; alternatively cd into the target repo or add repo .biggz/config.json.", toolPrefix),
 	}
 	out, _ := json.Marshal(envelope)
 	writeJSON(map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": -32603, "message": string(out)}})
@@ -536,7 +554,7 @@ func main() {
 					"protocolVersion": "2024-11-05",
 					"capabilities":    map[string]any{"tools": map[string]any{}},
 					"serverInfo":      map[string]string{"name": "biggz-ai", "version": "1.0.0"},
-					"instructions":    serverInstructions,
+					"instructions":    prefixMemRefs(serverInstructions, toolPrefix),
 				},
 			})
 		case "ping":

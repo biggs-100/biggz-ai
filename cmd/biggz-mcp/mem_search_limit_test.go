@@ -11,6 +11,27 @@ import (
 	"testing"
 )
 
+func TestPrefixMemRefs(t *testing.T) {
+	in := "Call mem_save, then mem_search. After biggz_mem_save judge with biggz_mem_judge. Deferred: mem_update, bigmem_branch_create. BigMem provides memory."
+	got := prefixMemRefs(in, "biggz")
+	for _, want := range []string{"biggz_mem_save", "biggz_mem_search", "biggz_mem_judge", "biggz_mem_update", "biggz_bigmem_branch_create"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in %q", want, got)
+		}
+	}
+	for _, banned := range []string{"biggz_biggz_", "bigbiggz_"} {
+		if strings.Contains(got, banned) {
+			t.Errorf("double-prefix %q in %q", banned, got)
+		}
+	}
+	if !strings.Contains(got, "BigMem provides") {
+		t.Errorf("prose must be untouched: %q", got)
+	}
+	if out := prefixMemRefs(in, ""); out != in {
+		t.Errorf("empty prefix must be identity, got %q", out)
+	}
+}
+
 func TestParseSearchLimit(t *testing.T) {
 	cases := []struct {
 		name        string

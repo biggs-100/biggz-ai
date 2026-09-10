@@ -15,8 +15,8 @@ directly inline.
 ## BigMem Protocol
 
 BigMem via `biggz_mem_*` tools. Proactive save after decisions, fixes,
-discoveries. Search: mem_context → mem_search → mem_get_observation.
-Session close: mem_session_summary before "done".
+discoveries. Search: biggz_mem_context → biggz_mem_search → biggz_mem_get_observation.
+Session close: biggz_mem_session_summary before "done".
 
 ## Strict TDD
 
