@@ -230,7 +230,8 @@ export function renderCallText(toolName, args = {}) {
 
 export function renderResultText(toolName, result, options = {}) {
   const status = compactResultStatus(toolName, result, options);
-  if (!options.expanded || options.isPartial) return `↳ ${status}`;
+  const isError = !!(result?.isError || result?.error);
+  if ((!options.expanded && !isError) || options.isPartial) return `↳ ${status}`;
   const text = firstTextContent(result);
   if (text) {
     const lines = text.split("\n");
