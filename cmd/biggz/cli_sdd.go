@@ -1709,3 +1709,109 @@ func runSDDTDD(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, instructions)
 	return 0
 }
+
+// sddRouteRun handles the "biggz sdd-route" subcommand.
+// Usage: biggz sdd-route [--files N] [--lines N] [--nontrivial N] [--acceptance-clear] [--single-domain] [--verify]
+//
+//	[--new-interface] [--new-domain] [--new-dep] [--golden] [--theme] [--ui-rewrite] [--critical]
+//	[--cross-cutting] [--ambiguous-done] [--json]
+//
+// Evaluates the pre-SDD routing triggers deterministically. Exit 0 = direct,
+// exit 1 = MUST recommend SDD via explicit question + STOP, exit 2 = usage error.
+func sddRouteRun() int {
+	return runSddRoute(os.Args[2:], os.Stdout, os.Stderr)
+}
+
+// runSddRoute is the testable core of sddRouteRun.
+func runSddRoute(args []string, stdout, stderr io.Writer) int {
+	if len(args) >= 1 && (args[0] == "--help" || args[0] == "-h") {
+		fmt.Fprintln(stderr, "Usage: biggz sdd-route [flags]")
+		fmt.Fprintln(stderr, "  Evaluate pre-SDD routing triggers deterministically.")
+		fmt.Fprintln(stderr, "  --files N --lines N --nontrivial N — scale estimates")
+		fmt.Fprintln(stderr, "  --acceptance-clear --single-domain --verify — scale carve-out (all three)")
+		fmt.Fprintln(stderr, "  --new-interface --new-domain --new-dep — hard triggers")
+		fmt.Fprintln(stderr, "  --golden --theme --ui-rewrite --critical — hard triggers")
+		fmt.Fprintln(stderr, "  --cross-cutting --ambiguous-done — hard triggers")
+		fmt.Fprintln(stderr, "  --json — machine-readable verdict")
+		fmt.Fprintln(stderr, "  Exit: 0 direct, 1 recommend SDD (question + STOP), 2 usage error")
+		return 0
+	}
+
+	var in sdd.RouteInput
+	asJSON := false
+	parseErr := false
+	for i := 0; i < len(args); i++ {
+		intFlag := func(dst *int) bool {
+			if i+1 >= len(args) {
+				fmt.Fprintf(stderr, "error: %s requires a value\n", args[i])
+				parseErr = true
+				return true
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n < 0 {
+				fmt.Fprintf(stderr, "error: flag requires a non-negative integer\n")
+				parseErr = true
+				return true
+			}
+			*dst = n
+			return true
+		}
+		if args[i] == "--json" {
+			asJSON = true
+			continue
+		}
+		switch args[i] {
+		case "--files":
+			intFlag(&in.EstimatedFiles)
+		case "--lines":
+			intFlag(&in.EstimatedLines)
+		case "--nontrivial":
+			intFlag(&in.NontrivialFiles)
+		case "--acceptance-clear":
+			in.AcceptanceClear = true
+		case "--single-domain":
+			in.SingleDomain = true
+		case "--verify":
+			in.VerificationPlanned = true
+		case "--new-interface":
+			in.NewPublicInterface = true
+		case "--new-domain":
+			in.NewDomain = true
+		case "--new-dep":
+			in.NewDependency = true
+		case "--golden":
+			in.TouchesGolden = true
+		case "--theme":
+			in.TouchesTheme = true
+		case "--ui-rewrite":
+			in.UIRewrite = true
+		case "--critical":
+			in.CriticalPackages = true
+		case "--cross-cutting":
+			in.CrossCutting = true
+		case "--ambiguous-done":
+			in.AmbiguousDone = true
+		default:
+			fmt.Fprintf(stderr, "error: unknown flag %q\n", args[i])
+			return 2
+		}
+	}
+	if parseErr {
+		return 2
+	}
+
+	verdict := sdd.EvaluateRoute(in)
+	if asJSON {
+		payload, _ := json.Marshal(verdict)
+		fmt.Fprintln(stdout, string(payload))
+	} else if verdict.Route == sdd.RouteAskSDD {
+		fmt.Fprintf(stdout, "ask-sdd: %s\n", verdict.Reason)
+	} else {
+		fmt.Fprintf(stdout, "direct: %s\n", verdict.Reason)
+	}
+	if verdict.Route == sdd.RouteAskSDD {
+		return 1
+	}
+	return 0
+}

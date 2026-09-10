@@ -10,7 +10,7 @@ Route authorized work through exactly ONE of three implementation routes based o
 |---|---|---|
 | **Direct inline** | Understand/verify from 1–3 files; or one mechanical, already-understood file with no research or unresolved design decision | Inline edit. No artifacts. No delegation. No SDD. |
 | **Delegated direct** | Understand needs 4+ files; reading prepares a write; broad research needed; or writer touches 2+ non-trivial files | One scout or one writer. Bounded. No SDD artifacts. |
-| **Optional SDD** | Substantial ambiguity where durable proposal/spec/design/tasks materially reduce uncertainty, OR large/critical change (see SDD recommendation triggers) | MUST recommend SDD via explicit choice + STOP. Selected only by explicit request or accepted proposal. |
+| **Optional SDD** | Substantial ambiguity where durable proposal/spec/design/tasks materially reduce uncertainty, OR large/critical change (see SDD recommendation triggers) | MUST run `biggz sdd-route` first, then recommend SDD via explicit choice + STOP on ask. Selected only by explicit request or accepted proposal. |
 
 **SIZE NEVER SELECTS SDD.** File counts describe context needed for the current action, not a risk score and not an SDD threshold. Size/risk never auto-launch SDD — but large/critical signals MUST trigger an explicit SDD recommendation question + STOP. Risk may strengthen native verification, but it never forces SDD.
 
@@ -60,7 +60,28 @@ Parent-orchestrator routing boundaries. Use smallest useful topology and keep sa
 
 #### SDD recommendation triggers (MANDATORY)
 
-MUST recommend SDD (question + STOP, never auto-launch) when ANY holds: estimated >400 lines or 5+ files or 2+ non-trivial files with unclear acceptance; new public interface / new domain / new external dependency; touches golden tests, visual theme, full UI rewrite, or critical packages; cross-cutting (e.g. app + views + theme) or "done" is ambiguous. Declined → proceed direct/delegated without nagging; accepted → Session Recall + Preflight, then `sdd-new`/`sdd-continue`.
+Before implementation, run the deterministic check with your estimates — do not eyeball counts:
+
+```
+biggz sdd-route --files N --lines N [--nontrivial N] [--acceptance-clear] [--single-domain] [--verify]
+              [--new-interface] [--new-domain] [--new-dep] [--golden] [--theme]
+              [--ui-rewrite] [--critical] [--cross-cutting] [--ambiguous-done] [--json]
+```
+
+Exit 0 = direct, exit 1 = MUST recommend SDD via explicit question + STOP (never auto-launch),
+exit 2 = usage error. The check is mandatory whenever the work touches 2+ files, any
+non-trivial file, or any suspected hard trigger below; one-file mechanical edits stay exempt.
+
+MUST recommend SDD (question + STOP) when ANY holds: new public interface, new domain, new
+external dependency, golden tests, visual theme, full UI rewrite, critical packages,
+cross-cutting change (e.g. app + views + theme), or ambiguous "done" — each asks
+unconditionally, regardless of size or clarity. Scale signals (estimated >400 lines, 5+ files,
+2+ non-trivial files) ask UNLESS all three hold: acceptance clear AND single domain AND
+verification planned. Unclear acceptance asks once substantial (>100 lines, 3+ files, or any
+non-trivial file); tiny unclear items stay direct (clarify inline). Declined → proceed
+direct/delegated without nagging; accepted → Session Recall + Preflight, then `sdd-new`/`sdd-continue`.
+
+Precedent: 7 files with clear acceptance, single domain, and tests (quiet-tools) = direct, no question.
 
 **Long-session nuance (~20 tool calls):** if accumulating work is no longer clearly local — roughly 20 tool calls, 5 exploratory file reads, or 2 non-mechanical edits without delegation — pause and delegate remaining work instead of silently continuing monolithically.
 

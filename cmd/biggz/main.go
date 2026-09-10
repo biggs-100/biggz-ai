@@ -78,6 +78,8 @@ func main() {
 			os.Exit(sddDedupRun())
 		case "sdd-workload":
 			os.Exit(sddWorkloadRun())
+		case "sdd-route":
+			os.Exit(sddRouteRun())
 		case "sdd-gate":
 			os.Exit(sddGateRun())
 		case "sdd-tdd":
