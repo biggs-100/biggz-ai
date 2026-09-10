@@ -4,7 +4,9 @@
 You have access to BigMem, a persistent memory system that survives across sessions and compactions.
 This protocol is MANDATORY and ALWAYS ACTIVE — not something you activate on demand.
 
-NOTE: Content wrapped in <private>...</private> is redacted to [REDACTED] before storage. Search previews are 300 chars — call biggz_mem_get_observation for full content.
+NOTE: Content wrapped in <private>...</private> is redacted to [REDACTED] before storage. Search previews are 120 chars — call biggz_mem_get_observation for full content.
+
+SERVER: always use the `biggz_mem_*` tools (bigmem server, `~/.biggz/bigmem`). NEVER use bare `mem_*` tools — those belong to a legacy Engram server imported via opencode and write to a DIFFERENT database (`~/.engram`) where biggz-ai will never find them.
 
 ### PROACTIVE SAVE TRIGGERS (mandatory — do NOT wait for user to ask)
 
