@@ -61,13 +61,17 @@ func (p *PiExtensionsStep) Prepare(ctx context.Context) error {
 
 // piExtensionsDeployList returns the canonical deploy list for pi extensions.
 // Keep in sync with internal/assets/pi/biggz-pi-extensions-factory.test.mjs.
-// biggz-memory-chrome.js + biggz-synthesis-gate.js wrappers are excluded:
-// the adapter-aware fallback is retired, native /mcp via pi-mcp-adapter@^2 is
-// the only memory path. JS sources stay on disk until the Phase-2 stability
-// gate + one-release soak allows deletion.
+// biggz-synthesis-gate.js wrapper is excluded: native Go synthesis gate
+// (internal/sdd/synthesis_gate.go) is the only enforcement path. JS source
+// stays on disk until the Phase-2 stability gate + one-release soak allows
+// deletion.
+// biggz-memory-chrome.js is DEPLOYED: it is the pretty layer that collapses
+// native /mcp memory results to one line (no gate — always active unless
+// BIGGZ_PRETTY=0).
 func piExtensionsDeployList() []struct{ asset, target string } {
 	list := []struct{ asset, target string }{
 		{"pi/biggz-thinking-wrap.js", "biggz-thinking-wrap.js"},
+		{"pi/biggz-memory-chrome.js", "biggz-memory-chrome.js"},
 		{"pi/biggz-tool-interception.js", "biggz-tool-interception.js"},
 		{"pi/biggz-extension-api.js", "biggz-extension-api.js"},
 		{"pi/biggz-session-guard.js", "biggz-session-guard.js"},
@@ -245,10 +249,11 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 		for _, stale := range []string{"gentle-ai.ts", "quiet-tools.ts", "sdd-init.ts", "startup-banner.ts"} {
 			_ = os.Remove(filepath.Join(extDir, stale))
 		}
-		// Self-heal retired wrappers: stale biggz-memory-chrome.js +
-		// biggz-synthesis-gate.js copies keep enforcing the duplicate gate.
-		// Absent files are a silent no-op (os.Remove error ignored).
-		for _, stale := range []string{"biggz-memory-chrome.js", "biggz-synthesis-gate.js"} {
+		// Self-heal retired wrapper: stale biggz-synthesis-gate.js copies keep
+		// enforcing the duplicate gate. Absent files are a silent no-op
+		// (os.Remove error ignored). biggz-memory-chrome.js is NOT stale —
+		// it is deployed (see piExtensionsDeployList).
+		for _, stale := range []string{"biggz-synthesis-gate.js"} {
 			_ = os.Remove(filepath.Join(extDir, stale))
 		}
 		_ = os.RemoveAll(filepath.Join(extDir, "_disabled_broken_backup"))
