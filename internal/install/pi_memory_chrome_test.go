@@ -166,7 +166,7 @@ func TestMemoryChromeRendering_Node(t *testing.T) {
 	}
 	testScript := filepath.Join(tmpDir, "test.mjs")
 	script := `
-import { humanToolName, compactToolArg, compactResultStatus, renderCallText, renderResultText } from "./chrome.mjs";
+import { humanToolName, compactToolArg, compactResultStatus, renderCallText, renderResultText, semanticJsonPreview, sanitizeTerminalText } from "./chrome.mjs";
 function assert(cond, msg) { if (!cond) { console.error("FAIL: "+msg); process.exit(1); } }
 function check() {
   // prefix stripping: biggz_mem_save should map same as mem_save
@@ -187,15 +187,30 @@ function check() {
   assert(expanded.includes("↳") && expanded.includes("Saved: My Task"), "renderResultText expanded: "+expanded);
   const collapsed = renderResultText("biggz_mem_save", res, {expanded:false});
   assert(collapsed.startsWith("↳") && !collapsed.includes("Saved: My Task") || collapsed.includes("✓"), "collapsed should not show full text beyond status: "+collapsed);
-  // json result for search
-  const searchRes = { content: [{type:"json", json: [{id:"1"},{id:"2"}]}], details: { data: [{id:"1"},{id:"2"}] } };
+  // json result for search arrives as text block with JSON string (MCP has no "json" type)
+  const searchRes = { content: [{type:"text", text: JSON.stringify([{id:"1"},{id:"2"}]) }] };
+  const searchStatusText = compactResultStatus("mem_search", searchRes);
+  assert(searchStatusText === "✓ 2 results", "search count via text JSON: "+searchStatusText);
   // Simulate json path via details.data
   const searchStatus = compactResultStatus("mem_search", { details: { data: [{id:"1"},{id:"2"}] } });
   assert(searchStatus === "✓ 2 results", "search count: "+searchStatus);
+  // current_project via text JSON
+  const projStatus = compactResultStatus("mem_current_project", { content: [{type:"text", text: JSON.stringify({project:"biggz-ai"}) }] });
+  assert(projStatus.includes("biggz-ai"), "current_project via text JSON: "+projStatus);
   // get_observation
   const getRes = { details: { data: {id:"obs-xyz"} } };
   const getStatus = compactResultStatus("mem_get_observation", getRes);
   assert(getStatus === "✓ observation #obs-xyz", "get_observation: "+getStatus);
+  // gentle incremental: sanitize strips ANSI/OSC escapes
+  assert(sanitizeTerminalText("\x1b[31mred\x1b[0m") === "red", "sanitize ANSI");
+  assert(compactToolArg("mem_save", {title:"\x1b[31mhi\x1b[0m"}).includes("hi") && !compactToolArg("mem_save", {title:"\x1b[31mhi\x1b[0m"}).includes("\x1b"), "compactToolArg sanitized");
+  // gentle incremental: semantic JSON preview keeps content, drops bare braces
+  const preview = semanticJsonPreview(JSON.stringify([{id:"1",title:"hello"},{id:"2",title:"world"}]), 3);
+  assert(preview && preview.includes("hello") && !/^[\s{}\[\],]*$/.test(preview.split("\n")[0]), "semantic preview: "+preview);
+  assert(semanticJsonPreview("plain text") === undefined, "non-JSON preview undefined");
+  // expanded search shows semantic preview, never a raw brace dump
+  const expandedSearch = renderResultText("mem_search", { content: [{type:"text", text: JSON.stringify([{id:"1",title:"hello"}]) }] }, {expanded:true});
+  assert(expandedSearch.includes("hello"), "expanded search semantic: "+expandedSearch.slice(0,200));
   console.log("PASS");
 }
 check();

@@ -13,6 +13,10 @@
  *
  * Pure UI — no DB semantics. Handles both textResult and jsonResult via
  * firstTextContent + resultData duality.
+ *
+ * Gentle-pi learnings (incremental): sanitizeTerminalText on every string
+ * reaching the transcript, semanticJsonPreview for JSON payloads so the
+ * expanded view shows content-only lines instead of a raw JSON dump.
  */
 
 // ── Rank5: unified truncation + preview budgets (mirrors render-utils.ts) ──
@@ -118,6 +122,44 @@ const ARG_KEYS = {
 
 export const SUPPORTED_MEMORY_TOOLS = Object.freeze(Object.keys(TOOL_LABELS));
 
+// ── Gentle-inspired: sanitize every string that reaches the transcript ──
+// Port of gentle-pi lib/terminal-theme.ts: strip ANSI/OSC/control chars so a
+// payload can never break the TUI or inject escape sequences into chat.
+const NON_OSC_ANSI_ESCAPE_PATTERN = /\x1B\[[0-?]*[ -/]*[@-~]|\x1B[@-Z\\-_]|\x9B[0-?]*[ -/]*[@-~]/g;
+const CONTROL_CHAR_PATTERN = /[\u0000-\u0008\u000B-\u000D\u000E-\u001F\u007F-\u009F]/g;
+const OSC_ESCAPE_PATTERN = /(?:\x1B\]|\x9D)[\s\S]*?(?:\x07|\x1B\\|\x9C|$)/g;
+
+export function stripAnsi(value) {
+  return String(value ?? "").replace(OSC_ESCAPE_PATTERN, "").replace(NON_OSC_ANSI_ESCAPE_PATTERN, "");
+}
+
+export function sanitizeTerminalText(value) {
+  return stripAnsi(value).replace(CONTROL_CHAR_PATTERN, "");
+}
+
+// ── Gentle-inspired: semantic JSON preview ──
+// Port of gentle-pi extensions/quiet-tools.ts semanticJsonPreview: parse the
+// JSON, re-print it, drop structure-only lines (bare braces/brackets/commas)
+// and keep the first `limit` lines with real content. Collapsed stays a
+// one-line status; this feeds the expanded view so it never dumps raw JSON.
+export function semanticJsonPreview(text, limit = PREVIEW_LIMITS.COLLAPSED_LINES) {
+  const trimmed = String(text ?? "").trim();
+  if (!/^[\[{]/.test(trimmed)) return undefined;
+  let parsed;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  const normalized = JSON.stringify(parsed, null, 2);
+  if (normalized === undefined) return undefined;
+  return sanitizeTerminalText(normalized
+    .split("\n")
+    .filter((line) => !/^[\s{}\[\],]*$/.test(line))
+    .slice(0, limit)
+    .join("\n"));
+}
+
 function normalizeToolName(toolName) {
   // Strip biggz_ prefix so biggz_mem_save → mem_save maps to same label
   const base = String(toolName ?? "").replace(/^biggz_/, "");
@@ -131,7 +173,7 @@ export function humanToolName(toolName) {
 }
 
 export function truncateText(value, max = TRUNCATE_LENGTHS.TITLE) {
-  const text = String(value ?? "").replace(/\s+/g, " ").trim();
+  const text = sanitizeTerminalText(String(value ?? "")).replace(/\s+/g, " ").trim();
   if (text.length <= max) return text;
   return `${text.slice(0, Math.max(0, max - 1))}…`;
 }
@@ -148,7 +190,7 @@ export function compactToolArg(toolName, args = {}) {
   for (const key of keys) {
     const value = args?.[key];
     if (value === undefined || value === null || value === "") continue;
-    if (key === "id" || key === "observation_id" || key === "memory_id_a" || key === "memory_id_b") return `#${value}`;
+    if (key === "id" || key === "observation_id" || key === "memory_id_a" || key === "memory_id_b") return `#${sanitizeTerminalText(value)}`;
     if (key === "source_project" || key === "target_project") return quote(value);
     return quote(value);
   }
@@ -167,11 +209,20 @@ function compactReviewArg(args = {}) {
 
 function firstTextContent(result) {
   const block = result?.content?.find?.((entry) => entry?.type === "text" && typeof entry.text === "string");
-  return block?.text ?? "";
+  return sanitizeTerminalText(block?.text ?? "");
 }
 
 function resultData(result) {
-  return result?.details?.data ?? result?.details ?? result;
+  const d = result?.details?.data ?? result?.details;
+  if (d !== undefined && d !== null && !(typeof d === "object" && Object.keys(d).length === 0)) return d;
+  // jsonResult now arrives as a text block with a JSON string (MCP has no
+  // "json" content type). Parse it back so collapsed status keeps counts
+  // and ids without dumping raw JSON in chat.
+  const text = firstTextContent(result);
+  if (text) {
+    try { return JSON.parse(text); } catch { /* plain text, fall through */ }
+  }
+  return result;
 }
 
 function countItems(value) {
@@ -234,7 +285,9 @@ export function renderResultText(toolName, result, options = {}) {
   if ((!options.expanded && !isError) || options.isPartial) return `↳ ${status}`;
   const text = firstTextContent(result);
   if (text) {
-    const lines = text.split("\n");
+    // JSON payloads render as semantic preview (content-only lines), never raw dump.
+    const semantic = semanticJsonPreview(text, options.maxRows ?? previewWindowRows());
+    const lines = (semantic ?? text).split("\n");
     const capped = capPreviewLines(lines, { maxRows: options.maxRows ?? previewWindowRows(), expanded: options.expanded });
     const body = capped.join("\n");
     // framed card emulation for expanded view
