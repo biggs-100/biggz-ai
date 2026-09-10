@@ -34,3 +34,7 @@ coverage/
 .bg-sync/
 # Local BigMem runtime data
 .bigmem/
+
+# ceremony bench artifacts (built/measured locally, never committed)
+/bench/biggz-ceremony-bench
+/bench/results-*.json
