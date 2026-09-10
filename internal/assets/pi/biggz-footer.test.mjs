@@ -243,3 +243,44 @@ m.default(pi);
 assert.equal(pi._biggzFooter,undefined);
 });
 });
+
+// ── git worktree counts (gentle parity: parsePorcelain) ─────────────────────
+describe('git counts',()=>{
+let footer;
+const NL = String.fromCharCode(10);
+beforeEach(async()=>{footer=await import(`${footerUrl}?git=${Date.now()}${Math.random()}`);footer._resetGitCountsForTest();});
+afterEach(()=>{delete process.env.BIGGZ_GIT_STATUS;try{footer._resetGitCountsForTest();}catch{}});
+it('parsePorcelain staged/unstaged/untracked/ignored',()=>{
+const out = ["M  a.js"," M b.js","A  c.js","R  o.js -> n.js","?? u.js","!! ign.js",""].join(NL);
+assert.deepEqual(footer.parsePorcelain(out),{staged:3,unstaged:1,untracked:1});
+assert.deepEqual(footer.parsePorcelain(""),{staged:0,unstaged:0,untracked:0});
+assert.deepEqual(footer.parsePorcelain(null),{staged:0,unstaged:0,untracked:0});
+});
+it('formatGitCounts only non-zero as *U +S ?T',()=>{
+assert.equal(footer.formatGitCounts({staged:0,unstaged:0,untracked:0}),"");
+assert.equal(footer.formatGitCounts({staged:1,unstaged:2,untracked:3})," *2 +1 ?3");
+assert.equal(footer.formatGitCounts({staged:2})," +2");
+});
+it('getGitCounts injectable runner + null on throw + TTL cache',()=>{
+let calls=0;
+const run=(...a)=>{calls++;return [" M a.js",""].join(NL);};
+assert.deepEqual(footer.getGitCounts("/repo",run),{staged:0,unstaged:1,untracked:0});
+assert.deepEqual(footer.getGitCounts("/repo",()=>{throw new Error("boom");}),{staged:0,unstaged:1,untracked:0});
+assert.equal(calls,1);
+assert.equal(footer.getGitCounts("/nope",()=>{throw new Error("x");}),null);
+});
+it('BIGGZ_GIT_STATUS=0 never shells out',()=>{
+process.env.BIGGZ_GIT_STATUS="0";
+let calls=0;
+assert.equal(footer.getGitCounts("/repo",()=>{calls++;return "";}),null);
+assert.equal(calls,0);
+});
+it('branch segment carries counts, raw stays clean',()=>{
+process.env.BIGGZ_PRETTY='1';process.env.TERM='xterm-256color';
+const theme={fg:(_,t)=>t,symbolPreset:"unicode"};
+const ctx={branch:"main",cwd:"/definitely-not-a-repo-xyz"};
+const segs=footer.buildFooterSegments(theme,{},ctx,null);
+assert.ok(String(segs.raw.branch).includes("main"),"raw keeps branch");
+assert.ok(!String(segs.branchSeg).includes("*"),"no counts outside repo");
+});
+});

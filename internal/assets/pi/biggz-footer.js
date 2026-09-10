@@ -32,6 +32,7 @@ import {
 	SEPARATORS as IMPORTED_SEPARATORS,
 	getSeparator as importedGetSeparator,
 } from "./biggz-extension-api.js";
+import { execFileSync } from "node:child_process";
 
 // Fallback presets mirror biggz-extension-api.js when import unavailable (tests/native node)
 const FALLBACK_PRESETS = Object.freeze({
@@ -380,6 +381,51 @@ export function renderModelInfo(modelName, provider, thinking, theme) {
 	return { text, raw, rawWidth };
 }
 
+// ── Git worktree counts (gentle parity: parsePorcelain) ─────────────────────
+// Suffix for the branch segment: " *2 +1 ?3" (unstaged/staged/untracked),
+// empty string when clean/unavailable. Cached per cwd (TTL 3s) so the footer
+// never shells out more than ~once per rerender burst. Fail-silent: non-repo
+// or git missing yields null. Opt-out via BIGGZ_GIT_STATUS=0.
+export function parsePorcelain(text) {
+	let staged = 0, unstaged = 0, untracked = 0;
+	for (const line of String(text ?? "").split("\n")) {
+		if (!line) continue;
+		if (line.startsWith("??")) { untracked++; continue; }
+		if (line.startsWith("!!")) continue;
+		const x = line[0], y = line[1];
+		if (x && x !== " " && x !== "?") staged++;
+		if (y && y !== " " && y !== "?") unstaged++;
+	}
+	return { staged, unstaged, untracked };
+}
+
+export function formatGitCounts({ staged = 0, unstaged = 0, untracked = 0 } = {}) {
+	const parts = [];
+	if (unstaged > 0) parts.push(`*${unstaged}`);
+	if (staged > 0) parts.push(`+${staged}`);
+	if (untracked > 0) parts.push(`?${untracked}`);
+	return parts.length ? ` ${parts.join(" ")}` : "";
+}
+
+const GIT_COUNTS_TTL_MS = 3000;
+let _gitCountsCache = { cwd: null, at: 0, value: null };
+export function _resetGitCountsForTest() { _gitCountsCache = { cwd: null, at: 0, value: null }; }
+
+export function getGitCounts(cwd, runFn) {
+	if (typeof process !== "undefined" && process.env?.BIGGZ_GIT_STATUS === "0") return null;
+	const dir = cwd || ".";
+	const now = Date.now();
+	if (_gitCountsCache.cwd === dir && (now - _gitCountsCache.at) < GIT_COUNTS_TTL_MS) return _gitCountsCache.value;
+	let out = null;
+	try {
+		const run = runFn || execFileSync;
+		out = run("git", ["status", "--porcelain=v1", "--untracked-files=normal"], { cwd: dir, timeout: 1500, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+	} catch { out = null; }
+	const value = out == null ? null : parsePorcelain(out);
+	_gitCountsCache = { cwd: dir, at: now, value };
+	return value;
+}
+
 // ── Footer segments (theme colors via statusLine* tokens) ──
 export function buildFooterSegments(theme, footerData, ctx, pi, usage) {
 	// New contract: branch|change|lineage|lens 1/4|budget 1/1 — detect if new data present else legacy path|branch|tokens|cost|context|model
@@ -388,6 +434,9 @@ export function buildFooterSegments(theme, footerData, ctx, pi, usage) {
 	const rawLineage = ctx?.lineage ?? ctx?.lineageId ?? footerData?.lineage ?? footerData?.lineageId ?? null;
 	const rawLens = ctx?.lens ?? ctx?.lensProgress ?? ctx?.lensLabel ?? footerData?.lens ?? footerData?.lensProgress ?? null;
 	const rawBudget = ctx?.budget ?? ctx?.budgetLabel ?? ctx?.budgetProgress ?? footerData?.budget ?? footerData?.budgetProgress ?? null;
+	const segCwd = ctx?.cwd || (typeof process !== "undefined" ? process.cwd() : ".");
+	const gitCounts = getGitCounts(segCwd);
+	const countsSuffix = gitCounts ? formatGitCounts(gitCounts) : "";
 	const hasNew = rawChange!=null || rawLineage!=null || rawLens!=null || rawBudget!=null;
 	const col = (raw, token)=>{
 		if(!isPrettyEnabled()||isDumbTerm()||!theme||typeof theme.fg!=="function") return raw;
@@ -395,6 +444,7 @@ export function buildFooterSegments(theme, footerData, ctx, pi, usage) {
 	};
 	if(hasNew){
 		const branchRaw = rawBranch ? String(rawBranch) : "";
+		const branchDisplay = branchRaw ? branchRaw + countsSuffix : "";
 		const changeRaw = rawChange ? String(rawChange) : "";
 		const lineageRaw = rawLineage!=null ? `lineage ${String(rawLineage)}` : "";
 		const lensRaw = (()=>{
@@ -417,17 +467,17 @@ export function buildFooterSegments(theme, footerData, ctx, pi, usage) {
 			}
 			return `budget ${String(rawBudget)}`;
 		})();
-		const branchSeg = branchRaw ? col(branchRaw, "statusLineGitClean") : "";
+		const branchSeg = branchDisplay ? col(branchDisplay, "statusLineGitClean") : "";
 		const changeSeg = changeRaw ? col(changeRaw, "statusLinePath") : "";
 		const lineageSeg = lineageRaw ? col(lineageRaw, "statusLineContext") : "";
 		const lensSeg = lensRaw ? col(lensRaw, "statusLineSpend") : "";
 		const budgetSeg = budgetRaw ? col(budgetRaw, "statusLineCost") : "";
 		const segments = [branchSeg, changeSeg, lineageSeg, lensSeg, budgetSeg].filter(Boolean);
-		const rawsOrdered = [branchRaw, changeRaw, lineageRaw, lensRaw, budgetRaw].filter(Boolean);
+		const rawsOrdered = [branchDisplay, changeRaw, lineageRaw, lensRaw, budgetRaw].filter(Boolean);
 		return {
 			segments, rawsOrdered,
 			raw: { branch: branchRaw, change: changeRaw, lineage: lineageRaw, lens: lensRaw, budget: budgetRaw },
-			widths: { branch: visibleWidth(branchRaw), change: visibleWidth(changeRaw), lineage: visibleWidth(lineageRaw), lens: visibleWidth(lensRaw), budget: visibleWidth(budgetRaw) },
+			widths: { branch: visibleWidth(branchDisplay), change: visibleWidth(changeRaw), lineage: visibleWidth(lineageRaw), lens: visibleWidth(lensRaw), budget: visibleWidth(budgetRaw) },
 			allColored: segments,
 			pathRaw: changeRaw || branchRaw || "",
 			branchSeg, changeSeg, lineageSeg, lensSeg, budgetSeg,
@@ -437,7 +487,7 @@ export function buildFooterSegments(theme, footerData, ctx, pi, usage) {
 	}
 	// legacy fallback: path|branch|tokens|cost|context|model
 	const gitBranch = rawBranch;
-	const cwd = ctx?.cwd || (typeof process !== "undefined" ? process.cwd() : ".");
+	const cwd = segCwd;
 	const pathRawFull = buildPathString(cwd, null);
 	let pct = null; let win = 0;
 	try{ const u = ctx?.getContextUsage?.(); if(u){ if(typeof u.percent==="number") pct=u.percent; else if(typeof u.fraction==="number") pct=u.fraction*100; else if(typeof u.used==="number"&&typeof u.limit==="number"&&u.limit>0) pct=(u.used/u.limit)*100; win=Number(u.contextWindow??u.limit??ctx?.model?.contextWindow??0)||0; } }catch{}
@@ -446,15 +496,15 @@ export function buildFooterSegments(theme, footerData, ctx, pi, usage) {
 	const costVal = Number(usageTotals?.cost ?? ctx?.cost ?? ctx?.usageStats?.cost ?? 0)||0;
 	const ctxLabelRaw = pct!=null ? (win? `${Number(pct).toFixed(0)}%/${fmtTokens(win)}`:`${Number(pct).toFixed(0)}%`):"-";
 	const tokensRaw=getUsageLabel(usageTotals); const costRaw=getCostLabel(costVal);
-	const branchSeg = gitBranch ? col(`${FOOTER_ICONS.branch} ${gitBranch}`, "statusLineGitClean") : "";
+	const branchSeg = gitBranch ? col(`${FOOTER_ICONS.branch} ${gitBranch}${countsSuffix}`, "statusLineGitClean") : "";
 	const tokensSeg = tokensRaw==="-"?"":col(tokensRaw,"statusLineSpend");
 	const costSeg = costRaw==="-"?"":col(costRaw,"statusLineCost");
 	const contextSeg = (ctxLabelRaw==="-"||pct==null)?"":renderContextUsage(Number(pct)||0, win, theme);
 	const modelName=getModelLabel(ctx).split("/").pop()||getModelLabel(ctx); const provider=ctx?.model?.provider||""; const thinking=getThinkingLabel(pi); const modelInfo=renderModelInfo(modelName,provider,thinking,theme); const modelSeg=modelInfo.text;
 	return {
 		pathRaw: pathRawFull, branchSeg, tokensSeg, costSeg, contextSeg, modelSeg,
-		raw: { path: pathRawFull, branch: gitBranch?`${FOOTER_ICONS.branch} ${gitBranch}`:"", tokens: tokensRaw, cost: costRaw, context: ctxLabelRaw, model: modelInfo.raw },
-		widths: { branch: visibleWidth(gitBranch?`${FOOTER_ICONS.branch} ${gitBranch}`:""), tokens: visibleWidth(tokensRaw==="-"?"":tokensRaw), cost: visibleWidth(costRaw==="-"?"":costRaw), context: visibleWidth(ctxLabelRaw==="-"?"":ctxLabelRaw), model: modelInfo.rawWidth, path: visibleWidth(pathRawFull) },
+		raw: { path: pathRawFull, branch: gitBranch?`${FOOTER_ICONS.branch} ${gitBranch}${countsSuffix}`:"", tokens: tokensRaw, cost: costRaw, context: ctxLabelRaw, model: modelInfo.raw },
+		widths: { branch: visibleWidth(gitBranch?`${FOOTER_ICONS.branch} ${gitBranch}${countsSuffix}`:""), tokens: visibleWidth(tokensRaw==="-"?"":tokensRaw), cost: visibleWidth(costRaw==="-"?"":costRaw), context: visibleWidth(ctxLabelRaw==="-"?"":ctxLabelRaw), model: modelInfo.rawWidth, path: visibleWidth(pathRawFull) },
 		allColored: [pathRawFull, branchSeg, tokensSeg, costSeg, contextSeg, modelSeg],
 	};
 }
