@@ -130,6 +130,17 @@ func TestSessionGuard_BashFallback(t *testing.T) {
 	if !found {
 		t.Fatalf("bash args must contain session_summary, got %v", capturedArgs)
 	}
+	// REQ-SC1: the explicit session id must ride the bash fallback so the CLI
+	// routes the summary to the per-session upsert, not the active-session fallback.
+	foundSessionID := false
+	for i, a := range capturedArgs {
+		if a == "--session-id" && i+1 < len(capturedArgs) && capturedArgs[i+1] == "sess-1" {
+			foundSessionID = true
+		}
+	}
+	if !foundSessionID {
+		t.Fatalf("bash args must pass --session-id sess-1, got %v", capturedArgs)
+	}
 	// cleanup fallback file if created
 	_ = capturedDir
 }

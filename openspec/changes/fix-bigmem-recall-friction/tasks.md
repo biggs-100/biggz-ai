@@ -48,24 +48,24 @@ Driven by `verify-report.md`: off Windows the O_EXCL probe cannot observe a live
 
 ## Phase 2: Searchable close · PR 2
 
-- [ ] 2.1 RED: repeat close S → one `session_summary` row; empty-query recency (`updated_at DESC`) finds it (REQ-SC1).
-- [ ] 2.2 `internal/bigmem/bigmem.go`: `SessionSummaryObsID` + upsert `ON CONFLICT DO UPDATE`; `SaveCtx` routes `session_summary`+`session_id`.
-- [ ] 2.3 `internal/bigmem/full.go`: `SessionEnd` dual-write, retry once (50 ms); failure → explicit error, `sessions` kept.
-- [ ] 2.4 `internal/sdd/session_guard.go`: drop duplicate save, pass `--session-id`; `cli_bigmem.go`: `save --session-id`.
+- [x] 2.1 RED: repeat close S → one `session_summary` row; empty-query recency (`updated_at DESC`) finds it (REQ-SC1).
+- [x] 2.2 `internal/bigmem/bigmem.go`: `SessionSummaryObsID` + upsert `ON CONFLICT DO UPDATE`; `SaveCtx` routes `session_summary`+`session_id`.
+- [x] 2.3 `internal/bigmem/full.go`: `SessionEnd` dual-write, retry once (50 ms); failure → explicit error, `sessions` kept.
+- [x] 2.4 `internal/sdd/session_guard.go`: drop duplicate save, pass `--session-id`; `cli_bigmem.go`: `save --session-id`.
 
 ## Phase 3: FTS sanitization · PR 3
 
-- [ ] 3.1 RED: sanitize table (hyphen `gentle-pi`, accent `sesión`, operators, letterless); any-mode hits; zero signal+hint; REQ-RR2 ordering.
-- [ ] 3.2 `internal/bigmem/bigmem.go`: per-token sanitize (strip `"`, quote, join AND/OR); explicit zero-result signal.
-- [ ] 3.3 `cmd/biggz-mcp/main.go` zero envelope (`zero_results`+`hint`); `cli_bigmem.go` mirrors hint.
+- [x] 3.1 RED: sanitize table (hyphen `gentle-pi`, accent `sesión`, operators, letterless); any-mode hits; zero signal+hint; REQ-RR2 ordering.
+- [x] 3.2 `internal/bigmem/bigmem.go`: per-token sanitize (strip `"`, quote, join AND/OR); explicit zero-result signal.
+- [x] 3.3 `cmd/biggz-mcp/main.go` zero envelope (`zero_results`+`hint`); `cli_bigmem.go` mirrors hint.
 
 ## Phase 4: Summary read + recall discipline · PR 4
 
-- [ ] 4.1 RED: >150-char summary untruncated (MCP `mem_context`/CLI `context`); unknown id → non-zero; previews stay 120.
-- [ ] 4.2 `cmd/biggz-mcp/main.go`: newest summary full, older 150 preview; `cli_bigmem.go`: newest full, older 120 preview.
-- [ ] 4.3 `internal/assets/biggz/biggz-orchestrator-workflow.md`: Recall discipline (`mem_context(5)` + ≤1 recency call; never FTS chains); `orchestrator_test.go` markers kept.
+- [x] 4.1 RED: >150-char summary untruncated (MCP `mem_context`/CLI `context`); unknown id → non-zero; previews stay 120.
+- [x] 4.2 `cmd/biggz-mcp/main.go`: newest summary full, older 150 preview; `cli_bigmem.go`: newest full, older 120 preview.
+- [x] 4.3 `internal/assets/biggz/biggz-orchestrator-workflow.md`: Recall discipline (`mem_context(5)` + ≤1 recency call; never FTS chains); `orchestrator_test.go` markers kept.
 
 ## Phase 5: Verification · PR 4
 
-- [ ] 5.1 `go test ./... -count=1 -timeout 180s` green.
-- [ ] 5.2 E2E live `biggz-mcp`: CLI recall → no ghost warning, same store; recall ≤2 calls.
+- [x] 5.1 `go test ./... -count=1 -timeout 180s` green.
+- [x] 5.2 E2E live `biggz-mcp`: CLI recall → no ghost warning, same store; recall ≤2 calls.

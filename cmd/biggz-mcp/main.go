@@ -810,6 +810,16 @@ func handleToolCall(id any, name string, args map[string]any) {
 		if anyPreviewTruncated {
 			fmt.Fprintln(os.Stderr, "Results above are previews (120 chars). Call biggz_mem_get_observation for full content.")
 		}
+		if len(entries) == 0 {
+			// Explicit zero-result signal (REQ-FTS1): the empty match set plus a
+			// retry hint when the widest mode (any) has not been tried yet.
+			envelope := map[string]any{"results": entries, "zero_results": true}
+			if matchMode != "any" && strings.TrimSpace(query) != "" {
+				envelope["hint"] = "No matches in match_mode=all. Retry with match_mode=any to broaden the search."
+			}
+			jsonResult(id, envelope)
+			return
+		}
 		// Append activity nudge if needed
 		if nudge := sessionActivity.NudgeIfNeeded(sessForActivity); nudge != "" && len(entries) > 0 {
 			// Append nudge as extra entry hint; for now just log to stderr and keep JSON pure
@@ -899,13 +909,21 @@ func handleToolCall(id any, name string, args map[string]any) {
 			return
 		}
 		var parts []string
+		fullSummaryShown := false
 		for _, s := range sessions {
 			line := fmt.Sprintf("Session %s: %s", s.ID, s.StartTime.Format("2006-01-02 15:04"))
 			if !s.EndTime.IsZero() {
 				line += fmt.Sprintf(" → %s", s.EndTime.Format("15:04"))
 			}
-			if s.Summary != "" {
-				line += fmt.Sprintf(" — %s", s.Summary[:min(len(s.Summary), 150)])
+			if summary := sessionSummaryText(store, s); summary != "" {
+				// REQ-FR1: the newest summary returns full in this single call;
+				// older summaries keep the 150-char preview.
+				if !fullSummaryShown {
+					line += fmt.Sprintf(" — %s", summary)
+					fullSummaryShown = true
+				} else {
+					line += fmt.Sprintf(" — %s", summary[:min(len(summary), 150)])
+				}
 			}
 			parts = append(parts, line)
 		}
@@ -1519,6 +1537,17 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// sessionSummaryText resolves the summary text the context surface reads
+// (REQ-FR1): the deterministic session_summary observation when present — the
+// full-read source named by the spec — else the sessions row summary. Callers
+// apply the truncation policy (newest full, older preview).
+func sessionSummaryText(store *bigmem.Store, sess bigmem.Session) string {
+	if obs, err := store.GetCtx(context.Background(), bigmem.SessionSummaryObsID(sess.ID)); err == nil && strings.TrimSpace(obs.Content) != "" {
+		return obs.Content
+	}
+	return sess.Summary
 }
 
 func writeJSON(v any) {

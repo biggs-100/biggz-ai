@@ -54,7 +54,7 @@ func bigmemRun() int {
 		fmt.Fprintln(os.Stderr, "Usage: biggz bigmem <command> [args...]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Commands:")
-		fmt.Fprintln(os.Stderr, "  save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K]")
+		fmt.Fprintln(os.Stderr, "  save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K] [--session-id S]")
 		fmt.Fprintln(os.Stderr, "    --type T (bugfix|decision|architecture|discovery|pattern|config|preference|session_summary|etc)")
 		fmt.Fprintln(os.Stderr, "    --scope S (project|personal, default project)")
 		fmt.Fprintln(os.Stderr, "    Content >50k truncated with [truncated] marker (see bigmem.go truncateIfNeeded)")
@@ -103,7 +103,7 @@ func bigmemRun() int {
 		return runRecall(args[1:])
 	case "save":
 		if len(args) < 3 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K] [--session-id S]")
 			fmt.Fprintln(os.Stderr, "  --type T (bugfix|decision|architecture|discovery|pattern|config|preference|session_summary|etc)")
 			fmt.Fprintln(os.Stderr, "  --scope S (project|personal, default project)")
 			fmt.Fprintln(os.Stderr, "  Content >50k truncated with [truncated] marker (see bigmem.go truncateIfNeeded)")
@@ -124,6 +124,13 @@ func bigmemRun() int {
 			case "--topic-key":
 				if i+1 < len(args) {
 					obs.TopicKey = args[i+1]
+					i++
+				}
+			case "--session-id":
+				// REQ-SC1: explicit session id routes session_summary to the
+				// per-session upsert instead of the active-session fallback.
+				if i+1 < len(args) {
+					obs.SessionID = args[i+1]
 					i++
 				}
 			}
@@ -279,6 +286,10 @@ func bigmemRun() int {
 		}
 		if len(results) == 0 {
 			fmt.Println("No results.")
+			if opts.MatchMode != "any" && strings.TrimSpace(query) != "" {
+				// Zero-result retry hint (REQ-FTS1): mirrors the MCP envelope hint.
+				fmt.Println("No all-mode matches. Retry with --match-mode any to broaden the search.")
+			}
 			if opts.Project != "" {
 				fmt.Fprintf(os.Stderr, "No results for %q in project %q. Try --all or --project biggz-ai.\n", query, opts.Project)
 			}
@@ -477,6 +488,7 @@ func bigmemRun() int {
 			fmt.Println("No session history.")
 			return 0
 		}
+		fullSummaryShown := false
 		for _, s := range sessions {
 			if project != "" && s.Project != project {
 				continue
@@ -485,8 +497,15 @@ func bigmemRun() int {
 			if !s.EndTime.IsZero() {
 				line += fmt.Sprintf(" → %s", s.EndTime.Format("15:04"))
 			}
-			if s.Summary != "" {
-				line += fmt.Sprintf(" — %s", truncateStr(s.Summary, 120))
+			if summary := sessionSummaryText(store, s); summary != "" {
+				// REQ-FR1: the newest summary returns full in this single call;
+				// older summaries keep the 120-char preview.
+				if !fullSummaryShown {
+					line += fmt.Sprintf(" — %s", summary)
+					fullSummaryShown = true
+				} else {
+					line += fmt.Sprintf(" — %s", truncateStr(summary, 120))
+				}
 			}
 			fmt.Println(line)
 		}
@@ -1148,6 +1167,17 @@ func bigmemRun() int {
 	}
 
 	return 0
+}
+
+// sessionSummaryText resolves the summary text `context` reads (REQ-FR1): the
+// deterministic session_summary observation when present — the full-read source
+// named by the spec, written by the session-close paths — else the sessions row
+// summary. Callers apply the truncation policy (newest full, older preview).
+func sessionSummaryText(store *bigmem.Store, sess bigmem.Session) string {
+	if obs, err := store.Get(bigmem.SessionSummaryObsID(sess.ID)); err == nil && strings.TrimSpace(obs.Content) != "" {
+		return obs.Content
+	}
+	return sess.Summary
 }
 
 // bigmemGraphRun renders topic_key hierarchy and memory_relations BM25 edges.

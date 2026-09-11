@@ -43,9 +43,11 @@ Before SDD Session Preflight, perform Session Recall to restore context. This ga
 > For recency use `bigmem search --query "" ORDER BY updated_at DESC` or `biggz recall`; never use FTS term search for 'latest'.
 > FTS rank is for relevance, not recency.
 
+**Recall discipline (REQ-RR3):** "where were we?" is bounded to two reads — `biggz_mem_context(5)` + ≤1 recency call → answer; never FTS chains (`search --query "session"`, token chains) to reconstruct session state. Concretely: start with `biggz_mem_context(5)`, then at most ONE additional recency call (`biggz recall` / `Search("", opts)`, empty query, `ORDER BY updated_at DESC`) identifies the latest summary — emit the recap immediately after; total recall reads MUST NOT exceed two calls before the recap is emitted. The `sdd {project}` search below resolves SDD artifacts for preflight (relevance, not recency) — it is not a "where were we?" read and MUST NOT be chained to re-derive it.
+
 Steps (all mandatory):
 1. `biggz_mem_context(limit=5)` — recent sessions (or `biggz recall --limit 5 --json` / `Search("", opts)` → `ORDER BY updated_at DESC` @1801)
-2. `biggz recall` / `biggz bigmem recent` / `Search("", opts)` — latest observations ordered by `updated_at DESC` for "en que nos quedamos?" — MUST NOT use FTS `search --query "session"` or `ORDER BY rank` (@1844) for latest
+2. `biggz recall` / `biggz bigmem recent` / `Search("", opts)` — latest observations ordered by `updated_at DESC` for "en que nos quedamos?" — at most ONE recency call; MUST NOT use FTS `search --query "session"` or `ORDER BY rank` (@1844) for latest
 3. `biggz_mem_search(query:"sdd {project}" limit=10)` — SDD artifacts for project (relevance, not recency)
 4. `biggz rdd status` — read the user-owned quality-regime switch (read-only, cheap). Carry `enabled` vs `disabled/unmanaged` forward; it bounds what guarantees you may claim for the whole session.
 4. Inject summary: synthesize top observations/sessions into short recap (fresh `2026-09-01` before stale `2026-08-27`)
