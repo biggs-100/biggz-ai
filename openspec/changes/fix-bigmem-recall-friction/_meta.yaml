@@ -1,0 +1,8 @@
+name: fix-bigmem-recall-friction
+created: 2026-09-10T04:58:08Z
+created_at: 2026-09-10T04:58:08Z
+phase: propose
+description: "Fix BigMem recall friction: full last-session summary retrievable in one call, session close saved as searchable observation, multi-token FTS (hyphens/accents), ghost-WAL live-holder false positive, orchestrator recall discipline."
+status: active
+type: bugfix
+---

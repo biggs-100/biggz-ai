@@ -1,0 +1,9 @@
+# DAG state for SDD change
+phases:
+  propose: pending
+  spec: pending
+  design: pending
+  tasks: pending
+  apply: pending
+  verify: pending
+  archive: pending

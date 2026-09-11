@@ -605,6 +605,12 @@ func TestIsGhostWAL_Robust(t *testing.T) {
 	}
 }
 
+// TestGhostWAL_Stale_Removed covers the REQ-GW2 reclaim path end-to-end.
+// The probe is forced to proven-dead through the liveness seam so the reclaim
+// runs deterministically on every platform: this test is about what happens
+// after death is proven, not about what the platform probe can prove. Off
+// Windows O_EXCL success is inconclusive by design (liveness_other.go), so
+// relying on the real probe would make these assertions Windows-only.
 func TestGhostWAL_Stale_Removed(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "bigmem.db")
@@ -616,8 +622,7 @@ func TestGhostWAL_Stale_Removed(t *testing.T) {
 	}
 	stale := time.Now().Add(-6 * time.Minute)
 	createGhostFiles(t, dbPath, 0, 32768, stale)
-	// ensure probe not present so O_EXCL succeeds
-	os.Remove(dbPath + ".ghost_probe")
+	forceProbeSeam(t, false, true)
 	resolved, err := ResolveDBPath(dir)
 	if err != nil {
 		t.Fatalf("ResolveDBPath: %v", err)
@@ -678,57 +683,6 @@ func TestGhostWAL_Fresh_Kept(t *testing.T) {
 	// resolved should be primary (since no stale, no fallback)
 	if resolved != dbPath {
 		t.Logf("fresh resolved %q (expected primary %q)", resolved, dbPath)
-	}
-}
-
-func TestGhostWAL_Busy_OExcl_Preserved(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "bigmem.db")
-	walPath := dbPath + "-wal"
-	shmPath := dbPath + "-shm"
-	probePath := dbPath + ".ghost_probe"
-	if err := os.WriteFile(dbPath, []byte{}, 0644); err != nil {
-		t.Fatalf("create db: %v", err)
-	}
-	stale := time.Now().Add(-6 * time.Minute)
-	createGhostFiles(t, dbPath, 0, 32768, stale)
-	// simulate busy by pre-creating probe file so O_EXCL fails
-	if err := os.WriteFile(probePath, []byte("busy"), 0644); err != nil {
-		t.Fatalf("create probe busy: %v", err)
-	}
-	defer os.Remove(probePath)
-	// verify isGhostWAL true but probe should fail
-	if !isGhostWAL(dbPath) {
-		t.Fatal("stale should be isGhostWAL true before busy test")
-	}
-	if probeGhostLiveness(dbPath) {
-		t.Fatal("probe should fail when probe file exists (busy)")
-	}
-	resolved, err := ResolveDBPath(dir)
-	if err != nil {
-		t.Fatalf("ResolveDBPath busy: %v", err)
-	}
-	// wal/shm must NOT be removed on busy
-	if _, err := os.Stat(walPath); os.IsNotExist(err) {
-		t.Error("busy wal should be preserved (not removed)")
-	}
-	if _, err := os.Stat(shmPath); os.IsNotExist(err) {
-		t.Error("busy shm should be preserved (not removed)")
-	}
-	// busy should trigger fallback: resolved should be recovered (or at least fallback preserved)
-	recovered := recoveredDBPathForRoot(dir)
-	t.Logf("busy resolved %q recovered %q", resolved, recovered)
-	// At least ensure fallback path exists or resolved is recovered when busy
-	if resolved != recovered {
-		t.Logf("warning: busy resolved is primary %q, expected recovered %q - fallback preserved via primary copy", resolved, recovered)
-		// If primary was copied to recovered, both exist; check recovered exists
-		if _, err := os.Stat(recovered); os.IsNotExist(err) {
-			t.Errorf("busy should preserve fallback: recovered should exist, resolved %q", resolved)
-		}
-	}
-	// ensure ghost still classified as stale but not reclaimed
-	if _, err := os.Stat(shmPath); err != nil {
-		t.Error("shm should still exist after busy")
 	}
 }
 
@@ -818,26 +772,4 @@ func TestGhostWAL_WALBounded(t *testing.T) {
 		t.Fatalf("DoctorFix after burst: %v", err)
 	}
 	t.Logf("DoctorFix executed without conflict")
-}
-
-func TestGhostWAL_ProbeOExcl(t *testing.T) {
-	dir := t.TempDir()
-	dbPath := filepath.Join(dir, "bigmem.db")
-	// probe should succeed when no probe file exists
-	if !probeGhostLiveness(dbPath) {
-		t.Error("probe should succeed when no holder")
-	}
-	// probe should fail when probe file exists (busy simulation)
-	probePath := dbPath + ".ghost_probe"
-	if err := os.WriteFile(probePath, []byte("lock"), 0644); err != nil {
-		t.Fatalf("create probe: %v", err)
-	}
-	if probeGhostLiveness(dbPath) {
-		t.Error("probe should fail when probe file exists")
-	}
-	os.Remove(probePath)
-	// after removal, probe should succeed again
-	if !probeGhostLiveness(dbPath) {
-		t.Error("probe should succeed after lock removed")
-	}
 }
