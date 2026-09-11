@@ -61,9 +61,9 @@ Driven by `verify-report.md`: off Windows the O_EXCL probe cannot observe a live
 
 ## Phase 4: Summary read + recall discipline · PR 4
 
-- [ ] 4.1 RED: >150-char summary untruncated (MCP `mem_context`/CLI `context`); unknown id → non-zero; previews stay 120.
-- [ ] 4.2 `cmd/biggz-mcp/main.go`: newest summary full, older 150 preview; `cli_bigmem.go`: newest full, older 120 preview.
-- [ ] 4.3 `internal/assets/biggz/biggz-orchestrator-workflow.md`: Recall discipline (`mem_context(5)` + ≤1 recency call; never FTS chains); `orchestrator_test.go` markers kept.
+- [x] 4.1 RED: >150-char summary untruncated (MCP `mem_context`/CLI `context`); unknown id → non-zero; previews stay 120.
+- [x] 4.2 `cmd/biggz-mcp/main.go`: newest summary full, older 150 preview; `cli_bigmem.go`: newest full, older 120 preview.
+- [x] 4.3 `internal/assets/biggz/biggz-orchestrator-workflow.md`: Recall discipline (`mem_context(5)` + ≤1 recency call; never FTS chains); `orchestrator_test.go` markers kept.
 
 ## Phase 5: Verification · PR 4
 

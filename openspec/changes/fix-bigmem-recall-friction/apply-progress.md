@@ -1,12 +1,13 @@
 # Apply Progress — fix-bigmem-recall-friction
 
 - **Change:** fix-bigmem-recall-friction
-- **Slice:** 1 + Phase 1b (Phase 1 — Ghost-WAL liveness, PR 1 of the feature-branch-chain); Phase 2 — Searchable close (PR 2 of the chain; see the Phase 2 section); Phase 3 — FTS sanitization (PR 3 of the chain; see the Phase 3 section)
+- **Slice:** 1 + Phase 1b (Phase 1 — Ghost-WAL liveness, PR 1 of the feature-branch-chain); Phase 2 — Searchable close (PR 2 of the chain; see the Phase 2 section); Phase 3 — FTS sanitization (PR 3 of the chain; see the Phase 3 section); Phase 4 — Summary read + recall discipline (PR 4 of the chain; see the Phase 4 section)
 - **Status:** complete (tasks 1.1–1.4) — runtime harness evidence + bookkeeping finished in this continuation run (the previous apply run hit the 20-minute task-mode timeout after the code was green, before harness evidence and bookkeeping). Phase 1b (tasks 1b.1–1b.5) added in a later continuation run; see the Phase 1b section for evidence; its one off-surface residual (`TestGhostWAL_Stale_Removed`) was resolved in a follow-up run via the liveness seam — no residual remains. Phase 2 (tasks 2.1–2.4) complete in a later continuation run — RED, implementation, exactly-once runtime harness and rollback evidence in the Phase 2 section.
 - **Mode:** Standard (`strict_tdd: false` for this project; no Strict-TDD cycle table applies)
 - **Branch / base:** `fix/bigmem-recall-friction-1-ghost-wal` (tracker: `fix/bigmem-recall-friction`, base `bed2d881`) — uncommitted, left dirty for human review
 - **Phase 2 branch / base:** `fix/bigmem-recall-friction-2-searchable-close`, base = PR 1 branch at `5d2d9871` — uncommitted, left dirty for human review
 - **Phase 3 branch / base:** `fix/bigmem-recall-friction-3-fts-sanitize`, base = PR 2 branch at `a381065e` — uncommitted, left dirty for human review
+- **Phase 4 branch / base:** `fix/bigmem-recall-friction-4-summary-recall`, base = PR 3 branch at `8f29615c` — uncommitted, left dirty for human review
 - **Environment:** Go 1.26.1 windows/amd64
 
 ## Tasks Completed
@@ -431,16 +432,150 @@ No results.                                               # defect reproduced on
 
 Revert `internal/bigmem/bigmem.go` (`sanitizeFTSTerms`/`hasFTSAlnum` + the `SearchCtx` FTS-branch guard), `cmd/biggz-mcp/main.go` (zero envelope block), `cmd/biggz/cli_bigmem.go` (retry-hint line), and **delete** `internal/bigmem/fts_sanitize_test.go`; revert the two test additions in `cmd/biggz-mcp/main_test.go` (`TestMemSearch_ZeroEnvelope` + `resultText`) and `cmd/biggz/cli_bigmem_test.go` (`TestBigmemSearch_ZeroHintAndHyphenHit`). → back to raw MATCH expressions (any-mode hyphen miss) and the plain `[]` search response at `a381065e` (PR 2 state). Self-contained: no other file depends on the new symbols; slices 1–2 files are untouched by this slice.
 
+## Phase 4 — Summary read + recall discipline (REQ-FR1, REQ-RR3)
+
+- **Scope:** tasks 4.1–4.3 (defect #1 read half: `mem_context`/`context` sliced every session summary at 150/120 chars, and a CLI/session-guard fallback close (observation-only) was invisible to `context`; defect #5: the workflow asset lacked a bounded recall discipline).
+- **Files:** table below. Authored changed lines: 281 additions + 5 deletions = **286** altered lines (code + tests + workflow asset; SDD ledger updates — tasks.md + this section — stay outside the authored count per the convention recorded in slice 2). Under the 400 budget; PR 1's `size:exception` does NOT extend here.
+- **Mode:** Standard (`strict_tdd: false`); RDD enabled — every PASS below is raw output from this run.
+
+### Implementation
+
+| File | +/- | Purpose |
+|------|-----|---------|
+| `cmd/biggz-mcp/main.go` | +21/−2 | `mem_context`: `sessionSummaryText` resolves the deterministic `session_summary` observation first (REQ-FR1's named read source), falling back to `sessions.summary`; the newest summary prints full and untruncated in the same call, older ones keep the existing 150-char preview |
+| `cmd/biggz/cli_bigmem.go` | +21/−2 | `context`: same resolution; newest full, older keep `truncateStr(summary, 120)` |
+| `cmd/biggz-mcp/main_test.go` | +128 (new tests) | `TestMemContext_FullNewestSummary` (newest full / older 150 preview), `TestMemContext_ReturnsObservationSummary` (observation-only close shape), `TestMemSearch_PreviewStays120` (preview clause guard), `ctxWaitNextSecond` helper |
+| `cmd/biggz/cli_bigmem_test.go` | +78 (new tests) | `TestBigmemContext_FullNewestSummary` (CLI-save seeding, newest full / older 120 preview), `TestBigmemGet_FullSummaryAndUnknownID` (by-id full + non-zero unknown id), `waitNextSecond` helper |
+| `internal/assets/biggz/biggz-orchestrator-workflow.md` | +3/−1 | Recall discipline paragraph (REQ-RR3): `biggz_mem_context(5)` + ≤1 recency call → answer; never FTS chains; total recall reads ≤2 calls before the recap; step 2 annotated "at most ONE recency call"; Session Boot Recall structure + all `orchestrator_test.go` markers kept |
+| `internal/assets/biggz/orchestrator_test.go` | +30 (new test) | `TestOrchestratorRecallDisciplineInvariant` locks the discipline markers + the stop condition |
+
+Why the observation resolution matters: the session-guard bash fallback and `biggz bigmem save --type session_summary --session-id` write only the deterministic `session-summary-{id}` observation (no `sessions.summary`), so a sessions-only `context` showed the session with no text at all (reproduced in the RED below) — a close could not be recalled in one call. The session row stays the fallback for MCP-written closes and legacy sessions; the truncation policy from design D3 is unchanged (newest full, older preview; search previews untouched).
+
+Deliberate, documented nuances (verify should read these):
+
+1. **"Newest summary" = the first session (newest-first `ORDER BY start_time DESC`) with a resolved non-empty summary**; that one prints full, every later one keeps the preview. Sessions with no summary at all still print their bare line.
+2. **Observation-first resolution.** `obs.Content` is preferred when the deterministic observation exists (the spec names the observation as the read source and closes update it in place); `sessions.summary` remains the fallback, so behavior for legacy rows without observations is unchanged.
+3. **MCP parity.** Both surfaces resolve identically; only the preview cut differs (150 MCP per D3, 120 CLI per D3). Search previews stay exactly `truncate(r.Content, 120)` (guard test).
+4. **Test ordering determinism.** `start_time` has 1s (RFC3339) precision; the helpers wait past a second boundary so the two seeded sessions sort strictly (no reliance on SQLite tie order).
+
+### RED evidence (before the fix)
+
+```
+$ go test ./cmd/biggz ./cmd/biggz-mcp ./internal/assets/biggz -run 'Context|Summary|Orchestrator' -count=1 -v
+--- FAIL: TestBigmemContext_FullNewestSummary (0.28s)
+    cli_bigmem_test.go:233: context must print the newest summary (170 chars) untruncated in one call, got "  sess-cli-new — 2026-09-11 10:11\n  sess-cli-old — 2026-09-11 10:11\n"
+    cli_bigmem_test.go:239: older summary head must remain as its 120-char preview, got "  sess-cli-new — 2026-09-11 10:11\n  sess-cli-old — 2026-09-11 10:11\n"
+--- FAIL: TestMemContext_FullNewestSummary (0.69s)
+    main_test.go:704: mem_context must return the newest summary (166 chars) untruncated in one call, got "Session sess-ctx-newer: ... — NNNN…(150 N's, repeated-character runs abbreviated)…NNNN"   # 150-char hard cut, tail marker missing
+--- FAIL: TestMemContext_ReturnsObservationSummary (0.03s)
+    main_test.go:746: mem_context must resolve the session_summary observation (214 chars) untruncated, got "Session sess-ctx-obs: 2026-09-11 10:11"
+--- FAIL: TestOrchestratorRecallDisciplineInvariant (0.00s)
+    orchestrator_test.go:372: biggz-orchestrator-workflow.md missing recall-discipline marker "Recall discipline" (also "≤1 recency call", "never FTS chains", "at most ONE additional recency call")
+```
+
+The CLI failures show the exact isolation: the CLI-save close produced no `sessions.summary`, so `context` printed no summary text at all. The MCP failure shows the 150-char slice (tail marker missing). `TestBigmemGet_FullSummaryAndUnknownID` and `TestMemSearch_PreviewStays120` PASSED red — non-regression guards, already correct before the fix.
+
+### Focused test command + result (this run)
+
+```
+$ go test ./cmd/biggz ./cmd/biggz-mcp ./internal/assets/biggz -run 'Context|Summary|Orchestrator' -count=1
+ok  	github.com/biggs-100/biggz-ai/cmd/biggz	0.958s
+ok  	github.com/biggs-100/biggz-ai/cmd/biggz-mcp	2.338s
+ok  	github.com/biggs-100/biggz-ai/internal/assets/biggz	1.463s
+```
+
+Verbose (this run): `TestBigmemContext_FullNewestSummary`, `TestBigmemGet_FullSummaryAndUnknownID` (+2 subtests), `TestMemContext_FullNewestSummary`, `TestMemContext_ReturnsObservationSummary`, `TestMemSearch_PreviewStays120`, `TestOrchestratorRecallDisciplineInvariant` (+2 subtests) and all pre-existing `TestOrchestrator*` invariants PASS; 0 FAIL.
+
+### Package suite command + result (this run)
+
+```
+$ go test ./internal/bigmem ./internal/sdd ./cmd/biggz ./cmd/biggz-mcp ./internal/assets/biggz -count=1 -timeout 240s
+ok  	github.com/biggs-100/biggz-ai/internal/bigmem	31.537s
+ok  	github.com/biggs-100/biggz-ai/internal/sdd	24.809s
+ok  	github.com/biggs-100/biggz-ai/cmd/biggz	67.292s
+ok  	github.com/biggs-100/biggz-ai/cmd/biggz-mcp	5.066s
+ok  	github.com/biggs-100/biggz-ai/internal/assets/biggz	1.535s
+```
+
+### Static checks
+
+```
+$ go vet ./cmd/biggz ./cmd/biggz-mcp ./internal/assets/biggz   # exit 0, no output
+$ gofmt -l cmd/biggz cmd/biggz-mcp internal/assets/biggz       # no output (clean)
+$ go build ./...                                               # BUILD_OK
+```
+
+### Runtime harness evidence
+
+Fixed binaries built from this working tree into `C:\Users\USER\AppData\Local\Temp\p4h\bin`; `USERPROFILE`/`HOME` pointed at the temp home `C:\Users\USER\AppData\Local\Temp\p4h\home`. The real store `C:\Users\USER\.biggz\bigmem` was never opened: its `bigmem.db` mtime (epoch `1789139545`) is identical before and after the whole harness run.
+
+```
+$ go build -o .../p4h/bin/biggz-fixed.exe ./cmd/biggz          # exit 0
+$ go build -o .../p4h/bin/biggz-mcp-fixed.exe ./cmd/biggz-mcp  # exit 0
+$ biggz-fixed.exe bigmem save "Session summary" "$OLD (174 chars)" --type session_summary --scope project --project p4-harness --session-id sess-harness-old
+Saved: session-summary-sess-harness-old                        # EXIT=0
+$ sleep 1.2
+$ biggz-fixed.exe bigmem save "Session summary" "$NEW (174 chars)" --type session_summary --scope project --project p4-harness --session-id sess-harness-new
+Saved: session-summary-sess-harness-new                        # EXIT=0
+```
+
+(a) `context` — newest full, older previewed, ONE call:
+
+```
+$ biggz-fixed.exe bigmem context p4-harness
+  sess-harness-new — 2026-09-11 10:13 — NNNN…(150 N's)-HARNESS-NEWER-TAIL-9e4c
+  sess-harness-old — 2026-09-11 10:13 — OOOO…(120 O's)...
+EXIT=0
+NEWEST_FULL=YES                (tail marker -HARNESS-NEWER-TAIL-9e4c present)
+OLDER_TAIL_ABSENT=YES          (older tail marker -HARNESS-OLDER-TAIL-2f8d absent => previewed)
+OLDER_HEAD_120_PRESENT=YES
+```
+
+(b) `get <id>` full in one call:
+
+```
+$ biggz-fixed.exe bigmem get session-summary-sess-harness-new
+...
+Content:   NNNN…(150 N's)-HARNESS-NEWER-TAIL-9e4c
+GET_EXIT=0
+```
+
+(c) unknown id fails visibly:
+
+```
+$ biggz-fixed.exe bigmem get obs-does-not-exist-0000
+error: get: not found: sql: no rows in result set
+UNKNOWN_EXIT=1
+```
+
+(d) a second, older summary still previewed — same `context` run above (older tail absent, head present).
+
+Bonus — MCP `mem_context` over stdio, same temp store:
+
+```
+$ echo '{"jsonrpc":"2.0","id":"m1","method":"tools/call","params":{"name":"mem_context","arguments":{"limit":5}}}' | biggz-mcp-fixed.exe
+{"id":"m1",...,"text":"Session sess-harness-new: 2026-09-11 10:13 — NNNN…-HARNESS-NEWER-TAIL-9e4c\nSession sess-harness-old: 2026-09-11 10:13 — OOOO…(150 O's)"}
+MCP_EXIT=0, stderr empty
+MCP_NEWEST_FULL=YES            (untruncated newest in one call)
+MCP_OLDER_TAIL_ABSENT=YES      (older kept the 150-char preview)
+```
+
+### Rollback boundary (Phase 4)
+
+Revert `cmd/biggz-mcp/main.go` (`sessionSummaryText` + the `mem_context` full/newest-preview policy), `cmd/biggz/cli_bigmem.go` (`sessionSummaryText` + the `context` policy), delete the new tests in `cmd/biggz-mcp/main_test.go` (`TestMemContext_FullNewestSummary`, `TestMemContext_ReturnsObservationSummary`, `TestMemSearch_PreviewStays120`, `ctxWaitNextSecond`) and `cmd/biggz/cli_bigmem_test.go` (`TestBigmemContext_FullNewestSummary`, `TestBigmemGet_FullSummaryAndUnknownID`, `waitNextSecond`), remove `TestOrchestratorRecallDisciplineInvariant` from `internal/assets/biggz/orchestrator_test.go`, and revert the discipline paragraph + step-2 annotation in `internal/assets/biggz/biggz-orchestrator-workflow.md`. → back to the 150/120 hard cuts and the discipline-free asset at PR 3 state (`8f29615c`). Self-contained: no other file depends on the new symbols; slices 1–3 files are untouched by this slice.
+
 ## Remaining Tasks
 
 Phase 1b residual: RESOLVED — `internal/bigmem/bigmem_test.go > TestGhostWAL_Stale_Removed` now forces `(holder=false, proven=true)` through the `forceProbeSeam` helper (`ghost_test.go`), keeping the REQ-GW2 reclaim assertions intact and platform-independent (see the Phase 1b section for the cross-platform audit + evidence). No residual remains in Phase 1b.
 
-Phases 4–5 (not started, out of this run's scope):
+Phases 4–5 status (this branch):
 
-- Phase 4 (PR 4): summary read + recall discipline — tasks 4.1–4.3
-- Phase 5: verification — tasks 5.1–5.2
+- Phase 4 (PR 4): summary read + recall discipline — tasks 4.1–4.3 COMPLETED (see the Phase 4 section above).
+- Phase 5: verification — tasks 5.1–5.2 NOT started (out of apply scope).
 
 ## Notes
 
+- Phase 4 attempt-ledger scope label: `phase-4-summary-read-recall` (this slice's work unit). The change has used one maintainer-approved reset per slice; ledger resets require an explicit maintainer decision and are never automatic (this apply run neither settles nor resets the ledger).
+- Phase 4 harness artifacts live under `C:\Users\USER\AppData\Local\Temp\p4h\` (outside the repo). The real store `C:\Users\USER\.biggz\bigmem` was never opened — `bigmem.db` mtime unchanged (epoch 1789139545 before/after).
 - Prior interrupted-run ledger facts preserved: outcome `interrupted` omitted `evidence_revision`; interrupted attempts do not consume budget (`remaining_attempts=2`); ledger revision `bf3cf0dcb1d1004c56dfcf0ba2d220601f0006264dcbae41a74d737f406f5e9e`.
 - No commit/push/branch changes; tree dirty for human review. Harness artifacts live under `/tmp/bm-harness/` (outside the repo).

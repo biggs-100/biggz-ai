@@ -488,6 +488,7 @@ func bigmemRun() int {
 			fmt.Println("No session history.")
 			return 0
 		}
+		fullSummaryShown := false
 		for _, s := range sessions {
 			if project != "" && s.Project != project {
 				continue
@@ -496,8 +497,15 @@ func bigmemRun() int {
 			if !s.EndTime.IsZero() {
 				line += fmt.Sprintf(" → %s", s.EndTime.Format("15:04"))
 			}
-			if s.Summary != "" {
-				line += fmt.Sprintf(" — %s", truncateStr(s.Summary, 120))
+			if summary := sessionSummaryText(store, s); summary != "" {
+				// REQ-FR1: the newest summary returns full in this single call;
+				// older summaries keep the 120-char preview.
+				if !fullSummaryShown {
+					line += fmt.Sprintf(" — %s", summary)
+					fullSummaryShown = true
+				} else {
+					line += fmt.Sprintf(" — %s", truncateStr(summary, 120))
+				}
 			}
 			fmt.Println(line)
 		}
@@ -1159,6 +1167,17 @@ func bigmemRun() int {
 	}
 
 	return 0
+}
+
+// sessionSummaryText resolves the summary text `context` reads (REQ-FR1): the
+// deterministic session_summary observation when present — the full-read source
+// named by the spec, written by the session-close paths — else the sessions row
+// summary. Callers apply the truncation policy (newest full, older preview).
+func sessionSummaryText(store *bigmem.Store, sess bigmem.Session) string {
+	if obs, err := store.Get(bigmem.SessionSummaryObsID(sess.ID)); err == nil && strings.TrimSpace(obs.Content) != "" {
+		return obs.Content
+	}
+	return sess.Summary
 }
 
 // bigmemGraphRun renders topic_key hierarchy and memory_relations BM25 edges.

@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
 )
@@ -652,6 +653,133 @@ func TestHandleToolCall_mem_context(t *testing.T) {
 			t.Errorf("result = %s", string(r.Result))
 		}
 	})
+}
+
+// ctxWaitNextSecond blocks until the wall clock crosses the next second
+// boundary. Session start_time is stored with RFC3339 (1s) precision, so a
+// session created after this point sorts strictly newer under
+// ORDER BY start_time DESC.
+func ctxWaitNextSecond() {
+	time.Sleep(time.Until(time.Now().Truncate(time.Second).Add(1100 * time.Millisecond)))
+}
+
+// TestMemContext_FullNewestSummary proves REQ-FR1 on the MCP surface: the
+// newest session summary returns full and untruncated in a single mem_context
+// call, while older summaries keep the 150-char preview.
+func TestMemContext_FullNewestSummary(t *testing.T) {
+	dir := t.TempDir()
+	var err error
+	store, err = bigmem.Open(dir)
+	if err != nil {
+		t.Fatalf("bigmem.Open: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	older := strings.Repeat("O", 150) + "-OLDER-TAIL-7f3a"
+	newer := strings.Repeat("N", 150) + "-NEWER-TAIL-9b2c"
+
+	if err := store.EnsureImplicitSession("sess-ctx-older", "ctx-proj"); err != nil {
+		t.Fatalf("EnsureImplicitSession older: %v", err)
+	}
+	if _, err := store.SessionEnd("sess-ctx-older", older); err != nil {
+		t.Fatalf("SessionEnd older: %v", err)
+	}
+	ctxWaitNextSecond()
+	if err := store.EnsureImplicitSession("sess-ctx-newer", "ctx-proj"); err != nil {
+		t.Fatalf("EnsureImplicitSession newer: %v", err)
+	}
+	if _, err := store.SessionEnd("sess-ctx-newer", newer); err != nil {
+		t.Fatalf("SessionEnd newer: %v", err)
+	}
+
+	raw := captureStdout(t, func() {
+		handleToolCall("c-full", "mem_context", map[string]any{"limit": 5.0})
+	})
+	r := parseRPC(t, raw)
+	if r.Error != nil {
+		t.Fatalf("unexpected error: %v", r.Error)
+	}
+	text := resultText(t, r)
+	if !strings.Contains(text, newer) {
+		t.Errorf("mem_context must return the newest summary (%d chars) untruncated in one call, got %q", len(newer), text)
+	}
+	if strings.Contains(text, "-OLDER-TAIL-7f3a") {
+		t.Errorf("older summary must stay previewed at 150 chars, got %q", text)
+	}
+	if !strings.Contains(text, older[:150]) {
+		t.Errorf("older summary head must remain as its 150-char preview, got %q", text)
+	}
+}
+
+// TestMemContext_ReturnsObservationSummary covers the CLI/session-guard
+// fallback close shape: only the deterministic session_summary observation
+// exists (no sessions.summary), and mem_context must still return its full
+// content (REQ-FR1 names the observation as the read source).
+func TestMemContext_ReturnsObservationSummary(t *testing.T) {
+	dir := t.TempDir()
+	var err error
+	store, err = bigmem.Open(dir)
+	if err != nil {
+		t.Fatalf("bigmem.Open: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	if err := store.EnsureImplicitSession("sess-ctx-obs", "ctx-proj"); err != nil {
+		t.Fatalf("EnsureImplicitSession: %v", err)
+	}
+	long := strings.Repeat("S", 200) + "-OBS-TAIL-4d1e"
+	if err := store.SaveCtx(t.Context(), &bigmem.Observation{
+		Title: "Session summary", Type: "session_summary", Content: long,
+		SessionID: "sess-ctx-obs", Project: "ctx-proj", Scope: "project",
+	}); err != nil {
+		t.Fatalf("SaveCtx: %v", err)
+	}
+
+	raw := captureStdout(t, func() {
+		handleToolCall("c-obs", "mem_context", map[string]any{"limit": 5.0})
+	})
+	r := parseRPC(t, raw)
+	if r.Error != nil {
+		t.Fatalf("unexpected error: %v", r.Error)
+	}
+	if text := resultText(t, r); !strings.Contains(text, long) {
+		t.Errorf("mem_context must resolve the session_summary observation (%d chars) untruncated, got %q", len(long), text)
+	}
+}
+
+// TestMemSearch_PreviewStays120 guards REQ-FR1's preview clause: fixing the
+// full-read path MUST NOT alter the 120-char search preview.
+func TestMemSearch_PreviewStays120(t *testing.T) {
+	dir := t.TempDir()
+	var err error
+	store, err = bigmem.Open(dir)
+	if err != nil {
+		t.Fatalf("bigmem.Open: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	long := "preview-guard-token " + strings.Repeat("P", 160) + "-PREVIEW-TAIL-88aa"
+	if err := store.Save(&bigmem.Observation{
+		Title: "Preview note", Type: "note", Content: long,
+		Project: "ctx-proj", Scope: "project",
+	}); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	raw := captureStdout(t, func() {
+		handleToolCall("s-preview", "mem_search", map[string]any{"query": "preview-guard-token", "project": "ctx-proj"})
+	})
+	r := parseRPC(t, raw)
+	if r.Error != nil {
+		t.Fatalf("unexpected error: %v", r.Error)
+	}
+	text := resultText(t, r)
+	if !strings.Contains(text, long[:120]+"...") {
+		t.Errorf("mem_search must keep the 120-char preview plus ellipsis, got %q", text)
+	}
+	if strings.Contains(text, "-PREVIEW-TAIL-88aa") {
+		t.Errorf("mem_search preview must not include content beyond 120 chars, got %q", text)
+	}
 }
 
 func TestHandleToolCall_mem_session_summary(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
 )
@@ -191,6 +192,83 @@ func TestBigmemSearch_ZeroHintAndHyphenHit(t *testing.T) {
 			if !strings.Contains(stdout, want) {
 				t.Errorf("any-mode hyphenated search must return %q, got %q", want, stdout)
 			}
+		}
+	})
+}
+
+// waitNextSecond blocks until the wall clock crosses the next second
+// boundary. Session start_time is stored with RFC3339 (1s) precision, so a
+// session created after this point sorts strictly newer under
+// ORDER BY start_time DESC.
+func waitNextSecond() {
+	time.Sleep(time.Until(time.Now().Truncate(time.Second).Add(1100 * time.Millisecond)))
+}
+
+// TestBigmemContext_FullNewestSummary proves REQ-FR1 on the CLI surface: the
+// newest session_summary returns full in one `context` call, while older
+// summaries keep the 120-char preview. The seeding uses the session-guard
+// bash fallback shape (`save --type session_summary --session-id`), which
+// writes the deterministic observation that `context` must resolve.
+func TestBigmemContext_FullNewestSummary(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.Setenv("HOME", dir)
+	_ = os.Setenv("USERPROFILE", dir)
+
+	older := strings.Repeat("O", 150) + "-CLI-OLDER-TAIL-c1a7"
+	newer := strings.Repeat("N", 150) + "-CLI-NEWER-TAIL-e5b9"
+
+	if code, _, stderr := captureBigmemRun([]string{"save", "Session summary", older, "--type", "session_summary", "--scope", "project", "--project", "ctx-cli-probe", "--session-id", "sess-cli-old"}); code != 0 {
+		t.Fatalf("older save exit %d stderr=%q", code, stderr)
+	}
+	waitNextSecond()
+	if code, _, stderr := captureBigmemRun([]string{"save", "Session summary", newer, "--type", "session_summary", "--scope", "project", "--project", "ctx-cli-probe", "--session-id", "sess-cli-new"}); code != 0 {
+		t.Fatalf("newer save exit %d stderr=%q", code, stderr)
+	}
+
+	code, stdout, stderr := captureBigmemRun([]string{"context", "ctx-cli-probe"})
+	if code != 0 {
+		t.Fatalf("context exit %d stderr=%q", code, stderr)
+	}
+	if !strings.Contains(stdout, newer) {
+		t.Errorf("context must print the newest summary (%d chars) untruncated in one call, got %q", len(newer), stdout)
+	}
+	if strings.Contains(stdout, "-CLI-OLDER-TAIL-c1a7") {
+		t.Errorf("older summary must stay previewed at 120 chars, got %q", stdout)
+	}
+	if !strings.Contains(stdout, older[:120]) {
+		t.Errorf("older summary head must remain as its 120-char preview, got %q", stdout)
+	}
+}
+
+// TestBigmemGet_FullSummaryAndUnknownID proves REQ-FR1's by-id clause and the
+// unknown-id scenario: get returns the full content in one call, and an
+// unknown id exits non-zero with an explicit not-found error (no silent empty).
+func TestBigmemGet_FullSummaryAndUnknownID(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.Setenv("HOME", dir)
+	_ = os.Setenv("USERPROFILE", dir)
+	long := strings.Repeat("F", 200) + "-GET-TAIL-3c0d"
+	if code, _, stderr := captureBigmemRun([]string{"save", "Session summary", long, "--type", "session_summary", "--scope", "project", "--project", "ctx-cli-probe", "--session-id", "sess-cli-get"}); code != 0 {
+		t.Fatalf("save exit %d stderr=%q", code, stderr)
+	}
+
+	t.Run("full content by id", func(t *testing.T) {
+		code, stdout, stderr := captureBigmemRun([]string{"get", "session-summary-sess-cli-get"})
+		if code != 0 {
+			t.Fatalf("get exit %d stderr=%q", code, stderr)
+		}
+		if !strings.Contains(stdout, long) {
+			t.Errorf("get must print the full content (%d chars) in one call, got %q", len(long), stdout)
+		}
+	})
+
+	t.Run("unknown id exits non-zero", func(t *testing.T) {
+		code, stdout, stderr := captureBigmemRun([]string{"get", "obs-does-not-exist-0000"})
+		if code == 0 {
+			t.Fatalf("unknown id must exit non-zero, got 0 (stdout=%q)", stdout)
+		}
+		if !strings.Contains(stderr, "not found") {
+			t.Errorf("stderr must surface an explicit not-found error, got %q", stderr)
 		}
 	})
 }

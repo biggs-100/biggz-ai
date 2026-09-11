@@ -352,3 +352,33 @@ func TestOrchestratorAliasInvariant(t *testing.T) {
 		}
 	})
 }
+
+// TestOrchestratorRecallDisciplineInvariant locks the REQ-RR3 recall budget:
+// the workflow asset must document `mem_context(5)` + ≤1 recency call →
+// answer and the FTS ban, without dropping the existing Session Boot Recall
+// markers asserted by TestOrchestratorSessionRecallGateInvariant.
+func TestOrchestratorRecallDisciplineInvariant(t *testing.T) {
+	wf := readWorkflow(t)
+	t.Run("documents bounded recall discipline", func(t *testing.T) {
+		for _, needle := range []string{
+			"Recall discipline",
+			"biggz_mem_context(5)",
+			"≤1 recency call",
+			"never FTS chains",
+			"at most ONE additional recency call",
+			"ORDER BY updated_at DESC",
+		} {
+			if !strings.Contains(wf, needle) {
+				t.Errorf("biggz-orchestrator-workflow.md missing recall-discipline marker %q", needle)
+			}
+		}
+	})
+	t.Run("stop condition prevents chained searches", func(t *testing.T) {
+		if !strings.Contains(wf, "total recall reads MUST NOT exceed two calls") {
+			t.Errorf("workflow must document the bounded recall read budget (mem_context + ≤1 recency call)")
+		}
+		if !strings.Contains(wf, "never FTS") {
+			t.Errorf("workflow must ban FTS retrieval for 'where were we?'")
+		}
+	})
+}

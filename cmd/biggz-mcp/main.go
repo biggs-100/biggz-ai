@@ -909,13 +909,21 @@ func handleToolCall(id any, name string, args map[string]any) {
 			return
 		}
 		var parts []string
+		fullSummaryShown := false
 		for _, s := range sessions {
 			line := fmt.Sprintf("Session %s: %s", s.ID, s.StartTime.Format("2006-01-02 15:04"))
 			if !s.EndTime.IsZero() {
 				line += fmt.Sprintf(" → %s", s.EndTime.Format("15:04"))
 			}
-			if s.Summary != "" {
-				line += fmt.Sprintf(" — %s", s.Summary[:min(len(s.Summary), 150)])
+			if summary := sessionSummaryText(store, s); summary != "" {
+				// REQ-FR1: the newest summary returns full in this single call;
+				// older summaries keep the 150-char preview.
+				if !fullSummaryShown {
+					line += fmt.Sprintf(" — %s", summary)
+					fullSummaryShown = true
+				} else {
+					line += fmt.Sprintf(" — %s", summary[:min(len(summary), 150)])
+				}
 			}
 			parts = append(parts, line)
 		}
@@ -1529,6 +1537,17 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max] + "..."
+}
+
+// sessionSummaryText resolves the summary text the context surface reads
+// (REQ-FR1): the deterministic session_summary observation when present — the
+// full-read source named by the spec — else the sessions row summary. Callers
+// apply the truncation policy (newest full, older preview).
+func sessionSummaryText(store *bigmem.Store, sess bigmem.Session) string {
+	if obs, err := store.GetCtx(context.Background(), bigmem.SessionSummaryObsID(sess.ID)); err == nil && strings.TrimSpace(obs.Content) != "" {
+		return obs.Content
+	}
+	return sess.Summary
 }
 
 func writeJSON(v any) {
