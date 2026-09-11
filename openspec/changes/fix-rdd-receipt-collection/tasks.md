@@ -33,12 +33,12 @@ CI complexity gate (`internal/review`/`internal/sdd`, non-test): cyclomatic ≤1
 
 ## Phase 1: Inspector + hunks (S1a1)
 
-- [ ] 1.1 RED: `frozen_inspector_test.go` — executable `.md` + binary always materialize; `--text` forbidden
-- [ ] 1.2 RED: foreign cwd → byte-identical via `-C` + isolated `GIT_DIR`; unresolvable → typed refusal
-- [ ] 1.3 RED: dirty/staged never leak — frozen-tree bytes byte-identical
-- [ ] 1.4 GREEN: `internal/review/frozen_inspector.go` — repo resolved once; `--patch --full-index --no-ext-diff --no-textconv --unified=3`
-- [ ] 1.5 GREEN: `deriveLensHunks` (`cmd/biggz/cli_review.go:48`) → inspector hunks → `lens.NewLensInput`; parser-error candidate → non-empty findings
-- [ ] 1.6 Verify: `go test ./internal/review ./cmd/biggz`
+- [x] 1.1 RED: `frozen_inspector_test.go` — executable `.md` + binary always materialize; `--text` forbidden
+- [x] 1.2 RED: foreign cwd → byte-identical via `-C` + isolated `GIT_DIR`; unresolvable → typed refusal
+- [x] 1.3 RED: dirty/staged never leak — frozen-tree bytes byte-identical
+- [x] 1.4 GREEN: `internal/review/frozen_inspector.go` — repo resolved once; `--patch --full-index --no-ext-diff --no-textconv --unified=3`
+- [x] 1.5 GREEN: `deriveLensHunks` (`cmd/biggz/cli_review.go:48`) → inspector hunks → `lens.NewLensInput`; parser-error candidate → non-empty findings
+- [x] 1.6 Verify: `go test ./internal/review ./cmd/biggz`
 
 ## Phase 2: Materializer + `--materialize` (S1a2)
 

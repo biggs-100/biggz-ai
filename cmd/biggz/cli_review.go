@@ -31,9 +31,8 @@ func init() {
 	// Build-time Registry is last-win; unknown IDs are skipped by Ordered.
 	// Sequential pipeline.Stage wiring reuses the single DeriveRiskInput
 	// derivation (no per-lens diff):
-	//   input, _ := review.DeriveRiskInput(repo, commit, baseRef)
-	//   hunks, truncated := deriveLensHunks(repo, input) // ≤8MiB, Truncated flag
-	//   lensInput := lens.NewLensInput(input, hunks, truncated, repo)
+	//   hunks, err := deriveLensHunks(repo, commit, baseRef) // frozen-tree patch bytes, capped
+	//   lensInput, err := buildLensInput(repo, commit, baseRef, hunks)
 	//   stages := lensStagesForReview(lens.Ordered(review.PlanLenses(tier, declared)), lensInput)
 	api := extension.New()
 	readability.Register(api)
@@ -42,15 +41,19 @@ func init() {
 	lens.RegisterLens(&external.ExternalLensAdapter{LensID: "external"})
 }
 
-// deriveLensHunks derives hunk-bounded diff content for LensInput, capped at
-// 8MiB total with Truncated flag. It reuses the single DeriveRiskInput
-// derivation (no per-lens diff) and never falls back to full file reads for R4.
-func deriveLensHunks(repo string, input review.RiskInput) (map[string][]byte, bool) {
-	// Placeholder: in production this runs `git diff --raw -z` plus `git show` per path
-	// to collect hunks, then caps via lens.NewLensInput. For wiring verification,
-	// return empty map with truncated derived from input size; real hunks are
-	// supplied by the caller (e.g., review start pipeline).
-	return map[string][]byte{}, false
+// deriveLensHunks derives hunk-bounded diff content for LensInput from the
+// frozen base/candidate trees via the frozen inspector: the changed-path
+// manifest and every per-path patch are read from immutable tree objects
+// through an isolated Git view, never from the index or the working tree.
+// The inspector refuses typed when a per-path or whole-task byte cap would be
+// exceeded: a successful derivation is complete, never truncated.
+func deriveLensHunks(repo, commitSHA, baseRef string) (map[string][]byte, error) {
+	inspector, err := review.OpenFrozenInspector(repo, commitSHA, baseRef)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = inspector.Close() }()
+	return inspector.Hunks()
 }
 
 // buildLensInput is the single derivation entry point for all lenses:
