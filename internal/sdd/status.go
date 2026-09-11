@@ -517,6 +517,7 @@ func deriveChangeStatusWithForcedStoreCtx(ctx context.Context, cs *ChangeStatus,
 	cs.Route = deriveRoute(cs)
 	if includeInstructions {
 		instructions := renderPhaseInstructions(*cs)
+		appendReviewObligation(cs, &instructions)
 		cs.PhaseInstructions = &instructions
 	}
 	return nil
@@ -758,9 +759,33 @@ func deriveChangeStatusCtx(ctx context.Context, cs *ChangeStatus, changeDir, wor
 	cs.Route = deriveRoute(cs)
 	if includeInstructions {
 		instructions := renderPhaseInstructions(*cs)
+		appendReviewObligation(cs, &instructions)
 		cs.PhaseInstructions = &instructions
 	}
 	return nil
+}
+
+// appendReviewObligation surfaces the outstanding pre-publication review
+// obligation in the apply and verify phase instructions when the RDD gate
+// blocked the change (design D5). The obligation rides the existing
+// blockedReasons mechanism — no new status keys and nextRecommended stays
+// untouched — so it never first appears only when archive is attempted.
+func appendReviewObligation(cs *ChangeStatus, instructions *PhaseInstructions) {
+	for _, reason := range cs.BlockedReasons {
+		if !isReviewObligationReason(reason) {
+			continue
+		}
+		obligation := "Pre-publication review obligation: " + reason
+		instructions.Apply = append(instructions.Apply, obligation)
+		instructions.Verify = append(instructions.Verify, obligation)
+		return
+	}
+}
+
+// isReviewObligationReason reports whether a blocked reason is the RDD
+// pre-publication review obligation.
+func isReviewObligationReason(reason string) bool {
+	return strings.HasPrefix(reason, "rdd_receipt_missing") || strings.HasPrefix(reason, "rdd_unproducible")
 }
 
 // deriveReviewOffer emits a fresh post-verification invitation iff
@@ -783,11 +808,12 @@ func deriveReviewOffer(changeName, workspaceRoot string, applyState ApplyState, 
 	if !isRDDEnabled(workspaceRoot, rddOpts...) {
 		return nil
 	}
-	shortSHA := shortSHAForWorkspace(workspaceRoot)
-	if shortSHA == "" {
-		shortSHA = "unknown"
-	}
-	invocation := fmt.Sprintf("biggz review start --lineage %s", pathquote.Quote(changeName+"-"+shortSHA))
+	// The offer is lineage-free (design D1/D5): identity is derived once at
+	// `review start` from the subject file the verify phase writes, and the
+	// gate resolves the same derived identity back. No lineage id, binding,
+	// or receipt is embedded.
+	subjectPath := filepath.Join(workspaceRoot, "openspec", "changes", changeName, "review-subject.json")
+	invocation := fmt.Sprintf("biggz review start --subject %s", pathquote.Quote(subjectPath))
 	return &ReviewOfferBlock{Available: true, Invocation: invocation}
 }
 
@@ -921,14 +947,6 @@ func rddGateBlocked(workspaceRoot, change string) (bool, string) {
 		return true, err.Error()
 	}
 	return false, ""
-}
-
-func shortSHAForWorkspace(workspaceRoot string) string {
-	out, err := exec.Command("git", "-C", workspaceRoot, "rev-parse", "--short", "HEAD").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
 }
 
 // declaredArtifactStore resolves the declared artifact store by reading

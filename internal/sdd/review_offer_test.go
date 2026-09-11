@@ -2,9 +2,11 @@ package sdd
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/biggs-100/biggz-ai/internal/pathquote"
 	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
@@ -34,12 +36,16 @@ func TestReviewOffer(t *testing.T) {
 		if cs.ReviewOffer == nil || !cs.ReviewOffer.Available {
 			t.Fatalf("expected ReviewOffer available, got %+v", cs.ReviewOffer)
 		}
-		if !strings.Contains(cs.ReviewOffer.Invocation, "biggz review start --lineage") {
-			t.Fatalf("invocation missing prefix: %q", cs.ReviewOffer.Invocation)
+		if !strings.Contains(cs.ReviewOffer.Invocation, "biggz review start --subject") {
+			t.Fatalf("invocation missing the subject prefix: %q", cs.ReviewOffer.Invocation)
 		}
-		// Must contain quoted lineage via pathquote.Quote (double quotes around change-sha)
-		if !strings.Contains(cs.ReviewOffer.Invocation, "\"offer-pass-") {
-			t.Fatalf("invocation not quoted: %q", cs.ReviewOffer.Invocation)
+		// Must contain the quoted subject file via pathquote.Quote (no lineage id)
+		subjectPath := filepath.Join(ws, "openspec", "changes", "offer-pass", "review-subject.json")
+		if !strings.Contains(cs.ReviewOffer.Invocation, pathquote.Quote(subjectPath)) {
+			t.Fatalf("invocation must carry the quoted subject file %s: %q", subjectPath, cs.ReviewOffer.Invocation)
+		}
+		if strings.Contains(cs.ReviewOffer.Invocation, "--lineage") {
+			t.Fatalf("invocation must not embed a lineage id: %q", cs.ReviewOffer.Invocation)
 		}
 		// Must not contain persisted lineage binding
 		if strings.Contains(cs.ReviewOffer.Invocation, "lineage\":\"") || strings.Contains(cs.ReviewOffer.Invocation, "receipt") {
@@ -121,14 +127,14 @@ func TestReviewOfferQuoting(t *testing.T) {
 	if cs.ReviewOffer == nil {
 		t.Fatalf("expected offer for my change")
 	}
-	// Must contain pathquote.Quote style: "<change>-<sha>" quoted
-	expectedPrefix := "\"my change-"
-	if !strings.Contains(cs.ReviewOffer.Invocation, expectedPrefix) {
-		t.Fatalf("quoting failed, invocation %q does not contain %q", cs.ReviewOffer.Invocation, expectedPrefix)
+	// Must carry the quoted subject file via pathquote.Quote, change name intact
+	expected := pathquote.Quote(filepath.Join(ws, "openspec", "changes", change, "review-subject.json"))
+	if !strings.Contains(cs.ReviewOffer.Invocation, expected) {
+		t.Fatalf("quoting failed, invocation %q does not contain %q", cs.ReviewOffer.Invocation, expected)
 	}
 	// Ensure no persisted lineage leakage
-	if strings.Contains(cs.ReviewOffer.Invocation, "binding") {
-		t.Fatalf("invocation leaks binding: %q", cs.ReviewOffer.Invocation)
+	if strings.Contains(cs.ReviewOffer.Invocation, "binding") || strings.Contains(cs.ReviewOffer.Invocation, "--lineage") {
+		t.Fatalf("invocation leaks lineage binding: %q", cs.ReviewOffer.Invocation)
 	}
 }
 
