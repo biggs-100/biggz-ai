@@ -11,8 +11,12 @@
  *   `~/.pi/agent/sessions` for the most recent `*.jsonl` (by mtime, recursive)
  *   and parse its last `model_change` or assistant `message` for
  *   `model`/`provider`. If found and different from `settings.json`, update
- *   `settings.json` atomically and also try `pi.setModel()` for the current
- *   session (best-effort, never crashes pi).
+ *   `settings.json` atomically so the next launch inherits it.
+ *   The live session model is intentionally never touched: pi's `setModel()`
+ *   requires a full Model object, and a partial `{id, provider}` stub becomes
+ *   `agent.state.model`, flipping the next request into
+ *   `downgradeUnsupportedImages` → `model.input.includes("image")` → TypeError
+ *   "Cannot read properties of undefined (reading 'includes')" (pi >= 0.85.1).
  * - Runtime persist: on `model_select` (Ctrl+P) write `last-model.json` and
  *   update `settings.json` atomically so the next `pi` launch inherits it.
  * - Fallback: also tries `session_shutdown` / `session_end` to flush.
@@ -225,24 +229,9 @@ export default function biggzLastModel(pi) {
 				const sameProvider =
 					!found.provider || settings.defaultProvider === found.provider;
 				if (sameModel && sameProvider) return;
-				// Best-effort: try to set current session's model via pi API.
-				try {
-					if (typeof pi.setModel === "function") {
-						const candidate = {
-							id: found.model,
-							provider: found.provider || settings.defaultProvider || "opencode-go",
-						};
-						// Don't block startup; swallow rejection.
-						Promise.resolve(pi.setModel(candidate)).catch(() => {});
-					} else if (typeof pi.updateConfig === "function") {
-						try {
-							pi.updateConfig({
-								defaultModel: found.model,
-								defaultProvider: found.provider,
-							});
-						} catch {}
-					}
-				} catch {}
+				// Settings/cache only — never `pi.setModel()` with a partial
+				// object (see header: it poisons agent.state.model and the next
+				// request crashes in downgradeUnsupportedImages).
 				persist(found.model, found.provider);
 			} catch {}
 		}
@@ -254,24 +243,9 @@ export default function biggzLastModel(pi) {
 
 		// Session start: primary hook for new TUI sessions.
 		try {
-			pi.on("session_start", async (_event, ctx) => {
+			pi.on("session_start", async () => {
 				try {
 					syncStartup();
-				} catch {}
-				// Try to align current session's model if it drifted from last.
-				try {
-					const found = findLastModel();
-					if (found && found.model && ctx && ctx.model && ctx.model.id !== found.model) {
-						if (typeof pi.setModel === "function") {
-							const candidate = {
-								id: found.model,
-								provider:
-									found.provider ||
-									(ctx.model.provider ?? "opencode-go"),
-							};
-							await pi.setModel(candidate).catch(() => {});
-						}
-					}
 				} catch {}
 			});
 		} catch {}
