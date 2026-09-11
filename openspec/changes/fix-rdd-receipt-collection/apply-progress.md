@@ -6,12 +6,133 @@
 |-------|-------|--------|----|
 | S1a1 | Phase 1 (1.1–1.6): frozen inspector + real hunk derivation | done | PR 1 (base: tracker `fix/rdd-receipt-collection`; merged as 362c4c18) |
 | S1a2 | Phase 2 (2.1–2.5): materializer + `--materialize` | done | PR 2 (base: `fix/rdd-receipt-collection-2-materializer`, off tracker 362c4c18) |
+| S1b1 | Phase 3 (3.1–3.3): lineage identity + start canonicalization | done | PR 3 (base: `fix/rdd-receipt-collection-2-materializer`; head `fix/rdd-receipt-collection-3-identity`) |
 
-Progress: **11/33 tasks** (Phase 1 + Phase 2). Remaining: Phases 3–8 (S1b1, S1b2, S1c, S1d, S2, dogfood close).
+Progress: **14/33 tasks** (Phases 1–3). Remaining: Phases 4–8 (S1b2, S1c, S1d, S2, dogfood close).
 
 ---
 
-## Batch S1a2 — Materializer + `--materialize` (current)
+## Batch S1b1 — Identity + start canonicalization (current)
+
+| Field | Value |
+|-------|-------|
+| Work unit | `phases-3-8` (ledger attempt `tok-7d92e2825654e5077908597a`) |
+| Slice | S1b1 = Phase 3 only (tasks 3.1–3.3) |
+| Mode | Standard (`strict_tdd: false`) with the mandated RED-first order for 3.1 |
+| PR | PR 3 of the feature-branch-chain (base: `fix/rdd-receipt-collection-2-materializer` @ 60ba4033; head `fix/rdd-receipt-collection-3-identity`) |
+| Date | 2026-09-11 |
+| Store mode | hybrid (tasks.md `[x]` + BigMem `sdd/fix-rdd-receipt-collection/apply-progress`) |
+
+### Tasks Completed
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 3.1 RED: `lineage_identity_test.go` — derivation deterministic; abbrev → full SHA persisted; unresolvable → typed reject | done | `internal/review/lineage_identity_test.go` + `cmd/biggz/review_lineage_identity_test.go` (RED: `undefined: DeriveLineageID`, `CanonicalSubjectSHA`, `LineageIdentityRefusal`, `LineageIdentityUnresolvableCode` in both packages) |
+| 3.2 GREEN: `internal/review/lineage_identity.go` — `CanonicalSubjectSHA`, `DeriveLineageID` | done | `TestLineageIdentityDerivationIsExactAndDeterministic`, `TestLineageIdentityCanonicalSubjectSHA` (5 resolve + 6 refusal subtests) |
+| 3.3 GREEN: `review start` canonicalizes `CommitSHA`; defaults to derived id | done | `TestReviewStartLineageIdentityCanonicalizesAbbreviatedSubject`, `...SymbolicHEADSubject`, `...UnresolvableRejectedTyped`, `...ExplicitLineageStillWins`, `TestReviewLineageIdentityRuntimeHarness` |
+
+RED evidence captured before implementation:
+
+- `go test ./internal/review -run TestLineageIdentity -count=1 -v` → `FAIL [build failed]`: `undefined: DeriveLineageID` (lines 91, 102, 113, 125, 138), `undefined: CanonicalSubjectSHA` (164, 186), `undefined: LineageIdentityRefusal` (193), `undefined: LineageIdentityUnresolvableCode` (197-198).
+- `go test ./cmd/biggz -run TestReviewStartLineageIdentity -count=1 -v` → `FAIL [build failed]`: `undefined: review.DeriveLineageID` (56, 87, 152, 157, 175).
+
+### Files Changed
+
+| File | Action | +/- |
+|------|--------|-----|
+| `internal/review/lineage_identity.go` | Create (D1 derivation, canonicalization, typed refusal) | +130/−0 |
+| `internal/review/lineage_identity_test.go` | Create (formula/refusal/harness tests) | +286/−0 |
+| `cmd/biggz/review_lineage_identity_test.go` | Create (CLI acceptance + harness tests) | +195/−0 |
+| `cmd/biggz/cli_review.go` | Modify (canonicalize `subject.CommitSHA`, derived-id default, usage strings, `uuid` import removed) | +25/−4 |
+
+Slice total: **640 changed lines** (636 additions + 4 deletions).
+
+### Focused Test Command + Result
+
+```
+go test ./internal/review -run TestLineageIdentity -count=1 -v
+→ PASS, ok github.com/biggs-100/biggz-ai/internal/review 2.836s
+  3 top-level tests + 11 subtests, all PASS:
+  DerivationIsExactAndDeterministic ✓
+  CanonicalSubjectSHA ✓ (full idempotent ✓ | abbreviated ✓ | symbolic HEAD ✓ | tag ✓ | HEAD^{commit} ✓ |
+    refusals: missing commit ✓ | malformed ref ✓ | empty ✓ | whitespace ✓ | tree object ✓ | blob object ✓)
+  RuntimeHarness ✓
+
+go test ./cmd/biggz -run 'TestReviewStartLineageIdentity|TestReviewLineageIdentityRuntimeHarness' -count=1 -v
+→ PASS, ok github.com/biggs-100/biggz-ai/cmd/biggz 4.562s
+  TestReviewStartLineageIdentityCanonicalizesAbbreviatedSubject (0.74s) ✓
+  TestReviewStartLineageIdentitySymbolicHEADSubject (0.70s) ✓
+  TestReviewStartLineageIdentityUnresolvableRejectedTyped (0.35s) ✓
+  TestReviewStartLineageIdentityExplicitLineageStillWins (0.75s) ✓
+  TestReviewLineageIdentityRuntimeHarness (1.86s) ✓
+```
+
+### Package Suite Command + Result
+
+```
+go test ./internal/review ./cmd/biggz -count=1 -timeout 240s
+→ ok internal/review  165.399s
+→ ok cmd/biggz         80.601s
+```
+
+### Static Checks
+
+| Check | Result |
+|-------|--------|
+| `go build ./...` | OK |
+| `go vet ./...` | OK (exit 0) |
+| `gofmt -l` on the four touched files | clean |
+| CI complexity gate (cyclomatic ≤15 / cognitive ≤20, non-test `internal/review`) | `gocyclo -over 15 internal/review` → no non-test offender; `gocognit -over 20 internal/review` → no non-test offender |
+| `use-modern-go list --go-version 1.25` + `list --file-path cmd/biggz/cli_review.go` | consulted; full output read before editing. Applicable idioms: none forced (new code carries no `interface{}`, no manual sort/loop patterns, no WaitGroup/Once usage); tests use `t.Chdir` for cwd isolation |
+
+### Runtime Harness Evidence
+
+Command (internal): `go test ./internal/review -run TestLineageIdentityRuntimeHarness -count=1 -v` → PASS (0.86s). Raw output:
+
+```
+harness: repo=C:\Users\USER\AppData\Local\Temp\TestLineageIdentityRuntimeHarness1339296016\001
+harness: full_sha=be51024218573552760763bf772818022a5c6986 abbrev=be510242 symbolic=HEAD
+harness: common_dir=C:\Users\USER\AppData\Local\Temp\TestLineageIdentityRuntimeHarness1339296016\001\.git
+harness: derived(abbrev)=review-92e365ef771384ff derived(symbolic)=review-92e365ef771384ff derived(full)=review-92e365ef771384ff all_equal=true
+harness: second_run=review-92e365ef771384ff stable=true
+harness: foreign_cwd_id=review-92e365ef771384ff stable=true (cwd=C:\Users\USER\AppData\Local\Temp\TestLineageIdentityRuntimeHarness1339296016\002)
+harness: linked_worktree_id=review-92e365ef771384ff stable=true
+harness refusal: raw=ffffffffffffffffffffffffffffffffffffffff err=review lineage identity: unresolvable_subject_commit: subject commit "ffffffffffffffffffffffffffffffffffffffff" does not resolve to a commit object: exit status 1
+harness: store_root=C:\Users\USER\AppData\Local\Temp\TestLineageIdentityRuntimeHarness1339296016\001\.git\biggz\review-transactions entries_after_refusal=0 (expect 0)
+```
+
+Command (CLI integration): `go test ./cmd/biggz -run TestReviewLineageIdentityRuntimeHarness -count=1 -v` → PASS (1.86s). Raw output:
+
+```
+harness: repo=C:\Users\USER\AppData\Local\Temp\TestReviewLineageIdentityRuntimeHarness2319633159\001 full=6f68331e3918899dbe15d85f3084349495361965 abbrev=6f68331e
+harness: start(abbrev) lineage=review-d32d6d30d9f7b10d derived=review-d32d6d30d9f7b10d identical=true exit=0
+harness: genesis_subject=6f68331e3918899dbe15d85f3084349495361965 full_sha_persisted=true
+harness: derived_again=review-d32d6d30d9f7b10d stable=true
+harness: start(HEAD) lineage=review-7812186a227628e4 derived=review-7812186a227628e4 identical=true genesis_subject=1f5a1d880aa0aeca6edd1210842a465360d5e3ef full_sha_persisted=true
+harness refusal: exit=1 stderr=error: review lineage identity: unresolvable_subject_commit: subject commit "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" does not resolve to a commit object: exit status 1
+harness: store_entries_after_refusal=0 (expect 0)
+```
+
+Assertions proven by the harnesses: the exact D1 formula (independently recomputed with the canonical common dir + full SHA + `\x00` domain separator) matches the implementation for abbreviated, symbolic and full targets; the id is `review-<16 lowercase hex>`; stable across two derivations, a foreign cwd, and a linked worktree (store scope = git common dir); a real `review start` over an abbreviated subject persists the full SHA (`full_sha_persisted=true`) under the derived id; a symbolic `HEAD` subject canonicalizes the same way; an unresolvable subject exits 1 with the typed code `unresolvable_subject_commit` and zero lineage store entries.
+
+### Rollback Boundary
+
+Revert exactly this unit, independently of S1a2 (untouched by this slice):
+1. delete `internal/review/lineage_identity.go`, `internal/review/lineage_identity_test.go`, `cmd/biggz/review_lineage_identity_test.go`;
+2. revert the `cmd/biggz/cli_review.go` diff (+25/−4): the canonicalization block, the derived-id default, the restored `uuid.Must(uuid.NewV7())` default (and its import), and the usage strings.
+
+→ back to 60ba4033 (PR 2 head). Read-path only: no events, receipts, stores, or migrations are rewritten; an explicit `--lineage` keeps its behavior. Existing lineages started under the old UUID default stay readable (resolution/legacy scan is S1b2's surface).
+
+### Notes / Deviations
+
+- **Interpretation of "two runs"**: derivation stability across runs is proven by the pure-function harness (two derivations + foreign cwd + linked worktree) because starting the same derived lineage twice on one repo would append a second genesis to the same store; the CLI harness instead proves one real start per repo plus a re-derivation match.
+- **Repo-selection caveat (pre-existing, for S1b2/S1c awareness)**: `review start` opens the store via `NewAuthority("")` (cwd-scoped), while the identity derives from `subject.Repository`. The CLI acceptance tests `chdir` into the subject repo (matching every existing start test); a caller running from a foreign repo would still get the pre-existing cwd-scoped store. Resolution/gate surfaces (S1b2) are the natural place to reconcile this.
+- `CanonicalSubjectSHA` uses `rev-parse --verify --quiet <raw>^{commit}`; a caller-supplied value already ending in `^{commit}` peels idempotently (covered by the `HEAD^{commit}` subtest).
+- **Workload overrun:** S1b1 authors 640 changed lines against the 400-line review budget; `size:exception` accepted for the slice per the session preflight (`exception-ok`), consistent with this chain's precedent (S1a1 ~1,031; S1a2 979).
+
+---
+
+## Batch S1a2 — Materializer + `--materialize` (previous)
 
 | Field | Value |
 |-------|-------|
@@ -243,5 +364,5 @@ Revert exactly this unit, no other slice depends on the new symbols yet:
 
 ## Remaining Tasks
 
-- Phase 3 (S1b1): identity + start canonicalization (3.1–3.3) — PR 3, base = PR 2.
-- Phases 4–8 (S1b2, S1c, S1d, S2, dogfood close) untouched.
+- Phase 4 (S1b2): resolution + gate (4.1–4.3) — PR 4, base = PR 3 (`fix/rdd-receipt-collection-3-identity`).
+- Phases 5–8 (S1c, S1d, S2, dogfood close) untouched.
