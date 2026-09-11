@@ -276,29 +276,72 @@ func isGhostWAL(dbPath string) bool {
 	return true
 }
 
-// probeGhostLiveness attempts atomic O_CREATE|O_EXCL probe to detect live holder.
-// Returns true if probe succeeds (no live holder, safe to reclaim), false if busy.
-// Uses a sibling probe file with O_EXCL for atomic claim; fail means live holder or race.
-func probeGhostLiveness(dbPath string) bool {
-	probePath := dbPath + ".ghost_probe"
-	f, err := os.OpenFile(probePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-	if err != nil {
-		return false
+// ghostClass classifies the primary DB's WAL/SHM state for the open path.
+type ghostClass int
+
+const (
+	ghostNone         ghostClass = iota // not a stale ghost shape (fresh or other sizes)
+	ghostStale                          // stale ghost shape, probe proved no live holder
+	ghostLiveHolder                     // stale ghost shape, probe proved a live holder
+	ghostInconclusive                   // stale ghost shape, probe proved neither
+)
+
+// classifyGhostWAL implements REQ-GW1/GW2/GW3: it layers the platform liveness
+// probe on the unchanged isGhostWAL shape+freshness gate. Fresh or non-ghost
+// shapes are ghostNone (normal open). A stale ghost shape with a proven live
+// holder (e.g. biggz-mcp) is ghostLiveHolder: it MUST NOT be reclaimed or fall
+// back to bigmem_recovered. A stale shape whose probe proves the previous
+// holder dead is ghostStale (REQ-GW2 reclaim). Any other outcome is
+// ghostInconclusive (REQ-GW3 recovered fallback intact).
+func classifyGhostWAL(dbPath string) ghostClass {
+	if !isGhostWAL(dbPath) {
+		return ghostNone
 	}
-	f.Close()
-	_ = os.Remove(probePath)
-	return true
+	holder, proven := ghostProbeDBLiveness(dbPath)
+	switch {
+	case !proven:
+		return ghostInconclusive
+	case holder:
+		return ghostLiveHolder
+	default:
+		return ghostStale
+	}
+}
+
+// ghostProbeDBLiveness is a seam over probeDBLiveness so tests can force a
+// probe outcome (e.g. inconclusive) without platform tricks.
+var ghostProbeDBLiveness = probeDBLiveness
+
+// ghostReclaimCheckpoint is a seam over checkpointDB so tests can inject a
+// failing TRUNCATE checkpoint and assert it never fails Open (REQ-GW2).
+var ghostReclaimCheckpoint = checkpointDB
+
+// reclaimStaleWAL implements the REQ-GW2 stale reclaim after the probe proved
+// the previous holder dead: remove the zombie wal/shm (plus any leftover from
+// the legacy O_EXCL probe) and run a best-effort TRUNCATE checkpoint before
+// the caller opens the primary DB. Removal and checkpoint errors are
+// deliberately discarded: the caller opens the primary either way and never
+// falls back to recovered.
+func reclaimStaleWAL(dbPath string) {
+	_ = os.Remove(dbPath + "-wal")
+	_ = os.Remove(dbPath + "-shm")
+	_ = os.Remove(dbPath + ".ghost_probe")
+	_ = ghostReclaimCheckpoint(dbPath)
 }
 
 // checkpointDB runs PRAGMA wal_checkpoint(TRUNCATE) on the given DB file.
-func checkpointDB(dbPath string) {
+// It returns the exec error for observability; best-effort callers (GW2
+// reclaim, copies, merges) deliberately ignore it so a failing checkpoint
+// never fails Open (REQ-GW2).
+func checkpointDB(dbPath string) error {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		return
+		return err
 	}
 	defer db.Close()
 	db.Exec("PRAGMA busy_timeout=5000")
-	_, _ = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	return err
 }
 
 // safeCopyDB copies srcPath to dstPath with a WAL checkpoint before copy.
@@ -525,40 +568,19 @@ func ResolveDBPath(rootDir string) (string, error) {
 	_ = os.MkdirAll(rootDir, 0755)
 	primaryPath := bigmemDBPathForRoot(rootDir)
 	recoveredPath := recoveredDBPathForRoot(rootDir)
-	walPath := primaryPath + "-wal"
-	shmPath := primaryPath + "-shm"
 	needsFallback := false
-	if isGhostWAL(primaryPath) {
-		if probeGhostLiveness(primaryPath) {
-			// GW2: stale + O_EXCL probe ok -> Remove wal/shm + checkpoint before sql.Open
-			_ = os.Remove(walPath)
-			_ = os.Remove(shmPath)
-			if _, err := os.Stat(shmPath); err == nil {
-				if f, err := os.OpenFile(shmPath, os.O_WRONLY, 0644); err == nil {
-					_ = f.Truncate(0)
-					f.Close()
-					_ = os.Remove(shmPath)
-				}
-			}
-			if _, err := os.Stat(walPath); err == nil {
-				if f, err := os.OpenFile(walPath, os.O_WRONLY, 0644); err == nil {
-					_ = f.Truncate(0)
-					f.Close()
-					_ = os.Remove(walPath)
-				}
-			}
-			// checkpoint best-effort before sql.Open, swallow errors (GW2)
-			checkpointDB(primaryPath)
-			if _, err := os.Stat(shmPath); err == nil {
-				needsFallback = true
-			}
-			if _, err := os.Stat(walPath); err == nil {
-				needsFallback = true
-			}
-		} else {
-			// GW3: busy/O_EXCL fails -> preserve wal/shm, fallback intact
-			needsFallback = true
-		}
+	switch classifyGhostWAL(primaryPath) {
+	case ghostStale:
+		// REQ-GW2: the probe proved the previous holder dead -> reclaim the
+		// zombie wal/shm and open the primary directly (never recovered).
+		reclaimStaleWAL(primaryPath)
+	case ghostLiveHolder:
+		// REQ-GW1/GW3: a live holder (e.g. biggz-mcp) owns the store. wal/shm
+		// MUST NOT be touched and no recovered warning or fallback may run.
+	case ghostInconclusive:
+		// REQ-GW3: probe inconclusive (race/lock) -> keep wal/shm and keep the
+		// existing recovered fallback intact.
+		needsFallback = true
 	}
 	if needsFallback {
 		recoveredDir := filepath.Dir(recoveredPath)
