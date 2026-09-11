@@ -1478,6 +1478,13 @@ func (s *Store) RescueNullProjectOwnership(project string, opts RescueOptions) (
 
 // ─── Save with dedup ─────────────────────────────────────────────────────────
 
+// SessionSummaryObsID returns the deterministic observation id for a session's
+// summary (REQ-SC1). It is the stable key that makes repeated closes update the
+// same row in place instead of inserting duplicates.
+func SessionSummaryObsID(sessionID string) string {
+	return "session-summary-" + strings.TrimSpace(sessionID)
+}
+
 // Save persists an observation with full engram-compatible dedup:
 //  1. topic_key match → update existing (increment revision_count)
 //  2. normalized_hash + window → increment duplicate_count
@@ -1512,7 +1519,13 @@ func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...strin
 		}
 	}
 
-	if obs.ID == "" {
+	// REQ-SC1: session summaries are exactly-once per session id. The
+	// deterministic primary key routes repeated closes (retry or CLI
+	// fallback) through ON CONFLICT(id) DO UPDATE, updating in place.
+	isSessionSummary := obs.Type == "session_summary" && strings.TrimSpace(obs.SessionID) != ""
+	if isSessionSummary {
+		obs.ID = SessionSummaryObsID(obs.SessionID)
+	} else if obs.ID == "" {
 		obs.ID = fmt.Sprintf("obs-%d-%d", time.Now().UnixNano(), atomic.AddInt64(&globalIDSeq, 1))
 	}
 	now := time.Now().UTC()
@@ -1575,8 +1588,10 @@ func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...strin
 			return err
 		}
 	}
-	// Phase 1: topic_key dedup — update existing with same topic_key + project + scope
-	if obs.TopicKey != "" {
+	// Phase 1: topic_key dedup — update existing with same topic_key + project + scope.
+	// Skipped for session summaries: the deterministic key above is the
+	// identity, so a topic_key must never re-route the write to another row.
+	if obs.TopicKey != "" && !isSessionSummary {
 		var existingID string
 		var existingCreated string
 		if qErr := tx.QueryRowContext(ctx,
@@ -1618,9 +1633,12 @@ func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...strin
 		}
 	}
 
-	// Phase 2: hash-based dedup within window
-	window := dedupeWindowExpression(0)
-	{
+	// Phase 2: hash-based dedup within window. Skipped for session summaries:
+	// the deterministic key already guarantees one row per session, and the
+	// window merge would otherwise fold two sessions with identical content
+	// into a single observation, leaving the second close unsearchable.
+	if !isSessionSummary {
+		window := dedupeWindowExpression(0)
 		var existingID string
 		if qErr := tx.QueryRowContext(ctx,
 			`SELECT id FROM observations

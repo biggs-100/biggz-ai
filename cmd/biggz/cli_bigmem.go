@@ -54,7 +54,7 @@ func bigmemRun() int {
 		fmt.Fprintln(os.Stderr, "Usage: biggz bigmem <command> [args...]")
 		fmt.Fprintln(os.Stderr, "")
 		fmt.Fprintln(os.Stderr, "Commands:")
-		fmt.Fprintln(os.Stderr, "  save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K]")
+		fmt.Fprintln(os.Stderr, "  save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K] [--session-id S]")
 		fmt.Fprintln(os.Stderr, "    --type T (bugfix|decision|architecture|discovery|pattern|config|preference|session_summary|etc)")
 		fmt.Fprintln(os.Stderr, "    --scope S (project|personal, default project)")
 		fmt.Fprintln(os.Stderr, "    Content >50k truncated with [truncated] marker (see bigmem.go truncateIfNeeded)")
@@ -103,7 +103,7 @@ func bigmemRun() int {
 		return runRecall(args[1:])
 	case "save":
 		if len(args) < 3 {
-			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz bigmem save <title> <msg> [--type T] [--project P] [--scope S] [--topic-key K] [--session-id S]")
 			fmt.Fprintln(os.Stderr, "  --type T (bugfix|decision|architecture|discovery|pattern|config|preference|session_summary|etc)")
 			fmt.Fprintln(os.Stderr, "  --scope S (project|personal, default project)")
 			fmt.Fprintln(os.Stderr, "  Content >50k truncated with [truncated] marker (see bigmem.go truncateIfNeeded)")
@@ -124,6 +124,13 @@ func bigmemRun() int {
 			case "--topic-key":
 				if i+1 < len(args) {
 					obs.TopicKey = args[i+1]
+					i++
+				}
+			case "--session-id":
+				// REQ-SC1: explicit session id routes session_summary to the
+				// per-session upsert instead of the active-session fallback.
+				if i+1 < len(args) {
+					obs.SessionID = args[i+1]
 					i++
 				}
 			}

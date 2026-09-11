@@ -48,10 +48,10 @@ Driven by `verify-report.md`: off Windows the O_EXCL probe cannot observe a live
 
 ## Phase 2: Searchable close · PR 2
 
-- [ ] 2.1 RED: repeat close S → one `session_summary` row; empty-query recency (`updated_at DESC`) finds it (REQ-SC1).
-- [ ] 2.2 `internal/bigmem/bigmem.go`: `SessionSummaryObsID` + upsert `ON CONFLICT DO UPDATE`; `SaveCtx` routes `session_summary`+`session_id`.
-- [ ] 2.3 `internal/bigmem/full.go`: `SessionEnd` dual-write, retry once (50 ms); failure → explicit error, `sessions` kept.
-- [ ] 2.4 `internal/sdd/session_guard.go`: drop duplicate save, pass `--session-id`; `cli_bigmem.go`: `save --session-id`.
+- [x] 2.1 RED: repeat close S → one `session_summary` row; empty-query recency (`updated_at DESC`) finds it (REQ-SC1).
+- [x] 2.2 `internal/bigmem/bigmem.go`: `SessionSummaryObsID` + upsert `ON CONFLICT DO UPDATE`; `SaveCtx` routes `session_summary`+`session_id`.
+- [x] 2.3 `internal/bigmem/full.go`: `SessionEnd` dual-write, retry once (50 ms); failure → explicit error, `sessions` kept.
+- [x] 2.4 `internal/sdd/session_guard.go`: drop duplicate save, pass `--session-id`; `cli_bigmem.go`: `save --session-id`.
 
 ## Phase 3: FTS sanitization · PR 3
 

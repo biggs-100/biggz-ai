@@ -228,7 +228,7 @@ func SaveSessionSummaryWithFallbackForChange(ctx context.Context, workspaceRoot,
 		if hasMCP {
 			resultID, err = tryMCPSave(ctx, proj, sessionID, saveContent)
 		} else {
-			resultID, err = saveViaBash(ctx, workspaceRoot, proj, saveContent)
+			resultID, err = saveViaBash(ctx, workspaceRoot, proj, sessionID, saveContent)
 		}
 		if err == nil {
 			return resultID, nil
@@ -275,12 +275,11 @@ func tryMCPSave(ctx context.Context, proj, sessionID, content string) (string, e
 			}
 			return "", err
 		}
+		// SessionEnd dual-writes the searchable session_summary observation
+		// (REQ-SC1); a second Store.Save here would duplicate the row.
 		if ctx.Err() != nil {
 			return "", fmt.Errorf("session guard save: %w", ctx.Err())
 		}
-		// Also persist as observation for verification via Search
-		obs := &bigmem.Observation{Title: "Session summary", Type: "session_summary", Content: content, Project: proj, SessionID: sessionID}
-		_ = store.SaveCtx(ctx, obs)
 		return sessionID, nil
 	}
 	obs := &bigmem.Observation{Title: "Session summary", Type: "session_summary", Content: content, Project: proj, SessionID: sessionID}
@@ -290,7 +289,7 @@ func tryMCPSave(ctx context.Context, proj, sessionID, content string) (string, e
 	return obs.ID, nil
 }
 
-func saveViaBash(ctx context.Context, workspaceRoot, proj, content string) (string, error) {
+func saveViaBash(ctx context.Context, workspaceRoot, proj, sessionID, content string) (string, error) {
 	if strings.TrimSpace(proj) == "" {
 		info := project.DetectProjectFull(workspaceRoot)
 		if info.Project != "" && info.Project != "unknown" {
@@ -299,8 +298,14 @@ func saveViaBash(ctx context.Context, workspaceRoot, proj, content string) (stri
 			proj = "biggz-ai"
 		}
 	}
-	// biggz bigmem save "Session summary" "<content>" --type session_summary --scope project --project <proj>
+	// biggz bigmem save "Session summary" "<content>" --type session_summary --scope project --project <proj> [--session-id <id>]
 	args := []string{"bigmem", "save", "Session summary", content, "--type", "session_summary", "--scope", "project", "--project", proj}
+	// REQ-SC1: the explicit session id lets the CLI route the summary to the
+	// per-session upsert (session-summary-{id}) instead of the active-session
+	// fallback, so repeated closes update one row.
+	if strings.TrimSpace(sessionID) != "" {
+		args = append(args, "--session-id", sessionID)
+	}
 	cmd := execCommand(ctx, "biggz", args...)
 	if workspaceRoot != "" {
 		cmd.Dir = workspaceRoot

@@ -149,16 +149,52 @@ func (s *Store) SessionStart(id, project string) (*Session, error) {
 	return session, err
 }
 
-// SessionEnd marks a session as completed.
+// sessionSummaryRetryDelay is the single pause before a locked-store write is
+// attempted again (REQ-SC1). A var so tests can shorten it.
+var sessionSummaryRetryDelay = 50 * time.Millisecond
+
+// sessionSummaryUpsert persists the searchable observation half of the close
+// dual-write (REQ-SC1). Package-level seam (mirrors ghostProbeDBLiveness) so
+// tests can force the locked-store failure path without a real file lock.
+var sessionSummaryUpsert = func(s *Store, sessionID, project, summary string) error {
+	return s.SaveCtx(context.Background(), &Observation{
+		Title:     "Session summary",
+		Type:      "session_summary",
+		Content:   summary,
+		SessionID: sessionID,
+		Project:   project,
+		Scope:     "project",
+	})
+}
+
+// SessionEnd marks a session as completed and dual-writes a searchable
+// session_summary observation (REQ-SC1): the sessions row alone is invisible
+// to empty-query recency. The observation write is idempotent per session id
+// (deterministic PK, upsert in place), retries once after 50 ms and, when it
+// still fails, returns an explicit error while the already-committed sessions
+// row stays intact — success is never reported while the observation is missing.
 func (s *Store) SessionEnd(id, summary string) (*Session, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	_, err := s.db.Exec("UPDATE sessions SET end_time = ?, summary = ? WHERE id = ?",
 		time.Now().UTC().Format(time.RFC3339), summary, id)
+	var project string
+	if err == nil {
+		_ = s.db.QueryRow("SELECT COALESCE(project, '') FROM sessions WHERE id = ?", id).Scan(&project)
+	}
+	s.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
-	return &Session{ID: id, Summary: summary}, nil
+	var obsErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if obsErr = sessionSummaryUpsert(s, id, project, summary); obsErr == nil {
+			return &Session{ID: id, Summary: summary}, nil
+		}
+		if attempt == 0 {
+			time.Sleep(sessionSummaryRetryDelay)
+		}
+	}
+	return &Session{ID: id, Summary: summary}, fmt.Errorf("session summary observation failed after retry: %w", obsErr)
 }
 
 // parseSessionTime tries multiple layouts for legacy session timestamps.

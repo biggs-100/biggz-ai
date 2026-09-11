@@ -1,10 +1,11 @@
 # Apply Progress — fix-bigmem-recall-friction
 
 - **Change:** fix-bigmem-recall-friction
-- **Slice:** 1 + Phase 1b (Phase 1 — Ghost-WAL liveness, PR 1 of the feature-branch-chain)
-- **Status:** complete (tasks 1.1–1.4) — runtime harness evidence + bookkeeping finished in this continuation run (the previous apply run hit the 20-minute task-mode timeout after the code was green, before harness evidence and bookkeeping). Phase 1b (tasks 1b.1–1b.5) added in a later continuation run; see the Phase 1b section for evidence; its one off-surface residual (`TestGhostWAL_Stale_Removed`) was resolved in a follow-up run via the liveness seam — no residual remains.
+- **Slice:** 1 + Phase 1b (Phase 1 — Ghost-WAL liveness, PR 1 of the feature-branch-chain); Phase 2 — Searchable close (PR 2 of the chain; see the Phase 2 section)
+- **Status:** complete (tasks 1.1–1.4) — runtime harness evidence + bookkeeping finished in this continuation run (the previous apply run hit the 20-minute task-mode timeout after the code was green, before harness evidence and bookkeeping). Phase 1b (tasks 1b.1–1b.5) added in a later continuation run; see the Phase 1b section for evidence; its one off-surface residual (`TestGhostWAL_Stale_Removed`) was resolved in a follow-up run via the liveness seam — no residual remains. Phase 2 (tasks 2.1–2.4) complete in a later continuation run — RED, implementation, exactly-once runtime harness and rollback evidence in the Phase 2 section.
 - **Mode:** Standard (`strict_tdd: false` for this project; no Strict-TDD cycle table applies)
 - **Branch / base:** `fix/bigmem-recall-friction-1-ghost-wal` (tracker: `fix/bigmem-recall-friction`, base `bed2d881`) — uncommitted, left dirty for human review
+- **Phase 2 branch / base:** `fix/bigmem-recall-friction-2-searchable-close`, base = PR 1 branch at `5d2d9871` — uncommitted, left dirty for human review
 - **Environment:** Go 1.26.1 windows/amd64
 
 ## Tasks Completed
@@ -202,13 +203,118 @@ Off Windows a genuinely-dead stale ghost no longer reclaims; it takes the recove
 - **Cross-platform audit (inspection, new `liveness_other.go` semantics = O_EXCL success ⇒ `(false, false)`):** every ghost-related test in the package either skips by design on the foreign OS (`TestGhostWAL_LiveHolder_UsesPrimary`, `TestGhostWAL_LeftoverProbe_ReclaimWhenDead` and the `live holder` subtests — Windows-only share-0), uses the seam (`TestGhostWAL_Inconclusive_RecoveredFallback`, `TestGhostWAL_ReclaimKeepsData`, `TestReclaimCheckpointErrorNeverFailsOpen`, now `TestGhostWAL_Stale_Removed`), encodes the non-Windows expectation explicitly (`TestGhostWAL_NonWindows_LiveHolderKeepsFiles`, `TestProbeDBLiveness_Matrix/no holder`, `TestClassifyGhostWAL_Matrix/stale idle is reclaimable` via `wantOther: ghostInconclusive`), or never consults the probe at all — the shape/freshness gate returns first (`TestIsGhostWAL`, `TestIsGhostWAL_Robust`, `TestGhostWAL_Fresh_Kept`, `TestGhostWAL_SaveSearch_Checkpoint`, `TestGhostWAL_WALBounded`, `TestResolveDBPath_MergeByMaxUpdatedAt` in `doctor_test.go`). **No remaining test depends on the old non-Windows `proven=true` semantics.**
 - **Evidence (this run, Windows):** `go test ./internal/bigmem -run 'Ghost|Liveness|ReclaimCheckpoint' -count=1` → `ok ... 1.572s`; `go test ./internal/bigmem -count=1 -timeout 180s` → `ok ... 16.256s`; `go test ./internal/bigmem -run TestGhostWAL_Stale_Removed -count=1 -v` → `--- PASS: TestGhostWAL_Stale_Removed (0.19s)`; `go vet ./internal/bigmem` → exit 0; `gofmt -l internal/bigmem` → clean (no output).
 
+## Phase 2 — Searchable close (REQ-SC1)
+
+- **Scope:** tasks 2.1–2.4 (defect #1: MCP `mem_session_summary`/`SessionEnd` wrote only the `sessions` row and created no observation, so a closed session was not searchable in recall; the bash fallback did produce a searchable observation — that asymmetry was the bug).
+- **Files:** table below. Authored changed lines: 152 tracked (+135/−17) + 182 new = **334** (under the 400 budget; PR 1's `size:exception` does NOT extend here).
+- **Mode:** Standard (`strict_tdd: false`); RDD enabled — every PASS claimed below is raw output from this run.
+
+### Implementation
+
+| File | +/- | Purpose |
+|------|-----|---------|
+| `internal/bigmem/bigmem.go` | +24/−6 | `SessionSummaryObsID(sessionID)` = `"session-summary-" + TrimSpace(id)`; `SaveCtx` routes `type==session_summary && session_id!=""` to that deterministic PK (upsert `ON CONFLICT(id) DO UPDATE`) and bypasses the topic_key + hash-window dedup phases so two sessions with identical text never merge into one row |
+| `internal/bigmem/full.go` | +39/−3 | `SessionEnd` dual-write: `sessions` UPDATE commits first, then the observation upsert via the `sessionSummaryUpsert` seam (mirrors `ghostProbeDBLiveness`), retry once after `sessionSummaryRetryDelay` = 50 ms; persistent failure returns an explicit error while the `sessions` row stays intact. Store lock released before the upsert (SaveCtx takes it) — no deadlock |
+| `internal/sdd/session_guard.go` | +11/−6 | `tryMCPSave` drops its duplicate `store.SaveCtx` (SessionEnd now dual-writes); `saveViaBash` gains `sessionID` and appends `--session-id <id>` when non-empty |
+| `cmd/biggz/cli_bigmem.go` | +9/−2 | `save` parses `--session-id` (skips the active-session fallback) + usage strings updated |
+| `internal/bigmem/session_close_test.go` | +182 (new) | 4 tests: dual-write exactly-once + recency findability; same-content two sessions stay separate; retry-once/seam failure keeps `sessions` row; SaveCtx deterministic routing |
+| `internal/sdd/session_guard_test.go` | +11 | bash-fallback args assert `--session-id sess-1` rides the command |
+| `cmd/biggz/cli_bigmem_test.go` | +41 | `TestBigmemSave_SessionIDRoutesToUpsert`: double CLI close → same printed id + exactly 1 row via `Search("")`, content updated in place |
+
+Why the phase-2 bypass matters: without it the hash-window dedup would match two different sessions' identical summaries (`normalized_hash + project + scope + type + title` within the window) and update one row — leaving the second close unsearchable. `TestSessionEnd_SameContentTwoSessionsStaySeparate` is the guard.
+
+### RED evidence (before the fix)
+
+```
+$ go test ./internal/bigmem -run 'TestSessionEnd' -count=1 -v
+=== RUN   TestSessionEnd_DualWriteExactlyOnce
+    session_close_test.go:22: after first close: session_summary rows for sess-close-1 = 0
+    session_close_test.go:24: after first close want exactly 1 session_summary row, got 0
+--- FAIL: TestSessionEnd_DualWriteExactlyOnce (0.08s)
+=== RUN   TestSessionEnd_SameContentTwoSessionsStaySeparate
+    session_close_test.go:80: session sess-a must have exactly 1 session_summary, got 0
+--- FAIL: TestSessionEnd_SameContentTwoSessionsStaySeparate (0.03s)
+FAIL
+FAIL	github.com/biggs-100/biggz-ai/internal/bigmem	0.784s
+```
+
+### Runtime harness — exactly-once through the store API (raw `-v` output)
+
+```
+$ go test ./internal/bigmem -run 'TestSessionEnd_DualWriteExactlyOnce|TestSessionEnd_ObservationWriteRetriesOnceThenFailsVisibly|TestSessionEnd_SameContent|TestSaveCtx_SessionSummary' -count=1 -v
+--- PASS: TestSessionEnd_DualWriteExactlyOnce (0.12s)
+    session_close_test.go:25: after first close: session_summary rows for sess-close-1 = 1
+    session_close_test.go:35: recall: id=session-summary-sess-close-1 type=session_summary session_id=sess-close-1 updated_at=2026-09-11T05:19:08Z content="summary v1"
+    session_close_test.go:50: after repeat close: session_summary rows for sess-close-1 = 1 (content=summary v2)
+--- PASS: TestSessionEnd_SameContentTwoSessionsStaySeparate (0.08s)
+--- PASS: TestSessionEnd_ObservationWriteRetriesOnceThenFailsVisibly (0.08s)
+--- PASS: TestSaveCtx_SessionSummaryRoutesToDeterministicID (0.10s)
+PASS
+ok  	github.com/biggs-100/biggz-ai/internal/bigmem	1.036s
+```
+
+### Runtime harness — cross-process CLI (`go run` from this working tree, temp `USERPROFILE`; the real `~/.biggz/bigmem` was never opened)
+
+```
+$ export USERPROFILE=<os-temp-home> HOME=<os-temp-home>
+$ go run ./cmd/biggz bigmem save "Session summary" "cli close v1" --type session_summary --scope project --project biggz-ai --session-id sess-cli-rt
+Saved: session-summary-sess-cli-rt
+$ go run ./cmd/biggz bigmem save "Session summary" "cli close v2" --type session_summary --scope project --project biggz-ai --session-id sess-cli-rt
+Saved: session-summary-sess-cli-rt
+$ go run ./cmd/biggz bigmem recent --type session_summary --json
+[
+  {
+    "id": "session-summary-sess-cli-rt",
+    "title": "Session summary",
+    "type": "session_summary",
+    "content": "cli close v2",
+    "session_id": "sess-cli-rt",
+    "project": "biggz-ai",
+    "scope": "project",
+    "revision_count": 2,
+    "duplicate_count": 2,
+    "last_seen_at": "...",
+    "created_at": "...",
+    "updated_at": "..."
+  }
+]
+```
+
+One row, updated in place (`revision_count: 2`), searchable via empty-query recency. The installed `biggz` on PATH is an OLD build and is NOT cited as evidence anywhere in this section.
+
+### Commands + results (this run, after all edits)
+
+```
+$ go test ./internal/bigmem ./internal/sdd ./cmd/biggz -run 'Session|Close' -count=1
+ok  	github.com/biggs-100/biggz-ai/internal/bigmem	3.040s
+ok  	github.com/biggs-100/biggz-ai/internal/sdd	4.107s
+ok  	github.com/biggs-100/biggz-ai/cmd/biggz	0.602s
+$ go test ./internal/bigmem ./internal/sdd ./cmd/biggz -count=1 -timeout 180s
+ok  	github.com/biggs-100/biggz-ai/internal/bigmem	27.163s
+ok  	github.com/biggs-100/biggz-ai/internal/sdd	24.403s
+ok  	github.com/biggs-100/biggz-ai/cmd/biggz	67.144s
+$ go vet ./internal/bigmem ./internal/sdd ./cmd/biggz     # exit 0, no output
+$ gofmt -l internal/bigmem internal/sdd cmd/biggz         # no output (clean)
+$ go build ./...                                          # BUILD_OK
+```
+
+### Notes / follow-ups
+
+- MCP `mem_session_summary`/`mem_session_end` call `store.SessionEnd`, so the dual-write reaches the MCP path without touching `cmd/biggz-mcp/main.go` (out of this slice's surface); their existing `writeError` path now surfaces a persistent observation failure explicitly.
+- Consequence of the documented routing: any `session_summary` save with a non-empty session id upserts per session — repeated CLI manual summaries attached to the same session (including the `manual-save-<project>` pseudo-session) update one row instead of stacking rows. This matches design D2 ("exactly-once per session id") and the REQ-SC1 idempotency scenario; recorded here because it is a behavior change for repeated manual closes.
+- `SessionSummaryObsID` runs only for `TrimSpace(session_id) != ""`; a session id with surrounding whitespace keys off the trimmed id while the stored `session_id` column keeps the raw value (pre-existing normalization behavior, no change made).
+- `TestSessionGuard_MCPUsesMCP` still proves the MCP path (SessionEnd → HasSessionSummary true) with the duplicate Save gone; `TestSessionGuard_RetrySucceeds` still sees exactly 2 `bigmemOpen` calls (guard-level retry unchanged).
+
+### Rollback boundary (Phase 2)
+
+Revert `internal/bigmem/bigmem.go` (routing + dedup bypass + `SessionSummaryObsID`), `internal/bigmem/full.go` (`SessionEnd` dual-write + seam + retry), `internal/sdd/session_guard.go` (drop duplicate save + `--session-id`), `cmd/biggz/cli_bigmem.go` (`--session-id` flag) and delete `internal/bigmem/session_close_test.go`; revert the two test additions in `internal/sdd/session_guard_test.go` / `cmd/biggz/cli_bigmem_test.go`. → back to `SessionEnd` writing only the `sessions` row (PR 1 state at `5d2d9871`). Self-contained: no other file depends on the new symbols; slice 1 is untouched.
+
 ## Remaining Tasks
 
 Phase 1b residual: RESOLVED — `internal/bigmem/bigmem_test.go > TestGhostWAL_Stale_Removed` now forces `(holder=false, proven=true)` through the `forceProbeSeam` helper (`ghost_test.go`), keeping the REQ-GW2 reclaim assertions intact and platform-independent (see the Phase 1b section for the cross-platform audit + evidence). No residual remains in Phase 1b.
 
-Phases 2–5 (not started, out of this run's scope):
+Phases 3–5 (not started, out of this run's scope):
 
-- Phase 2 (PR 2): searchable close — tasks 2.1–2.4
 - Phase 3 (PR 3): FTS sanitization — tasks 3.1–3.3
 - Phase 4 (PR 4): summary read + recall discipline — tasks 4.1–4.3
 - Phase 5: verification — tasks 5.1–5.2
