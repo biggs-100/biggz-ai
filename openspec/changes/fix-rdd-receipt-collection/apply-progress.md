@@ -8,12 +8,119 @@
 | S1a2 | Phase 2 (2.1–2.5): materializer + `--materialize` | done | PR 2 (base: `fix/rdd-receipt-collection-2-materializer`, off tracker 362c4c18) |
 | S1b1 | Phase 3 (3.1–3.3): lineage identity + start canonicalization | done | PR 3 (base: `fix/rdd-receipt-collection-2-materializer`; head `fix/rdd-receipt-collection-3-identity`) |
 | S1b2 | Phase 4 (4.1–4.3): candidate-lineage resolution + verify gate (bug #60) | done | PR 4 (base: `fix/rdd-receipt-collection-3-identity` @ cc26de2a; head `fix/rdd-receipt-collection-4-resolve-gate`) |
+| S1c | Phase 5 (5.1–5.5): surfacing + parity guard | done | PR 5 (base: `fix/rdd-receipt-collection-4-resolve-gate` @ 5ea72fd7; head `fix/rdd-receipt-collection-5-surfacing`) |
 
-Progress: **17/33 tasks** (Phases 1–4). Remaining: Phases 5–8 (S1c, S1d, S2, dogfood close).
+Progress: **22/33 tasks** (Phases 1–5). Remaining: Phases 6–8 (S1d, S2, dogfood close).
 
 ---
 
-## Batch S1b2 — Resolution + gate (current)
+## Batch S1c — Surfacing + parity guard (current)
+
+| Field | Value |
+|-------|-------|
+| Work unit | `phases-3-8` (ledger attempt `tok-819f1c0143a853fc247762de`) |
+| Slice | S1c = Phase 5 (tasks 5.1–5.5) |
+| Mode | Standard (`strict_tdd: false`) |
+| PR | PR 5 of the feature-branch-chain (base: `fix/rdd-receipt-collection-4-resolve-gate` @ 5ea72fd7; head `fix/rdd-receipt-collection-5-surfacing`, uncommitted) |
+| Date | 2026-09-11 |
+| Store mode | hybrid (tasks.md `[x]` + BigMem `sdd/fix-rdd-receipt-collection/apply-progress`) |
+
+### Tasks Completed
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 5.1 GREEN: `internal/review/producers.go` — `SupportedReviewHosts`, `BlockingReviewSurfaces()`, `ProducerManifest()` | done | Single source of truth: 6 blocking surfaces (the five gate kinds + `sdd-verify`) × 2 supported hosts; `ProducerSubjectToken`; `ValidateProducerManifest` (guard); `ResolveProducer`; `CurrentProducerHost` (pi relay-gated, opencode ambient — existing `IsPiRelayAvailable`) |
+| 5.2 RED: `rdd_parity_test.go` — missing producer fails guard; coverage passes; plugin wires capture | done | `internal/review/rdd_parity_test.go` — 4 subtests all PASS: `FullCoveragePasses`, `MissingProducerFailsGuard` (missing host, missing surface, empty command), `ResolveProducerConsumesManifest`, `PluginWiresCapture` |
+| 5.3 GREEN: `internal/sdd/{status.go,engram_status.go}` — offer without lineage id; obligation+producer in `blockedReasons`; `nextRecommended` untouched | done | Offer is `biggz review start --subject "<ws>/openspec/changes/<change>/review-subject.json"` (`pathquote.Quote`, no id); `appendReviewObligation` lifts the `blockedReasons` obligation into `PhaseInstructions.Apply/Verify`; no new status keys; BigMem derivation runs the same RDD gate; dead `shortSHAForWorkspace` removed |
+| 5.4 GREEN: refusals name exact producer command; unproducible → `rdd_unproducible` | done | verify.go `reviewProducerResolution` + `producerRefusal` consume the manifest (no hardcoded command); `classifyGateReason` hints through the same resolution; `rdd_unproducible` typed branch when the surface/host has no producer |
+| 5.5 Verify: offer ≡ gate ≡ receipt one lineage; obligation clears (receipt/disabled); `go test ./internal/review ./internal/sdd` | done | Harness proofs PASS (`TestRDDParitySurfacing`: gate resolves HEAD to the derived lineage that holds the receipt; obligation clears with receipt and with RDD disabled); full three-package suite green (below) |
+
+### Files Changed
+
+| File | Action | +/- |
+|------|--------|-----|
+| `internal/review/producers.go` | Create (hosts, surfaces, manifest, guard, resolution) | +154/−0 |
+| `internal/review/rdd_parity_test.go` | Create (4 subtests) | +122/−0 |
+| `internal/sdd/verify.go` | Modify (manifest-consuming refusals, `rdd_unproducible`, `classifyGateReason` signature) | +23/−11 |
+| `internal/sdd/status.go` | Modify (subject offer, `appendReviewObligation`, dead helper removed) | +31/−13 |
+| `internal/sdd/engram_status.go` | Modify (RDD gate parity + obligation wiring) | +16/−0 |
+| `internal/sdd/gates_test.go` | Modify (append `TestRDDParitySurfacing`, imports) | +180/−0 |
+| `internal/sdd/review_offer_test.go` | **Modify (boundary extension — see Deviations)** | +17/−11 |
+
+Slice total: **543 insertions + 35 deletions across 7 files** (over the 400-line budget; `size:exception` accepted for the slice per the session preflight).
+
+### Focused Test Command + Result
+
+```
+go test ./internal/review -run TestRDDParity -count=1 -v
+→ PASS, ok github.com/biggs-100/biggz-ai/internal/review 0.151s (exit 0)
+  TestRDDParity/FullCoveragePasses ✓ | MissingProducerFailsGuard ✓ |
+  ResolveProducerConsumesManifest ✓ | PluginWiresCapture ✓
+
+go test ./internal/sdd -run 'TestRDDParitySurfacing|TestReviewOffer|TestVerifyRDDResolve' -count=1 -v
+→ PASS, ok github.com/biggs-100/biggz-ai/internal/sdd 9.682s (exit 0)
+  TestRDDParitySurfacing (2.49s): ObligationNamesProducerAndSurfacesOffer ✓ |
+  ObligationClearsWithValidReceipt ✓ | ObligationClearsWhenRDDDisabled ✓ |
+  UnproducibleRefusalIsTyped ✓
+  TestReviewOffer (4 subtests) ✓ | TestReviewOfferQuoting ✓ | TestReviewOfferDisabledEmitsNil ✓
+  TestVerifyRDDResolve* (4 tests) ✓
+```
+
+### Package Suite Command + Result
+
+```
+go test ./internal/review ./internal/sdd ./cmd/biggz -count=1 -timeout 240s
+→ ok internal/review  177.447s
+→ ok internal/sdd      37.026s
+→ ok cmd/biggz         93.918s
+```
+
+### Static Checks
+
+| Check | Result |
+|-------|--------|
+| `go build ./...` | OK (exit 0) |
+| `go vet ./...` | OK (exit 0, no findings) |
+| `go vet ./internal/review ./internal/sdd` (focused) | OK (exit 0) |
+| `use-modern-go list --go-version 1.25` (go.mod `1.25.0`) consulted before authoring | consulted; applied `maps.Clone` in the guard test; no `interface{}` |
+
+### Runtime Harness Evidence (raw)
+
+Scenario A — obligation and offer from a real derived change (RDD enabled, no receipt): the offer carries the quoted subject file and no lineage id; `blockedReasons` carries `rdd_receipt_missing` naming the exact manifest command; apply and verify instructions surface it; `nextRecommended == resolve-blockers` (existing routing).
+
+Scenario B — real temp repository, derived lineage started → captured → finalized; raw proof from `TestVerifyRDDResolveRuntimeHarness` (manifest command, no `--lineage`):
+
+```
+harness: repo=...\TestVerifyRDDResolveRuntimeHarness3406334167\002 head=8864666cd9c26ede126d5124e620e433a6500e38 derived=review-2b8fc96dde40b099 receipt=sha256:c436a9f9... preflight_err=<nil>
+harness: repo=...\003 head=c6eb27e91e87debc5cefa061850514487e3ae2fc missing_preflight_err=rdd_receipt_missing: review lineage resolution: unresolved_candidate_lineage: ...; hint: run `biggz review start --subject "...\003\openspec\changes\fix-rdd-receipt-collection\review-subject.json"` and `biggz review finalize <lineage>`
+```
+
+Assertions proven: (a) a host with no producer command fails the guard (`MissingProducerFailsGuard`); (b) the full manifest passes (`FullCoveragePasses`); (c) the OpenCode plugin’s capture wiring is asserted (`PluginWiresCapture`: `capture-result`, `--input`, `--preflight`, `tool.execute.after`, preserve budget); (d) the obligation text in `blockedReasons` names the exact manifest command (Scenario A; raw output in the focused run); (e) the obligation clears with a receipt and when RDD is disabled (Scenario B + disabled subtest); (f) `nextRecommended` unchanged (`resolve-blockers` from the pre-existing gate routing).
+
+### Rollback Boundary
+
+Revert exactly this unit; no other slice consumes the new symbols yet:
+
+1. delete `internal/review/producers.go` and `internal/review/rdd_parity_test.go`;
+2. revert `internal/sdd/verify.go` (+23/−11): restore `reviewProducerInvocation` + `pathquote` import, drop `producerRefusal`/`reviewProducerResolution`/`errors` import, restore `classifyGateReason(reason)`;
+3. revert `internal/sdd/status.go` (+31/−13): restore the `--lineage` offer + `shortSHAForWorkspace`, drop `appendReviewObligation`/`isReviewObligationReason` and the two call-site appends;
+4. revert `internal/sdd/engram_status.go` (+16): drop the RDD gate block and the two obligation appends;
+5. revert `internal/sdd/gates_test.go` (+180) and `internal/sdd/review_offer_test.go` (+17/−11).
+
+→ back to 5ea72fd7 (PR 4 head). Surfacing is additive; no data, migration, store, config, or receipt changes.
+
+### Notes / Deviations
+
+1. **Boundary extension (disclosed):** `internal/sdd/review_offer_test.go` was edited outside the listed allowed surfaces. Its two offer tests asserted the superseded `--lineage <change>-<shortsha>` invitation, which the change’s own sdd spec MODIFIES to the subject form (“Previously: Invocation embedded `--lineage …`”); task 5.3 and 5.5’s suite are impossible while those assertions stand. The edit is test-only (+17/−11) and reverts alone.
+2. **`rdd_parity_test.go` placement:** the session’s allowed surfaces list `internal/review/rdd_parity_test.go` (design.md’s File Changes table said `internal/sdd/rdd_parity_test.go`); the sdd-side surfacing tests landed in the allowed `internal/sdd/gates_test.go` as `TestRDDParitySurfacing`.
+3. **RED-first order for 5.2:** the parity test and `producers.go` were authored in the same pass (dependency-ordered), so a strict pre-implementation compile-failure transcript was not captured; the guard contract is asserted both ways (broken manifest fails, full manifest passes).
+4. **`rdd_unproducible` reachability:** the typed branch fires when the manifest has no producer for the surface/host; `CurrentProducerHost` only returns guard-covered hosts, so the path is proven at the unit seam (`producerRefusal` + `ResolveProducer` unknown-host). Host detection reuses the EXISTING `IsPiRelayAvailable()` handshake — no new env var.
+5. **`internal/review/gate.go` untouched:** `EvaluateGate` receives no workspace or subject path, so it cannot name a producer without inventing context; producer naming lands on the verify preflight and the status surfacing (both workspace-aware).
+6. **`shortSHAForWorkspace` removed** in `status.go` (dead after the subject offer; no other callers).
+
+---
+
+## Batch S1b2 — Resolution + gate (previous)
 
 | Field | Value |
 |-------|-------|

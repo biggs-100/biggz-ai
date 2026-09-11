@@ -62,11 +62,11 @@ CI complexity gate (`internal/review`/`internal/sdd`, non-test): cyclomatic ≤1
 
 ## Phase 5: Surfacing + parity guard (S1c)
 
-- [ ] 5.1 GREEN: `internal/review/producers.go` — `SupportedReviewHosts`, `BlockingReviewSurfaces()`, `ProducerManifest()`
-- [ ] 5.2 RED: `rdd_parity_test.go` — missing producer fails guard; coverage passes; plugin wires capture
-- [ ] 5.3 GREEN: `internal/sdd/{status.go,engram_status.go}` — offer without lineage id (`pathquote.Quote`); obligation+producer in `blockedReasons`; `nextRecommended` untouched
-- [ ] 5.4 GREEN: refusals name exact producer command; unproducible → `rdd_unproducible`
-- [ ] 5.5 Verify: offer ≡ gate ≡ receipt one lineage; obligation clears (receipt/disabled); `go test ./internal/review ./internal/sdd`
+- [x] 5.1 GREEN: `internal/review/producers.go` — `SupportedReviewHosts`, `BlockingReviewSurfaces()`, `ProducerManifest()`
+- [x] 5.2 RED: `rdd_parity_test.go` — missing producer fails guard; coverage passes; plugin wires capture
+- [x] 5.3 GREEN: `internal/sdd/{status.go,engram_status.go}` — offer without lineage id (`pathquote.Quote`); obligation+producer in `blockedReasons`; `nextRecommended` untouched
+- [x] 5.4 GREEN: refusals name exact producer command; unproducible → `rdd_unproducible`
+- [x] 5.5 Verify: offer ≡ gate ≡ receipt one lineage; obligation clears (receipt/disabled); `go test ./internal/review ./internal/sdd`
 
 ## Phase 6: Verify-side subject writer (S1d)
 
