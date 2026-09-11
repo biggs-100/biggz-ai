@@ -67,5 +67,5 @@ Driven by `verify-report.md`: off Windows the O_EXCL probe cannot observe a live
 
 ## Phase 5: Verification · PR 4
 
-- [ ] 5.1 `go test ./... -count=1 -timeout 180s` green.
-- [ ] 5.2 E2E live `biggz-mcp`: CLI recall → no ghost warning, same store; recall ≤2 calls.
+- [x] 5.1 `go test ./... -count=1 -timeout 180s` green.
+- [x] 5.2 E2E live `biggz-mcp`: CLI recall → no ghost warning, same store; recall ≤2 calls.

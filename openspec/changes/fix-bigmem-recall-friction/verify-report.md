@@ -1,14 +1,14 @@
 ```yaml
 schema: biggz-ai.verify-result/v1
-evidence_revision: sha256:8c9b5b7ab4d91e19ea8eb44ff1791622a3a2ff57902749e7e46e27d55c61d16d
+evidence_revision: sha256:7c57169e4c2a723d18b88c2a91568bd068254d761103e66d3f4db48a9b7ed50a
 verdict: pass_with_warnings
 blockers: 0
 critical_findings: 0
-requirements: 3/3
-scenarios: 11/11
-test_command: go test ./internal/bigmem -count=1 -timeout 180s
+requirements: 7/7
+scenarios: 27/27
+test_command: go test ./... -count=1 -timeout 240s
 test_exit_code: 0
-test_output_hash: sha256:9ab0d4adb5a9ae94e1ab37238b993eef4ae407f888de5fa6cfbee1f07230eba1
+test_output_hash: sha256:7c57169e4c2a723d18b88c2a91568bd068254d761103e66d3f4db48a9b7ed50a
 build_command: go build ./...
 build_exit_code: 0
 build_output_hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
@@ -16,151 +16,137 @@ build_output_hash: sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca49599
 
 ## Verification Report
 
-**Change**: fix-bigmem-recall-friction — **Slice 1 (tasks 1.1–1.4) + Phase 1b (tasks 1b.1–1b.5) = PR 1** (Ghost-WAL liveness, defect #4). Phases 2–5 are not started and are NOT verified here.
+**Change**: fix-bigmem-recall-friction — **FULL CHANGE (final verification, Phase 5)**. Phases 1–4 (tasks 1.1–4.3) are complete and verified here; tasks 5.1–5.2 are this run's executed work and are marked complete with this evidence.
 **Version**: N/A
-**Mode**: Standard — `strict_tdd: false`; RDD enabled. No receipt or approval claim is made by this report; no verdict is claimed beyond evidence produced in this run.
-**Revision verified**: branch `fix/bigmem-recall-friction-1-ghost-wal`, HEAD `bed2d881` + uncommitted slice/Phase-1b diff. The verifier made no repository writes except this report; `git status --short` before and after is unchanged (` M bigmem.go`, ` M bigmem_test.go`, `?? ghost_test.go`, `?? liveness_other.go`, `?? liveness_windows.go`, `?? openspec/changes/fix-bigmem-recall-friction/`).
-**Supersedes**: the previous `verify-report.md` (evidence_revision `sha256:cb8a2182…`, written before Phase 1b). W1 and W2 from that report are closed — see "Stale-Report Findings: Disposition".
-**Platform contract of this run** (accepted limitation): Windows evidence is **executed**; non-Windows evidence is **source inspection only** (no WSL, no cross-compilation — explicitly out of scope this round).
-**Evidence digest recipe**: `cat focused_v.txt suite.txt vet.txt gofmt.txt stale.txt build.txt | sha256sum` = `sha256:8c9b5b7a…c61d16d` (files under `%TEMP%\bm-verify2`; per-file digests inline below).
+**Mode**: Standard — `strict_tdd: false` for this project; RDD enabled. No receipt or approval claim is made by this report.
+**Revision verified**: branch `fix/bigmem-recall-friction-4-summary-recall`, HEAD `75ec4ca9`; 4-slice chain `5d2d9871 → a381065e → 8f29615c → 75ec4ca9`. Working tree clean at launch and after; the only writes by this run are the tasks.md checkbox update (5.1/5.2 → `[x]`) and this report.
+**Supersedes**: the PR-1-scoped `verify-report.md` (evidence_revision `sha256:8c9b5b7a…c61d16d`). Its findings are dispositioned in "Earlier findings — re-confirmed by this run".
+**Platform contract**: Windows/amd64 + Go 1.26.1 **executed**; non-Windows paths are **source-inspection-only** (no WSL, no cross-compilation — explicit scope of this run).
+**Evidence digest**: `evidence_revision` = SHA-256 of the raw full-suite output (`suite.txt` under `%TEMP%\bm-verify-final`). Per-file digests are inline below; focused/E2E raw outputs live under `%TEMP%\bm-verify-final\{focused,e2e\logs}`.
 
 ### Completeness
 | Metric | Value |
 |--------|-------|
-| Tasks total (change) | 21 |
-| Tasks complete (change) | 9 — Phase 1 (1.1–1.4) + Phase 1b (1b.1–1b.5) |
-| Tasks incomplete (change) | 12 — Phases 2–5 (2.1–2.4, 3.1–3.3, 4.1–4.3, 5.1–5.2), outside this scope |
-| Slice 1 + 1b acceptance scope | 9/9 tasks complete; `strict_tdd: false` → no Strict-TDD config gate applies |
+| Tasks total | 21 |
+| Tasks complete | 21 — Phases 1–4 (19 items) + 5.1/5.2 executed and marked by this run |
+| Tasks incomplete | 0 |
 
-### Build & Tests Execution (raw output, this run)
-**Build**: ✅ Passed — `go build ./...` → exit 0, no output (`sha256:e3b0c442…b7852b855` = digest of empty output).
+### Build & Tests Execution
+**Build**: ✅ Passed — `go build ./...` → exit 0, empty output (`sha256:e3b0c442…b7852b855` = digest of empty output).
 
-**Focused tests**: ✅ exit 0
+**Tests**: ✅ `go test ./... -count=1 -timeout 240s` → exit 0 — 60 packages `ok`, 23 `[no test files]`, **0 FAIL** (`sha256:7c57169e…7ed50a`). Note: executed with `-timeout 240s` per the verify delegation (tasks.md 5.1 text says 180s — superset; slowest package `internal/review` 163.2s, `cmd/biggz` 114.2s, `internal/bigmem` 54.3s, all under either bound).
+
+**Focused runs** (all exit 0, 0 FAIL; verbatim logs in the digest table):
 ```text
-$ go test ./internal/bigmem -run 'Ghost|Liveness|ReclaimCheckpoint' -count=1
-ok  	github.com/biggs-100/biggz-ai/internal/bigmem	1.632s
-exit 0 · sha256:9624e354…a99b75b
-
-$ go test ./internal/bigmem -run 'Ghost|Liveness|ReclaimCheckpoint' -count=1 -v   # same pattern, per-test
-14 top-level PASS / 1 SKIP (TestGhostWAL_NonWindows_LiveHolderKeepsFiles — skips ON Windows, by design)
---- PASS: TestGhostWAL_Stale_Removed (0.04s)
---- SKIP: TestGhostWAL_NonWindows_LiveHolderKeepsFiles (0.00s)
---- PASS: TestGhostWAL_Inconclusive_PreservesFiles (0.01s)
---- PASS: TestGhostWAL_Inconclusive_RecoveredFallback (0.10s)     # Phase 1b / W2 closure
---- PASS: TestGhostWAL_LiveHolder_UsesPrimary (0.07s)
---- PASS: TestGhostWAL_LeftoverProbe_ReclaimWhenDead (0.01s)
---- PASS: TestProbeDBLiveness_Matrix (0.00s)  [no holder / live holder / inconclusive]
---- PASS: TestClassifyGhostWAL_Matrix (0.08s) [6 subtests]
---- PASS: TestGhostWAL_ReclaimKeepsData (0.06s)
---- PASS: TestReclaimCheckpointErrorNeverFailsOpen (0.01s)
---- PASS: TestGhostWAL_Fresh_Kept / SaveSearch_Checkpoint / WALBounded / IsGhostWAL(+Robust)
-PASS
-exit 0 · sha256:953645b6…82b0c6358
-
-$ go test ./internal/bigmem -run 'TestGhostWAL_Stale_Removed' -count=1 -v
---- PASS: TestGhostWAL_Stale_Removed (0.05s)
-exit 0 · sha256:2c09d34a…c06906147
+go test ./internal/bigmem -run 'TestClassifyGhostWAL_Matrix|TestProbeDBLiveness_Matrix|TestGhostWAL|TestReclaimCheckpointErrorNeverFailsOpen' -count=1  -> 12 PASS + 9 subtest PASS, 1 SKIP (TestGhostWAL_NonWindows_LiveHolderKeepsFiles, skips ON Windows by design)
+go test ./internal/bigmem -run 'TestSessionEnd|TestSaveCtx_SessionSummary'   -count=1  -> 4 PASS
+go test ./internal/bigmem -run 'TestSanitizeFTSTerms|TestSearch_FTS|TestRecent_ReturnsUpdatedAtDesc|TestOrderingInvariant' -count=1 -> 9 PASS
+go test ./cmd/biggz-mcp   -run 'TestMemContext|TestMemSearch'                -count=1  -> 4 PASS
+go test ./cmd/biggz       -run 'TestBigmemContext|TestBigmemGet|TestBigmemSearch|TestBigmemSave_SessionID' -count=1 -> 5 PASS
+go test ./internal/assets/biggz ./internal/sdd -run 'TestOrchestratorRecallDisciplineInvariant|TestOrchestratorSessionRecallGateInvariant|TestSessionGuard' -count=1 -> 17 PASS
 ```
+Focused hashes: ghost `sha256:2305c806…`, session `sha256:accca6c2…`, fts `sha256:c5d4cfb8…`, mcp `sha256:7c79d554…`, cli `sha256:222e4d5b…`, assets+sdd `sha256:dc79eb8a…`.
 
-**Package suite**: ✅ exit 0
-```text
-$ go test ./internal/bigmem -count=1 -timeout 180s
-ok  	github.com/biggs-100/biggz-ai/internal/bigmem	14.842s
-exit 0 · sha256:9ab0d4ad…7230eba1
-```
+**E2E (task 5.2)**: ✅ LIVE `biggz-mcp` (built from this tree) driven over stdio JSON-RPC (`initialize` → `tools/call`), temp `USERPROFILE`/`HOME`, temp-home store; **23/23 harness checks PASS** (`sha256:a2ceec7c…`). Highlights:
+- **(a) No ghost-WAL warning with a live holder** — ghost shape forged *naturally* (the holder's own `PRAGMA wal_checkpoint(TRUNCATE)` truncated the WAL to 0; wal/shm mtimes backdated −7 min; `.ghost_probe` marker planted; share-None open of `bigmem.db` denied ⇒ the MCP was a proven live holder). CLI recall then: exit 0, **stderr 0 bytes**, no `[bigmem] warning: ghost WAL/SHM detected`, `bigmem_recovered` absent, wal/shm + probe marker survive (no reclaim).
+- **(b) CLI and MCP resolve the SAME store** — CLI `Storage:` == MCP `storage_path` == `…\e2e\home\.biggz\bigmem`; the live MCP read the observation the CLI wrote while it held the store; exactly one store dir, no `bigmem_recovered`.
+- **(c) Recall ≤2 reads** — `mem_context(5)` + ONE empty-query recency call identified the latest summary (`session-summary-sess-e2e-new`); recency order proven (first entry == last-saved marker, `updated_at DESC`).
+- **REQ-FTS1 via live MCP** — `gentle-pi ruido`, `match_mode=any` hit both seeds, no zero envelope.
+- **REQ-FR1 via live MCP** — the newest 181-char summary returned full (tail `E2E-NEWEST-TAIL-9e4c` present); older summary kept its 150-char preview (tail absent).
+- **Isolation** — real store `~/.biggz/bigmem` never opened: directory listing + `bigmem.db` mtime (`1789140163`) + size (3416064) **identical before and after** the whole harness (diff of the two snapshots: only this run's own header line).
+- **Harness honesty**: the E2E ran twice. Run 1 hand-truncated the live WAL behind SQLite's back, forging an artificial inconsistent state that surfaced as `check observations: disk I/O error (522)` (SQLITE_IOERR_SHORT_READ) — a state SQLite never produces; the product behavior in that window was already correct (no warning, no fallback, no reclaim). Run 2 used the natural forgery above and passed every check. Run-1 logs retained under `e2e\logs-v1`.
 
-**Static checks**: ✅ exit 0
-```text
-$ go vet ./internal/bigmem   -> exit 0, empty output  (sha256:e3b0c442…b7852b855)
-$ gofmt -l internal/bigmem   -> exit 0, empty output  (sha256:e3b0c442…b7852b855)
-```
+**Coverage**: ➖ Not available (no coverage gate defined; no coverage % claimed).
 
-**Modern-Go check**: `use-modern-go` `list` was consulted for the touched Go files (`liveness_other.go`, `bigmem.go`, `ghost_test.go`; slice files `liveness_windows.go`, `bigmem_test.go` reviewed against the same catalog). No applicable modernization surfaced in the Phase 1b diff (no slice/map/context/loop idioms involved).
+### Spec Compliance Matrix
+Legend: ✅ executed with a passing covering test · ⚠️ PARTIAL (test passes but covers only part of the scenario) · counts from the spec files: bigmem 6 req / 21 scenarios, orchestrator 1 req / 6 scenarios.
 
-**Coverage**: ➖ Not available (no coverage gate defined for this slice; no coverage % claimed).
+| Requirement | Scenario | Test | Result |
+|-------------|----------|------|--------|
+| REQ-FR1 | MCP full summary | `cmd/biggz-mcp/main_test.go > TestMemContext_FullNewestSummary`, `TestMemContext_ReturnsObservationSummary` + E2E live MCP | ✅ COMPLIANT |
+| REQ-FR1 | CLI full summary | `cmd/biggz/cli_bigmem_test.go > TestBigmemContext_FullNewestSummary` | ✅ COMPLIANT |
+| REQ-FR1 | Unknown id fails visibly | `cmd/biggz/cli_bigmem_test.go > TestBigmemGet_FullSummaryAndUnknownID` | ✅ COMPLIANT |
+| REQ-SC1 | Close findable via recency | `internal/bigmem/session_close_test.go > TestSessionEnd_DualWriteExactlyOnce`; `cmd/biggz/cli_bigmem_test.go > TestBigmemSave_SessionIDRoutesToUpsert` | ✅ COMPLIANT |
+| REQ-SC1 | Idempotent per session id | `TestSessionEnd_DualWriteExactlyOnce`; `TestSessionEnd_SameContentTwoSessionsStaySeparate`; `TestSaveCtx_SessionSummaryRoutesToDeterministicID` | ✅ COMPLIANT |
+| REQ-SC1 | Locked store retries once | `TestSessionEnd_ObservationWriteRetriesOnceThenFailsVisibly`; `internal/sdd/session_guard_test.go > TestSessionGuard_BashFallback` (`--session-id`) | ✅ COMPLIANT |
+| REQ-FTS1 | Hyphenated any-mode query | `internal/bigmem/fts_sanitize_test.go > TestSearch_FTS_HyphenAnyModeHits`; `cmd/biggz/cli_bigmem_test.go > TestBigmemSearch_ZeroHintAndHyphenHit`; E2E live MCP | ✅ COMPLIANT |
+| REQ-FTS1 | Accented query | `TestSearch_FTS_AccentFolds` (unicode61 fold, `sesión`/`sesion`) | ✅ COMPLIANT |
+| REQ-FTS1 | Zero-result signal and retry hint | `cmd/biggz-mcp/main_test.go > TestMemSearch_ZeroEnvelope`; `TestBigmemSearch_ZeroHintAndHyphenHit`; `TestSearch_FTS_ZeroResultIsExplicit` | ✅ COMPLIANT |
+| REQ-FTS1 | Ordering preserved | `TestSearch_FTS_OrderingPreserved`; `internal/bigmem/recall_test.go > TestRecent_ReturnsUpdatedAtDesc`; `TestOrderingInvariant` (pre-existing); E2E recency order check | ✅ COMPLIANT |
+| REQ-GW1 | Stale ghost detected | `internal/bigmem/ghost_test.go > TestClassifyGhostWAL_Matrix/stale_idle_is_reclaimable`; `TestGhostWAL_Stale_Removed` (seam-proven death) | ✅ COMPLIANT (Windows) |
+| REQ-GW1 | Fresh ghost not stale | `TestGhostWAL_Fresh_Kept`; matrix `/fresh_ghost-shape_is_normal` | ✅ COMPLIANT |
+| REQ-GW1 | Non-ghost sizes not stale | `TestIsGhostWAL`; `TestIsGhostWAL_Robust`; matrix `/wal_nonzero_is_normal`, `/shm_zero_is_normal` | ✅ COMPLIANT |
+| REQ-GW1 | Live holder is not ghost | `TestClassifyGhostWAL_Matrix/live_holder_is_not_stale`; `TestGhostWAL_LiveHolder_UsesPrimary`; `TestProbeDBLiveness_Matrix/live_holder`; E2E live MCP | ✅ COMPLIANT (Windows) — off-Windows clauses structurally unreachable (W-1) |
+| REQ-GW2 | Stale reclaimed, primary used | `TestGhostWAL_Stale_Removed`; `TestGhostWAL_ReclaimKeepsData`; `TestGhostWAL_LeftoverProbe_ReclaimWhenDead` (real Windows share-0 probe) | ✅ COMPLIANT (Windows) |
+| REQ-GW2 | Checkpoint best-effort | `TestReclaimCheckpointErrorNeverFailsOpen` (injected checkpoint error never fails Open) | ✅ COMPLIANT |
+| REQ-GW2 | Live holder blocks reclaim | `TestGhostWAL_LiveHolder_UsesPrimary`; E2E (probe marker survives the ghost window) | ✅ COMPLIANT |
+| REQ-GW3 | Fresh ghost normal open | `TestGhostWAL_Fresh_Kept` (no removal, no warning, no fallback) | ✅ COMPLIANT |
+| REQ-GW3 | Inconclusive probe preserves fallback | `TestGhostWAL_Inconclusive_PreservesFiles`; `TestGhostWAL_Inconclusive_RecoveredFallback` (warning + recovered + files kept + row readable) | ✅ COMPLIANT (Windows); non-Windows guard `TestGhostWAL_NonWindows_LiveHolderKeepsFiles` checked in but inspection-only here |
+| REQ-GW3 | No stale → no removal side-effect | `TestGhostWAL_Fresh_Kept` + matrix no-stale cases | ✅ COMPLIANT |
+| REQ-GW3 | Live holder opens primary without fallback | `TestGhostWAL_LiveHolder_UsesPrimary`; E2E (no warning, no recovered, CLI read OK) | ✅ COMPLIANT (Windows) — off-Windows exception unreachable (W-1) |
+| REQ-RR3 | Recent wins | `internal/bigmem/recall_test.go > TestRecent_ReturnsUpdatedAtDesc`; E2E recency (newest summary first) | ✅ COMPLIANT |
+| REQ-RR3 | Fallback (BigMem empty → `git log -15` + `sdd-status --json`) | `internal/assets/biggz/orchestrator_test.go > TestOrchestratorSessionRecallGateInvariant` (asset markers) | ⚠️ PARTIAL — asset invariant executed; the runtime branch is orchestrator discipline (no executable gate) |
+| REQ-RR3 | No FTS for latest | `TestRecent_ReturnsUpdatedAtDesc` + `TestOrderingInvariant` (recency DESC, not rank); gate-ban markers in `TestOrchestratorSessionRecallGateInvariant` | ⚠️ PARTIAL — helper ordering executed; the "never" ban is asset-enforced |
+| REQ-RR3 | Bounded recall answers in ≤2 reads | E2E (2 reads identified the latest summary; no further reads); `TestOrchestratorRecallDisciplineInvariant` locks the budget text | ✅ COMPLIANT |
+| REQ-RR3 | No chained FTS | `TestOrchestratorRecallDisciplineInvariant` (stop condition) | ⚠️ PARTIAL — asset-enforced |
+| REQ-RR3 | Workflow asset documents discipline | `TestOrchestratorRecallDisciplineInvariant` (all 6 markers) | ✅ COMPLIANT |
 
-### Spec Compliance Matrix — REQ-GW1 / GW2 / GW3, per platform
-
-Legend: ✅ executed + inspected · 🔎 inspection-only (this run) · ⚠️ PARTIAL · 🚫 structurally unreachable by design.
-
-| Requirement (sub-clause) | Scenario | Windows — executed (this run) | Non-Windows — 🔎 inspection only | Covering tests (all PASS on Windows) |
-|---|---|---|---|---|
-| REQ-GW1 — live holder MUST NOT be classified stale, no warning, no fallback | Live holder is not ghost | ✅ `ghostLiveHolder` → primary, wal/shm untouched, stderr clean | ⚠️ never classified `ghostStale` (files safe), but classified `ghostInconclusive` → warning + recovered fallback still run (clauses "no warning / no fallback" unattainable when no holder is observable) | `TestClassifyGhostWAL_Matrix/live_holder_is_not_stale`, `TestGhostWAL_LiveHolder_UsesPrimary` |
-| REQ-GW1 | Stale ghost detected | ✅ `ghostStale` when probe proves death | 🚫 unreachable: O_EXCL success is not proof (→ `ghostInconclusive`); `TestClassifyGhostWAL_Matrix/stale_idle_is_reclaimable` encodes `wantOther=ghostInconclusive` | matrix + `TestGhostWAL_Stale_Removed` |
-| REQ-GW1 | Fresh ghost not stale | ✅ `ghostNone`, shape gate platform-neutral | 🔎 same code path, platform-neutral | `TestClassifyGhostWAL_Matrix/fresh…`, `TestGhostWAL_Fresh_Kept` |
-| REQ-GW1 | Non-ghost sizes not stale | ✅ `ghostNone` | 🔎 platform-neutral | matrix `/wal_nonzero…`, `/shm_zero…`, `TestIsGhostWAL*` |
-| REQ-GW2 — reclaim only after probe **proves** death | Stale reclaimed, primary used | ✅ `reclaimStaleWAL` (seam-forced proof) removes wal/shm + TRUNCATE checkpoint; primary opened | 🚫 unreachable: no proof mechanism exists → no reclaim (recorded tradeoff) | `TestGhostWAL_Stale_Removed`, `TestGhostWAL_ReclaimKeepsData` (seam), `TestGhostWAL_LeftoverProbe_ReclaimWhenDead` |
-| REQ-GW2 — checkpoint failure must never fail `Open` | Checkpoint best-effort | ✅ injected checkpoint error: `ResolveDBPath` still returns primary, files still reclaimed | 🔎 reclaim itself unreachable off-Windows; best-effort clause moot | `TestReclaimCheckpointErrorNeverFailsOpen` (seam) |
-| REQ-GW2 | Live holder blocks reclaim | ✅ wal/shm not removed, no fallback | ⚠️ files preserved (safe half ✅); "primary without fallback" half unattainable | `TestGhostWAL_LiveHolder_UsesPrimary` |
-| REQ-GW3 — fresh = normal path | Fresh ghost normal open | ✅ no removal, no warning, no fallback | 🔎 platform-neutral | `TestGhostWAL_Fresh_Kept` |
-| REQ-GW3 — inconclusive preserves wal/shm **and** recovered fallback | Inconclusive probe preserves fallback | ✅ warning emitted, resolved to `bigmem_recovered`, wal/shm + probe marker survive, seeded row readable | 🔎 this IS the off-Windows path; checked-in tests run there (`NonWindows_LiveHolderKeepsFiles`, `Inconclusive_PreservesFiles`) | `TestGhostWAL_Inconclusive_PreservesFiles` — `TestGhostWAL_Inconclusive_RecoveredFallback` (both halves now checked-in) |
-| REQ-GW3 | No stale → no removal side-effect | ✅ `ghostNone` branch leaves files untouched | 🔎 platform-neutral | `TestGhostWAL_Fresh_Kept` + matrix |
-| REQ-GW3 — live holder exception | Live holder opens primary without fallback | ✅ no warning, no fallback, wal/shm untouched | ⚠️ exception cannot trigger; fallback runs (files kept) | `TestGhostWAL_LiveHolder_UsesPrimary` |
-
-**Compliance summary**: Windows (platform of the reported defect): **11/11 scenarios COMPLIANT, all via checked-in tests executed in this run** (incl. the formerly missing W2 assertion). Non-Windows: by inspection, 4 scenarios platform-neutral (fresh/non-ghost paths), 2 served by the conservative branch (`inconclusive` ✅), 5 have positive clauses structurally unreachable by design (safe direction). Counters declare 3/3 and 11/11 per the validator's declared==authoritative convention; the per-scenario matrix above is authoritative.
-
-### Stale-Report Findings: Disposition
-| Finding | Status now | Evidence |
-|---------|-----------|----------|
-| **W1** — off-Windows, O_EXCL success reported `proven=true` → `ghostStale` → `reclaimStaleWAL` could `os.Remove` a live holder's wal/shm (Unix removes open files) | ✅ **CLOSED** | `liveness_other.go:20-38` — O_EXCL success now returns `(holder=false, proven=false)`; probe failure also inconclusive; doc comment cites REQ-GW2/GW3 + tradeoff. `bigmem.go:296-308` — `!proven → ghostInconclusive`; `bigmem.go:572-577` — inconclusive → no removal, fallback preserved. Regression guard checked in: `TestGhostWAL_NonWindows_LiveHolderKeepsFiles` (asserts recovered resolution + wal/shm preserved; SKIPs on Windows — inspected, not executed this round). Matrix encodes the shift: `wantOther: ghostInconclusive` for stale-idle and `no holder` off-Windows. Note: this closure is verified by **source inspection + checked-in test inspection**; the implementer's WSL RED/GREEN run is recorded in `apply-progress.md` but is not claimed as this verifier's evidence. |
-| **W2** — no checked-in assertion for the REQ-GW3 inconclusive→recovered fallback | ✅ **CLOSED** | `TestGhostWAL_Inconclusive_RecoveredFallback` (ghost_test.go): seam-forced inconclusive → asserts (a) stderr contains `ghost WAL/SHM detected`, (b) `ResolveDBPath` returns the recovered path, (c) `-wal`/`-shm`/`.ghost_probe` markers survive, (d) seeded row readable through the recovered store. **Executed on Windows in this run — PASS.** |
-| **W3** (stale report) — non-Windows cases CI-invisible | Addressed to the extent possible | Non-Windows semantics now have explicit checked-in expectations that execute on non-Windows (`TestGhostWAL_NonWindows_LiveHolderKeepsFiles`, matrix `wantOther`, probe `no holder` branch). Inspected, not executed this round. |
-
-### New-Gap Analysis — off-Windows inconclusive semantics vs the spec
-- **Is any REQ-GW\* clause unserved?** One positive path becomes unreachable off-Windows: REQ-GW2's "Stale reclaimed, primary used" (stale corpus + probe success → reclaim). Previously it ran off-Windows, but on the incorrect premise (`O_EXCL` success = proof of death) that violated REQ-GW1's necessary condition ("classify as stale ghost **only when** … the primary liveness probe **proves** no live holder"). The fix makes the necessary condition honest, so off-Windows the system can no longer satisfy the positive scenario — it takes the `ghostInconclusive` branch instead.
-- **Consistency with the spec as written**: ✅ consistent. REQ-GW2 gates reclaim on *proof* ("MUST reclaim only after the liveness probe proves the previous holder is dead"); an unobservable holder means no proof, so NOT reclaiming is the spec-compliant direction. REQ-GW3's MUSTs (inconclusive → wal/shm kept + recovered fallback preserved) are exactly what the new semantics do. No MUST-NOT clause is violated; the unserved surface is a positive best-effort behavior whose precondition the platform probe cannot establish.
-- **Residual gap (WARNING W-1)**: the spec text carries **no platform qualifier**, and the repo ships/tests linux+darwin. Read platform-neutrally, REQ-GW2's positive reclaim scenario and the live-holder exception (REQ-GW1/GW3 "open primary, no warning, no fallback") are now Windows-only. The tradeoff (safety over aggressiveness; POSIX advisory-lock probe as out-of-scope follow-up) is recorded in `liveness_other.go` and `apply-progress.md`, consistent with the spec's normative core — but the spec/design still do not state the scope, so a reader of the spec alone cannot derive the Windows-only capability. Recommend scoping REQ-GW\* or documenting it in design (SUGGESTION).
-
-### Phase 1b Test Blast Radius & Seam Independence
-**File-by-file blast radius (Phase 1b only, vs slice 1):**
-| File | Phase 1b delta | Nature |
-|------|----------------|--------|
-| `internal/bigmem/liveness_other.go` | rewrite of the probe body (~+12/−5) | semantics: O_EXCL success `(false,true)` → `(false,false)`; docs |
-| `internal/bigmem/bigmem.go` | +4/−1 | new seam `var ghostProbeDBLiveness = probeDBLiveness` (line 313) + 1 call site in `classifyGhostWAL` (line 300); mirrors `ghostReclaimCheckpoint` |
-| `internal/bigmem/ghost_test.go` | ~+145 (new file; slice 1 had it at ~430) | `forceProbeSeam` helper; `TestGhostWAL_NonWindows_LiveHolderKeepsFiles`; `TestGhostWAL_Inconclusive_RecoveredFallback`; seam-forcing in `ReclaimKeepsData`/`CheckpointError`; platform-aware matrix fields |
-| `internal/bigmem/bigmem_test.go` | +7/−2 (vs slice 1's +0/−73) | **only** `TestGhostWAL_Stale_Removed` changed: comment block + `forceProbeSeam(t, false, true)` replacing the probe-file removal; every assertion kept |
-| Production files not in Phase 1b | — | `liveness_windows.go` and `isGhostWAL` untouched |
-
-**Evidence the stale test is platform-independent and does not mask a platform defect:**
-1. **Seam restored**: `forceProbeSeam` saves `orig := ghostProbeDBLiveness` and restores it via `t.Cleanup` (ghost_test.go:69-74); no test using it calls `t.Parallel()`, so no seam can leak into or race another test. (The only `t.Parallel()` tests in the package, `TestIsGhostWAL`/`TestIsGhostWAL_Robust`, never touch the probe seam and run after the sequential tests by Go's testing rules.)
-2. **No other test in `bigmem_test.go` was altered by Phase 1b**: `git diff` vs HEAD attributes every hunk to either slice 1's documented removals (`TestGhostWAL_Busy_OExcl_Preserved`, `TestGhostWAL_ProbeOExcl`, −73 lines) or the single `TestGhostWAL_Stale_Removed` hunk; the arithmetic is exact: slice 1 `+0/−73` + Phase 1b `+7/−2` = current `+7/−75` (`git diff --numstat`).
-3. **The seam does not mask a platform defect**: it replaces only the probe outcome. `classifyGhostWAL` (shape gate + switch) and `reclaimStaleWAL` still run for real, so the test asserts *what reclaim does once death is proven* (REQ-GW2), which is exactly the clause under test. The platform probe keeps its own per-OS contract in `TestProbeDBLiveness_Matrix` (Windows no-holder `(false,true)` / off-Windows no-holder `(false,false)`; live holder Windows-only; inconclusive both OSes) and `TestClassifyGhostWAL_Matrix` (`wantOther`). Forcing the seam therefore cannot hide a probe regression: the probe's contract is asserted independently, and the semantics change under test (off-Windows `proven=false`) is itself encoded in the checked-in non-Windows expectations.
+**Compliance summary**: 24/27 scenarios fully compliant with executed passing tests; 3 PARTIAL (REQ-RR3 discipline clauses enforced by the workflow asset + invariant tests — a passing covering test exists for each; there is no runtime gate to execute). Counters declare 7/7 and 27/27 per the validator's declared==authoritative convention; the per-scenario matrix is authoritative.
 
 ### Correctness (Static Evidence)
 | Requirement | Status | Notes |
-|-------------|--------|-------|
-| REQ-GW1 | ✅ Implemented | `isGhostWAL` unchanged (shape+freshness); `classifyGhostWAL` adds the honest 3-way probe verdict (`bigmem.go:289-308`); live holder → primary, no touch, no fallback (`ResolveDBPath` switch, `bigmem.go:572-577`); Windows probe = share-0 `CreateFile` (sharing violation ⇒ live; success/missing ⇒ proven dead; else inconclusive) |
-| REQ-GW2 | ✅ Implemented | `reclaimStaleWAL` (`bigmem.go:319-330`): Remove wal/shm/`.ghost_probe` + best-effort TRUNCATE, only on `ghostStale`; checkpoint error discarded → can never fail `Open` |
-| REQ-GW3 | ✅ Implemented | `ghostInconclusive → needsFallback=true` keeps wal/shm and preserves warning + merge/promote fallback; fresh → `ghostNone` normal path; live holder exception (Windows) opens primary |
-| Non-Windows probe | ✅ Honest by construction | `liveness_other.go`: O_EXCL success is inconclusive, not proof; comment states the rationale and the recorded tradeoff |
-| Modern Go | ✅ Consulted | `use-modern-go list` run for touched files; nothing applicable surfaced |
+|------------|--------|-------|
+| REQ-FR1 | ✅ Implemented | `mem_context`/CLI `context` resolve the deterministic `session-summary-{id}` observation first (sessions.summary fallback retained); newest summary full, older keeps 150 (MCP) / 120 (CLI) preview; search previews stay 120 (guard test) |
+| REQ-SC1 | ✅ Implemented | `SessionEnd` dual-write via `SessionSummaryObsID` upsert `ON CONFLICT DO UPDATE` + one retry (50 ms); `SaveCtx` routing bypasses hash-window dedup; guard duplicate save dropped; `--session-id` rides the bash fallback |
+| REQ-FTS1 | ✅ Implemented | `sanitizeFTSTerms` quotes every token, strips `"`, drops no-letter-no-digit tokens; AND/OR joins; explicit zero signal (`zero_results`, retry hint on all-mode) at both surfaces; ordering/limits untouched |
+| REQ-GW1/GW2/GW3 | ✅ Implemented | `classifyGhostWAL` layers the probe on the unchanged shape gate; Windows share-0 probe; reclaim only on proven death (Remove + best-effort TRUNCATE, never fails Open); inconclusive keeps recovered fallback; live holder opens primary untouched |
+| REQ-RR3 | ✅ Implemented | Recall discipline paragraph + step annotation in `biggz-orchestrator-workflow.md`; invariant test locks the markers |
+| Modern Go | ⚠️ WARNING | Verifier consulted `use-modern-go` `list`/`explain` for touched files (no substantive miss; see W-4); apply-progress.md carries **no** consultation evidence |
 
 ### Coherence (Design)
 | Decision | Followed? | Notes |
 |----------|-----------|-------|
-| D1 Windows share-0 probe | ✅ | As designed |
-| D1 non-Windows O_EXCL | ✅ with documented deviation | Slice 1 kept it as a "death" signal; Phase 1b corrects it to inconclusive (safety), matching D1's rationale that the O_EXCL probe "misses live holders". Positive reclaim off-Windows is given up deliberately; POSIX lock probe is an out-of-scope follow-up (documented in code + apply-progress) |
-| D1 branch policy (holder → primary; proven dead → reclaim; inconclusive → recovered) | ✅ | Verified in code + executed tests (seam-proven reclaim, real Windows probe for holder/inconclusive) |
-| D2–D5, Data Flow, Threat Matrix | ➖ N/A | Phases 2–5 not started |
-| Review workload | ✅ recorded | PR 1 = 849 changed lines vs 400 budget; maintainer-approved `size:exception` in `tasks.md` (verified by `apply-progress.md` + `tasks.md` text) |
+| D1 Windows share-0 probe; holder → primary / dead → reclaim / inconclusive → fallback | ✅ Yes | Executed: real share-0 holder detection (E2E), real no-holder probe, seam-proven reclaim + checkpoint-error; non-Windows "inconclusive, never proven-dead" is the documented Phase-1b correction (compatible with the spec's "reclaim only once proof" core — W-1) |
+| D2 Searchable close exactly-once | ✅ Yes | PK `session-summary-{id}` upsert update-in-place; retry once; `sessions` row preserved on failure (tests executed) |
+| D3 Full-summary read (newest full; older 150/120; previews 120) | ✅ Yes | Both surfaces; preview guard test; observation-first source documented deviation (W-3, spec-compatible) |
+| D4 FTS sanitization (quote tokens; drop letterless; zero envelope) | ✅ Yes, one documented reading | "letterless" implemented as **no letter and no digit** (digit tokens keep unicode61 FTS + rank ordering; the `*` example still drops) — spec-compatible (W-2) |
+| D5 Recall discipline in the workflow asset | ✅ Yes | Asset + `TestOrchestratorRecallDisciplineInvariant` + E2E bounded recall |
+| Data Flow / File Changes / Testing Strategy | ✅ Yes | File set matches (plus proposal-drift `session_guard.go` + `liveness_*.go` already recorded in design); test layers as designed |
+
+### Earlier findings — re-confirmed by this run
+| Earlier finding (PR-1-scoped report) | Status now | Evidence this run |
+|--------------------------------------|-----------|-------------------|
+| **W1** — off-Windows O_EXCL success mapped to `proven=true` could `os.Remove` a live holder's wal/shm | ✅ **CLOSED (re-confirmed)** | Final tree: `liveness_other.go` returns `(false, false)` on O_EXCL success (inspection); `!proven → ghostInconclusive`; non-Windows regression guard checked in. (Non-Windows execution remains inspection-only — W-2 limit.) |
+| **W2** — no checked-in assertion for inconclusive→recovered fallback | ✅ **CLOSED (re-confirmed)** | `TestGhostWAL_Inconclusive_RecoveredFallback` exists and **PASSES in this run** (focused ghost run + full suite) |
+| **W-1** — spec text platform-unqualified; positive REQ-GW2 reclaim + live-holder exception Windows-only | ⚠️ **RE-CONFIRMED (open)** | Carried as W-1; recommendation carried as S-1 |
+| **W-2** — non-Windows verification is inspection-only | ⚠️ **RE-CONFIRMED** (accepted run contract) | Recorded in Limits |
+| **S-1/S-2/S-3** — spec scope wording; POSIX lock-probe follow-up; D1 wording nit | Carried | Unchanged — recorded in SUGGESTIONs |
+
+### Design deviations — judged against the specs
+1. **Platform scope of the ghost probe** (non-Windows O_EXCL → inconclusive, never reclaims): WARNING **W-1**. It does not break a spec MUST: the hazardous direction (removing a live holder's files) is closed, REQ-GW3's inconclusive clauses are honored, and REQ-GW2's "MUST reclaim only after the probe proves death" is kept literally honest; the cost is that the positive reclaim scenario and the live-holder exception are unreachable off-Windows and the spec carries no platform qualifier.
+2. **"letterless" = no letter and no digit** (design D4 wording): WARNING **W-2**. Spec-compatible: REQ-FTS1 requires hyphen/accent/operator handling and zero-signal — all met; keeping digit-only tokens preserves unicode61 FTS tokens and REQ-RR2 rank ordering; the design's cited `*` example still drops.
+3. **Observation-first summary resolution** (`session-summary-{id}` preferred, `sessions.summary` fallback): WARNING **W-3**. Spec-compatible: REQ-FR1 names the `session_summary` observation as the read source ("by id or for the latest summary"); the fallback keeps legacy rows readable.
 
 ### Issues Found
-**CRITICAL**: None. (No failing test, no `UNTESTED`/`FAILING` scenario with a checked-in-expectation gap on Windows; the W2 gap that previously forced a runtime-only claim is closed.)
+**CRITICAL**: None. No failing test, no scenario without a passing covering test, no spec-breaking deviation, no incomplete task.
 
 **WARNING**:
-- **W-1 — Spec text remains platform-unqualified while positive REQ-GW\* behavior is now Windows-only.** Off Windows, the live-holder exception and the positive reclaim path are structurally unreachable (probe cannot observe a holder). Files are never at risk (the hazardous direction is closed) and every MUST-NOT is honored, but a spec reader cannot derive the platform scope; REQ-GW2's positive scenario is unserved off-Windows. Recorded tradeoff exists (code + apply-progress) but the spec/design were not updated.
-- **W-2 — Non-Windows verification is inspection-only in this round.** The checked-in non-Windows expectations were not executed (no WSL/cross-compilation by explicit instruction). Window-limited but accepted; re-run on Linux CI would close it.
+- **W-1** — Spec/design remain platform-unqualified while the positive REQ-GW2 reclaim path and the live-holder exception are structurally unreachable off-Windows (files never at risk; safe direction). Non-Windows evidence in this round is inspection-only.
+- **W-2** — Design D4 wording ("drop letterless tokens") is realized as "no letter and no digit"; documented in apply-progress, spec-compatible (digit tokens preserve REQ-RR2 rank ordering).
+- **W-3** — Design D3 did not pin the summary source; implementation resolves the deterministic observation first (spec's named source) with `sessions.summary` as fallback; documented, spec-compatible.
+- **W-4** — `apply-progress.md` contains **no `use-modern-go` consultation evidence** for any touched Go file (grep: zero matches; only the earlier PR-1 verify report mentions it). Delegation requires the apply evidence to exist; it does not. Verifier's own due diligence: `use-modern-go list`/`explain` consulted for the primary touched files (`bigmem.go`, `cmd/biggz-mcp/main.go`, `session_guard.go`) — no substantive modernization missed; the only literal matches are two bounded `i < 2` loops in new test files (one has a changing bound, which `range_over_int` explicitly exempts; the other is a style nit).
 
 **SUGGESTION**:
-- **S-1** — Scope REQ-GW\* to Windows in the spec delta, or state the non-Windows limitation in `design.md`, so the Windows-only positive path is derivable from the artifacts (mirrors stale-report S2, still open).
-- **S-2** — Track the POSIX advisory-lock probe (fcntl on SQLite lock bytes) as the follow-up that restores non-Windows reclaiming; it is already named out-of-scope in `liveness_other.go`.
-- **S-3** — (Carried) Clarify design D1's "(handle held through `os.Remove`)" wording — the probe handle closes before best-effort removal; the TOCTOU window is benign (failed removal leaves files; primary still opens).
+- **S-1** — Scope REQ-GW\* to Windows in the spec delta, or state the non-Windows limitation in `design.md` (carried; still open).
+- **S-2** — Track the POSIX advisory-lock probe (`fcntl` on SQLite lock bytes) as the follow-up restoring non-Windows reclaiming (already named out-of-scope in `liveness_other.go`).
+- **S-3** — Clarify design D1's "(handle held through `os.Remove`)" wording (the probe handle closes before best-effort removal; the TOCTOU window is benign).
 
 ### Limits of This Verification
-- **Executed (this run, Windows/amd64, Go 1.26.1)**: focused ghost/liveness/reclaim tests (14 PASS, 1 by-design SKIP), full `internal/bigmem` suite, `TestGhostWAL_Stale_Removed` verbose, `go vet`, `gofmt -l`, `go build ./...`. All exit 0; hashes recorded above.
-- **Inspected only**: non-Windows probe semantics and every non-Windows-specific expectation (`liveness_other.go`, matrix `wantOther`, `TestGhostWAL_NonWindows_LiveHolderKeepsFiles`); the Phase 1b blast-radius accounting (diff/numstat, since slice 1 was never committed, Phase-1b-vs-slice-1 isolation rests on exact arithmetic + hunk attribution); design/tasks/apply-progress conformance.
-- **Not verified**: Phases 2–5 (unstarted); cross-platform execution (explicitly out of scope this round); CI wiring that would execute the non-Windows tests; the implementer's WSL runs were not re-run and are not used as this verifier's evidence.
-- **Tree state**: uncommitted for human review (no commits/branches created); only this report was added.
+- **Executed (this run, Windows/amd64, Go 1.26.1)**: `go build ./...`; full suite (`go test ./... -count=1 -timeout 240s`); six focused per-test runs; `use-modern-go` `list`/`explain`; the live-MCP E2E (two runs; v2 authoritative, v1 retained as a harness-lesson log).
+- **Inspected only**: non-Windows probe semantics and every non-Windows-specific expectation (`liveness_other.go`, matrix `wantOther`, `TestGhostWAL_NonWindows_LiveHolderKeepsFiles` — skips ON Windows); design/tasks/apply-progress conformance.
+- **Not verified**: non-Windows execution (explicitly out of scope this round); CI wiring for the non-Windows tests; coverage (no gate).
+- **Isolation**: the real store `C:\Users\USER\.biggz\bigmem` was never opened by any harness process (all ran with `USERPROFILE`/`HOME` overridden to a temp home); its directory listing, `bigmem.db` size and mtime are identical before/after.
+- **Tree state**: only `tasks.md` (5.1/5.2 checkboxes) and this report were written; no commit, no push, no ledger interaction (orchestrator-held token).
 
 ### Verdict
-**PASS WITH WARNINGS** — On Windows (the platform of the reported defect), all 11 REQ-GW1/GW2/GW3 scenarios pass with checked-in tests executed in this run, including the reclaim path (seam-proven), the checkpoint-failure path, and the REQ-GW3 inconclusive fallback that previously lacked a checked-in assertion. Stale-report findings **W1 and W2 are CLOSED**; the Phase 1b fix introduces no new violating behavior — its cost is that off-Windows positive reclaim and the live-holder exception become structurally unreachable (safe direction, recorded tradeoff), which the unqualified spec text still does not state (**W-1**). This is not a rounded-up PASS: off-Windows claims rest on source inspection only (**W-2**), and the spec/platform scope mismatch remains open as W-1/S-1. Change-level verify/archive remain blocked until Phases 2–5 complete.
+**PASS WITH WARNINGS** — The complete change: 21/21 tasks, build and full suite green (60 `ok` / 0 FAIL), all 7 requirements and 27 scenarios covered by passing tests (24 executed-compliant; 3 asset-enforced discipline clauses PARTIAL), and the live-MCP E2E proves the four defect fixes end-to-end with the real store untouched. The warnings are the non-Windows platform-scope residual (W-1), two documented design deviations judged spec-compatible (W-2/W-3), and missing modern-go evidence in apply-progress (W-4) — none blocks archive; W-1/S-1 remain the follow-up documentation gap.
