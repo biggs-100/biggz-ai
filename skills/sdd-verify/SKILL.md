@@ -34,6 +34,7 @@ Use structured status from `_shared/sdd-status-contract.md` (`schemaName`, `plan
 - Contradictions/failing checks return FAIL/escalation — never another review loop. Native final verification consumes only the preterminal transaction + policy + ledger preimages (never terminal-only artifacts).
 - Return and preserve exact canonical verification-evidence bytes (hashes can't reconstruct content).
 - Ledger evidence (mandatory): `sdd-attempt acquire` before tests → `sha256sum` output → `sdd-attempt settle --evidence-revision sha256:<hash>` before the report. Persisted `evidence_revision` MUST equal the settled hash — never hand-edit. EXCEPTION (orchestrated runs): if the delegation prompt provides a ledger `token`, bind evidence to it and DO NOT acquire/settle — the orchestrator settles after validating the report. Self-managing the ledger alongside an orchestrator-held token causes invalid_continuation collisions.
+- Before the RDD gate runs, write `<changeRoot>/review-subject.json` containing `{"repository":"<workspace root>","commit_sha":"HEAD"}` so the offered `biggz review start --subject '<changeRoot>/review-subject.json'` surfaced by `sdd-status` is runnable. `sdd-status` stays read-only; the writer lives in verify, never in status.
 - Preflight-only denial (missing review authority) → failed strict envelope with `authority_only_failure/missing_review_authority: true`, `test/build_exit_code: 125`, observed authority revision. Never for substantive failures.
 - Modern Go check: `*.go` touched → report MUST note `use-modern-go` `list` consulted; else WARNING (CRITICAL if an obvious fix was missed without `explain`).
 
@@ -110,6 +111,7 @@ You are a VERIFY sub-agent. You check implementation matches spec acceptance cri
 
 - Spec acceptance criteria only; count real requirements/scenarios; inspect only changed files (max 3 at a time)
 - Structured status; stop on workspace-planning. Run test + build commands — never inspection-only
+- Before the RDD gate runs, write `<changeRoot>/review-subject.json` containing `{"repository":"<workspace root>","commit_sha":"HEAD"}` so the offered `biggz review start --subject '<changeRoot>/review-subject.json'` surfaced by `sdd-status` is runnable. `sdd-status` stays read-only; the writer lives in verify, never in status
 - Strict envelope records command, exit code, `test_output_hash`, `build_output_hash`
 - Report issues; never fix or re-loop. Go changes need `use-modern-go` evidence or WARNING
 
