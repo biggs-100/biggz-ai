@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode"
 
 	projpkg "github.com/biggs-100/biggz-ai/internal/project"
 	_ "modernc.org/sqlite"
@@ -276,29 +277,72 @@ func isGhostWAL(dbPath string) bool {
 	return true
 }
 
-// probeGhostLiveness attempts atomic O_CREATE|O_EXCL probe to detect live holder.
-// Returns true if probe succeeds (no live holder, safe to reclaim), false if busy.
-// Uses a sibling probe file with O_EXCL for atomic claim; fail means live holder or race.
-func probeGhostLiveness(dbPath string) bool {
-	probePath := dbPath + ".ghost_probe"
-	f, err := os.OpenFile(probePath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0644)
-	if err != nil {
-		return false
+// ghostClass classifies the primary DB's WAL/SHM state for the open path.
+type ghostClass int
+
+const (
+	ghostNone         ghostClass = iota // not a stale ghost shape (fresh or other sizes)
+	ghostStale                          // stale ghost shape, probe proved no live holder
+	ghostLiveHolder                     // stale ghost shape, probe proved a live holder
+	ghostInconclusive                   // stale ghost shape, probe proved neither
+)
+
+// classifyGhostWAL implements REQ-GW1/GW2/GW3: it layers the platform liveness
+// probe on the unchanged isGhostWAL shape+freshness gate. Fresh or non-ghost
+// shapes are ghostNone (normal open). A stale ghost shape with a proven live
+// holder (e.g. biggz-mcp) is ghostLiveHolder: it MUST NOT be reclaimed or fall
+// back to bigmem_recovered. A stale shape whose probe proves the previous
+// holder dead is ghostStale (REQ-GW2 reclaim). Any other outcome is
+// ghostInconclusive (REQ-GW3 recovered fallback intact).
+func classifyGhostWAL(dbPath string) ghostClass {
+	if !isGhostWAL(dbPath) {
+		return ghostNone
 	}
-	f.Close()
-	_ = os.Remove(probePath)
-	return true
+	holder, proven := ghostProbeDBLiveness(dbPath)
+	switch {
+	case !proven:
+		return ghostInconclusive
+	case holder:
+		return ghostLiveHolder
+	default:
+		return ghostStale
+	}
+}
+
+// ghostProbeDBLiveness is a seam over probeDBLiveness so tests can force a
+// probe outcome (e.g. inconclusive) without platform tricks.
+var ghostProbeDBLiveness = probeDBLiveness
+
+// ghostReclaimCheckpoint is a seam over checkpointDB so tests can inject a
+// failing TRUNCATE checkpoint and assert it never fails Open (REQ-GW2).
+var ghostReclaimCheckpoint = checkpointDB
+
+// reclaimStaleWAL implements the REQ-GW2 stale reclaim after the probe proved
+// the previous holder dead: remove the zombie wal/shm (plus any leftover from
+// the legacy O_EXCL probe) and run a best-effort TRUNCATE checkpoint before
+// the caller opens the primary DB. Removal and checkpoint errors are
+// deliberately discarded: the caller opens the primary either way and never
+// falls back to recovered.
+func reclaimStaleWAL(dbPath string) {
+	_ = os.Remove(dbPath + "-wal")
+	_ = os.Remove(dbPath + "-shm")
+	_ = os.Remove(dbPath + ".ghost_probe")
+	_ = ghostReclaimCheckpoint(dbPath)
 }
 
 // checkpointDB runs PRAGMA wal_checkpoint(TRUNCATE) on the given DB file.
-func checkpointDB(dbPath string) {
+// It returns the exec error for observability; best-effort callers (GW2
+// reclaim, copies, merges) deliberately ignore it so a failing checkpoint
+// never fails Open (REQ-GW2).
+func checkpointDB(dbPath string) error {
 	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
-		return
+		return err
 	}
 	defer db.Close()
 	db.Exec("PRAGMA busy_timeout=5000")
-	_, _ = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	_, err = db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
+	return err
 }
 
 // safeCopyDB copies srcPath to dstPath with a WAL checkpoint before copy.
@@ -525,40 +569,19 @@ func ResolveDBPath(rootDir string) (string, error) {
 	_ = os.MkdirAll(rootDir, 0755)
 	primaryPath := bigmemDBPathForRoot(rootDir)
 	recoveredPath := recoveredDBPathForRoot(rootDir)
-	walPath := primaryPath + "-wal"
-	shmPath := primaryPath + "-shm"
 	needsFallback := false
-	if isGhostWAL(primaryPath) {
-		if probeGhostLiveness(primaryPath) {
-			// GW2: stale + O_EXCL probe ok -> Remove wal/shm + checkpoint before sql.Open
-			_ = os.Remove(walPath)
-			_ = os.Remove(shmPath)
-			if _, err := os.Stat(shmPath); err == nil {
-				if f, err := os.OpenFile(shmPath, os.O_WRONLY, 0644); err == nil {
-					_ = f.Truncate(0)
-					f.Close()
-					_ = os.Remove(shmPath)
-				}
-			}
-			if _, err := os.Stat(walPath); err == nil {
-				if f, err := os.OpenFile(walPath, os.O_WRONLY, 0644); err == nil {
-					_ = f.Truncate(0)
-					f.Close()
-					_ = os.Remove(walPath)
-				}
-			}
-			// checkpoint best-effort before sql.Open, swallow errors (GW2)
-			checkpointDB(primaryPath)
-			if _, err := os.Stat(shmPath); err == nil {
-				needsFallback = true
-			}
-			if _, err := os.Stat(walPath); err == nil {
-				needsFallback = true
-			}
-		} else {
-			// GW3: busy/O_EXCL fails -> preserve wal/shm, fallback intact
-			needsFallback = true
-		}
+	switch classifyGhostWAL(primaryPath) {
+	case ghostStale:
+		// REQ-GW2: the probe proved the previous holder dead -> reclaim the
+		// zombie wal/shm and open the primary directly (never recovered).
+		reclaimStaleWAL(primaryPath)
+	case ghostLiveHolder:
+		// REQ-GW1/GW3: a live holder (e.g. biggz-mcp) owns the store. wal/shm
+		// MUST NOT be touched and no recovered warning or fallback may run.
+	case ghostInconclusive:
+		// REQ-GW3: probe inconclusive (race/lock) -> keep wal/shm and keep the
+		// existing recovered fallback intact.
+		needsFallback = true
 	}
 	if needsFallback {
 		recoveredDir := filepath.Dir(recoveredPath)
@@ -1456,6 +1479,13 @@ func (s *Store) RescueNullProjectOwnership(project string, opts RescueOptions) (
 
 // ─── Save with dedup ─────────────────────────────────────────────────────────
 
+// SessionSummaryObsID returns the deterministic observation id for a session's
+// summary (REQ-SC1). It is the stable key that makes repeated closes update the
+// same row in place instead of inserting duplicates.
+func SessionSummaryObsID(sessionID string) string {
+	return "session-summary-" + strings.TrimSpace(sessionID)
+}
+
 // Save persists an observation with full engram-compatible dedup:
 //  1. topic_key match → update existing (increment revision_count)
 //  2. normalized_hash + window → increment duplicate_count
@@ -1490,7 +1520,13 @@ func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...strin
 		}
 	}
 
-	if obs.ID == "" {
+	// REQ-SC1: session summaries are exactly-once per session id. The
+	// deterministic primary key routes repeated closes (retry or CLI
+	// fallback) through ON CONFLICT(id) DO UPDATE, updating in place.
+	isSessionSummary := obs.Type == "session_summary" && strings.TrimSpace(obs.SessionID) != ""
+	if isSessionSummary {
+		obs.ID = SessionSummaryObsID(obs.SessionID)
+	} else if obs.ID == "" {
 		obs.ID = fmt.Sprintf("obs-%d-%d", time.Now().UnixNano(), atomic.AddInt64(&globalIDSeq, 1))
 	}
 	now := time.Now().UTC()
@@ -1553,8 +1589,10 @@ func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...strin
 			return err
 		}
 	}
-	// Phase 1: topic_key dedup — update existing with same topic_key + project + scope
-	if obs.TopicKey != "" {
+	// Phase 1: topic_key dedup — update existing with same topic_key + project + scope.
+	// Skipped for session summaries: the deterministic key above is the
+	// identity, so a topic_key must never re-route the write to another row.
+	if obs.TopicKey != "" && !isSessionSummary {
 		var existingID string
 		var existingCreated string
 		if qErr := tx.QueryRowContext(ctx,
@@ -1596,9 +1634,12 @@ func (s *Store) SaveCtx(ctx context.Context, obs *Observation, parentID ...strin
 		}
 	}
 
-	// Phase 2: hash-based dedup within window
-	window := dedupeWindowExpression(0)
-	{
+	// Phase 2: hash-based dedup within window. Skipped for session summaries:
+	// the deterministic key already guarantees one row per session, and the
+	// window merge would otherwise fold two sessions with identical content
+	// into a single observation, leaving the second close unsearchable.
+	if !isSessionSummary {
+		window := dedupeWindowExpression(0)
 		var existingID string
 		if qErr := tx.QueryRowContext(ctx,
 			`SELECT id FROM observations
@@ -1779,8 +1820,50 @@ func (s *Store) GetCtx(ctx context.Context, id string) (*Observation, error) {
 
 // ─── Search with BM25 ranking ────────────────────────────────────────────────
 
+// sanitizeFTSTerms converts a raw query into an FTS5 MATCH expression where
+// every token is a quoted literal, so hyphens, accents, and operator words are
+// never parsed as FTS syntax (REQ-FTS1). Per token: strip any `"`, drop
+// tokens without a letter or digit (unicode61 tokenizes them away, so they
+// would only zero the MATCH), then wrap the rest in `"..."`. Tokens join with
+// `AND` (mode `all`, also the default) or `OR` (mode `any`).
+//
+// hasTokens=false means no FTS-usable token survived (punctuation-only input):
+// callers must not build a MATCH — a zero-result search stays an explicit
+// empty result set instead of an FTS parse error.
+func sanitizeFTSTerms(query, mode string) (fts string, hasTokens bool) {
+	parts := make([]string, 0, 8)
+	for tok := range strings.FieldsSeq(query) {
+		tok = strings.ReplaceAll(tok, `"`, "")
+		if !hasFTSAlnum(tok) {
+			continue
+		}
+		parts = append(parts, `"`+tok+`"`)
+	}
+	if len(parts) == 0 {
+		return "", false
+	}
+	sep := " AND "
+	if mode == "any" {
+		sep = " OR "
+	}
+	return strings.Join(parts, sep), true
+}
+
+// hasFTSAlnum reports whether tok keeps at least one letter or digit.
+func hasFTSAlnum(tok string) bool {
+	for _, r := range tok {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return true
+		}
+	}
+	return false
+}
+
 // Search finds observations using FTS5 full-text search with BM25 ranking.
-// Supports "all" (AND) and "any" (OR) match modes.
+// Multi-token queries are sanitized per token (sanitizeFTSTerms) so hyphens,
+// accents, and operator words are literals; "all" (AND, default) and "any"
+// (OR) match modes are supported (REQ-FTS1). A zero-match search returns an
+// explicit empty result set with a nil error — never a MATCH parse error.
 // If query contains "/", does an exact topic_key lookup first.
 func (s *Store) Search(query string, opts SearchOptions) (results []*Observation, err error) {
 	return s.SearchCtx(context.Background(), query, opts)
@@ -1908,24 +1991,9 @@ func (s *Store) SearchCtx(ctx context.Context, query string, opts SearchOptions)
 		args = append(args, limit)
 		q, args = appendOffset(q, args, opts)
 		rows, err = s.db.QueryContext(ctx, q, args...)
-	} else {
-		// FTS5 with BM25 ranking — "all" = AND, "any" = OR (Engram parity)
-		var ftsQuery string
-		if opts.MatchMode == "any" {
-			terms := strings.Fields(query)
-			for i, t := range terms {
-				terms[i] = strings.ReplaceAll(t, "\"", "")
-			}
-			ftsQuery = strings.Join(terms, " OR ")
-		} else {
-			// "all" (default): AND semantics — each term wrapped in quotes
-			terms := strings.Fields(query)
-			for i, t := range terms {
-				terms[i] = "\"" + strings.ReplaceAll(t, "\"", "") + "\""
-			}
-			ftsQuery = strings.Join(terms, " AND ")
-		}
-
+	} else if ftsQuery, hasTokens := sanitizeFTSTerms(query, opts.MatchMode); hasTokens {
+		// FTS5 with BM25 ranking — sanitized tokens are quoted literals joined
+		// with AND ("all"/default) or OR ("any") (REQ-FTS1, Engram parity).
 		sqlQ := `SELECT o.id, o.title, o.type, o.content, o.session_id, o.tool_name,
 			o.topic_key, o.project, o.scope, o.normalized_hash, o.revision_count, o.duplicate_count,
 			o.last_seen_at, o.review_after, o.pinned, o.created_at, o.updated_at, o.deleted_at
@@ -1952,6 +2020,12 @@ func (s *Store) SearchCtx(ctx context.Context, query string, opts SearchOptions)
 		args = append(args, limit)
 		sqlQ, args = appendOffset(sqlQ, args, opts)
 		rows, err = s.db.QueryContext(ctx, sqlQ, args...)
+	} else {
+		// No FTS-usable token survived sanitizing (punctuation-only query):
+		// LIKE carries the search so zero stays an explicit empty result
+		// instead of a MATCH parse error.
+		likeSQL, likeArgs := buildLikeSearchSQL(query, opts, limit)
+		rows, err = s.db.QueryContext(ctx, likeSQL, likeArgs...)
 	}
 	if err != nil {
 		// FTS error — fallback to LIKE search
