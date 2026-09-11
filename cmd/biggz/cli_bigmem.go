@@ -286,6 +286,10 @@ func bigmemRun() int {
 		}
 		if len(results) == 0 {
 			fmt.Println("No results.")
+			if opts.MatchMode != "any" && strings.TrimSpace(query) != "" {
+				// Zero-result retry hint (REQ-FTS1): mirrors the MCP envelope hint.
+				fmt.Println("No all-mode matches. Retry with --match-mode any to broaden the search.")
+			}
 			if opts.Project != "" {
 				fmt.Fprintf(os.Stderr, "No results for %q in project %q. Try --all or --project biggz-ai.\n", query, opts.Project)
 			}

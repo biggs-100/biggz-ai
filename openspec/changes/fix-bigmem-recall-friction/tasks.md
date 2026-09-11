@@ -55,9 +55,9 @@ Driven by `verify-report.md`: off Windows the O_EXCL probe cannot observe a live
 
 ## Phase 3: FTS sanitization · PR 3
 
-- [ ] 3.1 RED: sanitize table (hyphen `gentle-pi`, accent `sesión`, operators, letterless); any-mode hits; zero signal+hint; REQ-RR2 ordering.
-- [ ] 3.2 `internal/bigmem/bigmem.go`: per-token sanitize (strip `"`, quote, join AND/OR); explicit zero-result signal.
-- [ ] 3.3 `cmd/biggz-mcp/main.go` zero envelope (`zero_results`+`hint`); `cli_bigmem.go` mirrors hint.
+- [x] 3.1 RED: sanitize table (hyphen `gentle-pi`, accent `sesión`, operators, letterless); any-mode hits; zero signal+hint; REQ-RR2 ordering.
+- [x] 3.2 `internal/bigmem/bigmem.go`: per-token sanitize (strip `"`, quote, join AND/OR); explicit zero-result signal.
+- [x] 3.3 `cmd/biggz-mcp/main.go` zero envelope (`zero_results`+`hint`); `cli_bigmem.go` mirrors hint.
 
 ## Phase 4: Summary read + recall discipline · PR 4
 

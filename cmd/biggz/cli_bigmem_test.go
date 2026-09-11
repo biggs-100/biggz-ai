@@ -140,3 +140,57 @@ func TestBigmemSyncImport_EngramDirEqualsForm(t *testing.T) {
 		t.Fatalf("expected exit 0 for --engram-dir= form, got %d stderr=%q", code, stderr)
 	}
 }
+
+// TestBigmemSearch_ZeroHintAndHyphenHit proves the CLI half of REQ-FTS1: the
+// all-mode zero retry hint, the silent any-mode zero, and hyphenated hits.
+func TestBigmemSearch_ZeroHintAndHyphenHit(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.Setenv("HOME", dir)
+	_ = os.Setenv("USERPROFILE", dir)
+	for _, seed := range [][]string{
+		{"save", "Hyphen note", "marcador gentle-pi unico", "--type", "note", "--scope", "project", "--project", "probe"},
+		{"save", "Ruido note", "ruido blanco suave", "--type", "note", "--scope", "project", "--project", "probe"},
+	} {
+		if code, _, stderr := captureBigmemRun(seed); code != 0 {
+			t.Fatalf("seed save exit %d stderr=%q", code, stderr)
+		}
+	}
+
+	t.Run("all-mode zero prints retry hint", func(t *testing.T) {
+		code, stdout, _ := captureBigmemRun([]string{"search", "gentle-pi qqq-inexistente", "--project", "probe"})
+		if code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		if !strings.Contains(stdout, "No results.") {
+			t.Fatalf("stdout must keep the zero signal, got %q", stdout)
+		}
+		if !strings.Contains(stdout, "--match-mode any") {
+			t.Errorf("stdout must mirror the retry hint, got %q", stdout)
+		}
+	})
+
+	t.Run("any-mode zero has no retry hint", func(t *testing.T) {
+		code, stdout, _ := captureBigmemRun([]string{"search", "qqq-inexistente zzz-inexistente", "--match-mode", "any", "--project", "probe"})
+		if code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		if !strings.Contains(stdout, "No results.") {
+			t.Fatalf("stdout must keep the zero signal, got %q", stdout)
+		}
+		if strings.Contains(stdout, "--match-mode any to broaden") {
+			t.Errorf("any-mode zero must not hint, got %q", stdout)
+		}
+	})
+
+	t.Run("any-mode hyphenated hits", func(t *testing.T) {
+		code, stdout, _ := captureBigmemRun([]string{"search", "gentle-pi ruido", "--match-mode", "any", "--project", "probe"})
+		if code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		for _, want := range []string{"Hyphen note", "Ruido note"} {
+			if !strings.Contains(stdout, want) {
+				t.Errorf("any-mode hyphenated search must return %q, got %q", want, stdout)
+			}
+		}
+	})
+}

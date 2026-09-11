@@ -810,6 +810,16 @@ func handleToolCall(id any, name string, args map[string]any) {
 		if anyPreviewTruncated {
 			fmt.Fprintln(os.Stderr, "Results above are previews (120 chars). Call biggz_mem_get_observation for full content.")
 		}
+		if len(entries) == 0 {
+			// Explicit zero-result signal (REQ-FTS1): the empty match set plus a
+			// retry hint when the widest mode (any) has not been tried yet.
+			envelope := map[string]any{"results": entries, "zero_results": true}
+			if matchMode != "any" && strings.TrimSpace(query) != "" {
+				envelope["hint"] = "No matches in match_mode=all. Retry with match_mode=any to broaden the search."
+			}
+			jsonResult(id, envelope)
+			return
+		}
 		// Append activity nudge if needed
 		if nudge := sessionActivity.NudgeIfNeeded(sessForActivity); nudge != "" && len(entries) > 0 {
 			// Append nudge as extra entry hint; for now just log to stderr and keep JSON pure

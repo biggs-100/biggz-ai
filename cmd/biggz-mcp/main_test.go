@@ -62,6 +62,24 @@ func parseRPC(t *testing.T, raw string) *rpcResponse {
 	return &r
 }
 
+// resultText extracts the first text content block from a result, unescaping
+// the JSON payloads that jsonResult emits as text.
+func resultText(t *testing.T, r *rpcResponse) string {
+	t.Helper()
+	var res struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.Unmarshal(r.Result, &res); err != nil {
+		t.Fatalf("unmarshal result: %v", err)
+	}
+	if len(res.Content) == 0 {
+		t.Fatalf("result has no content: %s", string(r.Result))
+	}
+	return res.Content[0].Text
+}
+
 func toolNames(tools []map[string]any) []string {
 	names := make([]string, len(tools))
 	for i, t := range tools {
@@ -430,6 +448,60 @@ func TestHandleToolCall_mem_search(t *testing.T) {
 		r := parseRPC(t, raw)
 		if r.Error != nil {
 			t.Fatalf("unexpected error: %v", r.Error)
+		}
+	})
+}
+
+// TestMemSearch_ZeroEnvelope proves REQ-FTS1's zero contract: all-mode zero
+// carries zero_results + a retry hint, any-mode zero only the signal, and a
+// hyphenated any-mode query hits instead of erroring.
+func TestMemSearch_ZeroEnvelope(t *testing.T) {
+	setupStore(t)
+	store.Save(&bigmem.Observation{Title: "Hyphen target", Content: "marcador gentle-pi unico", Type: "note", Project: "test"})
+
+	t.Run("all mode zero signals and hints", func(t *testing.T) {
+		raw := captureStdout(t, func() {
+			handleToolCall("z1", "mem_search", map[string]any{"query": "gentle-pi qqq-inexistente", "project": "test"})
+		})
+		r := parseRPC(t, raw)
+		if r.Error != nil {
+			t.Fatalf("unexpected error: %v", r.Error)
+		}
+		out := resultText(t, r)
+		for _, want := range []string{`"zero_results":true`, `"results":[]`, "match_mode=any"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("all-mode zero envelope must contain %s, got %s", want, out)
+			}
+		}
+	})
+
+	t.Run("any mode zero signals without hint", func(t *testing.T) {
+		raw := captureStdout(t, func() {
+			handleToolCall("z2", "mem_search", map[string]any{"query": "qqq-inexistente zzz-inexistente", "match_mode": "any", "project": "test"})
+		})
+		r := parseRPC(t, raw)
+		if r.Error != nil {
+			t.Fatalf("unexpected error: %v", r.Error)
+		}
+		out := resultText(t, r)
+		if !strings.Contains(out, `"zero_results":true`) {
+			t.Errorf("any-mode zero must still signal zero_results, got %s", out)
+		}
+		if strings.Contains(out, "hint") {
+			t.Errorf("any-mode zero must not emit a retry hint, got %s", out)
+		}
+	})
+
+	t.Run("hyphenated any mode hits", func(t *testing.T) {
+		raw := captureStdout(t, func() {
+			handleToolCall("z3", "mem_search", map[string]any{"query": "gentle-pi", "match_mode": "any", "project": "test"})
+		})
+		r := parseRPC(t, raw)
+		if r.Error != nil {
+			t.Fatalf("unexpected error: %v", r.Error)
+		}
+		if !strings.Contains(resultText(t, r), "Hyphen target") {
+			t.Errorf("hyphenated any-mode query must hit, got %s", resultText(t, r))
 		}
 	})
 }

@@ -1,11 +1,12 @@
 # Apply Progress — fix-bigmem-recall-friction
 
 - **Change:** fix-bigmem-recall-friction
-- **Slice:** 1 + Phase 1b (Phase 1 — Ghost-WAL liveness, PR 1 of the feature-branch-chain); Phase 2 — Searchable close (PR 2 of the chain; see the Phase 2 section)
+- **Slice:** 1 + Phase 1b (Phase 1 — Ghost-WAL liveness, PR 1 of the feature-branch-chain); Phase 2 — Searchable close (PR 2 of the chain; see the Phase 2 section); Phase 3 — FTS sanitization (PR 3 of the chain; see the Phase 3 section)
 - **Status:** complete (tasks 1.1–1.4) — runtime harness evidence + bookkeeping finished in this continuation run (the previous apply run hit the 20-minute task-mode timeout after the code was green, before harness evidence and bookkeeping). Phase 1b (tasks 1b.1–1b.5) added in a later continuation run; see the Phase 1b section for evidence; its one off-surface residual (`TestGhostWAL_Stale_Removed`) was resolved in a follow-up run via the liveness seam — no residual remains. Phase 2 (tasks 2.1–2.4) complete in a later continuation run — RED, implementation, exactly-once runtime harness and rollback evidence in the Phase 2 section.
 - **Mode:** Standard (`strict_tdd: false` for this project; no Strict-TDD cycle table applies)
 - **Branch / base:** `fix/bigmem-recall-friction-1-ghost-wal` (tracker: `fix/bigmem-recall-friction`, base `bed2d881`) — uncommitted, left dirty for human review
 - **Phase 2 branch / base:** `fix/bigmem-recall-friction-2-searchable-close`, base = PR 1 branch at `5d2d9871` — uncommitted, left dirty for human review
+- **Phase 3 branch / base:** `fix/bigmem-recall-friction-3-fts-sanitize`, base = PR 2 branch at `a381065e` — uncommitted, left dirty for human review
 - **Environment:** Go 1.26.1 windows/amd64
 
 ## Tasks Completed
@@ -309,13 +310,133 @@ $ go build ./...                                          # BUILD_OK
 
 Revert `internal/bigmem/bigmem.go` (routing + dedup bypass + `SessionSummaryObsID`), `internal/bigmem/full.go` (`SessionEnd` dual-write + seam + retry), `internal/sdd/session_guard.go` (drop duplicate save + `--session-id`), `cmd/biggz/cli_bigmem.go` (`--session-id` flag) and delete `internal/bigmem/session_close_test.go`; revert the two test additions in `internal/sdd/session_guard_test.go` / `cmd/biggz/cli_bigmem_test.go`. → back to `SessionEnd` writing only the `sessions` row (PR 1 state at `5d2d9871`). Self-contained: no other file depends on the new symbols; slice 1 is untouched.
 
+## Phase 3 — FTS sanitization (REQ-FTS1)
+
+- **Scope:** tasks 3.1–3.3 (defect #3: any-mode multi-token queries with hyphens were parsed as FTS syntax — `gentle-pi OR ruido` made FTS error with `no such column: pi`, the LIKE fallback compared the whole raw string and the search returned zero silently).
+- **Files:** table below. Authored changed lines: 193 tracked (+193/−19) + 171 new = **383** (under the 400 budget; slice 1's `size:exception` does NOT extend here). SDD ledger updates (tasks.md + this section) stay outside the authored count per the convention recorded in slice 2.
+- **Mode:** Standard (`strict_tdd: false`); RDD enabled — every PASS below is raw output from this run.
+
+### Implementation
+
+| File | +/- | Purpose |
+|------|-----|---------|
+| `internal/bigmem/bigmem.go` | +53/−19 | `sanitizeFTSTerms(query, mode) (fts string, hasTokens bool)`: per token strip `"`, drop tokens without a letter or digit, wrap the rest in `"..."`, join `AND` (all/default) or `OR` (any); `hasFTSAlnum` helper; `SearchCtx` FTS branch guards on `hasTokens` — punctuation-only queries go straight to LIKE so zero stays an explicit empty result, never a MATCH parse error |
+| `internal/bigmem/fts_sanitize_test.go` | +171 (new) | `TestSanitizeFTSTerms` (12-case table) + 5 integration tests: any-mode hyphen hits, all-mode AND requires both tokens, explicit zero (nil error), accent fold (`sesión`/`sesion`), ordering preserved (rank vs `updated_at DESC`) |
+| `cmd/biggz-mcp/main.go` | +10 | `mem_search` zero envelope: `{"results":[],"zero_results":true}` + `hint` (retry `match_mode=any`) on all/default-mode zero only |
+| `cmd/biggz-mcp/main_test.go` | +72 | `TestMemSearch_ZeroEnvelope` (3 subtests) + `resultText` helper to unescape the JSON text block |
+| `cmd/biggz/cli_bigmem.go` | +4 | `search` zero path prints the retry hint (`Retry with --match-mode any`) when mode != any and query non-empty |
+| `cmd/biggz/cli_bigmem_test.go` | +54 | `TestBigmemSearch_ZeroHintAndHyphenHit` (3 subtests: all-zero hint, any-zero silent, hyphenated hits) |
+
+Deliberate, documented nuances (verify should read these):
+
+1. **"letterless" implemented as "no letter and no digit".** Design D4 says "drop letterless tokens"; `2026`-style digit tokens are letterless but unicode61 tokenizes digits into real FTS tokens (probed: quoted `"123"`/`"2026"` parse fine, `"2026-09-11"` matches its note). Dropping them would move digit-only queries off rank-ordered FTS → REQ-RR2 regression. The design's cited letterless example (`*`) still drops. Quoting is the actual hyphen/operator fix; dropping is for tokens that tokenize away (`***`), which would only zero an AND expression.
+2. **Zero-result signal placement.** Design Interfaces list only `sanitizeFTSTerms` for `bigmem.go`, so no new store API was added: the store delivers an explicit empty result set with nil error (no MATCH parse error hidden behind the LIKE fallback), and the surfaces emit the signal (`zero_results` in the MCP envelope; `No results.` + hint on the CLI). The CLI hint rides **stdout** (primary response channel, mirrors the in-band MCP hint); the pre-existing project hint stays on stderr untouched.
+
+### RED evidence (before the fix)
+
+```
+$ go test ./internal/bigmem -run 'TestSearch_FTS' -count=1 -v
+=== RUN   TestSearch_FTS_HyphenAnyModeHits
+    fts_sanitize_test.go:45: any-mode "gentle-pi ruido" must return "Hyphen note", got map[]
+    fts_sanitize_test.go:45: any-mode "gentle-pi ruido" must return "Ruido note", got map[]
+    fts_sanitize_test.go:45: any-mode "gentle-pi ruido" must return "Combo note", got map[]
+--- FAIL: TestSearch_FTS_HyphenAnyModeHits (0.08s)
+```
+
+Root-cause probe (raw FTS5, before the fix): `MATCH 'gentle-pi'` → `SQL logic error: no such column: pi`; `MATCH '"gentle-pi"'` → 1 row; `MATCH 'gentle-pi OR ruido'` (old any-mode expression) → same error; `MATCH '"gentle-pi" OR "ruido"'` → 2 rows. Accent check: `sesion` and `"sesión"` both matched the `sesión` note (unicode61 folding verified, not assumed).
+
+### Focused test command + result (this run)
+
+```
+$ go test ./internal/bigmem ./cmd/biggz-mcp ./cmd/biggz -run 'FTS|Match|Search' -count=1
+ok  	github.com/biggs-100/biggz-ai/internal/bigmem	2.930s
+ok  	github.com/biggs-100/biggz-ai/cmd/biggz-mcp	0.755s
+ok  	github.com/biggs-100/biggz-ai/cmd/biggz	0.306s
+```
+
+Verbose: `TestSanitizeFTSTerms`, `TestSearch_FTS_*` (5), `TestMemSearch_ZeroEnvelope`, `TestBigmemSearch_ZeroHintAndHyphenHit` all PASS.
+
+### Package suite command + result (this run)
+
+```
+$ go test ./internal/bigmem ./internal/sdd ./cmd/biggz ./cmd/biggz-mcp -count=1 -timeout 240s
+ok  	github.com/biggs-100/biggz-ai/internal/bigmem	28.877s
+ok  	github.com/biggs-100/biggz-ai/internal/sdd	23.511s
+ok  	github.com/biggs-100/biggz-ai/cmd/biggz	63.214s
+ok  	github.com/biggs-100/biggz-ai/cmd/biggz-mcp	3.832s
+```
+
+### Static checks
+
+```
+$ go vet ./internal/bigmem ./cmd/biggz-mcp ./cmd/biggz   # exit 0, no output
+$ gofmt -l internal/bigmem cmd/biggz-mcp cmd/biggz       # no output (clean)
+```
+
+### Runtime harness evidence
+
+Fixed binaries built from this working tree into `C:\Users\USER\AppData\Local\Temp\tmp.lUasNDQSRS\bin`; `USERPROFILE`/`HOME` pointed at the temp home `...\tmp.lUasNDQSRS\home`. The real store `C:\Users\USER\.biggz\bigmem` was never referenced by any harness command.
+
+```
+$ go build -o $H/bin/biggz-fixed.exe ./cmd/biggz          # exit 0
+$ go build -o $H/bin/biggz-mcp-fixed.exe ./cmd/biggz-mcp  # exit 0
+$ biggz-fixed.exe bigmem save "Hyphen seed" "marcador gentle-pi unico" --type note --scope project --project probe
+Saved: obs-1789137349277529000-1                          # EXIT=0
+$ biggz-fixed.exe bigmem save "Accent seed" "la sesión de cierre" --type note --scope project --project probe
+Saved: obs-1789137349366100700-1                          # EXIT=0
+```
+
+CLI any-mode hyphen `gentle-pi ruido` (the defect query):
+
+```
+$ biggz-fixed.exe bigmem search "gentle-pi ruido" --match-mode any --project probe
+  obs-1789137349277529000-1 [note] Hyphen seed (0s)       # EXIT=0
+```
+
+CLI accent `sesion` (all default) → `obs-1789137349366100700-1 [note] Accent seed`, EXIT=0.
+
+CLI all-mode zero (`gentle-pi qqq-inexistente`), stdout/stderr split:
+
+```
+--stdout--
+No results.
+No all-mode matches. Retry with --match-mode any to broaden the search.
+--stderr--
+No results for "gentle-pi qqq-inexistente" in project "probe". Try --all or --project biggz-ai.
+```
+
+CLI any-mode zero → stdout `No results.` only (no retry hint), EXIT=0.
+
+MCP stdio (`tools/call` piped; no handshake required):
+
+```
+> mem_search {"query":"gentle-pi qqq-inexistente","project":"probe"}
+{"result":{"content":[{"text":"{\"hint\":\"No matches in match_mode=all. Retry with match_mode=any to broaden the search.\",\"results\":[],\"zero_results\":true}","type":"text"}]}}
+
+> mem_search {"query":"qqq-inexistente zzz-inexistente","match_mode":"any","project":"probe"}
+{"result":{"content":[{"text":"{\"results\":[],\"zero_results\":true}","type":"text"}]}}
+
+> mem_search {"query":"gentle-pi ruido","match_mode":"any","project":"probe"}
+... "title":"Hyphen seed" ...                            # hit present, EXIT=0
+```
+
+Negative control — OLD installed `biggz` (PATH build), same temp store, same defect query:
+
+```
+$ biggz bigmem search "gentle-pi ruido" --match-mode any --project probe
+No results.                                               # defect reproduced on the old build
+```
+
+### Rollback boundary (Phase 3)
+
+Revert `internal/bigmem/bigmem.go` (`sanitizeFTSTerms`/`hasFTSAlnum` + the `SearchCtx` FTS-branch guard), `cmd/biggz-mcp/main.go` (zero envelope block), `cmd/biggz/cli_bigmem.go` (retry-hint line), and **delete** `internal/bigmem/fts_sanitize_test.go`; revert the two test additions in `cmd/biggz-mcp/main_test.go` (`TestMemSearch_ZeroEnvelope` + `resultText`) and `cmd/biggz/cli_bigmem_test.go` (`TestBigmemSearch_ZeroHintAndHyphenHit`). → back to raw MATCH expressions (any-mode hyphen miss) and the plain `[]` search response at `a381065e` (PR 2 state). Self-contained: no other file depends on the new symbols; slices 1–2 files are untouched by this slice.
+
 ## Remaining Tasks
 
 Phase 1b residual: RESOLVED — `internal/bigmem/bigmem_test.go > TestGhostWAL_Stale_Removed` now forces `(holder=false, proven=true)` through the `forceProbeSeam` helper (`ghost_test.go`), keeping the REQ-GW2 reclaim assertions intact and platform-independent (see the Phase 1b section for the cross-platform audit + evidence). No residual remains in Phase 1b.
 
-Phases 3–5 (not started, out of this run's scope):
+Phases 4–5 (not started, out of this run's scope):
 
-- Phase 3 (PR 3): FTS sanitization — tasks 3.1–3.3
 - Phase 4 (PR 4): summary read + recall discipline — tasks 4.1–4.3
 - Phase 5: verification — tasks 5.1–5.2
 
