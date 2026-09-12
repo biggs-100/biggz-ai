@@ -42,11 +42,11 @@ CI complexity gate (`internal/review`/`internal/sdd`, non-test): cyclomatic ≤1
 
 ## Phase 2: Materializer + `--materialize` (S1a2)
 
-- [ ] 2.1 RED: `materialize_test.go` — binding, context, name-status, numstat, per-path `GENTLE_AI_REVIEW_PATCH` delimiters
-- [ ] 2.2 RED: >4 MiB → typed cap refusal (no truncation); empty patch on content-changing path → `materialize_vacuous`
-- [ ] 2.3 GREEN: `internal/review/materialize.go` — marker composition, read-only
-- [ ] 2.4 GREEN: `capture-result --materialize` prints exactly bytes, captures nothing; exclusive with `--input`/`--preflight`
-- [ ] 2.5 Verify: chain events + receipts unchanged; bytes deterministic, byte-identical ×2 + foreign cwd
+- [x] 2.1 RED: `materialize_test.go` — binding, context, name-status, numstat, per-path `GENTLE_AI_REVIEW_PATCH` delimiters
+- [x] 2.2 RED: >4 MiB → typed cap refusal (no truncation); empty patch on content-changing path → `materialize_vacuous`
+- [x] 2.3 GREEN: `internal/review/materialize.go` — marker composition, read-only
+- [x] 2.4 GREEN: `capture-result --materialize` prints exactly bytes, captures nothing; exclusive with `--input`/`--preflight`
+- [x] 2.5 Verify: chain events + receipts unchanged; bytes deterministic, byte-identical ×2 + foreign cwd
 
 ## Phase 3: Identity + start canonicalization (S1b1)
 

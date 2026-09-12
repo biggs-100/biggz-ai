@@ -205,6 +205,40 @@ func (i *FrozenInspector) hunksBounded(taskCap, pathCap int) (map[string][]byte,
 	return hunks, nil
 }
 
+// NameStatus returns the frozen `git diff --name-status` bytes between the
+// base and candidate trees, read through the isolated view: the same
+// neutralization as the per-path patches, so repository attributes, external
+// diffs, textconv, and the live worktree cannot move the classification.
+func (i *FrozenInspector) NameStatus() ([]byte, error) {
+	if err := i.usable(); err != nil {
+		return nil, err
+	}
+	return i.gitSmall(i.diffFactArgs("--name-status")...)
+}
+
+// NumStat returns the frozen `git diff --numstat` bytes between the base and
+// candidate trees, read through the isolated view. A binary path reports
+// Git's "-" counts, never blob bytes (--text stays absent).
+func (i *FrozenInspector) NumStat() ([]byte, error) {
+	if err := i.usable(); err != nil {
+		return nil, err
+	}
+	return i.gitSmall(i.diffFactArgs("--numstat")...)
+}
+
+// diffFactArgs is the whole-manifest diff-fact invocation behind NameStatus
+// and NumStat: renames stay disabled so the facts remain aligned with the
+// rename-disabled manifest, and --text is deliberately absent.
+func (i *FrozenInspector) diffFactArgs(shape string) []string {
+	return []string{
+		"-c", "color.ui=false",
+		"-c", "core.attributesFile=" + i.attributesFile,
+		"-c", "diff.external=",
+		"diff", shape, "--no-color", "--no-ext-diff", "--no-textconv",
+		"--no-renames", "--ignore-submodules=none", i.baseTree, i.candidateTree, "--",
+	}
+}
+
 // usable refuses reads on a closed inspector.
 func (i *FrozenInspector) usable() error {
 	if i == nil || i.closed {

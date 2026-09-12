@@ -196,6 +196,7 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "    [--subject-hash <sha>]         Provider-issued artifact subject hash")
 	fmt.Fprintln(os.Stderr, "    --input <file>|-               Raw reviewer result JSON file or - for stdin")
 	fmt.Fprintln(os.Stderr, "    [--preflight]                 Verify the binding and print the artifact subject without persisting")
+	fmt.Fprintln(os.Stderr, "    [--materialize]               Print the complete reviewer task bytes without capturing")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  refute <lineage> --input <file>|-   Register the one read-only refuter batch")
 	fmt.Fprintln(os.Stderr, "                                 Every inferential candidate-causal finding must carry a verdict")
@@ -945,6 +946,7 @@ func reviewCaptureResultRun() int {
 	var lineageID, targetID, lensName, expectedRevision, repositoryContext, subjectHash, input, agentValue string
 	order := -1
 	preflight := false
+	materialize := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--agent":
@@ -1017,12 +1019,14 @@ func reviewCaptureResultRun() int {
 			input = args[i]
 		case "--preflight":
 			preflight = true
+		case "--materialize":
+			materialize = true
 		case "--help", "-h":
-			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight] [--materialize]")
 			return 0
 		default:
 			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
-			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight] [--materialize]")
 			return 1
 		}
 	}
@@ -1058,16 +1062,24 @@ func reviewCaptureResultRun() int {
 
 	if lineageID == "" || targetID == "" || lensName == "" || order < 0 || expectedRevision == "" {
 		fmt.Fprintln(os.Stderr, "error: --lineage, --target, --lens, --order, and --expected-revision are required")
-		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight] [--materialize]")
+		return 1
+	}
+	if materialize && preflight {
+		fmt.Fprintln(os.Stderr, "error: capture-result --materialize and --preflight are mutually exclusive (--materialize already prints the preflight context)")
+		return 1
+	}
+	if materialize && input != "" {
+		fmt.Fprintln(os.Stderr, "error: capture-result --materialize and --input are mutually exclusive (--materialize prints the reviewer task and captures nothing)")
 		return 1
 	}
 	if preflight && input != "" {
 		fmt.Fprintln(os.Stderr, "error: capture-result --preflight verifies the binding only and does not accept --input")
 		return 1
 	}
-	if !preflight && input == "" {
-		fmt.Fprintln(os.Stderr, "error: --input is required (or use --preflight)")
-		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> --input <file>|- [--preflight]")
+	if !preflight && !materialize && input == "" {
+		fmt.Fprintln(os.Stderr, "error: --input is required (or use --preflight / --materialize)")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> --input <file>|- [--preflight] [--materialize]")
 		return 1
 	}
 
@@ -1112,6 +1124,19 @@ func reviewCaptureResultRun() int {
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(result); err != nil {
 			fmt.Fprintf(os.Stderr, "error: encoding output: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	if materialize {
+		payload, err := review.MaterializeReviewerTask(binding)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if _, err := os.Stdout.Write(payload); err != nil {
+			fmt.Fprintf(os.Stderr, "error: writing reviewer task: %v\n", err)
 			return 1
 		}
 		return 0
