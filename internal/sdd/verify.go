@@ -2,6 +2,7 @@ package sdd
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -884,6 +885,12 @@ func VerifyPreflightAt(workspaceRoot, change string) error {
 	return verifyPreflightAt(workspaceRoot, change)
 }
 
+// verifyCandidateRef names the candidate the RDD verify gate governs: the
+// commit HEAD points at. The resolver canonicalizes it to its full SHA
+// (design D1) and the bare change name is never used as a lineage lookup
+// (bug #60: the gate never found the receipt captured for the real lineage).
+const verifyCandidateRef = "HEAD^{commit}"
+
 func verifyPreflightAt(workspaceRoot, change string) error {
 	if workspaceRoot == "" {
 		var err error
@@ -895,9 +902,15 @@ func verifyPreflightAt(workspaceRoot, change string) error {
 	if !isRDDEnabled(workspaceRoot) {
 		return nil
 	}
-	result, err := review.EvaluateGate(review.GatePostApply, workspaceRoot, change, review.GateOptions{})
+	// Resolve the lineage that governs the candidate before evaluating the
+	// gate: derived-first, then the read-only legacy scan, else typed refusal.
+	lineageID, err := review.ResolveCandidateLineage(workspaceRoot, verifyCandidateRef)
 	if err != nil {
-		return fmt.Errorf("rdd_receipt_missing: lineage %q unavailable: %w; hint: run `biggz review start --lineage %s` and `biggz review finalize %s`", change, err, change, change)
+		return producerRefusal(reviewProducerResolution(workspaceRoot, change), err)
+	}
+	result, err := review.EvaluateGate(review.GatePostApply, workspaceRoot, lineageID, review.GateOptions{})
+	if err != nil {
+		return producerRefusal(reviewProducerResolution(workspaceRoot, change), fmt.Errorf("lineage %q unavailable: %w", lineageID, err))
 	}
 	if result.Delivery == review.DeliveryDisabledUnmanaged || result.Delivery == review.DeliveryBurned {
 		return nil
@@ -909,16 +922,35 @@ func verifyPreflightAt(workspaceRoot, change string) error {
 	if len(result.Reasons) > 0 {
 		reason = strings.Join(result.Reasons, "; ")
 	}
-	return classifyGateReason(reason)
+	return classifyGateReason(reason, reviewProducerResolution(workspaceRoot, change))
+}
+
+// reviewProducerResolution resolves the exact producer command that satisfies
+// the sdd verify preflight by consuming the review producer manifest (design
+// D4/D5) — never a hardcoded command string.
+func reviewProducerResolution(workspaceRoot, change string) review.ProducerResolution {
+	subjectPath := filepath.Join(workspaceRoot, "openspec", "changes", change, "review-subject.json")
+	return review.ResolveProducer(review.ProducerSurfaceSDDVerify, review.CurrentProducerHost(), subjectPath)
+}
+
+// producerRefusal renders the typed refusal for a blocked preflight: a missing
+// receipt names the exact producer command from the manifest, while a surface
+// with no producer for the current host reports rdd_unproducible honestly
+// (rdd spec: never fabricate PASS and never deliver as unmanaged).
+func producerRefusal(resolution review.ProducerResolution, cause error) error {
+	if !resolution.Producible {
+		return fmt.Errorf("rdd_unproducible: no producer is registered for surface %q on host %q: %v; the receipt cannot be produced from this runtime", resolution.Surface, resolution.Host, cause)
+	}
+	return fmt.Errorf("rdd_receipt_missing: %v; hint: run `%s` and `biggz review finalize <lineage>`", cause, resolution.Command)
 }
 
 // classifyGateReason maps a gate reason to the typed preflight error.
 // Extracted from verifyPreflightAt to keep the gate entrypoint under
 // the complexity budget; matching is substring-based and case-insensitive.
-func classifyGateReason(reason string) error {
+func classifyGateReason(reason string, resolution review.ProducerResolution) error {
 	lower := strings.ToLower(reason)
 	if strings.Contains(lower, "missing persisted") || strings.Contains(lower, "no events") || strings.Contains(lower, "empty") || strings.Contains(lower, "no receipt") || strings.Contains(lower, "missing") && strings.Contains(lower, "receipt") {
-		return fmt.Errorf("rdd_receipt_missing: %s; hint: run `biggz review` and receipt flow", reason)
+		return producerRefusal(resolution, errors.New(reason))
 	}
 	if strings.Contains(lower, "unmanaged") || strings.Contains(lower, "receipt binding") || strings.Contains(lower, "hash does not match") || strings.Contains(lower, "invalid") || strings.Contains(lower, "binding") {
 		return fmt.Errorf("rdd_unmanaged: %s", reason)
@@ -926,5 +958,5 @@ func classifyGateReason(reason string) error {
 	if strings.Contains(lower, "chain is invalid") || strings.Contains(lower, "integrity") {
 		return fmt.Errorf("rdd_unmanaged: %s", reason)
 	}
-	return fmt.Errorf("rdd_receipt_missing: %s", reason)
+	return producerRefusal(resolution, errors.New(reason))
 }

@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/biggs-100/biggz-ai/internal/extension"
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/review/lens"
@@ -31,9 +29,8 @@ func init() {
 	// Build-time Registry is last-win; unknown IDs are skipped by Ordered.
 	// Sequential pipeline.Stage wiring reuses the single DeriveRiskInput
 	// derivation (no per-lens diff):
-	//   input, _ := review.DeriveRiskInput(repo, commit, baseRef)
-	//   hunks, truncated := deriveLensHunks(repo, input) // ≤8MiB, Truncated flag
-	//   lensInput := lens.NewLensInput(input, hunks, truncated, repo)
+	//   hunks, err := deriveLensHunks(repo, commit, baseRef) // frozen-tree patch bytes, capped
+	//   lensInput, err := buildLensInput(repo, commit, baseRef, hunks)
 	//   stages := lensStagesForReview(lens.Ordered(review.PlanLenses(tier, declared)), lensInput)
 	api := extension.New()
 	readability.Register(api)
@@ -42,15 +39,19 @@ func init() {
 	lens.RegisterLens(&external.ExternalLensAdapter{LensID: "external"})
 }
 
-// deriveLensHunks derives hunk-bounded diff content for LensInput, capped at
-// 8MiB total with Truncated flag. It reuses the single DeriveRiskInput
-// derivation (no per-lens diff) and never falls back to full file reads for R4.
-func deriveLensHunks(repo string, input review.RiskInput) (map[string][]byte, bool) {
-	// Placeholder: in production this runs `git diff --raw -z` plus `git show` per path
-	// to collect hunks, then caps via lens.NewLensInput. For wiring verification,
-	// return empty map with truncated derived from input size; real hunks are
-	// supplied by the caller (e.g., review start pipeline).
-	return map[string][]byte{}, false
+// deriveLensHunks derives hunk-bounded diff content for LensInput from the
+// frozen base/candidate trees via the frozen inspector: the changed-path
+// manifest and every per-path patch are read from immutable tree objects
+// through an isolated Git view, never from the index or the working tree.
+// The inspector refuses typed when a per-path or whole-task byte cap would be
+// exceeded: a successful derivation is complete, never truncated.
+func deriveLensHunks(repo, commitSHA, baseRef string) (map[string][]byte, error) {
+	inspector, err := review.OpenFrozenInspector(repo, commitSHA, baseRef)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = inspector.Close() }()
+	return inspector.Hunks()
 }
 
 // buildLensInput is the single derivation entry point for all lenses:
@@ -168,7 +169,7 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "    --pre-pr-ci-attestation <file>  pre-pr: signed CI attestation (presence + parse, best-effort)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  start --subject <file>         Start a new review")
-	fmt.Fprintln(os.Stderr, "    [--lineage <id>]            Optional lineage ID (UUIDv7)")
+	fmt.Fprintln(os.Stderr, "    [--lineage <id>]            Optional lineage ID (default: the derived review-<16hex> identity)")
 	fmt.Fprintln(os.Stderr, "    [--base-ref <sha>]          Base for the correction budget (default: subject commit parent, else empty tree)")
 	fmt.Fprintln(os.Stderr, "    [--lenses <list>]           Selected lens slots, comma-separated (default: inferred from captured slots)")
 	fmt.Fprintln(os.Stderr, "    [--consent <mode>]          Consent declaration: relay (default on a terminal), granted, or declined")
@@ -193,6 +194,7 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "    [--subject-hash <sha>]         Provider-issued artifact subject hash")
 	fmt.Fprintln(os.Stderr, "    --input <file>|-               Raw reviewer result JSON file or - for stdin")
 	fmt.Fprintln(os.Stderr, "    [--preflight]                 Verify the binding and print the artifact subject without persisting")
+	fmt.Fprintln(os.Stderr, "    [--materialize]               Print the complete reviewer task bytes without capturing")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  refute <lineage> --input <file>|-   Register the one read-only refuter batch")
 	fmt.Fprintln(os.Stderr, "                                 Every inferential candidate-causal finding must carry a verdict")
@@ -571,6 +573,12 @@ type reviewExportData struct {
 // into the start_review event payload, alongside the content-based risk tier
 // and the frozen lens plan.
 //
+// The subject commit is canonicalized to its full object SHA before anything
+// derives from it (an abbreviated or symbolic value such as HEAD is resolved;
+// an unresolvable one refuses typed and persists nothing), and an omitted
+// --lineage defaults to the single derived review-<16hex> identity (design D1)
+// instead of a random UUID. An explicitly supplied --lineage still wins.
+//
 // Consent gate (Phase D1 parity): the classifier tier decides consent. A
 // low-risk candidate (documentation-only or trivial content) is silent
 // structural readback; medium/high needs consent. --consent relay prints the
@@ -627,6 +635,7 @@ func reviewStartRun() int {
 			}
 		case "--help", "-h":
 			fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>] [--base-ref <sha>] [--lenses <list>] [--consent relay|granted|declined] [--contract <schema>] [--agent <name>]")
+			fmt.Fprintln(os.Stderr, "  The subject commit is canonicalized to its full SHA; without --lineage the derived review-<16hex> identity is used.")
 			return 0
 		}
 	}
@@ -685,8 +694,24 @@ func reviewStartRun() int {
 		}
 	}
 
+	// Canonicalize the subject commit before anything derives from it: an
+	// abbreviated or symbolic value must never be persisted as the lineage
+	// subject, and an unresolvable one refuses typed with nothing persisted
+	// (spec: Subject Commit Canonicalization at Review Start).
+	canonicalSHA, err := review.CanonicalSubjectSHA(subject.Repository, subject.CommitSHA)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	subject.CommitSHA = canonicalSHA
+
 	if lineageID == "" {
-		lineageID = uuid.Must(uuid.NewV7()).String()
+		derived, err := review.DeriveLineageID(subject.Repository, subject.CommitSHA)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		lineageID = derived
 	}
 
 	lenses, err := review.ParseSelectedLenses(lensesValue)
@@ -942,6 +967,7 @@ func reviewCaptureResultRun() int {
 	var lineageID, targetID, lensName, expectedRevision, repositoryContext, subjectHash, input, agentValue string
 	order := -1
 	preflight := false
+	materialize := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--agent":
@@ -1014,12 +1040,14 @@ func reviewCaptureResultRun() int {
 			input = args[i]
 		case "--preflight":
 			preflight = true
+		case "--materialize":
+			materialize = true
 		case "--help", "-h":
-			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight] [--materialize]")
 			return 0
 		default:
 			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
-			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight] [--materialize]")
 			return 1
 		}
 	}
@@ -1055,16 +1083,24 @@ func reviewCaptureResultRun() int {
 
 	if lineageID == "" || targetID == "" || lensName == "" || order < 0 || expectedRevision == "" {
 		fmt.Fprintln(os.Stderr, "error: --lineage, --target, --lens, --order, and --expected-revision are required")
-		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight] [--materialize]")
+		return 1
+	}
+	if materialize && preflight {
+		fmt.Fprintln(os.Stderr, "error: capture-result --materialize and --preflight are mutually exclusive (--materialize already prints the preflight context)")
+		return 1
+	}
+	if materialize && input != "" {
+		fmt.Fprintln(os.Stderr, "error: capture-result --materialize and --input are mutually exclusive (--materialize prints the reviewer task and captures nothing)")
 		return 1
 	}
 	if preflight && input != "" {
 		fmt.Fprintln(os.Stderr, "error: capture-result --preflight verifies the binding only and does not accept --input")
 		return 1
 	}
-	if !preflight && input == "" {
-		fmt.Fprintln(os.Stderr, "error: --input is required (or use --preflight)")
-		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> --input <file>|- [--preflight]")
+	if !preflight && !materialize && input == "" {
+		fmt.Fprintln(os.Stderr, "error: --input is required (or use --preflight / --materialize)")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> --input <file>|- [--preflight] [--materialize]")
 		return 1
 	}
 
@@ -1109,6 +1145,19 @@ func reviewCaptureResultRun() int {
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(result); err != nil {
 			fmt.Fprintf(os.Stderr, "error: encoding output: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	if materialize {
+		payload, err := review.MaterializeReviewerTask(binding)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		if _, err := os.Stdout.Write(payload); err != nil {
+			fmt.Fprintf(os.Stderr, "error: writing reviewer task: %v\n", err)
 			return 1
 		}
 		return 0

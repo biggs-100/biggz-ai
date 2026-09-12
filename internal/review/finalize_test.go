@@ -101,8 +101,67 @@ func captureLens(t *testing.T, repo, lineageID, commitSHA string, lens string, o
 	}
 }
 
+// finalizeCandidateRepo builds a git repo with a base commit and a candidate
+// commit that touches exactly one path, returning the repo and the candidate
+// head SHA.
+func finalizeCandidateRepo(t *testing.T, path, content string) (string, string) {
+	t.Helper()
+	repo := t.TempDir()
+	gitInit(t, repo)
+	if err := os.WriteFile(filepath.Join(repo, "seed.txt"), []byte("seed\n"), 0644); err != nil {
+		t.Fatalf("write seed.txt: %v", err)
+	}
+	runGitInDir(t, repo, "add", ".")
+	runGitInDir(t, repo, "commit", "-m", "base")
+	full := filepath.Join(repo, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(full), 0755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(full), err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	runGitInDir(t, repo, "add", ".")
+	runGitInDir(t, repo, "commit", "-m", "candidate")
+	return repo, runGitInDir(t, repo, "rev-parse", "HEAD")
+}
+
+// finalizeStartClassified freezes the same start plan `review start` derives
+// for the candidate: the real classifier computes the tier, PlanLenses derives
+// the frozen selection from it, and the frozen budget comes from the same
+// derivation.
+func finalizeStartClassified(t *testing.T, repo, commitSHA, lineageID string) (*Store, StartEventPayload, RiskTier) {
+	t.Helper()
+	input, err := DeriveRiskInput(repo, commitSHA, "")
+	if err != nil {
+		t.Fatalf("DeriveRiskInput: %v", err)
+	}
+	tier := ClassifyRisk(input.Paths, input.ChangedLines, input.DiffSummary)
+	planned := PlanLenses(tier, nil)
+	budget, err := DeriveCorrectionBudget(input.ChangedLines)
+	if err != nil {
+		t.Fatalf("DeriveCorrectionBudget: %v", err)
+	}
+	plan := StartEventPayload{
+		Schema: ReviewStartEventSchema, Repository: repo, CommitSHA: commitSHA,
+		BaseRef: input.BaseTree, OriginalChangedLines: input.ChangedLines,
+		CorrectionBudget: budget, MaxCorrectionAttempts: MaxCompactCorrectionAttempts,
+		SelectedLenses: planned, RiskTier: string(tier), LensPlan: planned,
+	}
+	store, err := Open(repo, lineageID)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	review := New(model.ReviewSubject{Repository: repo, CommitSHA: commitSHA})
+	review.State.Role = model.RoleReviewer
+	review.WithStore(store).FreezeStartPlan(plan)
+	if err := review.Start(t.Context()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	return store, plan, tier
+}
+
 // ---------------------------------------------------------------------------
-// Finalize: missing lens slots
+// Finalize: lens selection validation
 // ---------------------------------------------------------------------------
 
 func TestFinalize_RejectsMissingDeclaredLensSlots(t *testing.T) {
@@ -130,16 +189,85 @@ func TestFinalize_RejectsMissingDeclaredLensSlots(t *testing.T) {
 	}
 }
 
-func TestFinalize_RejectsZeroCapturedLenses(t *testing.T) {
-	repo, _, head := finalizeFixtureRepo(t)
-	finalizeStart(t, repo, head, "finalize-zero", nil, "")
+// A documentation-only candidate is classified tier low with zero planned
+// lenses (the same frozen plan `review start` derives). Finalize must accept
+// that legitimate outcome: the receipt records the empty frozen selection, the
+// frozen candidate manifest, and the validated chain, and the gate resolves
+// normally — the review is not a dead end.
+func TestFinalize_AcceptsLensLessReview(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 
-	_, err := Finalize(repo, "finalize-zero")
-	if err == nil {
-		t.Fatal("expected rejection for zero captured lenses")
+	repo, head := finalizeCandidateRepo(t, "docs/guide.md", "# Guide\n\nLens-less receipt fix notes.\n")
+
+	origBurn := BurnEnabled
+	t.Cleanup(func() { BurnEnabled = origBurn })
+
+	// Durable receipt: burn disabled so the artifact survives for structural
+	// validation. The production burn path is covered below.
+	BurnEnabled = false
+	store, plan, tier := finalizeStartClassified(t, repo, head, "finalize-lensless")
+	if tier != RiskLow || len(plan.SelectedLenses) != 0 {
+		t.Fatalf("documentation-only candidate classified tier=%q lenses=%v, want low with no lenses", tier, plan.SelectedLenses)
 	}
-	if !strings.Contains(err.Error(), "no captured lens slots") {
-		t.Errorf("want no-captured-slots error, got: %v", err)
+
+	outcome, err := Finalize(repo, "finalize-lensless")
+	if err != nil {
+		t.Fatalf("Finalize lens-less review: %v", err)
+	}
+	if outcome.Idempotent || outcome.ReceiptPath == "" || !validSHA256Identity(outcome.ReceiptHash) {
+		t.Fatalf("outcome = %+v, want a fresh persisted receipt", outcome)
+	}
+	payload, err := os.ReadFile(filepath.Join(store.Dir, outcome.ReceiptPath))
+	if err != nil {
+		t.Fatalf("lens-less receipt must be persisted: %v", err)
+	}
+	var receipt PersistedReceipt
+	if err := json.Unmarshal(payload, &receipt); err != nil {
+		t.Fatalf("parse lens-less receipt: %v", err)
+	}
+	if err := receipt.Validate(); err != nil {
+		t.Fatalf("lens-less receipt must validate: %v", err)
+	}
+	if receipt.ReceiptHash != outcome.ReceiptHash {
+		t.Errorf("receipt hash = %s, want outcome hash %s", receipt.ReceiptHash, outcome.ReceiptHash)
+	}
+	if len(receipt.SelectedLenses) != 0 || len(receipt.LensSubjects) != 0 {
+		t.Errorf("receipt must record the empty frozen selection, got lenses=%v subjects=%v", receipt.SelectedLenses, receipt.LensSubjects)
+	}
+	if receipt.RiskTier != string(RiskLow) {
+		t.Errorf("receipt risk tier = %q, want the frozen low tier", receipt.RiskTier)
+	}
+	if receipt.TerminalState != ReviewReceiptTerminalState {
+		t.Errorf("receipt terminal state = %q, want %q", receipt.TerminalState, ReviewReceiptTerminalState)
+	}
+
+	gate, err := EvaluateGate(GatePostApply, repo, "finalize-lensless", GateOptions{})
+	if err != nil {
+		t.Fatalf("EvaluateGate: %v", err)
+	}
+	if !gate.Allowed || gate.Delivery != DeliveryReceiptGoverned {
+		t.Errorf("post-apply gate = allowed %v delivery %q reasons %v, want allowed via %s", gate.Allowed, gate.Delivery, gate.Reasons, DeliveryReceiptGoverned)
+	}
+
+	// Burn-enabled finalize (the production default): the receipt is ephemeral
+	// and the gate still resolves through the burned-delivery path.
+	BurnEnabled = true
+	burnedStore, _, _ := finalizeStartClassified(t, repo, head, "finalize-lensless-burned")
+	burnedOutcome, err := Finalize(repo, "finalize-lensless-burned")
+	if err != nil {
+		t.Fatalf("Finalize with burn enabled: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(burnedStore.Dir, burnedOutcome.ReceiptPath)); !os.IsNotExist(err) {
+		t.Errorf("receipt must be ephemeral after burn, stat err: %v", err)
+	}
+	burnedGate, err := EvaluateGate(GatePostApply, repo, "finalize-lensless-burned", GateOptions{})
+	if err != nil {
+		t.Fatalf("EvaluateGate (burned): %v", err)
+	}
+	if !burnedGate.Allowed || burnedGate.Delivery != DeliveryBurned {
+		t.Errorf("burned lens-less gate = allowed %v delivery %q reasons %v, want allowed via %s", burnedGate.Allowed, burnedGate.Delivery, burnedGate.Reasons, DeliveryBurned)
 	}
 }
 
@@ -159,6 +287,34 @@ func TestFinalize_RejectsExtraLensOutsideSelection(t *testing.T) {
 	}
 	if chain, _ := store.LoadChain(); chain.Count != 4 {
 		t.Errorf("event count = %d, want 4 (rejection must not append)", chain.Count)
+	}
+}
+
+// A medium-tier candidate plans the risk lens (PlanLenses medium → risk) and
+// finalize must keep refusing until that lens is captured: the lens-less
+// acceptance is specific to an empty frozen selection.
+func TestFinalize_MediumTierStillRequiresItsLens(t *testing.T) {
+	repo, head := finalizeCandidateRepo(t, "feature.go", "package feature\n\nfunc Value() int { return 1 }\n")
+	store, plan, tier := finalizeStartClassified(t, repo, head, "finalize-medium")
+	if tier != RiskMedium || !equalStrings(plan.SelectedLenses, []string{"risk"}) {
+		t.Fatalf("code candidate classified tier=%q lenses=%v, want medium/[risk]", tier, plan.SelectedLenses)
+	}
+
+	_, err := Finalize(repo, "finalize-medium")
+	if err == nil || !strings.Contains(err.Error(), "missing") || !strings.Contains(err.Error(), "risk") {
+		t.Fatalf("finalize must refuse until the planned lens is captured, got: %v", err)
+	}
+	chain, err := store.LoadChain()
+	if err != nil {
+		t.Fatalf("LoadChain: %v", err)
+	}
+	if chain.Count != 2 {
+		t.Errorf("event count = %d, want 2 (rejection must not append)", chain.Count)
+	}
+
+	captureLens(t, repo, "finalize-medium", head, "risk", 0)
+	if _, err := Finalize(repo, "finalize-medium"); err != nil {
+		t.Fatalf("Finalize after capturing the planned lens: %v", err)
 	}
 }
 

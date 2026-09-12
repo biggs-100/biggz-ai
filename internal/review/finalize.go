@@ -1117,6 +1117,12 @@ func collectFinalizeSlots(chain ValidatedChain) ([]finalizeSlot, error) {
 	return slots, nil
 }
 
+// validateFinalizeSelection reconciles the frozen lens selection with the
+// captured slots: every declared lens must be captured, captures outside the
+// frozen selection are refused, and disposed slots must be re-captured. A
+// frozen selection with zero lenses is a legitimate review outcome — the tier
+// plan decided no lens was needed — and finalize proceeds with a slot-less
+// receipt that records the empty selection honestly.
 func validateFinalizeSelection(plan StartEventPayload, capturedNames []string, chain ValidatedChain) error {
 	declared, err := canonicalStrings(plan.SelectedLenses, "selected lens")
 	if err != nil {
@@ -1141,9 +1147,12 @@ func validateFinalizeSelection(plan StartEventPayload, capturedNames []string, c
 		}
 		return fmt.Errorf("finalize: captured lens slot(s) outside the frozen selection: %s", strings.Join(stringDifference(capturedNames, declared), ", "))
 	}
-	if len(capturedNames) == 0 {
-		return errors.New("finalize: no captured lens slots; nothing to finalize")
-	}
+	// Zero declared lenses: nothing was selected and nothing can be missing.
+	// The tier plan decided no lens was needed (for example a documentation-only
+	// candidate), so a slot-less review is a terminal outcome, not a dead end:
+	// the receipt records the frozen (empty) selection, the frozen candidate
+	// manifest, and the validated chain — no invented lens and no fabricated
+	// approval — and the gate resolves normally from it.
 	return nil
 }
 

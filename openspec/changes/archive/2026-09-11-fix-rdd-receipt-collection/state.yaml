@@ -1,0 +1,16 @@
+pending_question:
+  schema: biggz-ai.pending-question/v1
+  change: fix-rdd-receipt-collection
+  created_at: "2026-09-12T00:35:00Z"
+  envelope:
+    questions:
+      - question: "S2 cerrado: transporte materializado verbatim, overlays tool-less, defecto pre-existente de binding-shape arreglado y lockeado, PR 7 abierto como #70, change en 28/33, ledger con 2 intentos restantes. Proceed lanza Phase 8 (cierre dogfood): receipt propio end-to-end, retro-collect de fix-bigmem-recall-friction, sdd-sync + sdd-archive de ese change con RDD activo, comentario + cierre de la issue #60 y arreglo de los defectos que aparezcan con test de cobertura."
+        header: "Decision"
+        options:
+          - label: "Continuar con Phase 8 (Recomendado)"
+            description: "Lanzo el slice dogfood final con superficies acotadas. Incluye escrituras reales en GitHub (comentario y cierre de #60) y el archive de fix-bigmem-recall-friction; te reporto cada resultado y paro ante cualquier fallo de gate."
+          - label: "Solo receipts, sin archive ni GitHub"
+            description: "Lanzo solo 8.1/8.2/8.5 (receipt propio y retro-collect, arreglo de defectos) y dejo sync/archive de fix-bigmem-recall-friction y el cierre de #60 para una decision aparte."
+          - label: "Detener aqui"
+            description: "No lanzo Phase 8. El change queda en 28/33 con PRs 69 y 70 abiertos, ledger con 2 intentos y la cadena intacta."
+  synthesis_md: "## Sub-agent Result: sdd-apply (S2) — S2 cerrado, PR 7 = #70, 28/33, siguiente Phase 8 (dogfood close)."
