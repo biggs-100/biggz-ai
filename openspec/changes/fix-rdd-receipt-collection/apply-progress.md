@@ -11,13 +11,73 @@
 | S1c | Phase 5 (5.1–5.5): surfacing + parity guard | done | PR 5 (base: `fix/rdd-receipt-collection-4-resolve-gate` @ 5ea72fd7; head `fix/rdd-receipt-collection-5-surfacing`) |
 | S1d | Phase 6 (6.1–6.2): verify-side `review-subject.json` writer + marker test | done | PR 6 (base: `fix/rdd-receipt-collection-5-surfacing` @ 429a7984; head `fix/rdd-receipt-collection-6-verify-subject`, uncommitted) |
 | S2 | Phase 7 (7.1–7.4): OpenCode plugin verbatim transport + tool-less overlays + contract doc + marker tests | done | PR 7 (base: `fix/rdd-receipt-collection-6-verify-subject`; head `fix/rdd-receipt-collection-7-plugin`, uncommitted) |
-| S3 | 8.5 defect fix: lens-less finalize accepts an empty frozen selection (docs-only candidate) | done | PR 8 (base: `fix/rdd-receipt-collection-7-plugin` @ 23c6e51b; head `fix/rdd-receipt-collection-8-lensless-receipt`, uncommitted) |
+| S3 | 8.5 defect fix: lens-less finalize accepts an empty frozen selection (docs-only candidate) | done | PR 8 (base: `fix/rdd-receipt-collection-7-plugin` @ 23c6e51b; head `fix/rdd-receipt-collection-8-lensless-receipt`; merged as 872a1acf + 4f6646cf) |
+| S4 | Phase 8 (8.1–8.3): dogfood close — own receipt end-to-end, retro-collect cleared, destructive sync + archive of `fix-bigmem-recall-friction` | done | PR 9 (base: `fix/rdd-receipt-collection-8-lensless-receipt` @ 4f6646cf; head `fix/rdd-receipt-collection-9-close`) |
 
-Progress: **29/33 tasks** (Phases 1–7 + 8.5). Remaining: 8.1–8.4 (Phase 8 dogfood close).
+Progress: **32/33 tasks** (Phases 1–7 + 8.5 + 8.1–8.3). Remaining: 8.4 (comment and close issue #60).
 
 ---
 
-## Batch S3 — Lens-less receipt (defect fix) (current)
+## Batch S4 — Phase 8 dogfood close (current)
+
+> 8.1 own receipt end-to-end in the pi runtime, 8.2 retro-collect cleared by the
+> HEAD receipt, 8.3 destructive sync + archive of `fix-bigmem-recall-friction`.
+> Executed by the orchestrator inline against the local build; 8.4 (issue #60)
+> follows this batch.
+
+| Field | Value |
+|-------|-------|
+| Work unit | `phases-6-8` (orchestrator-run slice; no ledger attempt outstanding after S3 settled) |
+| Slice | S4 = Phase 8 tasks 8.1–8.3 |
+| Mode | Standard (`strict_tdd: false`) |
+| PR | PR 9 of the feature-branch-chain (base: `fix/rdd-receipt-collection-8-lensless-receipt` @ 4f6646cf; head `fix/rdd-receipt-collection-9-close`) |
+| Date | 2026-09-11 |
+| Store mode | hybrid (tasks.md `[x]` + BigMem `sdd/fix-rdd-receipt-collection/apply-progress`) |
+
+### Tasks Completed
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 8.1 own receipt: start → `--materialize` → reviewer → `--input` → finalize → `review gate` allows | done | Consent relayed losslessly and granted for candidate `872a1acfc371988ac451943c6072a9b92dd038ab` (tier `medium`, lens `risk`, lineage `review-b22910da23db328f`); negotiated transition `collect`; `capture-result --materialize` produced 12,818 bytes (binding + context + name-status + numstat + per-path `GENTLE_AI_REVIEW_PATCH`); reviewer ran in a fresh locked-down pi process (scratch cwd, prompt via stdin, `--print --mode text --no-session --no-tools --no-extensions --no-skills --no-prompt-templates --no-themes --no-context-files --no-approve` — the `PiAdapter` shape) and returned strict JSON (`inspection.status: completed` over both manifest paths, 0 findings); `capture-result --input` admission `completed` (`result_hash sha256:f0803b7433dcc216cdac7175dcf299afdb72b2f4ff5ecde9a4c0597c05afe084`); `finalize` receipt `sha256:5734126e548d3bfb9566ff62ac247e135c888738afaaf74f74bfb6015618aa6e`; `review gate post-apply` `{"passed":false,"allowed":true,"delivery":"burned/unmanaged"}` |
+| 8.2 retro-collect `fix-bigmem-recall-friction` | done | The finalized receipt on HEAD (`review-d2d540998a64beba`, receipt `sha256:7c0320f1cf9218f9763e8486e4433a7a776a015234e507cfd1f499e8f08d8a85`) cleared that change's obligation: `./biggz.exe sdd-status --json` flipped it from `verify: blocked` to `verify: all_done`, `sync: ready`, `archive: ready`, with no `rdd_receipt_missing` in `blockedReasons` |
+| 8.3 `sdd-sync` then `sdd-archive` `fix-bigmem-recall-friction` | done | `sdd-sync` with `allow-destructive` approved for domains `bigmem`/`orchestrator` (applied through the repo's sanctioned parser/applier): bigmem 50→53 requirements (+13 scenarios, +92/−10), orchestrator 33→33 requirements (+3 scenarios, +18/−4), all 27 delta scenarios matched verbatim; `sdd-archive` moved the change to `openspec/changes/archive/2026-09-11-fix-bigmem-recall-friction/` (9 `git mv` renames + `archive-report.md`), task gate 21/21, RDD gate `allowed: true`, `session-close --check-only --json` `{"verified":true}`, BigMem archive marker `sdd/fix-bigmem-recall-friction/archive-report` |
+
+### Files Changed
+
+| File | Action |
+|------|--------|
+| `openspec/specs/bigmem/spec.md` | Modify (+92/−10) — sync deltas (3 added, 3 modified requirements) |
+| `openspec/specs/orchestrator/spec.md` | Modify (+18/−4) — sync delta (1 modified requirement) |
+| `openspec/changes/archive/2026-09-11-fix-bigmem-recall-friction/**` | Move (9 renames, 0 line changes) + new `archive-report.md` (84 lines) |
+
+### Focused Commands + Results
+
+```
+./biggz.exe review status review-b22910da23db328f --contract biggz-ai.review-integration/v1 --next-transition
+→ {"next_transition":{"type":"collect",…}} (lineage, target 872a1acf…, lens risk, order 0, expected_revision 05c388e6…)
+./biggz.exe review capture-result … --materialize      → exit 0, 12,818 bytes
+pi --print --mode text --no-session --no-tools … < task → exit 0, strict JSON, subject_hash sha256:edb438e5…
+./biggz.exe review capture-result … --input <result>   → admission_decision "completed"
+./biggz.exe review finalize review-b22910da23db328f   → exit 0, receipt sha256:5734126e…
+./biggz.exe review gate post-apply review-b22910da23db328f --json → allowed:true, delivery burned/unmanaged
+./biggz.exe sdd-status --json                          → fix-bigmem-recall-friction: verify/sync/archive all_done; nextRecommended archive
+./biggz.exe session-close --check-only --json          → {"verified":true}
+```
+
+### Rollback Boundary
+
+Revert the two spec files and re-move the archived change directory; the dogfood receipts live in the untracked `.git/biggz/review-transactions/` store and are immutable by design (never edited, never truncated).
+
+### Notes / Deviations
+
+1. **Binary.** Everything ran with the local build `./biggz.exe`; the `biggz` on PATH (`~/go/bin/biggz`, Sep 7) predates this change's flags (`--materialize` is unknown there), so a reinstall/upgrade is required before normal use.
+2. **Reviewer-host gap (honest).** This session has no `biggz-pi`/`gentle-pi` launcher and no `BIGGZ_PI_REVIEW_RELAY_CONTRACT`, so `CurrentProducerHost()` reports the ambient `opencode` host while the runtime is pi: the orchestrator drove the relay itself (locked-down pi process, `PiAdapter` flags) and supplied the reviewer contract as a system prompt, because the materialized task carries only the binding/context/patches — production hosts supply the reviewer role from the agent overlay. The materialized bytes were forwarded verbatim and the CLI independently validated binding, admission and budget.
+3. **Legacy lineage caveat.** Lineages started by the stale binary record an abbreviated subject commit, while the current capture binding requires the full SHA to match exactly, so they cannot be collected (they can be abandoned). The current binary canonicalizes at `start`, so this only affects pre-upgrade lineages.
+4. **8.2 via the HEAD receipt.** The RDD gate resolves `HEAD^{commit}`; the derived lineage for HEAD already carried a finalized receipt, so a second lineage for the same candidate was neither needed nor created.
+
+---
+
+## Batch S3 — Lens-less receipt (defect fix) (previous)
 
 > 8.5 defect fix: a review whose frozen lens selection is empty (low-tier /
 > documentation-only candidate) used to be a dead end — `review finalize`
