@@ -14,16 +14,16 @@
 | S3 | 8.5 defect fix: lens-less finalize accepts an empty frozen selection (docs-only candidate) | done | PR 8 (base: `fix/rdd-receipt-collection-7-plugin` @ 23c6e51b; head `fix/rdd-receipt-collection-8-lensless-receipt`; merged as 872a1acf + 4f6646cf) |
 | S4 | Phase 8 (8.1–8.3): dogfood close — own receipt end-to-end, retro-collect cleared, destructive sync + archive of `fix-bigmem-recall-friction` | done | PR 9 (base: `fix/rdd-receipt-collection-8-lensless-receipt` @ 4f6646cf; head `fix/rdd-receipt-collection-9-close`) |
 
-Progress: **32/33 tasks** (Phases 1–7 + 8.5 + 8.1–8.3). Remaining: 8.4 (comment and close issue #60).
+Progress: **33/33 tasks** (Phases 1–8). Apply complete; next phase is verify.
 
 ---
 
 ## Batch S4 — Phase 8 dogfood close (current)
 
 > 8.1 own receipt end-to-end in the pi runtime, 8.2 retro-collect cleared by the
-> HEAD receipt, 8.3 destructive sync + archive of `fix-bigmem-recall-friction`.
-> Executed by the orchestrator inline against the local build; 8.4 (issue #60)
-> follows this batch.
+> HEAD receipt, 8.3 destructive sync + archive of `fix-bigmem-recall-friction`,
+> 8.4 comment and close of issue #60. Executed by the orchestrator inline against
+> the local build.
 
 | Field | Value |
 |-------|-------|
@@ -41,6 +41,7 @@ Progress: **32/33 tasks** (Phases 1–7 + 8.5 + 8.1–8.3). Remaining: 8.4 (comm
 | 8.1 own receipt: start → `--materialize` → reviewer → `--input` → finalize → `review gate` allows | done | Consent relayed losslessly and granted for candidate `872a1acfc371988ac451943c6072a9b92dd038ab` (tier `medium`, lens `risk`, lineage `review-b22910da23db328f`); negotiated transition `collect`; `capture-result --materialize` produced 12,818 bytes (binding + context + name-status + numstat + per-path `GENTLE_AI_REVIEW_PATCH`); reviewer ran in a fresh locked-down pi process (scratch cwd, prompt via stdin, `--print --mode text --no-session --no-tools --no-extensions --no-skills --no-prompt-templates --no-themes --no-context-files --no-approve` — the `PiAdapter` shape) and returned strict JSON (`inspection.status: completed` over both manifest paths, 0 findings); `capture-result --input` admission `completed` (`result_hash sha256:f0803b7433dcc216cdac7175dcf299afdb72b2f4ff5ecde9a4c0597c05afe084`); `finalize` receipt `sha256:5734126e548d3bfb9566ff62ac247e135c888738afaaf74f74bfb6015618aa6e`; `review gate post-apply` `{"passed":false,"allowed":true,"delivery":"burned/unmanaged"}` |
 | 8.2 retro-collect `fix-bigmem-recall-friction` | done | The finalized receipt on HEAD (`review-d2d540998a64beba`, receipt `sha256:7c0320f1cf9218f9763e8486e4433a7a776a015234e507cfd1f499e8f08d8a85`) cleared that change's obligation: `./biggz.exe sdd-status --json` flipped it from `verify: blocked` to `verify: all_done`, `sync: ready`, `archive: ready`, with no `rdd_receipt_missing` in `blockedReasons` |
 | 8.3 `sdd-sync` then `sdd-archive` `fix-bigmem-recall-friction` | done | `sdd-sync` with `allow-destructive` approved for domains `bigmem`/`orchestrator` (applied through the repo's sanctioned parser/applier): bigmem 50→53 requirements (+13 scenarios, +92/−10), orchestrator 33→33 requirements (+3 scenarios, +18/−4), all 27 delta scenarios matched verbatim; `sdd-archive` moved the change to `openspec/changes/archive/2026-09-11-fix-bigmem-recall-friction/` (9 `git mv` renames + `archive-report.md`), task gate 21/21, RDD gate `allowed: true`, `session-close --check-only --json` `{"verified":true}`, BigMem archive marker `sdd/fix-bigmem-recall-friction/archive-report` |
+| 8.4 comment + close issue #60 | done | Comment with the defect → fix → PR mapping (PRs #63, #65–#72) plus the dogfood evidence: `https://github.com/biggs-100/biggz-ai/issues/60#issuecomment-5642454702`; issue closed with a pointer to that comment once the archive had landed and been verified (`state: CLOSED`) |
 
 ### Files Changed
 
