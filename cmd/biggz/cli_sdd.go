@@ -330,7 +330,8 @@ func sddApplyBlockedReason(roots []string) string {
 
 // sddVerifyValidateRun handles the "biggz sdd-verify-validate" subcommand.
 // Validates a verify report against authoritative requirement/scenario counts.
-// Usage: biggz sdd-verify-validate --input <path|-> [--requirements N --scenarios N] [--json]
+// Usage: biggz sdd-verify-validate <path|-> [--requirements N --scenarios N] [--json]
+// or equivalently: biggz sdd-verify-validate --input <path|-> [--requirements N --scenarios N] [--json]
 func sddVerifyValidateRun() int {
 	return runSDDVerifyValidate(os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
 }
@@ -338,8 +339,9 @@ func sddVerifyValidateRun() int {
 // runSDDVerifyValidate is the testable core of sddVerifyValidateRun.
 //
 // Admission rules (Phase C1 parity):
-//   - --input accepts a file path or "-" for stdin; the input is capped at
-//     1 MiB.
+//   - The input report is selected either by a positional <path|-> or by
+//     --input <path|->; giving both is a usage error. "-" reads stdin. The
+//     input is capped at 1 MiB.
 //   - --requirements and --scenarios must be provided together; when both
 //     are provided they are authoritative and a report whose counts differ
 //     is denied with a named reason. Lenient mode (no count comparison)
@@ -349,6 +351,8 @@ func sddVerifyValidateRun() int {
 func runSDDVerifyValidate(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	hasHelp := false
 	input := ""
+	positional := ""
+	positionalSet := false
 	declaredReq, declaredScen := -1, -1
 	reqSet, scenSet := false, false
 	emitJSON := false
@@ -392,13 +396,23 @@ func runSDDVerifyValidate(args []string, stdin io.Reader, stdout, stderr io.Writ
 		case "--json":
 			emitJSON = true
 		default:
-			parseErr = fmt.Sprintf("unknown flag %q", args[i])
+			switch {
+			case args[i] != "-" && strings.HasPrefix(args[i], "-"):
+				parseErr = fmt.Sprintf("unknown flag %q", args[i])
+			case !positionalSet:
+				positional = args[i]
+				positionalSet = true
+			default:
+				parseErr = fmt.Sprintf("unexpected positional argument %q", args[i])
+			}
 		}
 	}
 
 	if hasHelp {
-		fmt.Fprintln(stderr, "Usage: biggz sdd-verify-validate --input <path|-> [--requirements N --scenarios N] [--json]")
-		fmt.Fprintln(stderr, "  --input <path|->    — path to verify report, or - for stdin (required)")
+		fmt.Fprintln(stderr, "Usage: biggz sdd-verify-validate <path|-> [--requirements N --scenarios N] [--json]")
+		fmt.Fprintln(stderr, "       biggz sdd-verify-validate --input <path|-> [--requirements N --scenarios N] [--json]")
+		fmt.Fprintln(stderr, "  <path|->            — path to verify report, or - for stdin (positional form)")
+		fmt.Fprintln(stderr, "  --input <path|->    — path to verify report, or - for stdin (alternative to the positional form)")
 		fmt.Fprintln(stderr, "  --requirements N    — authoritative requirement count (must be given with --scenarios)")
 		fmt.Fprintln(stderr, "  --scenarios N       — authoritative scenario count (must be given with --requirements)")
 		fmt.Fprintln(stderr, "  --json              — emit the biggz-ai.verify-admission/v1 envelope")
@@ -408,8 +422,15 @@ func runSDDVerifyValidate(args []string, stdin io.Reader, stdout, stderr io.Writ
 		fmt.Fprintf(stderr, "error: %s\n", parseErr)
 		return 1
 	}
+	if positionalSet && input != "" {
+		fmt.Fprintln(stderr, `error: both a positional report path and --input were given; use either "biggz sdd-verify-validate <path>" or "biggz sdd-verify-validate --input <path|->"`)
+		return 1
+	}
+	if positionalSet {
+		input = positional
+	}
 	if input == "" {
-		fmt.Fprintln(stderr, "error: --input is required")
+		fmt.Fprintln(stderr, "error: input is required: pass a report path (biggz sdd-verify-validate <path>) or --input <path|->")
 		return 1
 	}
 	if reqSet != scenSet {
