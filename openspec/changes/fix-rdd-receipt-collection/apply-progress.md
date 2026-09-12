@@ -13,12 +13,80 @@
 | S2 | Phase 7 (7.1–7.4): OpenCode plugin verbatim transport + tool-less overlays + contract doc + marker tests | done | PR 7 (base: `fix/rdd-receipt-collection-6-verify-subject`; head `fix/rdd-receipt-collection-7-plugin`, uncommitted) |
 | S3 | 8.5 defect fix: lens-less finalize accepts an empty frozen selection (docs-only candidate) | done | PR 8 (base: `fix/rdd-receipt-collection-7-plugin` @ 23c6e51b; head `fix/rdd-receipt-collection-8-lensless-receipt`; merged as 872a1acf + 4f6646cf) |
 | S4 | Phase 8 (8.1–8.3): dogfood close — own receipt end-to-end, retro-collect cleared, destructive sync + archive of `fix-bigmem-recall-friction` | done | PR 9 (base: `fix/rdd-receipt-collection-8-lensless-receipt` @ 4f6646cf; head `fix/rdd-receipt-collection-9-close`) |
+| S5 | 8.5 second defect (verify-surfaced): absent organic subject commit binds to `HEAD` again | done | PR 9 (same head; fix landed after the verify phase found the e2e failure) |
 
 Progress: **33/33 tasks** (Phases 1–8). Apply complete; next phase is verify.
 
 ---
 
-## Batch S4 — Phase 8 dogfood close (current)
+## Batch S5 — Organic start regression (defect fix) (current)
+
+> Surfaced by the `sdd-verify` phase: the whole-repository suite failed in `e2e`,
+> a package outside the four this change touches, exposing that the S1b1
+> canonicalization had become stricter than the design for the legacy organic
+> subject (an inline-diff subject without `commit_sha`).
+
+| Field | Value |
+|-------|-------|
+| Work unit | `phases-6-8` (ledger attempt `tok-3c9ea6ab869da6b36e403bf8`) |
+| Slice | S5 = the second 8.5 defect fix (verify-surfaced) |
+| Mode | Standard (`strict_tdd: false`) |
+| PR | PR 9 of the feature-branch-chain (base `fix/rdd-receipt-collection-8-lensless-receipt`; head `fix/rdd-receipt-collection-9-close`) |
+| Date | 2026-09-11 |
+| Store mode | hybrid |
+
+### Tasks Completed
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 8.5 (second defect) | done | RED: `go test ./e2e -run TestOrganicReviewStart` → `review start failed: exit status 1 — review lineage identity: unresolvable_subject_commit: the subject commit is empty` (the legacy organic subject carries no `commit_sha`, and `DeriveRiskInput` documents that such subjects bind to HEAD). GREEN after the fix: the same test PASSes, plus the new unit test |
+
+### Files Changed
+
+| File | Action |
+|------|--------|
+| `internal/review/lineage_identity.go` | Modify — `CanonicalSubjectSHA` binds an absent/blank subject commit to `HEAD` (`cmp.Or(strings.TrimSpace(raw), "HEAD")`); only non-empty unresolvable values refuse typed; refusal/doc comments updated (+13/−9) |
+| `internal/review/lineage_identity_test.go` | Modify — `TestLineageIdentityAbsentSubjectBindsToCurrentHead`: absent vs abbreviated vs symbolic vs full all derive the same id, the id follows a moved HEAD, and a non-empty unresolvable value is still refused typed (+88/−8) |
+
+### Focused Test Command + Result
+
+```
+go test ./internal/review -run TestLineageIdentity -count=1   → ok internal/review 4.454s
+go test ./e2e -run TestOrganicReviewStart -count=1 -v         → --- PASS: TestOrganicReviewStart (1.02s)
+```
+
+### Package Suite Command + Result
+
+```
+go test ./e2e -count=1 -timeout 800s                                            → ok (previously FAIL)
+go test ./internal/review ./internal/sdd ./cmd/biggz ./internal/assets -count=1  → ok
+go test <the remaining 70 packages: ./... minus those four and e2e> -count=1     → ok
+```
+
+Whole-repository coverage is green again (`go build ./...` and `go vet ./...` OK; `gofmt -l` on both touched files clean).
+
+### Runtime Harness Evidence
+
+The regression test IS the runtime harness — real temp git repo, real CLI `review start` with an inline-diff organic subject, real chain validation:
+
+```
+--- PASS: TestOrganicReviewStart (1.02s)
+          Chain integrity:  PASS
+          Receipt match:    PASS
+```
+
+### Rollback Boundary
+
+Revert both files: `CanonicalSubjectSHA` refuses an empty subject again and `e2e/TestOrganicReviewStart` fails exactly as before. No store, receipt, chain or config change.
+
+### Notes / Deviations
+
+1. **Discipline note.** The first `sdd-apply` dispatch for this fix stalled (240s without a final response) after applying the production edit only; the orchestrator reviewed the in-tree diff, re-ran the RED and GREEN evidence itself and completed the bookkeeping inline. Nothing unreviewed was committed: the code is the worker's fix, and every suite result above was re-run by the orchestrator.
+2. **Why the per-slice suites missed it.** The four packages this change touches were green throughout; the failure only appears in the whole-repository run (`e2e`), which the bounded per-slice suites never included — the verify phase's broader run is what caught it, which is exactly its job.
+
+---
+
+## Batch S4 — Phase 8 dogfood close (previous)
 
 > 8.1 own receipt end-to-end in the pi runtime, 8.2 retro-collect cleared by the
 > HEAD receipt, 8.3 destructive sync + archive of `fix-bigmem-recall-friction`,
