@@ -231,22 +231,26 @@ The system MUST implement `readOnlyMarkerAfterToken` regex `(?i)^\s*\(read-only\
 
 ### Requirement: ReviewOffer Post-Verify Wiring
 
-System MUST emit `reviewOffer{Available:true, Invocation:"biggz review start --lineage <change>-<shortsha>"}` iff `applyState==all_done && verifyReport==done && passing && RDD enabled`; else MUST be `nil`. Passing=`pass`,0 blockers,8/8. `status.go:523`/`engram_status.go:246,342` MUST compute; `status_v2.go:48-53` MUST expose only `available,invocation`. Invocation MUST use `pathquote.Quote`, MUST NOT embed lineage/binding/receipt.
+System MUST emit `reviewOffer{Available:true, Invocation:"biggz review start --subject <file>"}` iff `applyState==all_done && verifyReport==done && passing && RDD enabled`; else MUST be `nil`. Passing=`pass`,0 blockers,8/8. `status.go:523`/`engram_status.go:246,342` MUST compute; `status_v2.go:48-53` MUST expose only `available,invocation`. Invocation MUST use `pathquote.Quote` and MUST NOT embed a lineage id, binding, or receipt.
+(Previously: Invocation embedded `--lineage <change>-<shortsha>`, producing an offer lineage that diverged from the gate lookup.)
 
 #### Scenario: Enabled PASS emits offer
+
 - GIVEN `all_done`, `verify done PASS`, `RDD enabled`
 - WHEN `biggz sdd-status --json` derives
-- THEN `reviewOffer.available==true` and `invocation` quoted
+- THEN `reviewOffer.available==true` with a quoted invocation carrying no lineage id
 
 #### Scenario: Disabled or verify failing emits nil
+
 - GIVEN `RDD disabled` OR `verify missing/fail` OR `blockers>0`
 - WHEN status derives
 - THEN `reviewOffer==nil`
 
 #### Scenario: Invocation quoting
+
 - GIVEN change `my change` shortsha `a1b2c3d`
 - WHEN invocation built
-- THEN MUST contain `pathquote.Quote` and MUST NOT contain persisted lineage
+- THEN MUST contain `pathquote.Quote` and MUST NOT contain a lineage id, binding or receipt
 
 ### Requirement: Hook Lineage-Aware Selection
 
@@ -467,3 +471,19 @@ The system MUST run hygiene only after `ArchiveChange` succeeded via `os.Rename`
 - GIVEN archive invoked
 - WHEN `ArchiveChange` executes
 - THEN it MUST only call `os.Rename` and MUST NOT call `branch -d`, `worktree prune`, or `RDDDisable` before move
+
+### Requirement: Pre-Publication Review Obligation in Phase Instructions
+
+When RDD is enabled and the verified candidate has no valid receipt, `sdd-apply`/`sdd-verify` phase instructions MUST surface the outstanding review obligation, including the exact producer command that satisfies it, before publication. The obligation MUST NOT first appear only when archive is attempted.
+
+#### Scenario: Verify completion surfaces obligation
+
+- GIVEN `RDD enabled`, verify completed passing, and no receipt exists
+- WHEN apply/verify phase instructions render
+- THEN they MUST surface the review obligation with the exact producer command
+
+#### Scenario: Valid receipt or disabled RDD surfaces nothing
+
+- GIVEN a valid receipt exists OR `RDD disabled`
+- WHEN phase instructions render
+- THEN they MUST NOT surface a review obligation
