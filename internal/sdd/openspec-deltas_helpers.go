@@ -1,6 +1,7 @@
 package sdd
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -154,7 +155,7 @@ func applySingleDelta(blocks map[string]string, order []string, d RequirementDel
 	case DeltaAdded:
 		return applyAddedDelta(blocks, order, name, d.Body), nil
 	case DeltaModified:
-		if err := applyModifiedDelta(blocks, name, d.Body); err != nil {
+		if err := applyModifiedDelta(blocks, order, name, d.Body); err != nil {
 			return order, err
 		}
 		return order, nil
@@ -177,9 +178,71 @@ func applyAddedDelta(blocks map[string]string, order []string, name, body string
 	return append(order, name)
 }
 
-func applyModifiedDelta(blocks map[string]string, name, body string) error {
+// modifiedNotFoundHint is the actionable tail shared by every
+// MODIFIED-requirement-not-found error. Exact-name matching stays
+// authoritative: the hint only explains how to express a retitle.
+const modifiedNotFoundHint = "the delta heading must match the main spec heading verbatim — a retitle must be expressed as REMOVED + ADDED, or the exact existing heading kept"
+
+// maxModifiedHintRunes bounds the heading text quoted back in the
+// MODIFIED-not-found error so the message stays stable for very long titles.
+const maxModifiedHintRunes = 120
+
+// requirementIDPrefixRe captures the leading REQ-… id of a requirement name,
+// e.g. "REQ-1" in "REQ-1 — Engram Import Dispatch" and "REQ-PIPELINE-001" in
+// "REQ-PIPELINE-001 — StagePlan Prepare/Apply Contract".
+var requirementIDPrefixRe = regexp.MustCompile(`(?i)^REQ-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*`)
+
+// requirementIDPrefix returns the uppercased leading REQ-… id, or "" when the
+// name does not start with one.
+func requirementIDPrefix(name string) string {
+	m := requirementIDPrefixRe.FindString(strings.TrimSpace(name))
+	return strings.ToUpper(m)
+}
+
+// normalizeRequirementName lowercases and collapses whitespace so two names
+// that differ only in case or spacing compare equal.
+func normalizeRequirementName(name string) string {
+	return strings.ToLower(strings.Join(strings.Fields(name), " "))
+}
+
+// modifiedCandidateName returns the first main-spec requirement (in spec
+// order) that shares the delta name's REQ-… id prefix or has an identical
+// normalized name. Exact matching remains authoritative; this only feeds the
+// error hint, so there is no fuzzy matching and no behavior change.
+func modifiedCandidateName(order []string, blocks map[string]string, name string) string {
+	nameID := requirementIDPrefix(name)
+	nameNorm := normalizeRequirementName(name)
+	for _, cand := range order {
+		if _, ok := blocks[cand]; !ok {
+			continue
+		}
+		if candID := requirementIDPrefix(cand); candID != "" && nameID != "" && candID == nameID {
+			return cand
+		}
+		if normalizeRequirementName(cand) == nameNorm {
+			return cand
+		}
+	}
+	return ""
+}
+
+// boundHeadingForError truncates a heading to maxModifiedHintRunes so the
+// not-found error stays bounded for pathologically long titles.
+func boundHeadingForError(name string) string {
+	runes := []rune(name)
+	if len(runes) <= maxModifiedHintRunes {
+		return name
+	}
+	return string(runes[:maxModifiedHintRunes]) + "…"
+}
+
+func applyModifiedDelta(blocks map[string]string, order []string, name, body string) error {
 	if _, exists := blocks[name]; !exists {
-		return fmt.Errorf("MODIFIED requirement %q not found in main spec", name)
+		msg := fmt.Sprintf("MODIFIED requirement %q not found in main spec; %s", boundHeadingForError(name), modifiedNotFoundHint)
+		if cand := modifiedCandidateName(order, blocks, name); cand != "" {
+			msg += fmt.Sprintf("; main spec has a similar requirement heading: %q", boundHeadingForError(cand))
+		}
+		return errors.New(msg)
 	}
 	blocks[name] = body
 	return nil
