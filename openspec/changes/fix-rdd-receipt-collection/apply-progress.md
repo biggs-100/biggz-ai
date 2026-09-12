@@ -11,12 +11,196 @@
 | S1c | Phase 5 (5.1–5.5): surfacing + parity guard | done | PR 5 (base: `fix/rdd-receipt-collection-4-resolve-gate` @ 5ea72fd7; head `fix/rdd-receipt-collection-5-surfacing`) |
 | S1d | Phase 6 (6.1–6.2): verify-side `review-subject.json` writer + marker test | done | PR 6 (base: `fix/rdd-receipt-collection-5-surfacing` @ 429a7984; head `fix/rdd-receipt-collection-6-verify-subject`, uncommitted) |
 | S2 | Phase 7 (7.1–7.4): OpenCode plugin verbatim transport + tool-less overlays + contract doc + marker tests | done | PR 7 (base: `fix/rdd-receipt-collection-6-verify-subject`; head `fix/rdd-receipt-collection-7-plugin`, uncommitted) |
+| S3 | 8.5 defect fix: lens-less finalize accepts an empty frozen selection (docs-only candidate) | done | PR 8 (base: `fix/rdd-receipt-collection-7-plugin` @ 23c6e51b; head `fix/rdd-receipt-collection-8-lensless-receipt`, uncommitted) |
 
-Progress: **28/33 tasks** (Phases 1–7). Remaining: Phase 8 (dogfood close).
+Progress: **29/33 tasks** (Phases 1–7 + 8.5). Remaining: 8.1–8.4 (Phase 8 dogfood close).
 
 ---
 
-## Batch S2 — OpenCode plugin + overlays + doc (current)
+## Batch S3 — Lens-less receipt (defect fix) (current)
+
+> 8.5 defect fix: a review whose frozen lens selection is empty (low-tier /
+> documentation-only candidate) used to be a dead end — `review finalize`
+> refused with `finalize: no captured lens slots; nothing to finalize` and the
+> RDD gate demanded that same impossible finalize. A frozen selection with zero
+> lenses is now a legitimate terminal outcome: finalize accepts it and persists
+> a valid slot-less receipt (frozen empty selection, frozen candidate manifest,
+> validated chain — no invented lens, no fabricated approval), and the gate
+> resolves normally.
+
+| Field | Value |
+|-------|-------|
+| Work unit | `phases-6-8` (ledger attempt `tok-d094fbdedfea8b6e6a7bc427`) |
+| Slice | S3 = the approved 8.5 lens-less finalize defect fix |
+| Mode | Standard (`strict_tdd: false`) |
+| PR | PR 8 of the feature-branch-chain (base: `fix/rdd-receipt-collection-7-plugin` @ 23c6e51b; head `fix/rdd-receipt-collection-8-lensless-receipt`, uncommitted) |
+| Date | 2026-09-11 |
+| Store mode | hybrid (tasks.md `[x]` + BigMem `sdd/fix-rdd-receipt-collection/apply-progress`) |
+
+### Tasks Completed
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 8.5 lens-less finalize defect (approved semantics) | done | `validateFinalizeSelection` (`internal/review/finalize.go`): the `len(declared) == 0 && len(capturedNames) == 0` branch no longer refuses; finalize proceeds to `deriveFinalizeManifest` → (zero slots) → `collectFinalizeEvidence` → `buildReceipt` → `receipt.Validate()` → `writeReceiptLocked` → `burnAndGateDelivery` with nothing lens-dependent. **Only behavioral delta vs 23c6e51b: zero declared + zero captured now succeeds**; declared-lens capture requirement, outside-selection refusal and disposed-slot refusal are byte-unchanged (their tests stay green). End-to-end proof: `TestFinalize_AcceptsLensLessReview`; harness raw output below |
+| Deliverables 2/3 (`receipt.go`, `gate.go`) | no change needed | Proven unnecessary: `PersistedReceipt.Validate()` already admits the empty selection (`validateLensSelection` 0==0, `validateLensSubjects` loops zero subjects, `risk_tier` frozen `low`, self-hash recomputed) and `EvaluateGate` has no lens-count branch — the durable slot-less receipt passes `verifyReceiptBinding` + `recomputeGateFindings` + `postApplyChecks` → `allowed`, `DeliveryReceiptGoverned`; the production burn path → `allowed` via `DeliveryBurned` (also accepted by the RDD verify preflight: `internal/sdd/verify.go:915`). Both paths asserted in `TestFinalize_AcceptsLensLessReview` |
+
+### Files Changed
+
+| File | Action | +/- |
+|------|--------|-----|
+| `internal/review/finalize.go` | Modify (`validateFinalizeSelection`: empty frozen selection proceeds; doc comment) | +12/−3 |
+| `internal/review/finalize_test.go` | Modify (2 new tests + `finalizeCandidateRepo`/`finalizeStartClassified` helpers; `TestFinalize_RejectsZeroCapturedLenses` replaced by the e2e acceptance test — coverage kept, semantics updated) | +165/−9 |
+
+Slice total: **+177/−12 across 2 files** — under the 400-line budget.
+
+### Focused Test Command + Result
+
+```
+go test ./internal/review -run 'TestFinalize_AcceptsLensLessReview|TestFinalize_MediumTierStillRequiresItsLens|TestFinalize_RejectsMissingDeclaredLensSlots|TestFinalize_RejectsExtraLensOutsideSelection|TestFinalize_HappyPathPersistsReceipt' -count=1 -v
+→ PASS (exit 0):
+  --- PASS: TestFinalize_RejectsMissingDeclaredLensSlots (0.78s)
+  --- PASS: TestFinalize_AcceptsLensLessReview (1.19s)
+  --- PASS: TestFinalize_RejectsExtraLensOutsideSelection (1.10s)
+  --- PASS: TestFinalize_MediumTierStillRequiresItsLens (0.92s)
+  --- PASS: TestFinalize_HappyPathPersistsReceipt (1.15s)
+  ok  github.com/biggs-100/biggz-ai/internal/review  5.282s
+```
+
+Broader finalize/gate/reopen regression (every TestFinalize* + TestEvaluateGate* + the reopen refusal):
+
+```
+go test ./internal/review -run 'TestFinalize|TestEvaluateGate|TestReopenResults_RefusesWhenNothingCaptured' -count=1 -v
+→ 33 tests PASS, 0 FAIL (incl. all five gate-kind happy paths, tampered/foreign receipt denials, every finalize refusal), exit 0, ok github.com/biggs-100/biggz-ai/internal/review 33.335s
+```
+
+### Package Suite Command + Result
+
+```
+go test ./internal/review -count=1 -timeout 400s
+→ ok  github.com/biggs-100/biggz-ai/internal/review  138.335s (exit 0)
+
+go test ./internal/sdd ./cmd/biggz -count=1 -timeout 400s
+→ ok  github.com/biggs-100/biggz-ai/internal/sdd    26.797s (exit 0)
+→ ok  github.com/biggs-100/biggz-ai/cmd/biggz       65.942s (exit 0)
+```
+
+### Static Checks
+
+| Check | Result |
+|-------|--------|
+| `biggz sdd-apply fix-rdd-receipt-collection` (edit-authority guard, local build) | exit 0; allowed roots = `C:\Users\USER\Desktop\biggz-ai` |
+| `go build ./...` | OK (exit 0) |
+| `go vet ./...` | OK (exit 0, no findings) |
+| `gofmt -l internal/review/finalize.go internal/review/finalize_test.go` | clean |
+| CI complexity gate (cyclomatic ≤15 / cognitive ≤20, non-test `internal/review`) | `gocyclo -over 15 internal/review` → no non-test offender; `gocognit -over 20 internal/review` → no non-test offender; touched file maxima: cyclomatic 12 (`loadAndValidateChain`), cognitive 16 (`validateLensSubjects`); the edited function lost a branch |
+| `use-modern-go list --file-path internal/review/finalize.go` + `finalize_test.go` | consulted (full output read); applied `t.Context()` in the new test helper (`testing_t_context`); no loop/slice/map idioms apply (the edit removes a branch, new test code has no manual search loops) |
+
+### Runtime Harness Evidence (raw)
+
+Harness: docs-only candidate and medium-tier control over two real temp git repos with the freshly built local CLI. Script `C:\Users\USER\AppData\Local\Temp\s3-run.sh` (lives in TEMP, outside the repo and outside the allowed edit surfaces); full log `C:\Users\USER\AppData\Local\Temp\s3-run-output.txt`. Raw output:
+
+```
+=== harness: binary under test ===
+-rwxr-xr-x 1 USER 197121 31105536 Sep 11 19:25 /c/Users/USER/Desktop/biggz-ai/biggz.exe
+
+=== Case A (documentation-only): review start ===
+Review started: review-e54a64097eca3a76 (correction budget: 2 lines, base 0c4ef53184f7e932e765e73dd02f4b81b002e862, risk tier: low, lenses: none)
+lineageA=review-e54a64097eca3a76
+headA=e68b8d7d1f110fdf2cac50ff30abbe105ae95b0f
+
+=== Case A: review finalize review-e54a64097eca3a76 ===
+Review finalized: review-e54a64097eca3a76 (receipt receipts\5a97f79676a35fbeb3db4b446b86d41293b6b5a0a1aa3ff4472b4613783a00b6.json, hash sha256:e8f65e2ed9c96bd3a2a900845b415391188c19415876cb094070a9a5054ef653, revision 399a3e1e9f3e16eb4fdee497bd774f3b64e0fb1efb56e54c2312af6cde8164ae)
+finalize_exit=0
+
+=== Case A: review gate post-apply review-e54a64097eca3a76 --json ===
+{
+  "gate": "post-apply",
+  "lineage": "review-e54a64097eca3a76",
+  "passed": false,
+  "allowed": true,
+  "delivery": "burned/unmanaged",
+  "reason": "review burned: receipt is ephemeral and burned after finalize; delivery via ordinary repository policy",
+  "reasons": [
+    "review burned: receipt is ephemeral and burned after finalize; delivery via ordinary repository policy"
+  ],
+  "dry_run": false
+}
+gate_exit=0
+
+=== Case A: review status review-e54a64097eca3a76 ===
+Lineage ID:     review-e54a64097eca3a76
+Head Hash:      38a81f9b005d382763da83d036bb8259b7a3c363e26319085fc1c6fa45a0623b
+Event Count:    4
+Chain Valid:    true
+Next Transition: gate (gates: post-apply, pre-commit, pre-push, pre-pr, release)
+Receipt:        valid (hash: sha256:5597b730f...)
+Receipt Artifact: receipts\5a97f79676a35fbeb3db4b446b86d41293b6b5a0a1aa3ff4472b4613783a00b6.json (hash: sha256:e8f65e2ed9c96bd3a2a900845b415391188c19415876cb094070a9a5054ef653)
+Risk Tier:      low
+
+=== Case B (medium control): review start ===
+Review started: review-1792f170f6484d22 (correction budget: 2 lines, base 0c4ef53184f7e932e765e73dd02f4b81b002e862, risk tier: medium, lenses: risk)
+
+=== Case B: review finalize before capture (must refuse) ===
+error: finalize: missing captured lens slot(s): risk; capture every selected lens before finalize
+finalize_before_capture_exit=1
+
+=== Case B: capture-result (strict reviewer result) ===
+{
+  "schema": "biggz-ai.review-result-artifact/v1",
+  "lineage_id": "review-1792f170f6484d22",
+  "lens": "risk",
+  "selected_order": 0,
+  "subject_hash": "sha256:a84c8c8bc12bd1b02972d4394735ebcc4a5e7d714cefceeb0dba071202b47f2d",
+  "admission_decision": "completed",
+  "revision": "e7d95b66b0efd75de958e9ff3985bf73acab1407fca5e59a153e8c0ac1de783a",
+  "result_hash": "sha256:ce35cf4dd6892ac81ba64a7db42534774885e69305c790f3953bce63209a180e"
+}
+capture_exit=0
+
+=== Case B: review finalize after capture ===
+Review finalized: review-1792f170f6484d22 (receipt receipts\b6b2aae853b1ce03dbb230253a04fa81b306a1ba1a3b664f9ecf61aab2fc1d6b.json, hash sha256:81072d3457b26c9ce16ba931bd4fbb9186d572c508f36ea1af4f69ada76482da, revision 4cf340cd09e0e26d0bebbaa39a261c28eee41e37decc39593529af7fe370452f)
+finalize_after_capture_exit=0
+
+=== Case B: review gate post-apply --json ===
+{
+  "gate": "post-apply",
+  "lineage": "review-1792f170f6484d22",
+  "passed": false,
+  "allowed": true,
+  "delivery": "burned/unmanaged",
+  "reason": "review burned: receipt is ephemeral and burned after finalize; delivery via ordinary repository policy",
+  "dry_run": false
+}
+gate_exit=0
+
+S3-HARNESS: DONE
+```
+
+Assertions proven: (a) a documentation-only candidate plans tier low with **no lenses**; (b) `review finalize` now **succeeds** on the zero-lens lineage (exit 0, persisted receipt + complete/burn events) where the defect dispatch recorded `error: finalize: no captured lens slots; nothing to finalize`; (c) the post-apply gate resolves for the lens-less lineage (`allowed: true`, exit 0) where it previously failed with `missing persisted review receipt`; (d) `review status` surfaces the valid receipt artifact and the gate transition; (e) the lens-bearing control still refuses finalize before its capture (`missing captured lens slot(s): risk`, exit 1) and succeeds after the real capture admission (`completed`), with its own allowed gate. Burn is the production default, so the CLI receipt is ephemeral after finalize; the durable (non-burned) receipt path is proven in-package by `TestFinalize_AcceptsLensLessReview` (`DeliveryReceiptGoverned`).
+
+### Rollback Boundary
+
+Revert exactly this unit; nothing else consumes the new path (no receipt schema, store, config, or data change):
+
+1. `git checkout -- internal/review/finalize.go internal/review/finalize_test.go`;
+2. revert `tasks.md` 8.5 `[x]` → `[ ]` and this progress batch.
+
+→ back to 23c6e51b (PR 7 head). The pre-fix behavior — the zero-lens refusal — returns with the revert; existing declared-lens tests are untouched either way.
+
+### Notes / Deviations
+
+1. **Only one behavioral delta:** `validateFinalizeSelection` no longer refuses when the declared selection and the captured set are both empty. The declared-lens path (`missing captured lens slot(s)`), the outside-selection refusal and the disposed/not-recaptured refusal are unchanged; `TestFinalize_RejectsMissingDeclaredLensSlots`, `TestFinalize_RejectsExtraLensOutsideSelection` and the reopen-results refusal (`TestReopenResults_RefusesWhenNothingCaptured` — a different function, `dispose.go`, still correctly requires captured slots to reopen) all stay green.
+2. **Coverage kept, semantics updated:** the pre-existing refusal test `TestFinalize_RejectsZeroCapturedLenses` asserted `no captured lens slots`; it was replaced in place by `TestFinalize_AcceptsLensLessReview` (the same zero-lens setup, now asserting the approved semantics end-to-end), plus the medium-tier regression test. No assertion was silently dropped.
+3. **Deliverables 2/3 conditional and satisfied without edits:** `receipt.go` and `gate.go` were not modified; the slot-less receipt validates and the gate resolves through the existing branches (evidence in the Tasks Completed row + e2e test). No existing receipt validation was weakened.
+4. **Observation outside the allowed surfaces (NOT changed, not in scope):** `deriveNextTransition` (`internal/review/next_transition.go:deriveFinalizeTransition`) only offers a `finalize` transition when `len(declared) > 0 || len(captured) > 0`, so `review status <lineage> --contract biggz-ai.review-integration/v1 --next-transition` on an *unfinalized* lens-less lineage still errors `contract envelope: no next transition to route (the lineage has no review events)` (reproduced pre-fix on the defect lineage and re-confirmed by reading the unchanged function; a finalized lens-less lineage transitions to `gate` — see harness `review status` output). The approved CLI path (`review finalize <lineage>`) is unblocked and the gate resolves; flagging the envelope routing nuance for the orchestrator's follow-up decision (file is outside this slice's edit surfaces).
+5. **Harness hygiene:** both cases ran in fresh temp repos (`%TEMP%/s3-harness-run/...`); no lineage was created in this repository's review store (`biggz review list` before/after unchanged — the two pre-existing `in_review` lineages from the defect repro were left untouched as evidence). The repo-root `biggz.exe` was rebuilt from this worktree (`go build -o biggz.exe ./cmd/biggz`), never deleted.
+6. **Ledger attempt `tok-d094fbdedfea8b6e6a7bc427` NOT settled** (per dispatch — the orchestrator settles after reviewing the diff).
+7. **No commit/push** (per dispatch). Working tree: 2 modified files, both within the allowed edit surfaces; untracked pre-existing files (`review-subject.json`, `review-subject-s2.json`, `state.yaml`) untouched.
+8. **BigMem merge:** the merged cumulative state of this file is saved (merged, never overwritten) to topic `sdd/fix-rdd-receipt-collection/apply-progress` (observation `obs-1789155285830308300-1`, type `architecture`, project `biggz-ai`) through the `internal/bigmem` store API (`Open` + `Update`) with a byte-identical round-trip check — the Windows argv limit rejects large CLI content writes.
+
+---
+
+## Batch S2 — OpenCode plugin + overlays + doc (previous)
 
 > Bounded completion re-run: the implementation had already landed in the working tree when the previous dispatch timed out before writing bookkeeping; this batch verifies that tree against 7.1–7.4, runs the runtime harness, and persists the artifacts.
 
