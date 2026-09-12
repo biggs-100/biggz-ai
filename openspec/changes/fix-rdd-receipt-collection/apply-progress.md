@@ -10,12 +10,170 @@
 | S1b2 | Phase 4 (4.1–4.3): candidate-lineage resolution + verify gate (bug #60) | done | PR 4 (base: `fix/rdd-receipt-collection-3-identity` @ cc26de2a; head `fix/rdd-receipt-collection-4-resolve-gate`) |
 | S1c | Phase 5 (5.1–5.5): surfacing + parity guard | done | PR 5 (base: `fix/rdd-receipt-collection-4-resolve-gate` @ 5ea72fd7; head `fix/rdd-receipt-collection-5-surfacing`) |
 | S1d | Phase 6 (6.1–6.2): verify-side `review-subject.json` writer + marker test | done | PR 6 (base: `fix/rdd-receipt-collection-5-surfacing` @ 429a7984; head `fix/rdd-receipt-collection-6-verify-subject`, uncommitted) |
+| S2 | Phase 7 (7.1–7.4): OpenCode plugin verbatim transport + tool-less overlays + contract doc + marker tests | done | PR 7 (base: `fix/rdd-receipt-collection-6-verify-subject`; head `fix/rdd-receipt-collection-7-plugin`, uncommitted) |
 
-Progress: **24/33 tasks** (Phases 1–6). Remaining: Phases 7–8 (S2, dogfood close).
+Progress: **28/33 tasks** (Phases 1–7). Remaining: Phase 8 (dogfood close).
 
 ---
 
-## Batch S1d — Verify-side subject writer (current)
+## Batch S2 — OpenCode plugin + overlays + doc (current)
+
+> Bounded completion re-run: the implementation had already landed in the working tree when the previous dispatch timed out before writing bookkeeping; this batch verifies that tree against 7.1–7.4, runs the runtime harness, and persists the artifacts.
+
+| Field | Value |
+|-------|-------|
+| Work unit | `phases-6-8` (ledger attempt `tok-2f2cc1059b7b98dc44fd7496`) |
+| Slice | S2 = Phase 7 only (tasks 7.1–7.4) |
+| Mode | Standard (`strict_tdd: false`) |
+| PR | PR 7 of the feature-branch-chain (base: `fix/rdd-receipt-collection-6-verify-subject`; head `fix/rdd-receipt-collection-7-plugin`, uncommitted) |
+| Date | 2026-09-11 |
+| Store mode | hybrid (tasks.md `[x]` + BigMem `sdd/fix-rdd-receipt-collection/apply-progress`) |
+
+### Tasks Completed
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 7.1 `plugins/review-result-artifacts.ts` — verbatim transport; tool-less reviewer; caller prompt discarded | done | `materializeReviewerTask` runs preflight → `capture-result --materialize`, transports the raw stdout Buffer untouched (`runNativeBytes`: `resolve(Buffer.concat(stdout))`, never trimmed), then `output.args.prompt = materialized.task`; `assertMaterializedSubject` refuses a task whose binding does not match the preflighted subject. Harness: byte-identical transport (sha256 in == hash out, `e98ed03f…`, 2442 bytes) with the caller body absent; capture leg keeps the preflight-completed binding (`reviewBindings` map, `repository_context` + `subject_hash` retained) |
+| 7.2 `sdd-overlay-{single,multi}.json` — review step | done | Both overlays set `"tools": {"*": false}` on `review-risk`/`review-readability`/`review-reliability`/`review-resilience` (8/8 verified in the harness from the shipped JSON); the `--materialize` leg itself is plugin-owned (an overlay JSON has no command slot) — see Notes/Deviations #2 |
+| 7.3 `skills/_shared/review-ledger-contract.md` — materialize route documented | done | `Transport`/`Binding`/`Preflight` rewritten and an explicit `Materialize.` paragraph added: bytes are forwarded byte-for-byte, binding is the only caller-authored input kept, capture leg retains `repository_context` + `subject_hash` |
+| 7.4 Extend `review_plugin_contract_test.go` markers; `go test ./internal/assets` | done | `TestReviewResultArtifactsMaterializeTransportContract` (transport markers, no-trim, no superseded injection route, corrected shape strings) + `TestReviewerAgentsRunToolLess` (both overlays, all four agents) PASS; `go test ./internal/assets -count=1` ok |
+
+### Files Changed
+
+| File | Action | +/- |
+|------|--------|-----|
+| `internal/assets/opencode/plugins/review-result-artifacts.ts` | Modify (materialize transport + corrected binding shape constants) | +123/−29 |
+| `internal/assets/opencode/sdd-overlay-single.json` | Modify (review agents tool-less) | +4/−8 |
+| `internal/assets/opencode/sdd-overlay-multi.json` | Modify (review agents tool-less) | +4/−8 |
+| `internal/assets/skills/_shared/review-ledger-contract.md` | Modify (materialize route) | +7/−5 |
+| `internal/assets/review_plugin_contract_test.go` | Modify (2 marker tests) | +104/−0 |
+| `openspec/changes/fix-rdd-receipt-collection/tasks.md` | Modify (7.1–7.4 `[x]`) | +4/−4 |
+
+Slice total: **+242/−50 across 5 code/doc files** (+ tasks.md) — under the 400-line budget.
+
+### Focused Test Command + Result
+
+```
+go test ./internal/assets -count=1 -run 'TestReviewResultArtifactsMaterializeTransportContract|TestReviewerAgentsRunToolLess' -v
+→ PASS (exit 0):
+  === RUN   TestReviewResultArtifactsMaterializeTransportContract
+  --- PASS: TestReviewResultArtifactsMaterializeTransportContract (0.00s)
+  === RUN   TestReviewerAgentsRunToolLess
+  --- PASS: TestReviewerAgentsRunToolLess (0.00s)
+  ok  github.com/biggs-100/biggz-ai/internal/assets  0.429s
+
+go test ./internal/assets -count=1
+→ ok  github.com/biggs-100/biggz-ai/internal/assets  0.406s (exit 0)
+```
+
+### Package Suite Command + Result
+
+```
+go test ./internal/assets ./internal/sdd ./internal/review ./cmd/biggz -count=1 -timeout 300s
+→ ok  github.com/biggs-100/biggz-ai/internal/assets    0.692s
+→ ok  github.com/biggs-100/biggz-ai/internal/sdd      32.339s
+→ ok  github.com/biggs-100/biggz-ai/internal/review  165.145s
+→ ok  github.com/biggs-100/biggz-ai/cmd/biggz         81.491s
+→ suite exit=0
+```
+
+Full `-v` run naming the touched plugin contract tests (subset of the package run):
+
+```
+go test ./internal/assets -count=1 -v
+→ --- PASS: TestReviewResultArtifactsPluginContract (0.00s)
+  --- PASS: TestReviewResultArtifactsMaterializeTransportContract (0.00s)
+  --- PASS: TestReviewerAgentsRunToolLess (0.00s)
+  PASS
+  ok  github.com/biggs-100/biggz-ai/internal/assets  0.399s (exit 0)
+```
+
+### Static Checks
+
+| Check | Result |
+|-------|--------|
+| `biggz sdd-apply fix-rdd-receipt-collection` (edit-authority guard, fresh build) | exit 0; allowed roots = `C:\Users\USER\Desktop\biggz-ai` |
+| `gofmt -l internal/assets/review_plugin_contract_test.go` | clean (exit 0) |
+| `use-modern-go list --file-path internal/assets/review_plugin_contract_test.go` | consulted; the file consumes `maps.Equal` already — no applicable modernization (no goroutines/context/loops needing the returned idioms) |
+| `go build ./...` | OK (exit 0) |
+| `go vet ./...` | OK (exit 0, no findings) |
+| `node scripts/check-provider-contract.mjs` | exit 0; `check passed 44 files` |
+| `node scripts/verify-package-files.mjs` | exit 0; `verify passed 44 files` |
+| `node scripts/check-skill-lint.mjs` | exit 0; WARNs only (pre-existing skill token counts, hard limit 3200), no FAILs |
+
+### Runtime Harness Evidence (raw)
+
+Harness: *"OpenCode host: bytes → tool-less reviewer → capture"*. Real `biggz` built fresh from the worktree; temp git repo with isolated `HOME`; real `review start` (contract-mode consent relay → exact granted invocation), real `review status --contract --next-transition` collect envelope, real plugin module executed by Node 24 (type-stripping) — `tool.execute.before` → transport, `tool.execute.after` → real capture; then real `finalize` and both real gates. Repro: `bash C:/Users/USER/AppData/Local/Temp/s2-harness/run.sh` (full log `C:/Users/USER/AppData/Local/Temp/s2-harness/run-output.txt`); harness lives in TEMP, outside the repo and outside the allowed edit surfaces.
+
+```
+=== review start — consent relay (contract mode) ===
+risk_evidence: ["lens plan: risk"]  candidate: risk=medium, lenses=["risk"], lineage=review-4dc805d92b5f333d
+granted invocation: biggz review start --subject C:/Users/USER/AppData/Local/Temp/s2-harness/repo/openspec/changes/fix-rdd-receipt-collection/review-subject.json --lineage review-4dc805d92b5f333d --consent granted
+Review started: review-4dc805d92b5f333d (correction budget: 10 lines, base 075b1a73eeaf8bdb970e21999d77b7b16f9050b4, risk tier: medium, lenses: risk)
+
+=== negotiated collect envelope ===
+{"schema":"biggz-ai.review-integration/v1","lineage":"review-4dc805d92b5f333d","next_transition":{"type":"collect","inputs":{"capture":{"lineage":"review-4dc805d92b5f333d","target":"287bf37f0d3fa508813eab93371032219c10e96d","lens":"risk","order":0,"expected_revision":"d5efc1094dd43e27b77da9a4d577c417001b4d867e45def76bd82bf680c117e7","repository_context":{"repository":"C:/Users/USER/AppData/Local/Temp/s2-harness/repo","project":"repo"}}}}}
+
+=== node plugin harness ===
+harness: where biggz -> C:\Users\USER\AppData\Local\Temp\s2-harness\bin\biggz.exe ; C:\Users\USER\go\bin\biggz.exe
+harness: repo=C:/Users/USER/AppData/Local/Temp/s2-harness/repo
+harness: envelope.transition=collect lineage=review-4dc805d92b5f333d
+harness: capture_input lens=risk order=0 target=287bf37f0d3fa508813eab93371032219c10e96d expected_revision=d5efc1094dd43e27b77da9a4d577c417001b4d867e45def76bd82bf680c117e7 repository_context=present
+harness: binding.keys.sorted=lens,lineage,order,repository_context,revision,target
+harness: before_hook=ok materialized_bytes=2442
+harness: sha256(transport)=e98ed03f7ff35ddd9bb91b9695da2cd5 sha256(direct-cli)=e98ed03f7ff35ddd9bb91b9695da2cd5 byte_identical=true
+harness: caller_body_discarded=true materialized.sections=binding+context+name-status+numstat patches=2 paths=["app.go","feature.md"]
+harness: materialized.subject_hash=sha256:a55d2c01f4660f1b130e8f3187f7595c5b1abd5cf9d8da0b380938b17d9dfe19
+harness: tool_less_reviewers=8/8 both overlays deny every tool ({"*":false})
+harness: reviewer_execution=simulated (no model provider in this run); input=the transported bytes above; tools available=none
+harness: after_hook_capture admission=completed result_hash=sha256:b1bde99457f5a3d076f7a678fb2b0b20c738a1af342b2fdaf8e261cd5c9bc50d captured_subject_hash=sha256:a55d2c01f4660f1b130e8f3187f7595c5b1abd5cf9d8da0b380938b17d9dfe19
+harness: old_plugin(HEAD) rejected the negotiated binding: "review task binding does not match the selected lens"
+harness: S2-HARNESS: OK
+
+=== finalize ===
+Review finalized: review-4dc805d92b5f333d (receipt …, hash sha256:fb577ebcc1892adf63b9f0d3c58adcbd21a71a66ec9e208531075d8578073d46)
+finalize exit=0
+
+=== real publication gate (review gate post-apply) ===
+{"gate":"post-apply","lineage":"review-4dc805d92b5f333d","passed":false,"allowed":true,"delivery":"burned/unmanaged","reason":"review burned: receipt is ephemeral and burned after finalize; delivery via ordinary repository policy"}
+gate exit=0
+
+=== real RDD gate (sdd.VerifyPreflightAt — the verify preflight) ===
+harness: rdd_gate=ALLOW (sdd.VerifyPreflightAt returned nil)
+s2gate exit=0
+```
+
+Fail-closed negative (fresh candidate commit, no lineage — same gate entrypoint):
+
+```
+harness: rdd_gate=BLOCKED err=rdd_receipt_missing: review lineage resolution: unresolved_candidate_lineage: no review lineage for candidate "HEAD^{commit}" (resolved commit be4a2d54e2a7d0154ef01bbff16f4d6924f566ff): derived identity review-427a12cb771af365 has no store entry and no legacy lineage genesis subject resolves to it; hint: run `biggz review start --subject "…review-subject.json"` and `biggz review finalize <lineage>`
+s2gate exit=1
+```
+
+Assertions proven: (a) the negotiated collect binding (always carrying `repository_context`) is accepted and materialized; (b) the host transported the materialized bytes byte-identically (hash in == hash out) with the caller-authored body discarded; (c) the shipped overlays deny every tool to all four review agents — the frozen bytes are the reviewer's only evidence; (d) the real capture CLI admitted the reviewer result under the binding retained from the before hook (admission `completed`); (e) after finalize both real gates allow; (f) before any lineage the gate fails closed with the typed `rdd_receipt_missing` + producer hint. Reviewer LLM execution was simulated (no model provider available in this run) — see Notes/Deviations #3.
+
+### Rollback Boundary
+
+Revert exactly this unit:
+
+1. `git checkout -- internal/assets/opencode/plugins/review-result-artifacts.ts internal/assets/opencode/sdd-overlay-single.json internal/assets/opencode/sdd-overlay-multi.json internal/assets/skills/_shared/review-ledger-contract.md internal/assets/review_plugin_contract_test.go`;
+2. revert `tasks.md` 7.1–7.4 `[x]` → `[ ]`.
+
+→ back to the S1d state (PR 6 head). Transport-only assets: no production Go code, no store/config/data changes; the pre-S2 plugin would reject negotiated bindings again (the defect below), which is exactly the broken state this slice replaces.
+
+### Notes / Deviations
+
+1. **Pre-existing defect surfaced while building the harness (fixed in-slice, regression-locked — not silently dropped).** The plugin's `parseBinding` compares `Object.keys(value).sort().join(",")` against literal shape strings. At HEAD, `withContext`/`current` read `…order,revision,repository_context…`, which is NOT the sorted order (`"repository_context" < "revision"`, 'p' < 'v'), so both constants were dead and **every binding carrying `repository_context` failed parse** with `review task binding does not match the selected lens` — and the negotiated collect envelope ALWAYS issues `repository_context` when the repository resolves (`internal/review/contract.go:109` + `contractRepositoryContext`), so the shipped plugin could never materialize/capture a negotiated binding (raw harness proof above: HEAD module rejects the real envelope; fixed module accepts). Raw evidence: `git show HEAD:…review-result-artifacts.ts` shows the dead strings; `git log -S "lens,lineage,order,revision,repository_context,target"` attributes them to `70ad11d8` (review-workflow parity) — **pre-existing**, not introduced by S2. Scope: the file is one of the S2 edit surfaces and the defect blocks 7.1 outright, so it was fixed in place (constants corrected to sorted order) and locked by `TestReviewResultArtifactsMaterializeTransportContract`. What is NOT reproducible: any residual preflight subject-hash mismatch — in the fixed tree the materialized binding, preflight subject, capture admission and reviewer echo all carry the same `sha256:a55d2c01…` (harness lines above).
+2. **7.2 literal reading vs representable surface:** the overlay JSONs define agents; they cannot carry a CLI flag. The design's S2 row assigns the verbatim transport to the plugin and the tool-less reviewer to the overlays; the materialize leg is exercised through the plugin hook in the harness, and the overlays ship the tool-less half. No overlay schema change was invented to host a flag.
+3. **Reviewer execution simulated (honest scope):** no model provider/OpenCode runtime is available in this environment, so the reviewer step feeds a synthesized strict reviewer result built from the transported bytes; everything else is real (plugin module execution, preflight/materialize/capture CLI, admission, finalize, gates). The 60-turn-visible path (`opencode` host launching a real tool-less reviewer) remains an open item for Phase 8 dogfooding.
+4. **Harness hygiene gotcha (not a product defect):** the first harness run silently exercised a stale globally-installed `biggz` (`~/go/bin` shadowing the fresh build under msys PATH), producing a UUIDv7 lineage and `lenses: none`; the driver now asserts the freshly built binary via the derived-identity help marker and a `where biggz` log line. Also: a docs-only candidate plans zero lenses (no collect transition) — the harness uses a code change for a medium tier, which exercises the contract-mode consent relay → exact granted invocation.
+5. **Ledger attempt `tok-2f2cc1059b7b98dc44fd7496` NOT settled** (per dispatch — the orchestrator settles after reviewing the diff).
+6. **No commit/push** (per dispatch). The pre-existing (untracked) `openspec/changes/fix-rdd-receipt-collection/state.yaml` and the untracked repo-root `biggz.exe` were left untouched; the harness lives entirely under `%TEMP%/s2-harness`.
+7. **BigMem merge:** this file's cumulative state is saved (merged, never overwritten) to topic `sdd/fix-rdd-receipt-collection/apply-progress`; the harness defect write-up is also saved to `sdd/fix-rdd-receipt-collection/s2-harness-defect`.
+
+---
+
+## Batch S1d — Verify-side subject writer (previous)
 
 | Field | Value |
 |-------|-------|
@@ -690,5 +848,4 @@ Revert exactly this unit, no other slice depends on the new symbols yet:
 
 ## Remaining Tasks
 
-- Phase 7 (S2): OpenCode plugin verbatim transport + overlays + contract doc (7.1–7.4) — PR 7, base = PR 6 (`fix/rdd-receipt-collection-6-verify-subject`).
-- Phase 8 (close): dogfood own receipt, retro-collect `fix-bigmem-recall-friction`, archive, issue #60 (8.1–8.5) — on the tracker after PR 7.
+- Phase 8 (close): dogfood own receipt, retro-collect `fix-bigmem-recall-friction`, archive, issue #60 (8.1–8.5) — PR 7 base (`fix/rdd-receipt-collection-7-plugin`); the 60-turn-visible reviewer path (`opencode` host, real tool-less reviewer) remains open for 8.1.
