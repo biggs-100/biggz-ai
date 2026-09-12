@@ -9,12 +9,123 @@
 | S1b1 | Phase 3 (3.1–3.3): lineage identity + start canonicalization | done | PR 3 (base: `fix/rdd-receipt-collection-2-materializer`; head `fix/rdd-receipt-collection-3-identity`) |
 | S1b2 | Phase 4 (4.1–4.3): candidate-lineage resolution + verify gate (bug #60) | done | PR 4 (base: `fix/rdd-receipt-collection-3-identity` @ cc26de2a; head `fix/rdd-receipt-collection-4-resolve-gate`) |
 | S1c | Phase 5 (5.1–5.5): surfacing + parity guard | done | PR 5 (base: `fix/rdd-receipt-collection-4-resolve-gate` @ 5ea72fd7; head `fix/rdd-receipt-collection-5-surfacing`) |
+| S1d | Phase 6 (6.1–6.2): verify-side `review-subject.json` writer + marker test | done | PR 6 (base: `fix/rdd-receipt-collection-5-surfacing` @ 429a7984; head `fix/rdd-receipt-collection-6-verify-subject`, uncommitted) |
 
-Progress: **22/33 tasks** (Phases 1–5). Remaining: Phases 6–8 (S1d, S2, dogfood close).
+Progress: **24/33 tasks** (Phases 1–6). Remaining: Phases 7–8 (S2, dogfood close).
 
 ---
 
-## Batch S1c — Surfacing + parity guard (current)
+## Batch S1d — Verify-side subject writer (current)
+
+| Field | Value |
+|-------|-------|
+| Work unit | `phases-6-8` (ledger attempt `tok-d9ab9305907d0e0c14b75d2c`) |
+| Slice | S1d = Phase 6 only (tasks 6.1–6.2) |
+| Mode | Standard (`strict_tdd: false`) |
+| PR | PR 6 of the feature-branch-chain (base: `fix/rdd-receipt-collection-5-surfacing` @ 429a7984; head `fix/rdd-receipt-collection-6-verify-subject`, uncommitted) |
+| Date | 2026-09-11 |
+| Store mode | hybrid (tasks.md `[x]` + BigMem `sdd/fix-rdd-receipt-collection/apply-progress`) |
+
+### Tasks Completed
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 6.1 `sdd-verify/SKILL.md`: verify writes `<changeRoot>/review-subject.json` (`{"repository","commit_sha":"HEAD"}`); `sdd-status` stays read-only — writer cannot live there | done | One identical instruction paragraph added to each renderable model variant (`model-capable` + `model-small`) of `internal/assets/skills/sdd-verify/SKILL.md` and its byte-identical mirror `skills/sdd-verify/SKILL.md`; `internal/sdd` untouched (status stays read-only) |
+| 6.2 Marker test `sdd_verify_writer_marker_test.go` proves instruction present | done | `internal/assets/sdd_verify_writer_marker_test.go` → `TestSDDVerifySubjectWriter` PASS; overlay-stripped negative proof FAILs (guard bites) |
+
+### Files Changed
+
+| File | Action | +/- |
+|------|--------|-----|
+| `internal/assets/skills/sdd-verify/SKILL.md` | Modify (writer instruction in both model variants) | +2/−0 |
+| `skills/sdd-verify/SKILL.md` | Modify (mirror, byte-identical in the same commit) | +2/−0 |
+| `internal/assets/sdd_verify_writer_marker_test.go` | Create (marker test via `assets.FS`, nosourcegrep-safe) | +47/−0 |
+| `openspec/changes/fix-rdd-receipt-collection/tasks.md` | Modify (6.1–6.2 `[x]`) | +2/−2 |
+
+Slice total: **53 insertions + 2 deletions across 4 files** (well under the 400-line budget).
+
+### Focused Test Command + Result
+
+```
+go test ./internal/assets -run TestSDDVerifySubjectWriter -count=1 -v
+→ PASS, ok github.com/biggs-100/biggz-ai/internal/assets 0.439s (exit 0)
+  === RUN   TestSDDVerifySubjectWriter
+  --- PASS: TestSDDVerifySubjectWriter (0.00s)
+  PASS
+```
+
+Negative proof (build overlay substitutes a copy of the skill with the two instruction lines removed; repo files untouched):
+
+```
+go test -overlay "$TEMP/ovl/overlay.json" ./internal/assets -run TestSDDVerifySubjectWriter -count=1 -v
+→ FAIL (exit 1):
+  sdd_verify_writer_marker_test.go:36: sdd-verify/SKILL.md missing the review-subject writer instruction "Before the RDD gate runs, write `<changeRoot>/review-subject.json`"
+  --- FAIL: TestSDDVerifySubjectWriter (0.00s)
+```
+
+### Package Suite Command + Result
+
+```
+go test ./internal/assets ./internal/sdd ./internal/review ./cmd/biggz -count=1 -timeout 300s
+→ ok internal/assets   0.790s
+→ ok internal/sdd     37.652s
+→ ok internal/review 173.078s
+→ ok cmd/biggz        87.285s
+```
+
+### Static Checks
+
+| Check | Result |
+|-------|--------|
+| `biggz sdd-apply fix-rdd-receipt-collection` (edit-authority guard) | exit 0; allowed roots = `C:\Users\USER\Desktop\biggz-ai` |
+| `go build ./...` | OK (exit 0) |
+| `go vet ./...` | OK (exit 0, no findings) |
+| `gofmt -l internal/assets/sdd_verify_writer_marker_test.go` | clean |
+| `node scripts/check-skill-lint.mjs` | exit 0; both mirrors WARN 1101 tokens (ideal 450, hard 3200) — token WARNs acceptable, no FAILs |
+| `cmp skills/sdd-verify/SKILL.md internal/assets/skills/sdd-verify/SKILL.md` | MIRROR-IDENTICAL |
+| `use-modern-go list --go-version 1.25` + `list --file-path internal/assets/sdd_verify_writer_marker_test.go` | consulted; no applicable modernization (marker test: no context, goroutines, slices, maps, or manual loops) |
+| CI complexity gate (cyclomatic ≤15 / cognitive ≤20) | no non-test `internal/sdd`/`internal/review` code touched — no additions possible |
+
+### Runtime Harness Evidence (raw)
+
+Phase 6's declared harness "offered subject invocation runs": fresh `go build -o <temp>/biggz-harness.exe ./cmd/biggz`; an external temp-module program (`github.com/biggs-100/biggz-ai/harness`, `replace` → repo, so it can import `internal/review` + `internal/sdd`) creates a temp git repo with isolated `HOME`, writes the subject file EXACTLY as the new instruction dictates, runs the real offered CLI invocation, resolves the gate lineage for `HEAD`, then captures + finalizes that same lineage and re-runs the real verify gate. Raw output:
+
+```
+harness: repo=C:\Users\USER\AppData\Local\Temp\rdd-harness-repo-4133046029
+harness: head=b1210cf602f16cbdf0ae6a1e65e6e8a3b6ea85be
+harness: subject_file=C:\Users\USER\AppData\Local\Temp\rdd-harness-repo-4133046029\openspec\changes\fix-rdd-receipt-collection\review-subject.json
+harness: subject_bytes={"repository":"C:/Users/USER/AppData/Local/Temp/rdd-harness-repo-4133046029","commit_sha":"HEAD"}
+harness: start exit=0 output="Review started: review-268a31d339558e06 (correction budget: 2 lines, base 4b36dfd79db36d8c59d1fb032de66b57f0457b65, risk tier: low, lenses: risk)"
+harness: started_lineage=review-268a31d339558e06 gate_resolved=review-268a31d339558e06 equal=true
+harness: preflight_before_capture=rdd_receipt_missing: missing persisted review receipt: run 'biggz review finalize <lineage>' to finalize the captured review; hint: run `biggz review start --subject "C:\Users\USER\AppData\Local\Temp\rdd-harness-repo-4133046029\openspec\changes\fix-rdd-receipt-collection\review-subject.json"` and `biggz review finalize <lineage>`
+harness: capture_admission=completed receipt=sha256:a79cff8a505314cf33816119bb30fdef55fab548a4f6ed801f08a474e9ba1df5
+harness: preflight_after_capture=<nil>
+harness: OK — offered subject invocation runs; start lineage == gate lineage for HEAD
+```
+
+Assertions proven: (a) the instruction-dictated subject file (`repository` + `commit_sha:"HEAD"`) makes the offered `biggz review start --subject '<changeRoot>/review-subject.json'` invocation runnable (real CLI, exit 0); (b) the lineage start derived (`review-268a31d339558e06`) EQUALS the lineage the RDD gate resolves for `HEAD` (`Review.ResolveCandidateLineage(repo, "HEAD^{commit}")` — the exact call `verifyPreflightAt` makes) — `equal=true`; (c) before capture the gate fails closed naming the same subject file; (d) after capture+finalize of that same lineage the real `sdd.VerifyPreflightAt` returns `nil` (receipt `sha256:a79cff8a…` satisfied the gate started from the subject file).
+
+### Rollback Boundary
+
+Revert exactly this unit; no other slice consumes anything from it:
+
+1. delete `internal/assets/sdd_verify_writer_marker_test.go`;
+2. remove the two instruction bullets from `internal/assets/skills/sdd-verify/SKILL.md` and `skills/sdd-verify/SKILL.md` (revert BOTH mirrors together to keep them byte-identical);
+3. revert `tasks.md` 6.1–6.2 `[x]` → `[ ]`.
+
+→ back to 429a7984 (PR 5 head). Asset-only: zero production Go changes, zero behavior change outside the shipped skill text; `sdd-status` untouched.
+
+### Notes / Deviations
+
+1. **Instruction in both model variants (deliberate):** the skill file ships two renderable bodies — `<!-- section:model-capable -->` and `<!-- section:model-small -->` — and `extractModelSection`/`parseFrontmatter` render exactly one per model class. A single placement would silently drop the writer contract for the other class, so the identical paragraph lands in both variants; `TestSDDVerifySubjectWriter` locks the dual presence (count == 2) so removing either fails the build. This delivers the "one instruction paragraph" requirement per renderable variant.
+2. **Harness not committed:** the dispatch's allowed edit surfaces excluded the `internal/sdd`/`cmd/biggz` test packages, so the runtime harness ran as an external temp-module program driving the real built CLI plus the exported resolution/gate functions; raw output captured above. No fixture-only shortcut: real git repo, real CLI binary, real gate function.
+3. **Ledger attempt `tok-d9ab9305907d0e0c14b75d2c` NOT settled** (per dispatch — the orchestrator settles after reviewing the diff).
+4. **No commit/push** (per dispatch — orchestrator commits after reviewing the diff). Working tree: 3 modified + 1 new file, all within the five allowed surfaces; the pre-existing untracked `openspec/changes/fix-rdd-receipt-collection/state.yaml` was left untouched.
+5. `biggz.exe` (untracked build output at the repo root) untouched; the harness binary was built to a temp path.
+
+---
+
+## Batch S1c — Surfacing + parity guard (previous)
 
 | Field | Value |
 |-------|-------|
@@ -579,5 +690,5 @@ Revert exactly this unit, no other slice depends on the new symbols yet:
 
 ## Remaining Tasks
 
-- Phase 5 (S1c): surfacing + parity guard (5.1–5.5) — PR 5, base = PR 4 (`fix/rdd-receipt-collection-4-resolve-gate`).
-- Phases 6–8 (S1d, S2, dogfood close) untouched.
+- Phase 7 (S2): OpenCode plugin verbatim transport + overlays + contract doc (7.1–7.4) — PR 7, base = PR 6 (`fix/rdd-receipt-collection-6-verify-subject`).
+- Phase 8 (close): dogfood own receipt, retro-collect `fix-bigmem-recall-friction`, archive, issue #60 (8.1–8.5) — on the tracker after PR 7.

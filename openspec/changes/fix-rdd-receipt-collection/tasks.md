@@ -70,8 +70,8 @@ CI complexity gate (`internal/review`/`internal/sdd`, non-test): cyclomatic ≤1
 
 ## Phase 6: Verify-side subject writer (S1d)
 
-- [ ] 6.1 `sdd-verify/SKILL.md`: verify writes `<changeRoot>/review-subject.json` (`{"repository","commit_sha":"HEAD"}`); `sdd-status` stays read-only — writer cannot live there
-- [ ] 6.2 Marker test `sdd_verify_writer_marker_test.go` proves instruction present; `go test ./internal/assets -run TestSDDVerifySubjectWriter`
+- [x] 6.1 `sdd-verify/SKILL.md`: verify writes `<changeRoot>/review-subject.json` (`{"repository","commit_sha":"HEAD"}`); `sdd-status` stays read-only — writer cannot live there
+- [x] 6.2 Marker test `sdd_verify_writer_marker_test.go` proves instruction present; `go test ./internal/assets -run TestSDDVerifySubjectWriter`
 
 ## Phase 7: OpenCode plugin + overlays + doc (S2)
 
