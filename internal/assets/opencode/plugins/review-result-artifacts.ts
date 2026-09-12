@@ -14,15 +14,19 @@ import { join } from "node:path"
 //      and `biggz review capture-result`:
 //
 //   - tool.execute.before: validates the GENTLE_AI_REVIEW_BINDING literal,
-//     rejects background tasks, runs `capture-result --preflight` to obtain
-//     the artifact subject (base/candidate trees + ordered changed-path
-//     manifest), injects it under GENTLE_AI_REVIEW_CONTEXT, and discards the
-//     caller-authored task body — the reviewer receives only provider-owned
-//     context and the exact instruction shape from the orchestrator's collect
-//     input.
+//     rejects background tasks, runs `capture-result --preflight` to validate
+//     the binding and derive the artifact subject (base/candidate trees +
+//     ordered changed-path manifest), then runs
+//     `capture-result --materialize` and replaces the caller-authored task
+//     body with the materialized bytes VERBATIM — the provider-owned
+//     materialized task IS the reviewer prompt, and the caller's binding line
+//     is the only part that survives (it selects the lens slot).
 //   - tool.execute.after: extracts strict JSON from the task result (rejecting
 //     empty and nested envelopes), runs `capture-result --input -` with the
 //     binding flags, and replaces the task output with the captured artifact.
+//     The binding it captures with is the one the before hook completed with
+//     the preflight-derived subject hash (provider-issued repository context
+//     retained), so the materialize transport never weakens the capture leg.
 //   - Failure path: biggz has no `preserve-result` CLI verb, so the raw
 //     payload is quarantined to a durable local file
 //     .git/biggz/preserved-results/<lineage>-<lens>-<order>-<ts>.json
@@ -39,6 +43,10 @@ import { join } from "node:path"
 // GENTLE_AI_REVIEW_BINDING is adopted verbatim from gentle-ai: it is the
 // de-facto standard literal across both projects, so a binding authored for
 // one transport is recognizable in the other.
+//
+// The reviewer itself runs tool-less: the host overlay denies every tool to
+// the review-* agents, so the transported frozen bytes are its only evidence
+// and no live worktree inspection is possible or needed.
 
 const REVIEW_AGENTS = new Set(["review-risk", "review-readability", "review-reliability", "review-resilience"])
 const BINDING = /^GENTLE_AI_REVIEW_BINDING (\{[^\n]+\})(?:\n|$)/
@@ -117,9 +125,9 @@ function parseBinding(prompt: unknown, lens: string): ReviewBinding {
   const value = binding as Record<string, unknown>
   const fields = Object.keys(value).sort().join(",")
   const minimal = fields === "lens,lineage,order,revision,target"
-  const withContext = fields === "lens,lineage,order,revision,repository_context,target"
+  const withContext = fields === "lens,lineage,order,repository_context,revision,target"
   const withSubject = fields === "lens,lineage,order,revision,subject_hash,target"
-  const current = fields === "lens,lineage,order,revision,repository_context,subject_hash,target"
+  const current = fields === "lens,lineage,order,repository_context,revision,subject_hash,target"
   const validContext = (candidate: unknown) => {
     if (typeof candidate !== "string" || candidate === "") return false
     let parsed: unknown
@@ -217,7 +225,16 @@ function captureCwd(worktree: string | undefined, directory: string): string {
   return worktree || directory
 }
 
-function runNative(cwd: string, args: string[], stdin: string): Promise<string> {
+// captureScope labels where a native capture failure happened, without ever
+// forwarding the raw cwd when the binding pins the repository itself.
+function captureScope(binding: ReviewBinding, cwd: string): string {
+  return binding.repository_context ? "the provider-issued repository context" : cwd
+}
+
+// runNativeBytes runs one native command and resolves its raw stdout Buffer.
+// This is the transport primitive: the materialize leg must forward bytes
+// exactly as printed, so the buffer is resolved untouched (never trimmed).
+function runNativeBytes(cwd: string, args: string[], stdin: string): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const child = spawn("biggz", args, { cwd, stdio: ["pipe", "pipe", "pipe"] })
     const stdout: Buffer[] = []
@@ -228,7 +245,7 @@ function runNative(cwd: string, args: string[], stdin: string): Promise<string> 
     child.on("error", reject)
     child.on("close", (code) => {
       if (code === 0) {
-        resolve(Buffer.concat(stdout).toString("utf8").trim())
+        resolve(Buffer.concat(stdout))
         return
       }
       reject(new Error(`biggz ${args[0]} ${args[1]} failed (${code ?? "signal"}): ${Buffer.concat(stderr).toString("utf8").trim()}`))
@@ -237,7 +254,18 @@ function runNative(cwd: string, args: string[], stdin: string): Promise<string> 
   })
 }
 
-function captureArgs(binding: ReviewBinding, preflight: boolean): string[] {
+// runNative is the trimmed text form used by the preflight and capture legs.
+async function runNative(cwd: string, args: string[], stdin: string): Promise<string> {
+  return (await runNativeBytes(cwd, args, stdin)).toString("utf8").trim()
+}
+
+// CaptureMode selects the capture-result leg: "preflight" validates the
+// binding and prints the artifact subject, "materialize" prints the complete
+// provider-owned reviewer task verbatim, and "input" captures the reviewer
+// result from stdin.
+type CaptureMode = "preflight" | "materialize" | "input"
+
+function captureArgs(binding: ReviewBinding, mode: CaptureMode): string[] {
   const args = [
     "review", "capture-result",
     "--lineage", binding.lineage, "--target", binding.target,
@@ -246,14 +274,15 @@ function captureArgs(binding: ReviewBinding, preflight: boolean): string[] {
   ]
   if (binding.repository_context) args.push("--repository-context", binding.repository_context)
   if (binding.subject_hash) args.push("--subject-hash", binding.subject_hash)
-  if (preflight) args.push("--preflight")
+  if (mode === "preflight") args.push("--preflight")
+  else if (mode === "materialize") args.push("--materialize")
   else args.push("--input", "-")
   return args
 }
 
 async function preflightCapture(cwd: string, binding: ReviewBinding): Promise<ReviewCapturePreflight> {
   try {
-    const response = await runNative(cwd, captureArgs(binding, true), "")
+    const response = await runNative(cwd, captureArgs(binding, "preflight"), "")
     let parsed: unknown
     try {
       parsed = JSON.parse(response)
@@ -293,9 +322,8 @@ async function preflightCapture(cwd: string, binding: ReviewBinding): Promise<Re
     // cannot embed reviewer payload content; it is still scrubbed (never
     // forwarded verbatim) because native failures can quote absolute paths,
     // environment assignments, or emails the transcript must not carry.
-    const scope = binding.repository_context ? "the provider-issued repository context" : cwd
     throw new Error(
-      `review capture preflight failed for lens ${binding.lens} under ${scope}: ` +
+      `review capture preflight failed for lens ${binding.lens} under ${captureScope(binding, cwd)}: ` +
       `${scrubbedCause(cause)}. ` +
       `The reviewer was not launched, so its exactly-once invocation is preserved. ` +
       `Relaunch the lens from the repository that owns lineage ${binding.lineage} ` +
@@ -326,12 +354,68 @@ function validManifestEntry(entry: unknown): entry is ChangedPathManifestEntry {
     typeof value.deleted === "boolean"
 }
 
-async function injectReviewerContext(prompt: string, lens: string, cwd: string): Promise<string> {
+// materializeReviewerTask replaces the caller-authored task body with the
+// provider-owned bytes `capture-result --materialize` prints. The bytes are
+// forwarded verbatim: the materialized task IS the reviewer prompt, and the
+// caller's binding line is the only part that survives (it selects the lens
+// slot). The preflight runs first so the binding is validated and the
+// artifact subject derived before the heavier composition, and so the
+// materialized bytes can be proven to describe that exact subject. The
+// returned binding keeps the provider-issued repository context and gains the
+// preflight-derived subject hash for the capture leg.
+async function materializeReviewerTask(
+  prompt: string, lens: string, cwd: string,
+): Promise<{ task: string; binding: ReviewBinding }> {
   const binding = parseBinding(prompt, lens)
   const preflight = await preflightCapture(cwd, binding)
-  const injectedBinding = { ...binding, subject_hash: preflight.subject.subject_hash }
-  return `GENTLE_AI_REVIEW_BINDING ${JSON.stringify(injectedBinding)}\n` +
-    `GENTLE_AI_REVIEW_CONTEXT ${JSON.stringify(preflight)}\n`
+  let raw: Buffer
+  try {
+    raw = await runNativeBytes(cwd, captureArgs(binding, "materialize"), "")
+  } catch (cause) {
+    throw new Error(
+      `review materialize failed for lens ${binding.lens} under ${captureScope(binding, cwd)}: ` +
+      `${scrubbedCause(cause)}. ` +
+      `The reviewer was not launched, so its exactly-once invocation is preserved. ` +
+      `Relaunch the lens from the repository that owns lineage ${binding.lineage} ` +
+      `(biggz resolves the repository from the working directory).`,
+    )
+  }
+  const task = raw.toString("utf8")
+  assertMaterializedSubject(task, lens, binding, preflight)
+  return { task, binding: { ...binding, subject_hash: preflight.subject.subject_hash } }
+}
+
+// assertMaterializedSubject proves the materialized bytes carry the artifact
+// subject the preflight just validated: same lineage, target, slot and
+// expected revision, and the derived subject hash. A mismatch would transport
+// a task for a different frozen view than the host validated, so it is
+// refused before any reviewer launches.
+function assertMaterializedSubject(
+  task: string, lens: string, binding: ReviewBinding, preflight: ReviewCapturePreflight,
+): void {
+  if (!BINDING.test(task)) {
+    throw new Error("review materialize did not print a provider-owned reviewer task")
+  }
+  const materialized = parseBinding(task, lens)
+  if (materialized.lineage !== binding.lineage || materialized.target !== binding.target ||
+      materialized.order !== binding.order || materialized.revision !== binding.revision ||
+      materialized.subject_hash !== preflight.subject.subject_hash) {
+    throw new Error("review materialize returned a different artifact subject")
+  }
+}
+
+// taskKey identifies one task tool call across the before/after boundaries.
+function taskKey(sessionID: string, callID: string): string {
+  return sessionID + "\u0000" + callID
+}
+
+// dropTaskBindings discards every stored binding of one session when the
+// session is deleted mid-flight.
+function dropTaskBindings(bindings: Map<string, ReviewBinding>, sessionID: string): void {
+  const prefix = sessionID + "\u0000"
+  for (const key of bindings.keys()) {
+    if (key.startsWith(prefix)) bindings.delete(key)
+  }
 }
 
 function errorMessage(cause: unknown): string {
@@ -448,13 +532,20 @@ async function preservedCaptureFailure(
 const ReviewResultArtifactsPlugin: Plugin = async ({ directory, worktree }) => {
   const preserveAttempts: Map<string, number> = new Map()
   const failedSDDSessions = new Map<string, SDDTaskFailure>()
+  // reviewBindings carries the before-hook binding (provider-issued
+  // repository context + preflight-derived subject hash) to the capture leg:
+  // after the materialize rewrite the task prompt is provider-owned bytes and
+  // no longer carries the caller's full binding.
+  const reviewBindings: Map<string, ReviewBinding> = new Map()
   const cwd = worktree || directory
   return {
-    dispose: async () => { preserveAttempts.clear(); failedSDDSessions.clear() },
+    dispose: async () => { preserveAttempts.clear(); failedSDDSessions.clear(); reviewBindings.clear() },
     event: async ({ event }) => {
       if (event.type === "session.deleted") {
-        preserveAttempts.delete(event.properties.info.id)
-        failedSDDSessions.delete(event.properties.info.id)
+        const sessionID = event.properties.info.id
+        preserveAttempts.delete(sessionID)
+        failedSDDSessions.delete(sessionID)
+        dropTaskBindings(reviewBindings, sessionID)
       }
     },
     "tool.execute.before": async (input, output) => {
@@ -476,11 +567,10 @@ const ReviewResultArtifactsPlugin: Plugin = async ({ directory, worktree }) => {
       if (output.args.background === true) {
         throw new Error("bound review tasks must run in the foreground for native result capture")
       }
-      output.args.prompt = await injectReviewerContext(
-        output.args.prompt,
-        output.args.subagent_type.slice("review-".length),
-        cwd,
-      )
+      const lens = output.args.subagent_type.slice("review-".length)
+      const materialized = await materializeReviewerTask(output.args.prompt, lens, cwd)
+      reviewBindings.set(taskKey(input.sessionID, input.callID), materialized.binding)
+      output.args.prompt = materialized.task
     },
     "tool.execute.after": async (input, output) => {
       if (input.tool !== "task" || typeof input.args?.subagent_type !== "string") return
@@ -498,7 +588,11 @@ const ReviewResultArtifactsPlugin: Plugin = async ({ directory, worktree }) => {
       if (!REVIEW_AGENTS.has(subagent)) return
       if (typeof input.args.prompt !== "string" || !BINDING.test(input.args.prompt)) return
       const lens = input.args.subagent_type.slice("review-".length)
-      const binding = parseBinding(input.args.prompt, lens)
+      const key = taskKey(input.sessionID, input.callID)
+      // Prefer the binding the before hook completed (repository context +
+      // subject hash); fall back to the transported provider-owned binding.
+      const binding = reviewBindings.get(key) ?? parseBinding(input.args.prompt, lens)
+      reviewBindings.delete(key)
       // Extract the replayable payload exactly once, BEFORE capture: a capture
       // failure must quarantine the extracted strict JSON — never the
       // enveloped output.output.
@@ -509,7 +603,7 @@ const ReviewResultArtifactsPlugin: Plugin = async ({ directory, worktree }) => {
         throw await preservedCaptureFailure(cwd, binding, output.output, cause, preserveAttempts, input.sessionID)
       }
       try {
-        output.output = await runNative(cwd, captureArgs(binding, false), result)
+        output.output = await runNative(cwd, captureArgs(binding, "input"), result)
         preserveAttempts.delete(input.sessionID)
       } catch (cause) {
         throw await preservedCaptureFailure(cwd, binding, result, cause, preserveAttempts, input.sessionID)
