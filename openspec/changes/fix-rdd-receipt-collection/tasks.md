@@ -50,9 +50,9 @@ CI complexity gate (`internal/review`/`internal/sdd`, non-test): cyclomatic ≤1
 
 ## Phase 3: Identity + start canonicalization (S1b1)
 
-- [ ] 3.1 RED: `lineage_identity_test.go` — derivation deterministic; abbrev → full SHA persisted; unresolvable → typed reject
-- [ ] 3.2 GREEN: `internal/review/lineage_identity.go` — `CanonicalSubjectSHA`, `DeriveLineageID`
-- [ ] 3.3 GREEN: `review start` canonicalizes `CommitSHA`; defaults to derived id; `go test ./internal/review -run TestLineageIdentity`
+- [x] 3.1 RED: `lineage_identity_test.go` — derivation deterministic; abbrev → full SHA persisted; unresolvable → typed reject
+- [x] 3.2 GREEN: `internal/review/lineage_identity.go` — `CanonicalSubjectSHA`, `DeriveLineageID`
+- [x] 3.3 GREEN: `review start` canonicalizes `CommitSHA`; defaults to derived id; `go test ./internal/review -run TestLineageIdentity`
 
 ## Phase 4: Resolution + gate (S1b2)
 

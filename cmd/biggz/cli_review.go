@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
-
 	"github.com/biggs-100/biggz-ai/internal/extension"
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/review/lens"
@@ -171,7 +169,7 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "    --pre-pr-ci-attestation <file>  pre-pr: signed CI attestation (presence + parse, best-effort)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  start --subject <file>         Start a new review")
-	fmt.Fprintln(os.Stderr, "    [--lineage <id>]            Optional lineage ID (UUIDv7)")
+	fmt.Fprintln(os.Stderr, "    [--lineage <id>]            Optional lineage ID (default: the derived review-<16hex> identity)")
 	fmt.Fprintln(os.Stderr, "    [--base-ref <sha>]          Base for the correction budget (default: subject commit parent, else empty tree)")
 	fmt.Fprintln(os.Stderr, "    [--lenses <list>]           Selected lens slots, comma-separated (default: inferred from captured slots)")
 	fmt.Fprintln(os.Stderr, "    [--consent <mode>]          Consent declaration: relay (default on a terminal), granted, or declined")
@@ -575,6 +573,12 @@ type reviewExportData struct {
 // into the start_review event payload, alongside the content-based risk tier
 // and the frozen lens plan.
 //
+// The subject commit is canonicalized to its full object SHA before anything
+// derives from it (an abbreviated or symbolic value such as HEAD is resolved;
+// an unresolvable one refuses typed and persists nothing), and an omitted
+// --lineage defaults to the single derived review-<16hex> identity (design D1)
+// instead of a random UUID. An explicitly supplied --lineage still wins.
+//
 // Consent gate (Phase D1 parity): the classifier tier decides consent. A
 // low-risk candidate (documentation-only or trivial content) is silent
 // structural readback; medium/high needs consent. --consent relay prints the
@@ -631,6 +635,7 @@ func reviewStartRun() int {
 			}
 		case "--help", "-h":
 			fmt.Fprintln(os.Stderr, "Usage: biggz review start --subject <file> [--lineage <id>] [--base-ref <sha>] [--lenses <list>] [--consent relay|granted|declined] [--contract <schema>] [--agent <name>]")
+			fmt.Fprintln(os.Stderr, "  The subject commit is canonicalized to its full SHA; without --lineage the derived review-<16hex> identity is used.")
 			return 0
 		}
 	}
@@ -689,8 +694,24 @@ func reviewStartRun() int {
 		}
 	}
 
+	// Canonicalize the subject commit before anything derives from it: an
+	// abbreviated or symbolic value must never be persisted as the lineage
+	// subject, and an unresolvable one refuses typed with nothing persisted
+	// (spec: Subject Commit Canonicalization at Review Start).
+	canonicalSHA, err := review.CanonicalSubjectSHA(subject.Repository, subject.CommitSHA)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return 1
+	}
+	subject.CommitSHA = canonicalSHA
+
 	if lineageID == "" {
-		lineageID = uuid.Must(uuid.NewV7()).String()
+		derived, err := review.DeriveLineageID(subject.Repository, subject.CommitSHA)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			return 1
+		}
+		lineageID = derived
 	}
 
 	lenses, err := review.ParseSelectedLenses(lensesValue)
