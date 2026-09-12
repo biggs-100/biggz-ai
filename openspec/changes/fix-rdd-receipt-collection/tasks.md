@@ -56,9 +56,9 @@ CI complexity gate (`internal/review`/`internal/sdd`, non-test): cyclomatic ≤1
 
 ## Phase 4: Resolution + gate (S1b2)
 
-- [ ] 4.1 RED: `lineage_resolve_test.go` — derived-first; legacy abbreviated readable (read-only scan, no rewrite); none → typed refusal
-- [ ] 4.2 GREEN: `internal/review/lineage_resolve.go` — `ResolveCandidateLineage`
-- [ ] 4.3 GREEN: `internal/sdd/verify.go` — resolve `HEAD^{commit}` before gate; replaces bare-change lookup; gate tests
+- [x] 4.1 RED: `lineage_resolve_test.go` — derived-first; legacy abbreviated readable (read-only scan, no rewrite); none → typed refusal
+- [x] 4.2 GREEN: `internal/review/lineage_resolve.go` — `ResolveCandidateLineage`
+- [x] 4.3 GREEN: `internal/sdd/verify.go` — resolve `HEAD^{commit}` before gate; replaces bare-change lookup; gate tests
 
 ## Phase 5: Surfacing + parity guard (S1c)
 

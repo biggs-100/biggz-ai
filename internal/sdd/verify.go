@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/pathquote"
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/fzipp/gocyclo"
 	"github.com/uudashr/gocognit"
@@ -884,6 +885,12 @@ func VerifyPreflightAt(workspaceRoot, change string) error {
 	return verifyPreflightAt(workspaceRoot, change)
 }
 
+// verifyCandidateRef names the candidate the RDD verify gate governs: the
+// commit HEAD points at. The resolver canonicalizes it to its full SHA
+// (design D1) and the bare change name is never used as a lineage lookup
+// (bug #60: the gate never found the receipt captured for the real lineage).
+const verifyCandidateRef = "HEAD^{commit}"
+
 func verifyPreflightAt(workspaceRoot, change string) error {
 	if workspaceRoot == "" {
 		var err error
@@ -895,9 +902,15 @@ func verifyPreflightAt(workspaceRoot, change string) error {
 	if !isRDDEnabled(workspaceRoot) {
 		return nil
 	}
-	result, err := review.EvaluateGate(review.GatePostApply, workspaceRoot, change, review.GateOptions{})
+	// Resolve the lineage that governs the candidate before evaluating the
+	// gate: derived-first, then the read-only legacy scan, else typed refusal.
+	lineageID, err := review.ResolveCandidateLineage(workspaceRoot, verifyCandidateRef)
 	if err != nil {
-		return fmt.Errorf("rdd_receipt_missing: lineage %q unavailable: %w; hint: run `biggz review start --lineage %s` and `biggz review finalize %s`", change, err, change, change)
+		return fmt.Errorf("rdd_receipt_missing: %v; hint: run `%s` and `biggz review finalize <lineage>`", err, reviewProducerInvocation(workspaceRoot, change))
+	}
+	result, err := review.EvaluateGate(review.GatePostApply, workspaceRoot, lineageID, review.GateOptions{})
+	if err != nil {
+		return fmt.Errorf("rdd_receipt_missing: lineage %q unavailable: %w; hint: run `%s` and `biggz review finalize <lineage>`", lineageID, err, reviewProducerInvocation(workspaceRoot, change))
 	}
 	if result.Delivery == review.DeliveryDisabledUnmanaged || result.Delivery == review.DeliveryBurned {
 		return nil
@@ -910,6 +923,13 @@ func verifyPreflightAt(workspaceRoot, change string) error {
 		reason = strings.Join(result.Reasons, "; ")
 	}
 	return classifyGateReason(reason)
+}
+
+// reviewProducerInvocation names the runnable producer invocation that starts
+// the receipt for the candidate at HEAD, replacing the bare-change hint.
+func reviewProducerInvocation(workspaceRoot, change string) string {
+	subjectPath := filepath.Join(workspaceRoot, "openspec", "changes", change, "review-subject.json")
+	return fmt.Sprintf("biggz review start --subject %s", pathquote.Quote(subjectPath))
 }
 
 // classifyGateReason maps a gate reason to the typed preflight error.

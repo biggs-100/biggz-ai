@@ -7,12 +7,120 @@
 | S1a1 | Phase 1 (1.1–1.6): frozen inspector + real hunk derivation | done | PR 1 (base: tracker `fix/rdd-receipt-collection`; merged as 362c4c18) |
 | S1a2 | Phase 2 (2.1–2.5): materializer + `--materialize` | done | PR 2 (base: `fix/rdd-receipt-collection-2-materializer`, off tracker 362c4c18) |
 | S1b1 | Phase 3 (3.1–3.3): lineage identity + start canonicalization | done | PR 3 (base: `fix/rdd-receipt-collection-2-materializer`; head `fix/rdd-receipt-collection-3-identity`) |
+| S1b2 | Phase 4 (4.1–4.3): candidate-lineage resolution + verify gate (bug #60) | done | PR 4 (base: `fix/rdd-receipt-collection-3-identity` @ cc26de2a; head `fix/rdd-receipt-collection-4-resolve-gate`) |
 
-Progress: **14/33 tasks** (Phases 1–3). Remaining: Phases 4–8 (S1b2, S1c, S1d, S2, dogfood close).
+Progress: **17/33 tasks** (Phases 1–4). Remaining: Phases 5–8 (S1c, S1d, S2, dogfood close).
 
 ---
 
-## Batch S1b1 — Identity + start canonicalization (current)
+## Batch S1b2 — Resolution + gate (current)
+
+| Field | Value |
+|-------|-------|
+| Work unit | `phases-3-8` (ledger attempt `tok-2aabb247ee2fd230cacb573e`) |
+| Slice | S1b2 = Phase 4 only (tasks 4.1–4.3) |
+| Mode | Standard (`strict_tdd: false`) with the mandated RED-first order for 4.1 |
+| PR | PR 4 of the feature-branch-chain (base: `fix/rdd-receipt-collection-3-identity` @ cc26de2a; head `fix/rdd-receipt-collection-4-resolve-gate`) |
+| Date | 2026-09-11 |
+| Store mode | hybrid (tasks.md `[x]` + BigMem `sdd/fix-rdd-receipt-collection/apply-progress`) |
+
+### Tasks Completed
+
+| Task | Status | Evidence |
+|------|--------|----------|
+| 4.1 RED: `lineage_resolve_test.go` — derived-first; legacy abbreviated readable (read-only scan, no rewrite); none → typed refusal | done | `internal/review/lineage_resolve_test.go` — 6 tests: `DerivedFirst`, `LegacyAbbreviatedReadOnly`, `NewestFirst`, `RefusesTyped`, `UnreadableStoreRefusesTyped`, `RuntimeHarness` |
+| 4.2 GREEN: `internal/review/lineage_resolve.go` — `ResolveCandidateLineage` | done | Focused suite green (exit 0); derived identity wins even against a NEWER competing legacy lineage; abbreviated candidate canonicalizes to the same resolution; legacy store bytes unchanged after resolution (`bytes_unchanged=true`) |
+| 4.3 GREEN: `internal/sdd/verify.go` — resolve `HEAD^{commit}` before gate; replaces bare-change lookup; gate tests | done | `internal/sdd/verify_rdd_resolve_test.go` — 4 tests: captured receipt satisfies the gate; legacy UUID lineage resolves by genesis subject; missing receipt names the runnable producer invocation and never `--lineage`; harness (below) |
+
+RED evidence provenance: the original apply run for this slice timed out (1200000ms, 111 turns) after writing the implementation but before persisting its console output; the RED-first test files are the unmodified artifacts (`lineage_resolve_test.go` was authored against undefined symbols — `ResolveCandidateLineage`, `LineageResolutionRefusal`, `LineageResolutionUnresolvedCode` — before 4.2 landed, so the package did not build pre-implementation). This completion re-run persisted GREEN + regression evidence only; no implementation changes were made (every required command passed on the first attempt).
+
+### Files Changed
+
+| File | Action | +/- |
+|------|--------|-----|
+| `internal/review/lineage_resolve.go` | Create (`ResolveCandidateLineage`, `LineageResolutionRefusal`, read-only legacy scan) | +197/−0 |
+| `internal/review/lineage_resolve_test.go` | Create (6 tests) | +355/−0 |
+| `internal/sdd/verify_rdd_resolve_test.go` | Create (4 gate tests) | +227/−0 |
+| `internal/sdd/verify.go` | Modify (`verifyCandidateRef`, resolve-then-gate, `reviewProducerInvocation`, `pathquote` import) | +22/−2 |
+
+Slice total: **803 changed lines** (801 additions + 2 deletions).
+
+### Focused Test Command + Result
+
+```
+go test ./internal/review -run TestResolveCandidateLineage -count=1 -v
+→ PASS, ok github.com/biggs-100/biggz-ai/internal/review 5.772s (exit 0)
+  6 tests all PASS:
+  DerivedFirst (0.79s) ✓ | LegacyAbbreviatedReadOnly (0.88s) ✓ | NewestFirst (1.01s) ✓ |
+  RefusesTyped (0.78s) ✓ | UnreadableStoreRefusesTyped (0.49s) ✓ | RuntimeHarness (1.67s) ✓
+
+go test ./internal/sdd -run 'TestVerifyRDDResolve|TestResolve' -count=1 -v
+→ PASS, ok github.com/biggs-100/biggz-ai/internal/sdd 5.411s (exit 0)
+  TestVerifyRDDResolveCandidateLineagePassesWithCapturedReceipt (1.45s) ✓
+  TestVerifyRDDResolveLegacyUUIDLineage (1.17s) ✓
+  TestVerifyRDDResolveMissingNamesProducerInvocation (0.52s) ✓
+  TestVerifyRDDResolveRuntimeHarness (2.13s) ✓
+  (TestResolveExistingPathEvalSymlinks SKIP — pre-existing Windows symlink-privilege skip, unrelated)
+```
+
+### Package Suite Command + Result
+
+```
+go test ./internal/review ./internal/sdd ./cmd/biggz -count=1 -timeout 240s
+→ ok internal/review  173.989s
+→ ok internal/sdd      31.204s
+→ ok cmd/biggz         88.955s
+```
+
+### Static Checks
+
+| Check | Result |
+|-------|--------|
+| `biggz sdd-apply fix-rdd-receipt-collection` (edit-authority guard) | exit 0; allowed roots = `C:\Users\USER\Desktop\biggz-ai` |
+| `go build ./...` | OK (exit 0) |
+| `go vet ./...` | OK (exit 0) |
+| `gofmt -l` on the four touched files | clean |
+
+### Runtime Harness Evidence
+
+Command (resolver): `go test ./internal/review -run TestResolveCandidateLineageRuntimeHarness -count=1 -v` → PASS (1.67s). Raw output:
+
+```
+harness: repo=C:\Users\USER\AppData\Local\Temp\TestResolveCandidateLineageRuntimeHarness1009495569\001 full=7d29652d2dc194340ad9e04859d45aeef1b62384 derived=review-a4e3f51e8147a654
+harness: derived-present resolved=review-a4e3f51e8147a654 err=<nil>
+harness: legacy_id=01932d0a-7f4e-7c31-9a6b-2f6f6b6c0005 full=6daada2173f7056573f9f42644ab78d1a55eaaee subject=6daada21 resolved=01932d0a-7f4e-7c31-9a6b-2f6f6b6c0005 err=<nil> bytes_unchanged=true
+harness: empty-store refusal err=review lineage resolution: unresolved_candidate_lineage: no review lineage for candidate "HEAD^{commit}" (resolved commit c0f67c76b8749a15d3a2800658de5fc2b3c5a438): derived identity review-54f226fe58bce81d has no store entry and no legacy lineage genesis subject resolves to it typed=true
+```
+
+Command (gate): `go test ./internal/sdd -run TestVerifyRDDResolveRuntimeHarness -count=1 -v` → PASS (2.13s). Raw output:
+
+```
+harness: repo=C:\Users\USER\AppData\Local\Temp\TestVerifyRDDResolveRuntimeHarness2441013870\002 head=7d5f13c30f088db8a0167ae27e05856559ceb50b derived=review-e664b6f2eba20180 receipt=sha256:46cfbf803d327227ff76ac069d31434f50e0d94c38e81293fab520ab9218a0a1 preflight_err=<nil>
+harness: repo=C:\Users\USER\AppData\Local\Temp\TestVerifyRDDResolveRuntimeHarness2441013870\003 head=fa58c0134042a24324aa73e58d6beadc62e0b730 missing_preflight_err=rdd_receipt_missing: review lineage resolution: unresolved_candidate_lineage: no review lineage for candidate "HEAD^{commit}" (resolved commit fa58c0134042a24324aa73e58d6beadc62e0b730): derived identity review-994c7b74512b2468 has no store entry and no legacy lineage genesis subject resolves to it; hint: run `biggz review start --subject "C:\Users\USER\AppData\Local\Temp\TestVerifyRDDResolveRuntimeHarness2441013870\003\openspec\changes\fix-rdd-receipt-collection\review-subject.json"` and `biggz review finalize <lineage>`
+```
+
+Assertions proven by the harnesses: (a) derived id present → resolves to the derived identity; (b) a legacy lineage (UUIDv7-style id, abbreviated subject `6daada21`) still resolves AND its store bytes are unchanged afterwards (`bytes_unchanged=true` — read-only scan, no migration/rewrite); (c) an empty store refuses with the typed `unresolved_candidate_lineage` (`typed=true`), and `RefusesTyped` additionally proves a lineage for a different subject never matches (no bare-name fallback); (d) the real verify gate on a change with a captured receipt no longer reports `rdd_receipt_missing` (`preflight_err=<nil>` — bug #60 fixed), and a missing receipt fails closed naming the runnable producer invocation (`biggz review start --subject <quoted path>`), never `--lineage`.
+
+### Rollback Boundary
+
+Revert exactly this unit, independently of S1b1 (untouched by this slice):
+1. delete `internal/review/lineage_resolve.go`, `internal/review/lineage_resolve_test.go`, `internal/sdd/verify_rdd_resolve_test.go`;
+2. revert the `internal/sdd/verify.go` diff (+22/−2): the `verifyCandidateRef` const, the resolve-then-gate block, the `reviewProducerInvocation` helper, and the `pathquote` import — restoring the bare-change `EvaluateGate` lookup and its bare `--lineage` hint.
+
+→ back to cc26de2a (PR 3 head). Read-path only: the legacy scan is stat/read and never migrates, renames, or rewrites a lineage (proven by byte snapshots); the gate remains fail-closed.
+
+### Notes / Deviations
+
+- **Completion re-run**: the original apply run for this slice timed out (1200000ms, 111 turns) with the implementation already written but the batch unpersisted. This completion re-run verified, captured evidence, marked tasks, and merged this batch; **zero implementation changes were made**.
+- **Workload overrun**: S1b2 authors 803 changed lines against the 400-line review budget; `size:exception` accepted for the slice per the session preflight (`exception-ok`), consistent with chain precedent (S1a1 ~1,031; S1a2 979; S1b1 640).
+- The gate now governs the candidate at `HEAD^{commit}` (design D1). The old behavior — passing the bare change name as a lineage id — is removed; `TestVerifyRDDResolveMissingNamesProducerInvocation` asserts the refusal contains no `--lineage` fallback.
+- Resolver ordering: derived-first (even against a newer competing legacy lineage), then matching lineages newest-first by most-recent event timestamp with a stable id tiebreak; a missing store root has no matches.
+- Unreadable/unparsable legacy lineages are skipped, never rewritten; an unreadable store root refuses typed without touching it (sentinel byte-equality assertion in `UnreadableStoreRefusesTyped`).
+- `TestResolveExistingPathEvalSymlinks` (Windows symlink privilege) skip is pre-existing and unrelated to this slice.
+
+---
+
+## Batch S1b1 — Identity + start canonicalization (previous)
 
 | Field | Value |
 |-------|-------|
@@ -364,5 +472,5 @@ Revert exactly this unit, no other slice depends on the new symbols yet:
 
 ## Remaining Tasks
 
-- Phase 4 (S1b2): resolution + gate (4.1–4.3) — PR 4, base = PR 3 (`fix/rdd-receipt-collection-3-identity`).
-- Phases 5–8 (S1c, S1d, S2, dogfood close) untouched.
+- Phase 5 (S1c): surfacing + parity guard (5.1–5.5) — PR 5, base = PR 4 (`fix/rdd-receipt-collection-4-resolve-gate`).
+- Phases 6–8 (S1d, S2, dogfood close) untouched.
