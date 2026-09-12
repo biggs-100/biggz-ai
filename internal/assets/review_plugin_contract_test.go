@@ -4,6 +4,8 @@
 package assets_test
 
 import (
+	"encoding/json"
+	"maps"
 	"strings"
 	"testing"
 
@@ -90,4 +92,106 @@ func TestReviewResultArtifactsPluginContract(t *testing.T) {
 	if !strings.Contains(source, "`${scrubbedCause(cause)}. `") {
 		t.Fatal("review-result-artifacts.ts preflight failure path must forward scrubbedCause")
 	}
+}
+
+// TestReviewResultArtifactsMaterializeTransportContract locks the S2 transport:
+// the before hook replaces the caller-authored task body with the bytes
+// `capture-result --materialize` prints, forwards them unchanged (the
+// transport leg never trims or re-encodes), proves they carry the preflighted
+// artifact subject, and keeps the capture leg with the completed binding.
+func TestReviewResultArtifactsMaterializeTransportContract(t *testing.T) {
+	source := readReviewPlugin(t)
+
+	for _, want := range []string{
+		// The materialize route replaces the binding/context injection.
+		`"--materialize"`,
+		`function materializeReviewerTask(`,
+		`captureArgs(binding, "materialize")`,
+		`output.args.prompt = materialized.task`,
+		`function assertMaterializedSubject(`,
+		`review materialize returned a different artifact subject`,
+		// Verbatim transport: the materialize leg resolves the raw stdout
+		// Buffer and never trims it.
+		`function runNativeBytes(`,
+		`resolve(Buffer.concat(stdout))`,
+		`const task = raw.toString("utf8")`,
+		// The before-hook binding survives to the capture leg.
+		`reviewBindings`,
+		`captureArgs(binding, "input")`,
+		`"--input", "-"`,
+		`"--preflight"`,
+		// The negotiated collect binding always carries the provider-issued
+		// repository context, so the sorted-key shapes must accept it (the
+		// original strings listed revision before repository_context and
+		// rejected every negotiated binding).
+		`"lens,lineage,order,repository_context,revision,target"`,
+		`"lens,lineage,order,repository_context,revision,subject_hash,target"`,
+	} {
+		if !strings.Contains(source, want) {
+			t.Fatalf("review-result-artifacts.ts missing the S2 transport marker %q", want)
+		}
+	}
+
+	// The caller prompt is discarded: the superseded injection route and the
+	// hand-built GENTLE_AI_REVIEW_CONTEXT line must not survive.
+	if strings.Contains(source, "injectReviewerContext") {
+		t.Fatal("review-result-artifacts.ts must not keep the superseded binding/context injection route")
+	}
+	if strings.Contains(source, "JSON.stringify(preflight)") {
+		t.Fatal("review-result-artifacts.ts must not hand-build GENTLE_AI_REVIEW_CONTEXT; the materialized bytes are the reviewer prompt")
+	}
+	if strings.Contains(source, `materialized.toString("utf8").trim()`) {
+		t.Fatal("review-result-artifacts.ts must forward the materialized task verbatim (no trim)")
+	}
+}
+
+// TestReviewerAgentsRunToolLess proves the review step ships tool-less
+// reviewers on both overlay variants: every lens agent denies all tools, so
+// the transported frozen bytes are the reviewer's only evidence (review
+// spec: "Verbatim Transport and Tool-Less Reviewer").
+func TestReviewerAgentsRunToolLess(t *testing.T) {
+	reviewers := []string{"review-risk", "review-readability", "review-reliability", "review-resilience"}
+	firstSeen := map[string]map[string]bool{}
+	for _, overlay := range []string{
+		"opencode/sdd-overlay-single.json",
+		"opencode/sdd-overlay-multi.json",
+	} {
+		agents := readOverlayAgentTools(t, overlay)
+		for _, name := range reviewers {
+			tools, ok := agents[name]
+			if !ok {
+				t.Fatalf("%s must define reviewer agent %q", overlay, name)
+			}
+			if len(tools) != 1 || tools["*"] {
+				t.Fatalf("%s agent %q tools = %v, want exactly {\"*\": false} (tool-less reviewer)", overlay, name, tools)
+			}
+			if previous, ok := firstSeen[name]; ok && !maps.Equal(previous, tools) {
+				t.Fatalf("reviewer agent %q tools differ across overlays: %v vs %v", name, previous, tools)
+			}
+			firstSeen[name] = tools
+		}
+	}
+}
+
+// readOverlayAgentTools returns each agent's tools map from one embedded
+// overlay.
+func readOverlayAgentTools(t *testing.T, overlay string) map[string]map[string]bool {
+	t.Helper()
+	data, err := assets.FS.ReadFile(overlay)
+	if err != nil {
+		t.Fatalf("ReadFile(%s) error = %v", overlay, err)
+	}
+	var root struct {
+		Agent map[string]struct {
+			Tools map[string]bool `json:"tools"`
+		} `json:"agent"`
+	}
+	if err := json.Unmarshal(data, &root); err != nil {
+		t.Fatalf("Unmarshal %s error = %v", overlay, err)
+	}
+	agents := make(map[string]map[string]bool, len(root.Agent))
+	for name, agent := range root.Agent {
+		agents[name] = agent.Tools
+	}
+	return agents
 }

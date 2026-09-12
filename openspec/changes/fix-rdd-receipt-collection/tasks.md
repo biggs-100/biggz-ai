@@ -75,10 +75,10 @@ CI complexity gate (`internal/review`/`internal/sdd`, non-test): cyclomatic ≤1
 
 ## Phase 7: OpenCode plugin + overlays + doc (S2)
 
-- [ ] 7.1 `opencode/plugins/review-result-artifacts.ts` — verbatim transport; tool-less reviewer; caller prompt discarded
-- [ ] 7.2 `opencode/sdd-overlay-{single,multi}.json` — review step uses `--materialize`
-- [ ] 7.3 `skills/_shared/review-ledger-contract.md` — materialize route documented
-- [ ] 7.4 Extend `review_plugin_contract_test.go` markers; `go test ./internal/assets`
+- [x] 7.1 `opencode/plugins/review-result-artifacts.ts` — verbatim transport; tool-less reviewer; caller prompt discarded
+- [x] 7.2 `opencode/sdd-overlay-{single,multi}.json` — review step uses `--materialize`
+- [x] 7.3 `skills/_shared/review-ledger-contract.md` — materialize route documented
+- [x] 7.4 Extend `review_plugin_contract_test.go` markers; `go test ./internal/assets`
 
 ## Phase 8: Dogfooding + downstream close
 
