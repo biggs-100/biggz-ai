@@ -240,6 +240,7 @@ func bigmemArchivedStatus(name string, bySuffix map[string]string, workspaceRoot
 	cs.BlockedReasons = []string{}
 	if includeInstructions {
 		instructions := renderPhaseInstructions(cs)
+		appendReviewObligation(&cs, &instructions)
 		cs.PhaseInstructions = &instructions
 	}
 	return cs
@@ -316,6 +317,20 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 	// Mirror sync routing with store gate: Engram/BigMem never routes to sync (filesystem wins elsewhere)
 	dependencies.Sync = DependencyAllDone
 	dependencies = applyStaleDecisionRouting(dependencies, staleDecision)
+	// RDD gate parity with the filesystem derivation (design D5): when RDD is
+	// enabled and no valid receipt exists, the pre-publication obligation
+	// rides the existing blockedReasons mechanism here as well.
+	if applyState == ApplyAllDone && coreReady {
+		if blocked, reason := rddGateBlocked(workspaceRoot, name); blocked {
+			if dependencies.Verify != DependencyBlocked {
+				dependencies.Verify = DependencyBlocked
+			}
+			if dependencies.Archive == DependencyReady {
+				dependencies.Archive = DependencyBlocked
+			}
+			blockedReasons.genuine = append(blockedReasons.genuine, reason)
+		}
+	}
 	nextRecommended := resolveNextRecommended(dependencies, applyState, verifyReportCurrent, remediationState)
 	cs.SchemaName = StatusSchemaName
 	cs.SchemaVersion = StatusSchemaVersion
@@ -336,6 +351,7 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
 	if includeInstructions {
 		instructions := renderPhaseInstructions(cs)
+		appendReviewObligation(&cs, &instructions)
 		cs.PhaseInstructions = &instructions
 	}
 	return cs
