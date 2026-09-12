@@ -1,9 +1,10 @@
 package review
 
-// Lineage identity tests (tasks 3.1–3.3, design D1): the single-lineage
-// derivation is exact and deterministic, canonicalizes abbreviated/symbolic
-// targets to full SHAs, and rejects unresolvable subjects with a typed
-// refusal that persists nothing.
+// Lineage identity tests (tasks 3.1–3.3, design D1; S5 regression): the
+// single-lineage derivation is exact and deterministic, canonicalizes
+// abbreviated/symbolic targets to full SHAs, binds an absent subject commit
+// to the current HEAD (the legacy organic subject contract), and rejects
+// unresolvable subjects with a typed refusal that persists nothing.
 
 import (
 	"crypto/sha256"
@@ -87,7 +88,7 @@ func TestLineageIdentityDerivationIsExactAndDeterministic(t *testing.T) {
 	}
 	want := expectedLineageIDFromFormula(t, repo, full)
 
-	for name, raw := range map[string]string{"full": full, "abbreviated": abbrev, "symbolic HEAD": "HEAD"} {
+	for name, raw := range map[string]string{"full": full, "abbreviated": abbrev, "symbolic HEAD": "HEAD", "absent (legacy organic)": ""} {
 		got, err := DeriveLineageID(repo, raw)
 		if err != nil {
 			t.Fatalf("DeriveLineageID(%s=%q): %v", name, raw, err)
@@ -158,6 +159,8 @@ func TestLineageIdentityCanonicalSubjectSHA(t *testing.T) {
 		{"symbolic HEAD resolves to full", "HEAD", full},
 		{"tag resolves to full", "lineage-identity-v1", full},
 		{"commit expression resolves to full", "HEAD^{commit}", full},
+		{"absent sha binds to HEAD", "", full},
+		{"whitespace-only sha binds to HEAD", "   ", full},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -176,8 +179,6 @@ func TestLineageIdentityCanonicalSubjectSHA(t *testing.T) {
 	refusals := []struct{ name, raw string }{
 		{"missing commit", strings.Repeat("f", 40)},
 		{"malformed ref", "lineage/no-such-ref"},
-		{"empty", ""},
-		{"whitespace only", "   "},
 		{"tree object", treeSHA},
 		{"blob object", blobSHA},
 	}
@@ -215,6 +216,69 @@ func TestLineageIdentityCanonicalSubjectSHA(t *testing.T) {
 	}
 }
 
+// TestLineageIdentityAbsentSubjectBindsToCurrentHead covers the S5 regression
+// (organic/legacy review start): a subject with no commit SHA must resolve to
+// the full current HEAD SHA — never persist a placeholder and never refuse —
+// derive the same stable lineage id as an explicit symbolic HEAD or full SHA,
+// follow HEAD when it moves (the binding is to the *current* HEAD), and keep
+// refusing a non-empty unresolvable subject typed.
+func TestLineageIdentityAbsentSubjectBindsToCurrentHead(t *testing.T) {
+	repo := lineageIdentityRepo(t)
+	full := runGitInDir(t, repo, "rev-parse", "HEAD")
+
+	got, err := CanonicalSubjectSHA(repo, "")
+	if err != nil {
+		t.Fatalf("CanonicalSubjectSHA(absent): %v", err)
+	}
+	if got != full {
+		t.Fatalf("CanonicalSubjectSHA(absent) = %q, want the full HEAD SHA %q", got, full)
+	}
+
+	absentID, err := DeriveLineageID(repo, "")
+	if err != nil {
+		t.Fatalf("DeriveLineageID(absent): %v", err)
+	}
+	assertLineageIDFormat(t, absentID)
+	if want := expectedLineageIDFromFormula(t, repo, full); absentID != want {
+		t.Errorf("DeriveLineageID(absent) = %s, want %s (the exact D1 formula over HEAD)", absentID, want)
+	}
+	for name, raw := range map[string]string{"symbolic HEAD": "HEAD", "full sha": full} {
+		base, err := DeriveLineageID(repo, raw)
+		if err != nil {
+			t.Fatalf("DeriveLineageID(%s=%q): %v", name, raw, err)
+		}
+		if base != absentID {
+			t.Errorf("DeriveLineageID(%s) = %s, want the absent-subject id %s", name, base, absentID)
+		}
+	}
+
+	// The binding is to the current HEAD: a new commit moves the derived id.
+	writeLineageIdentityFile(t, filepath.Join(repo, "moved.txt"), "moved\n")
+	runGitInDir(t, repo, "add", ".")
+	runGitInDir(t, repo, "commit", "-m", "move head")
+	movedFull := runGitInDir(t, repo, "rev-parse", "HEAD")
+	movedID, err := DeriveLineageID(repo, "")
+	if err != nil {
+		t.Fatalf("DeriveLineageID(absent) after a new HEAD: %v", err)
+	}
+	if movedID == absentID {
+		t.Errorf("absent subject did not follow the current HEAD: still %s", absentID)
+	}
+	if want := expectedLineageIDFromFormula(t, repo, movedFull); movedID != want {
+		t.Errorf("DeriveLineageID(absent) = %s, want the new HEAD derivation %s", movedID, want)
+	}
+
+	// A non-empty unresolvable value is still refused typed.
+	if _, err := CanonicalSubjectSHA(repo, strings.Repeat("f", 40)); err == nil {
+		t.Error("a non-empty unresolvable subject must still be refused")
+	} else {
+		var refusal *LineageIdentityRefusal
+		if !errors.As(err, &refusal) || refusal.Code != LineageIdentityUnresolvableCode {
+			t.Errorf("unresolvable err = %v, want *LineageIdentityRefusal with code %q", err, LineageIdentityUnresolvableCode)
+		}
+	}
+}
+
 func TestLineageIdentityRuntimeHarness(t *testing.T) {
 	repo := lineageIdentityRepo(t)
 	full := runGitInDir(t, repo, "rev-parse", "HEAD")
@@ -236,10 +300,14 @@ func TestLineageIdentityRuntimeHarness(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeriveLineageID(full): %v", err)
 	}
+	fromAbsent, err := DeriveLineageID(repo, "")
+	if err != nil {
+		t.Fatalf("DeriveLineageID(absent): %v", err)
+	}
 	want := expectedLineageIDFromFormula(t, repo, full)
-	allEqual := fromAbbrev == fromSymbolic && fromSymbolic == fromFull && fromFull == want
-	fmt.Printf("harness: derived(abbrev)=%s derived(symbolic)=%s derived(full)=%s all_equal=%t\n",
-		fromAbbrev, fromSymbolic, fromFull, allEqual)
+	allEqual := fromAbbrev == fromSymbolic && fromSymbolic == fromFull && fromFull == fromAbsent && fromFull == want
+	fmt.Printf("harness: derived(abbrev)=%s derived(symbolic)=%s derived(full)=%s derived(absent)=%s all_equal=%t\n",
+		fromAbbrev, fromSymbolic, fromFull, fromAbsent, allEqual)
 	if !allEqual {
 		t.Errorf("derivations disagree: abbrev=%s symbolic=%s full=%s want=%s", fromAbbrev, fromSymbolic, fromFull, want)
 	}

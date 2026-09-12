@@ -13,10 +13,13 @@ package review
 // repository, so the same repo + same target derive the same identity across
 // runs and from any working directory.
 //
-// Canonicalization accepts abbreviated and symbolic targets (`HEAD`); an
-// unresolvable subject refuses typed and callers persist nothing.
+// Canonicalization accepts an absent target (legacy organic subjects without
+// a commit SHA bind to the current HEAD, as risk derivation documents),
+// abbreviated and symbolic targets (`HEAD`); a non-empty subject that does
+// not resolve refuses typed and callers persist nothing.
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -37,8 +40,8 @@ const (
 
 // Lineage identity refusal codes.
 const (
-	// LineageIdentityUnresolvableCode refuses a subject that does not resolve
-	// to a commit object (empty, unknown, ambiguous, or not a commit).
+	// LineageIdentityUnresolvableCode refuses a non-empty subject that does
+	// not resolve to a commit object (unknown, ambiguous, or not a commit).
 	LineageIdentityUnresolvableCode = "unresolvable_subject_commit"
 	// LineageIdentityRepoScopeCode refuses a derivation whose store scope
 	// (the canonical git common dir) cannot be resolved.
@@ -74,16 +77,13 @@ type lineageIdentityMaterial struct {
 
 // CanonicalSubjectSHA resolves raw to the full commit object SHA via
 // `rev-parse <raw>^{commit}`. Full SHAs are returned unchanged; abbreviated
-// and symbolic values (`HEAD`) resolve to their full SHA. An empty, unknown,
+// and symbolic values (`HEAD`) resolve to their full SHA, and an absent value
+// ("" or whitespace) binds to the current `HEAD` — the documented legacy
+// organic subject contract (subjects without a commit SHA bind to HEAD), so
+// the resolved full SHA is what callers persist. A non-empty unknown,
 // ambiguous, or non-commit value refuses typed.
 func CanonicalSubjectSHA(repo, raw string) (string, error) {
-	target := strings.TrimSpace(raw)
-	if target == "" {
-		return "", &LineageIdentityRefusal{
-			Code:   LineageIdentityUnresolvableCode,
-			Detail: "the subject commit is empty",
-		}
-	}
+	target := cmp.Or(strings.TrimSpace(raw), "HEAD")
 	out, err := gitIn(repo, "rev-parse", "--verify", "--quiet", target+"^{commit}")
 	if err != nil || !validCommitSHA(out) {
 		return "", &LineageIdentityRefusal{
