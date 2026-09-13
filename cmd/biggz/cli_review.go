@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"time"
@@ -195,6 +196,9 @@ func printReviewHelp() {
 	fmt.Fprintln(os.Stderr, "    --input <file>|-               Raw reviewer result JSON file or - for stdin")
 	fmt.Fprintln(os.Stderr, "    [--preflight]                 Verify the binding and print the artifact subject without persisting")
 	fmt.Fprintln(os.Stderr, "    [--materialize]               Print the complete reviewer task bytes without capturing")
+	fmt.Fprintln(os.Stderr, "    [--execute [--timeout <seconds>]]  Run the pi reviewer on the composed prompt and capture its raw bytes")
+	fmt.Fprintln(os.Stderr, "                                  Requires --agent pi and the BIGGZ_PI_REVIEW_RELAY_CONTRACT handshake")
+	fmt.Fprintln(os.Stderr, "                                  --timeout: reviewer deadline in seconds, integer 1..7200 (default 600)")
 	fmt.Fprintln(os.Stderr, "")
 	fmt.Fprintln(os.Stderr, "  refute <lineage> --input <file>|-   Register the one read-only refuter batch")
 	fmt.Fprintln(os.Stderr, "                                 Every inferential candidate-causal finding must carry a verdict")
@@ -964,10 +968,13 @@ func reviewFinalizeRun() int {
 // reviewCaptureResultRun handles "biggz review capture-result".
 func reviewCaptureResultRun() int {
 	args := os.Args[3:]
-	var lineageID, targetID, lensName, expectedRevision, repositoryContext, subjectHash, input, agentValue string
+	var lineageID, targetID, lensName, expectedRevision, repositoryContext, subjectHash, input, agentValue, timeoutRaw string
 	order := -1
 	preflight := false
 	materialize := false
+	execute := false
+	timeoutSet := false
+	timeouts := review.DefaultReviewerTimeout
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--agent":
@@ -1042,14 +1049,56 @@ func reviewCaptureResultRun() int {
 			preflight = true
 		case "--materialize":
 			materialize = true
+		case "--execute":
+			execute = true
+		case "--timeout":
+			if i+1 >= len(args) {
+				fmt.Fprintln(os.Stderr, "error: --timeout requires a value")
+				return 1
+			}
+			i++
+			timeoutRaw = args[i]
+			timeoutSet = true
 		case "--help", "-h":
-			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight] [--materialize]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight] [--materialize] [--execute [--timeout <seconds>]]")
 			return 0
 		default:
 			fmt.Fprintf(os.Stderr, "error: unknown flag %q\n", args[i])
-			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight] [--materialize]")
+			fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] [--agent <name>] --input <file>|- [--preflight] [--materialize] [--execute [--timeout <seconds>]]")
 			return 1
 		}
+	}
+
+	// --execute / --timeout usage validation runs immediately after parsing,
+	// before the handshake and RDD gates, so conflicting flags are a pure
+	// usage error that never depends on the environment.
+	if execute {
+		switch {
+		case agentValue != "pi":
+			fmt.Fprintln(os.Stderr, "error: capture-result --execute requires --agent pi (the pi relay is the only executable reviewer runtime)")
+			return 1
+		case input != "":
+			fmt.Fprintln(os.Stderr, "error: capture-result --execute and --input are mutually exclusive (--execute runs the reviewer and captures its raw output)")
+			return 1
+		case preflight:
+			fmt.Fprintln(os.Stderr, "error: capture-result --execute and --preflight are mutually exclusive (--execute preflights internally before launching the reviewer)")
+			return 1
+		case materialize:
+			fmt.Fprintln(os.Stderr, "error: capture-result --execute and --materialize are mutually exclusive (--execute materializes internally before launching the reviewer)")
+			return 1
+		}
+		if timeoutSet {
+			seconds, err := strconv.Atoi(timeoutRaw)
+			maxSeconds := int(review.MaxReviewerTimeout / time.Second)
+			if err != nil || seconds < 1 || seconds > maxSeconds {
+				fmt.Fprintf(os.Stderr, "error: capture-result --timeout must be an integer between 1 and %d seconds, got %q\n", maxSeconds, timeoutRaw)
+				return 1
+			}
+			timeouts = time.Duration(seconds) * time.Second
+		}
+	} else if timeoutSet {
+		fmt.Fprintln(os.Stderr, "error: capture-result --timeout requires --execute")
+		return 1
 	}
 
 	if agentValue == "pi" {
@@ -1057,12 +1106,11 @@ func reviewCaptureResultRun() int {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
-		// Host relay available: the capture path could materialize via
-		// PiAdapter.Review with the Go-issued opaque prompt and then submit
-		// the raw bytes through the existing --input path. The current minimal
-		// port keeps the existing file/stdin input path unchanged; the
-		// adapter is available for future materialize/execute routing when the
-		// provider prompt binding is added.
+		// Host relay available: the capture path may materialize via
+		// PiAdapter.Review with the Go-issued opaque prompt and submit the raw
+		// bytes through the existing --input path, or run the reviewer directly
+		// with --execute (routed below after the handshake and RDD gates). The
+		// file/stdin input path stays unchanged.
 	}
 
 	// RDD kill-switch (P0-1): block capture (mutation) when disabled.
@@ -1083,7 +1131,7 @@ func reviewCaptureResultRun() int {
 
 	if lineageID == "" || targetID == "" || lensName == "" || order < 0 || expectedRevision == "" {
 		fmt.Fprintln(os.Stderr, "error: --lineage, --target, --lens, --order, and --expected-revision are required")
-		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight] [--materialize]")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> [--repository-context <json>] [--subject-hash <sha>] --input <file>|- [--preflight] [--materialize] [--execute [--timeout <seconds>]]")
 		return 1
 	}
 	if materialize && preflight {
@@ -1098,9 +1146,9 @@ func reviewCaptureResultRun() int {
 		fmt.Fprintln(os.Stderr, "error: capture-result --preflight verifies the binding only and does not accept --input")
 		return 1
 	}
-	if !preflight && !materialize && input == "" {
-		fmt.Fprintln(os.Stderr, "error: --input is required (or use --preflight / --materialize)")
-		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> --input <file>|- [--preflight] [--materialize]")
+	if !preflight && !materialize && !execute && input == "" {
+		fmt.Fprintln(os.Stderr, "error: --input is required (or use --preflight / --materialize / --execute)")
+		fmt.Fprintln(os.Stderr, "Usage: biggz review capture-result --lineage <id> --target <id> --lens <name> --order <n> --expected-revision <sha> --input <file>|- [--preflight] [--materialize] [--execute [--timeout <seconds>]]")
 		return 1
 	}
 
@@ -1133,6 +1181,38 @@ func reviewCaptureResultRun() int {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			return 1
 		}
+	}
+
+	if execute {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer stop()
+		outcome, err := review.ExecutePiReview(ctx, binding, timeouts, review.NewPiAdapter())
+		if err != nil {
+			var failure *review.ReviewerFailure
+			if errors.As(err, &failure) {
+				fmt.Fprintf(os.Stderr, "error: reviewer execute refused: kind=%s stage=%s elapsed=%s exit_code=%d stdout_bytes=%d stderr_bytes=%d no capture was performed\n",
+					failure.Kind, failure.Stage, failure.Elapsed, failure.ExitCode, failure.StdoutBytes, failure.StderrBytes)
+				if failure.Cause != nil {
+					fmt.Fprintf(os.Stderr, "error: %v\n", failure.Cause)
+				}
+			} else {
+				var admission *review.ArtifactAdmissionError
+				if errors.As(err, &admission) {
+					fmt.Fprintf(os.Stderr, "error: reviewer artifact admission refused: decision=%s diagnostic=%s no capture was performed\n",
+						admission.Admission.Decision, admission.Admission.Diagnostic)
+				} else {
+					fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				}
+			}
+			return 1
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(outcome.Artifact); err != nil {
+			fmt.Fprintf(os.Stderr, "error: encoding output: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	if preflight {

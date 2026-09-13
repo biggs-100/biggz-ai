@@ -30,7 +30,7 @@ biggz review start --subject subject.json --lineage demo-001
 | `biggz install` | Install skills + config in agent |
 | `biggz uninstall` | Remove managed assets (keeps memory data unless `--purge`) |
 | `biggz sdd-status [--cwd <dir>] [--json] [--instructions] [--watch] [--contract biggz-ai.sdd-status/v2]` | Show active/archived SDD changes (V2 authority-free) |
-| `biggz sdd-verify-validate --input <path\|->` | Validate verify reports (`--requirements`/`--scenarios`, `--json`) |
+| `biggz sdd-verify-validate <path\|->` | Validate verify reports (equivalent `--input <path\|->` form; `--requirements`/`--scenarios`, `--json`) |
 | `biggz sdd-attempt acquire\|settle\|status\|grant\|begin\|finish\|reset` | Manage attempt budgets (CAS, tokens, grants) |
 | `biggz sdd-continue [change]` | Determine next SDD phase (picker when omitted) |
 | `biggz sdd-apply <change>` | Validate edit authority for the apply phase (guard, warn `blocked(edit_authority_missing)`) |
