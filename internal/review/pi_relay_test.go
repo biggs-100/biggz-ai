@@ -3,10 +3,12 @@ package review
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -88,12 +90,13 @@ func TestPiRelayHandshake_StaleContractRefuses(t *testing.T) {
 
 func TestPiAdapter_Review_WithFakeBinary(t *testing.T) {
 	tests := []struct {
-		name    string
-		fakeOut string
-		wantErr string
+		name     string
+		fakeOut  string
+		wantErr  string
+		wantKind ReviewerFailureKind
 	}{
 		{name: "succeeds with raw output", fakeOut: `{"ok": true}`, wantErr: ""},
-		{name: "empty stdout fails", fakeOut: "   \n", wantErr: "produced no final message"},
+		{name: "empty stdout fails", fakeOut: "   \n", wantErr: "produced no final message", wantKind: ReviewerFailureEmptyOutput},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -105,6 +108,10 @@ func TestPiAdapter_Review_WithFakeBinary(t *testing.T) {
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("Review err = %v, want %q", err, tc.wantErr)
+				}
+				var failure *ReviewerFailure
+				if !errors.As(err, &failure) || failure.Kind != tc.wantKind || failure.Stage != ReviewerStagePi {
+					t.Fatalf("Review err = %v, want typed kind %q at stage %q", err, tc.wantKind, ReviewerStagePi)
 				}
 				return
 			}
@@ -159,6 +166,10 @@ func TestPiAdapter_Review_DeadlineFailsClosed(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "context deadline exceeded") {
 		t.Fatalf("stalled pi deadline = %v, want context deadline exceeded", err)
 	}
+	var failure *ReviewerFailure
+	if !errors.As(err, &failure) || failure.Kind != ReviewerFailureTimeout {
+		t.Fatalf("stalled pi deadline = %v, want typed kind %q", err, ReviewerFailureTimeout)
+	}
 }
 
 func TestPiAdapter_Review_MissingBinary(t *testing.T) {
@@ -169,6 +180,78 @@ func TestPiAdapter_Review_MissingBinary(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "pi reviewer transport unavailable") {
 		t.Fatalf("missing binary err = %v, want transport unavailable", err)
 	}
+	var failure *ReviewerFailure
+	if !errors.As(err, &failure) || failure.Kind != ReviewerFailureLaunch {
+		t.Fatalf("missing binary err = %v, want typed kind %q", err, ReviewerFailureLaunch)
+	}
+}
+
+func TestPiAdapter_Review_NonzeroExitIsTyped(t *testing.T) {
+	adapter := &PiAdapter{
+		LookPath:       func(string) (string, error) { return "/fake/pi", nil },
+		CommandContext: failingPiCommandContext(t, 3),
+	}
+	_, err := adapter.Review(context.Background(), "opaque prompt")
+	if err == nil || !strings.Contains(err.Error(), "pi reviewer transport failed") {
+		t.Fatalf("nonzero exit err = %v, want the preserved transport text", err)
+	}
+	var failure *ReviewerFailure
+	if !errors.As(err, &failure) || failure.Kind != ReviewerFailureNonzeroExit ||
+		failure.ExitCode != 3 || failure.Stage != ReviewerStagePi {
+		t.Fatalf("nonzero exit err = %v, want typed %q with exit code 3 at stage %q", err, ReviewerFailureNonzeroExit, ReviewerStagePi)
+	}
+}
+
+// failingPiCommandContext exits with the given code without producing stdout.
+func failingPiCommandContext(t *testing.T, code int) func(context.Context, string, ...string) *exec.Cmd {
+	t.Helper()
+	exit := "exit " + strconv.Itoa(code)
+	return func(ctx context.Context, name string, args ...string) *exec.Cmd {
+		if runtime.GOOS == "windows" {
+			return exec.CommandContext(ctx, "powershell", "-NoProfile", "-Command", exit)
+		}
+		return exec.CommandContext(ctx, "sh", "-c", "cat >/dev/null; "+exit)
+	}
+}
+
+func TestPiAdapter_Review_ExecutableOverride(t *testing.T) {
+	override := filepath.Join(t.TempDir(), "custom-pi")
+	lookPathCalls := 0
+	var spawned string
+	adapter := &PiAdapter{
+		LookPath: func(string) (string, error) { lookPathCalls++; return "", os.ErrNotExist },
+		CommandContext: func(ctx context.Context, name string, args ...string) *exec.Cmd {
+			spawned = name
+			return fakePiCommandContext(t, `{"override": true}`)(ctx, name, args...)
+		},
+	}
+	t.Run("absolute path runs directly", func(t *testing.T) {
+		t.Setenv(PiReviewRelayExecutableEnv, override)
+		raw, err := adapter.Review(context.Background(), "x")
+		if err != nil {
+			t.Fatalf("Review with override: %v", err)
+		}
+		if lookPathCalls != 0 {
+			t.Fatalf("the override must bypass PATH resolution, LookPath ran %d times", lookPathCalls)
+		}
+		if spawned != override {
+			t.Fatalf("spawned %q, want the override executed directly (never a shell)", spawned)
+		}
+		if !bytes.Contains(raw, []byte("override")) {
+			t.Fatalf("raw = %q, want the override output", raw)
+		}
+	})
+	t.Run("relative path refuses typed", func(t *testing.T) {
+		t.Setenv(PiReviewRelayExecutableEnv, "pi-relative")
+		_, err := adapter.Review(context.Background(), "x")
+		var failure *ReviewerFailure
+		if !errors.As(err, &failure) || failure.Kind != ReviewerFailureLaunch {
+			t.Fatalf("relative override err = %v, want typed kind %q", err, ReviewerFailureLaunch)
+		}
+		if !strings.Contains(err.Error(), PiReviewRelayExecutableEnv) {
+			t.Fatalf("refusal must name %s: %v", PiReviewRelayExecutableEnv, err)
+		}
+	})
 }
 
 func TestPiAdapter_Review_FlagsAreComplete(t *testing.T) {
