@@ -1,0 +1,7 @@
+name: sdd-fast-lane
+created: 2026-09-13T02:39:45Z
+created_at: 2026-09-13T02:39:45Z
+phase: explore
+description: "Add a size/risk-driven fast lane to the SDD pipeline: the existing sdd-route verdict selects a shallower graph (one merged plan artifact instead of proposal+spec+design+tasks, no research by default, apply, one verify pass that reuses apply evidence, automatic archive) while keeping RED-first tests, the real smoke and the RDD delivery gates."
+status: active
+type: feature

@@ -220,7 +220,7 @@ so consumers can parse native and manual status the same way.
 ## Dependency States
 
 - `proposal`, `specs`, `design`, and `tasks` report whether prerequisite artifacts are blocked, ready, or all done.
-- `apply` is `ready` only when specs, design, and tasks are available and task progress is not all done.
+- `apply` is `ready` only when the planning set (proposal, specs, design, tasks — real artifacts, or the fast-lane `plan.md` alias filling absent slots) is resolved and task progress is not all done.
 - `verify` is `ready` only when every implementation task is complete and required planning/apply evidence is available. Review presence, absence, or non-allow state is informational: it never routes status to `review`, suppresses test/build execution, or blocks verification. Apply-progress and focused work-unit checks support implementation evidence but never replace the independent final SDD verification.
 - Verify routing parses only the strict leading `biggz-ai.verify-result/v1` envelope. It compares measured requirement/scenario totals with actual specs and requires current test/build commands, zero passing exit codes, and output hashes. Human prose never controls readiness.
 - Failed evidence may route to `remediate` only through ordinary SDD failed-evidence accounting for the same failed evidence revision. Remediation completion requires concrete focused-test, runtime-harness (or justified N/A), and rollback evidence; a bare envelope never passes.

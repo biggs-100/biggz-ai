@@ -16,13 +16,13 @@ func renderPhaseInstructions(cs ChangeStatus) PhaseInstructions {
 	applyInstructions := []string{
 		fmt.Sprintf("Change: %s", change),
 		fmt.Sprintf("State: %s", cs.Dependencies.Apply),
-		"Read proposal, specs, design, and tasks before editing.",
+		"Read proposal, specs, design, and tasks — or the merged plan.md in the fast lane — before editing.",
 		"Implement only unchecked tasks and update tasks.md checkboxes as work completes.",
 	}
 	verifyInstructions := []string{
 		fmt.Sprintf("Change: %s", change),
 		fmt.Sprintf("State: %s", cs.Dependencies.Verify),
-		"Verify implementation against proposal, specs, design, and task completion.",
+		"Verify implementation against proposal, specs, design, and tasks — or the merged plan.md in the fast lane — plus task completion.",
 		"Run final verification only after every task is complete; apply-progress never makes final verification ready.",
 	}
 	remediateInstructions := []string{
