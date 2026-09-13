@@ -335,7 +335,7 @@ Every phase returns: `status` (`success`/`partial`/`blocked`), `executive_summar
 
 ## Hard Rules
 
-- Never skip phases — follow dependency graph
+- Never skip gates — follow dependency graph
 - Every spec requirement MUST have at least one Given/When/Then scenario
 - Every task MUST be specific, actionable, verifiable
 - Before apply, run workload forecast; if >400 lines, split into chained PRs

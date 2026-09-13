@@ -62,10 +62,10 @@ func SetBigMemStoreRootForTest(root string) { bigmemStoreRootOverride = root }
 
 // bigmemTitlePattern matches the BigMem topic_key convention
 // sdd/{change}/{artifact}. The artifact set is the minimal slice needed
-// for status derivation: proposal/spec/design/tasks/apply-progress/
+// for status derivation: proposal/plan/spec/design/tasks/apply-progress/
 // verify-report plus archive-report (closure signal) and state/explore
 // (ignored for existence). It mirrors gentle-ai's engramTitlePattern.
-var bigmemTitlePattern = regexp.MustCompile(`^sdd/([^/]+)/(proposal|spec|design|tasks|apply-progress|verify-report|archive-report|state|explore)$`)
+var bigmemTitlePattern = regexp.MustCompile(`^sdd/([^/]+)/(proposal|plan|spec|design|tasks|apply-progress|verify-report|archive-report|state|explore)$`)
 
 // inferBigMemProject delegates to internal/project.DetectProjectFull (5-case detection).
 // It preserves fallback behavior: when detection is ambiguous or fails, it falls back to normalized basename.
@@ -155,6 +155,14 @@ func bigmemArtifactState(m map[string]string, suffix string) ArtifactState {
 				ok = true
 			}
 		}
+		// fast-lane alias: an absent planning topic falls back to the merged
+		// plan topic; apply-progress and verify-report never alias.
+		if !ok && bigmemPlanAliasSlot(suffix) {
+			if c, ok2 := m["plan"]; ok2 {
+				content = c
+				ok = true
+			}
+		}
 		if !ok {
 			return ArtifactMissing
 		}
@@ -165,30 +173,62 @@ func bigmemArtifactState(m map[string]string, suffix string) ArtifactState {
 	return ArtifactDone
 }
 
-func bigmemArtifactPaths(changeName string, m map[string]string) ArtifactPaths {
-	paths := ArtifactPaths{}
-	if _, ok := m["proposal"]; ok {
-		paths.Proposal = []string{fmt.Sprintf("bigmem:sdd/%s/proposal", changeName)}
+// bigmemPlanAliasSlot reports whether a planning slot falls back to the
+// fast-lane plan topic when its real topic is absent. Apply-progress and
+// verify-report are not planning slots and never alias.
+func bigmemPlanAliasSlot(suffix string) bool {
+	switch suffix {
+	case "proposal", "spec", "specs", "design", "tasks":
+		return true
 	}
-	// spec topic is singular in BigMem
+	return false
+}
+
+func bigmemArtifactPaths(changeName string, m map[string]string) ArtifactPaths {
+	planPath := fmt.Sprintf("bigmem:sdd/%s/plan", changeName)
+	paths := ArtifactPaths{
+		Proposal:      bigmemSlotPath(changeName, "proposal", planPath, m, true),
+		Design:        bigmemSlotPath(changeName, "design", planPath, m, true),
+		Tasks:         bigmemSlotPath(changeName, "tasks", planPath, m, true),
+		ApplyProgress: bigmemSlotPath(changeName, "apply-progress", planPath, m, false),
+		VerifyReport:  bigmemSlotPath(changeName, "verify-report", planPath, m, false),
+	}
+	// spec topic is singular in BigMem; the fast-lane plan fills the slot
+	// only when neither topic exists.
 	if _, ok := m["spec"]; ok {
 		paths.Specs = []string{fmt.Sprintf("bigmem:sdd/%s/spec", changeName)}
 	} else if _, ok := m["specs"]; ok {
 		paths.Specs = []string{fmt.Sprintf("bigmem:sdd/%s/spec", changeName)}
-	}
-	if _, ok := m["design"]; ok {
-		paths.Design = []string{fmt.Sprintf("bigmem:sdd/%s/design", changeName)}
-	}
-	if _, ok := m["tasks"]; ok {
-		paths.Tasks = []string{fmt.Sprintf("bigmem:sdd/%s/tasks", changeName)}
-	}
-	if _, ok := m["apply-progress"]; ok {
-		paths.ApplyProgress = []string{fmt.Sprintf("bigmem:sdd/%s/apply-progress", changeName)}
-	}
-	if _, ok := m["verify-report"]; ok {
-		paths.VerifyReport = []string{fmt.Sprintf("bigmem:sdd/%s/verify-report", changeName)}
+	} else if _, ok := m["plan"]; ok {
+		paths.Specs = []string{planPath}
 	}
 	return paths
+}
+
+// bigmemSlotPath resolves one BigMem artifact path slot: the real topic
+// always wins, and the fast-lane plan topic fills the planning slots
+// (planAlias=true) when the real topic is absent. Apply-progress and
+// verify-report pass planAlias=false and never resolve to the plan.
+func bigmemSlotPath(changeName, suffix, planPath string, m map[string]string, planAlias bool) []string {
+	if _, ok := m[suffix]; ok {
+		return []string{fmt.Sprintf("bigmem:sdd/%s/%s", changeName, suffix)}
+	}
+	if _, ok := m["plan"]; ok && planAlias {
+		return []string{planPath}
+	}
+	return nil
+}
+
+// bigmemSlotContent resolves the content of a planning slot with the
+// fast-lane alias: the real topic wins by presence (an existing but empty
+// topic still wins over the plan) and the plan topic fills the slot when
+// the real topic is absent. Used by the checklist and edit-authority reads
+// that parse content directly from bySuffix.
+func bigmemSlotContent(m map[string]string, suffix string) string {
+	if content, ok := m[suffix]; ok {
+		return content
+	}
+	return m["plan"]
 }
 
 func bigmemHasFlags(bySuffix map[string]string, cs *ChangeStatus) {
@@ -218,7 +258,7 @@ func bigmemArchivedStatus(name string, bySuffix map[string]string, workspaceRoot
 		"applyProgress": bigmemArtifactState(bySuffix, "apply-progress"),
 		"verifyReport":  bigmemArtifactState(bySuffix, "verify-report"),
 	}
-	taskProgress := countTaskProgressText(bySuffix["tasks"])
+	taskProgress := countTaskProgressText(bigmemSlotContent(bySuffix, "tasks"))
 	cs.TasksTotal = taskProgress.Total
 	cs.TasksDone = taskProgress.Completed
 	cs.SchemaName = StatusSchemaName
@@ -255,7 +295,7 @@ func collectBigMemArtifactState(bySuffix map[string]string) (map[string]Artifact
 		"applyProgress": bigmemArtifactState(bySuffix, "apply-progress"),
 		"verifyReport":  bigmemArtifactState(bySuffix, "verify-report"),
 	}
-	taskProgress := countTaskProgressText(bySuffix["tasks"])
+	taskProgress := countTaskProgressText(bigmemSlotContent(bySuffix, "tasks"))
 	return artifacts, taskProgress
 }
 
@@ -264,6 +304,10 @@ func bigmemVerifyAndCore(bySuffix map[string]string, artifacts map[string]Artifa
 	if c, ok := bySuffix["spec"]; ok {
 		specContents = append(specContents, c)
 	} else if c, ok := bySuffix["specs"]; ok {
+		specContents = append(specContents, c)
+	} else if c, ok := bySuffix["plan"]; ok {
+		// fast-lane alias: keep verify admission counts on the same content
+		// the filesystem resolver reads (the plan).
 		specContents = append(specContents, c)
 	}
 	specCounts := countSpecRequirementsAndScenarios(specContents)
@@ -309,7 +353,7 @@ func deriveBigMemChangeStatus(name string, bySuffix map[string]string, workspace
 	cs.TasksDone = taskProgress.Completed
 	verifyResult, coreReady, applyState, blockedReasons := bigmemVerifyAndCore(bySuffix, artifacts, taskProgress)
 	allowedEditRoots := []string{workspaceRoot}
-	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, bySuffix["tasks"], workspaceRoot, allowedEditRoots)
+	applyState = applyEditAuthorityBlock(applyState, &blockedReasons, bigmemSlotContent(bySuffix, "tasks"), workspaceRoot, allowedEditRoots)
 	verifyReportCurrent := artifacts["verifyReport"] == ArtifactDone
 	remediationState, staleDecision, remediationComplete := buildBigMemRemediation(name, workspaceRoot, artifacts, applyState, verifyResult, &blockedReasons)
 	effectiveRemediationComplete := remediationComplete || staleDecision

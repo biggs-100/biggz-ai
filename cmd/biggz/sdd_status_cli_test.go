@@ -216,6 +216,71 @@ func TestSDDStatusInstructionsAddsPhaseInstructions(t *testing.T) {
 	}
 }
 
+// seedPlanOnlyChange writes a fast-lane fixture: one merged plan.md with
+// canonical headings and a checklist, and no proposal, specs, design, or
+// tasks artifacts.
+func seedPlanOnlyChange(t *testing.T, planning, name string) {
+	t.Helper()
+	changeRoot := filepath.Join(planning, "openspec", "changes", name)
+	if err := os.MkdirAll(changeRoot, 0755); err != nil {
+		t.Fatalf("mkdir change root: %v", err)
+	}
+	plan := "### Requirement: Fast Lane\n#### Scenario: Plan-only change reaches apply\n\n- [ ] T1\n- [ ] T2\n"
+	if err := os.WriteFile(filepath.Join(changeRoot, "plan.md"), []byte(plan), 0644); err != nil {
+		t.Fatalf("write plan.md: %v", err)
+	}
+}
+
+// TestSDDStatusJSONPlanOnlyLaneApplyReady is the CLI dogfood over a plan-only
+// fast-lane fixture: the real dispatcher must derive apply ready from the
+// plan alias and expose it through the JSON envelope.
+func TestSDDStatusJSONPlanOnlyLaneApplyReady(t *testing.T) {
+	// Isolate HOME so RDD state is deterministic (same dance as the envelope test).
+	home := t.TempDir()
+	oldHome := os.Getenv("HOME")
+	oldUserProfile := os.Getenv("USERPROFILE")
+	_ = os.Setenv("HOME", home)
+	_ = os.Setenv("USERPROFILE", home)
+	defer func() {
+		_ = os.Setenv("HOME", oldHome)
+		_ = os.Setenv("USERPROFILE", oldUserProfile)
+	}()
+	_, _ = review.RDDDisable("", "", "global")
+	defer func() { _, _ = review.RDDEnable("", "") }()
+
+	workspace := t.TempDir()
+	planning := filepath.Join(workspace, "planning")
+	if err := os.MkdirAll(planning, 0755); err != nil {
+		t.Fatalf("mkdir planning: %v", err)
+	}
+	seedPlanOnlyChange(t, planning, "lane-cli")
+
+	code, stdout, stderr := runSDDStatusCLIArgs(t, "--cwd", planning, "--json")
+	if code != 0 {
+		t.Fatalf("status exit code = %d (stderr: %q)", code, stderr)
+	}
+	var envelope statusEnvelope
+	if err := json.Unmarshal([]byte(stdout), &envelope); err != nil {
+		t.Fatalf("parse envelope: %v\n%s", err, stdout)
+	}
+	if len(envelope.Active) != 1 {
+		t.Fatalf("active changes = %d, want 1: %s", len(envelope.Active), stdout)
+	}
+	cs := envelope.Active[0]
+	if cs.ApplyState != "ready" {
+		t.Errorf("applyState = %q, want ready", cs.ApplyState)
+	}
+	if cs.NextRecommended != "apply" {
+		t.Errorf("nextRecommended = %q, want apply", cs.NextRecommended)
+	}
+	if cs.TaskProgress.Total != 2 || cs.TaskProgress.Completed != 0 || cs.TaskProgress.Pending != 2 {
+		t.Errorf("taskProgress = %#v, want 0/2 from the plan checklist", cs.TaskProgress)
+	}
+	if len(cs.BlockedReasons) != 0 {
+		t.Errorf("blockedReasons = %#v, want empty", cs.BlockedReasons)
+	}
+}
+
 // TestSDDStatusArchivedReportsDone is T4's archived half: an archived change
 // reports nextRecommended "done".
 func TestSDDStatusArchivedReportsDone(t *testing.T) {

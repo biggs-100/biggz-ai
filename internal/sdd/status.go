@@ -987,7 +987,8 @@ func declaredArtifactStore(ws string) ArtifactStore {
 }
 
 // resolveArtifactPaths maps every SDD artifact to its location branched by store:
-// openspec returns filesystem openspec/changes/{change}/… paths;
+// openspec returns filesystem openspec/changes/{change}/… paths (with the
+// fast-lane plan.md alias filling an absent planning slot);
 // engram/bigmem returns bigmem:sdd/{change}/… paths;
 // hybrid merges (filesystem-wins, so returns filesystem paths here, merge done at Status level);
 // none returns empty paths.
@@ -1006,16 +1007,33 @@ func resolveArtifactPaths(changeRoot string, store ArtifactStore) ArtifactPaths 
 			VerifyReport:  []string{fmt.Sprintf("bigmem:sdd/%s/verify-report", name)},
 		}
 	}
+	planPath := filepath.Join(changeRoot, "plan.md")
 	paths := ArtifactPaths{
-		Proposal:      existingPath(filepath.Join(changeRoot, "proposal.md")),
-		Design:        existingPath(filepath.Join(changeRoot, "design.md")),
-		Tasks:         existingPath(filepath.Join(changeRoot, "tasks.md")),
+		Proposal:      existingPathOrPlan(changeRoot, "proposal.md", planPath),
+		Design:        existingPathOrPlan(changeRoot, "design.md", planPath),
+		Tasks:         existingPathOrPlan(changeRoot, "tasks.md", planPath),
 		ApplyProgress: existingPath(filepath.Join(changeRoot, "apply-progress.md")),
 		VerifyReport:  existingPath(filepath.Join(changeRoot, "verify-report.md")),
 	}
 	specFiles := findSpecFiles(filepath.Join(changeRoot, "specs"))
+	if len(specFiles) == 0 {
+		// fast-lane alias: the plan doubles as the spec source when no
+		// specs/**/spec.md exists.
+		specFiles = existingPath(planPath)
+	}
 	paths.Specs = specFiles
 	return paths
+}
+
+// existingPathOrPlan resolves a single-artifact slot with the fast-lane
+// plan.md alias: the real artifact always wins per slot, and plan.md fills
+// the slot only when the real artifact is absent. Apply-progress and
+// verify-report never call this helper, so they never alias.
+func existingPathOrPlan(changeRoot, artifact, planPath string) []string {
+	if real := existingPath(filepath.Join(changeRoot, artifact)); len(real) > 0 {
+		return real
+	}
+	return existingPath(planPath)
 }
 
 func existingPath(path string) []string {

@@ -14,6 +14,11 @@ metadata:
 
 Generate all planning artifacts (proposal, spec, design, tasks) from a brief description in one pass, then proceed directly to implementation. Designed for changes that are well-understood and don't benefit from individual phase review cycles.
 
+Two depths, picked by the artifacts the change ends up with:
+
+- **Fast lane** — one merged `plan.md` stands in for proposal, spec, design, and tasks.
+- **Full fast-forward** — the four planning artifacts, for changes that still want per-artifact traceability.
+
 ## Activation Contract
 
 1. User must explicitly acknowledge skipping individual review phases.
@@ -25,10 +30,29 @@ Generate all planning artifacts (proposal, spec, design, tasks) from a brief des
 
 - User MUST explicitly confirm they accept skipping phase-level review. A single "yes, proceed" is sufficient — do not require repeated confirmation or make the user jump through hoops.
 - All four planning artifacts (proposal, spec, design, tasks) MUST be generated and written to disk — no phase is truly skipped, just collapsed into one step.
+- In the fast lane, the single `plan.md` replaces the four planning artifacts; phase depth follows the artifact set present, and no gate is skipped.
 - Verification is NEVER skipped — even fast-forward changes must pass full verification.
 - If the change is large (>400 lines estimated), refuse fast-forward and recommend full SDD workflow.
 - If the change introduces architectural impact (new public interface, new domain, new external dependency), refuse fast-forward and recommend full SDD workflow.
 - If user seems uncertain about the approach, route to sdd-explore instead.
+
+## Fast Lane
+
+When the change is small, well-understood, and a single merged artifact is enough, generate ONE `plan.md` instead of the four planning artifacts. Phase depth follows the artifact set present: a change whose only planning artifact is `plan.md` proceeds to apply, verify, and archive.
+
+`plan.md` scaffold (canonical headings and checklist are contractual):
+
+```markdown
+### Requirement: <capability>
+#### Scenario: <observable behavior>
+- [ ] <implementation task>
+```
+
+- Every requirement MUST carry at least one `#### Scenario:` block: verify admission compares the verify-envelope totals against these exact headings.
+- The checklist MUST contain at least one `- [ ]` item — task progress is counted from the plan file itself.
+- Writing a real planning artifact later graduates the change in place: no migration, no new field.
+- Gates are NEVER skipped in the lane: the RDD delivery receipt, `biggz sdd-verify-validate`, the PR workload guard, the session-summary guard, and edit authority all apply exactly as in the full pipeline.
+- No new command, overlay, or AGENTS.md entry: the lane runs inside this same `sdd-ff`.
 
 ## Decision Gates
 
@@ -43,7 +67,7 @@ Generate all planning artifacts (proposal, spec, design, tasks) from a brief des
 ## Execution Steps
 
 1. **Load shared protocol** — read `../_shared/sdd-phase-common.md`.
-2. **Evaluate complexity** — from the description, estimate: files to change, new abstractions needed, architectural impact, test volume. If >400 lines or architectural impact, refuse with explanation and suggest full SDD.
+2. **Evaluate complexity** — from the description, estimate: files to change, new abstractions needed, architectural impact, test volume. If >400 lines or architectural impact, refuse with explanation and suggest full SDD. Decide the depth: fast lane (single `plan.md`, see Fast Lane) when the change is small and well-understood; full fast-forward otherwise.
 3. **Check existing specs** — search `openspec/specs/` for domain specs related to the description. If found, note them for reference during generation.
 4. **Confirm with user** — present a brief complexity assessment and ask: "This will generate spec, design, and tasks from your description, then proceed to implementation. Verification is still required. Proceed?" If no, route to sdd-explore.
 5. **Generate proposal** — write `openspec/changes/{change-name}/proposal.md`:
@@ -65,6 +89,7 @@ Generate all planning artifacts (proposal, spec, design, tasks) from a brief des
    - Ordered task list by dependency.
    - Test evidence requirement per task.
    - Review workload estimate.
+   - Fast lane only: skip steps 5-8 and write the single `plan.md` scaffold instead.
 9. **Update metadata** — set `phase: apply` and `generated_by: sdd-ff` in `_meta.yaml`.
 10. **Proceed to apply** — delegate to sdd-apply skill starting from TASK-1.
 11. **Persist** — save all four generated artifacts to Engram for cross-session traceability.
@@ -93,6 +118,8 @@ risks:
     severity: medium
 skill_resolution: fallback-path
 ```
+
+Fast lane: the artifact list is the single `openspec/changes/{change-name}/plan.md` (`type: auto-plan`, merged proposal/spec/design/tasks) and `executive_summary` reports the lane.
 
 ## References
 
