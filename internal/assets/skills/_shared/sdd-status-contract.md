@@ -314,6 +314,7 @@ pre-proposal handoff and MUST NOT interview or infer consent. Native
   change.
 - `biggz sdd-attempt status <change>` — runtime ledger: revision, next action,
   active attempt, decision-required, complete, binding lineage/revision.
-- `biggz sdd-verify-validate --input <path> [--requirements N] [--scenarios N]`
-  — strict verify-report admission.
+- `biggz sdd-verify-validate <path|-> [--requirements N] [--scenarios N]`
+  — strict verify-report admission. The `--input <path|->` form is an exact
+  equivalent; passing both forms is a usage error.
 - If `biggz` is unavailable, use the Manual Status Schema in `_shared/references/sdd-status-derivation.md`.
