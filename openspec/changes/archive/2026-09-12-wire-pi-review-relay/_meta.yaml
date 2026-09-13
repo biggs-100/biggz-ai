@@ -1,0 +1,7 @@
+name: wire-pi-review-relay
+created: 2026-09-12T17:14:37Z
+created_at: 2026-09-12T17:14:37Z
+phase: explore
+description: "Wire the Pi review relay into the CLI so a Pi-hosted reviewer can be executed and captured without a hand-hosted process plus --input bytes: provider prompt binding and execute routing through PiAdapter."
+status: active
+type: feature
