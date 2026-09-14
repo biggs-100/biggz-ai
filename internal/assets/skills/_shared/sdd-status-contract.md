@@ -88,7 +88,12 @@ hybrid state; selected research must be `done`.
   opaque continuation token when required, and MAY carry `settle_obligation` on a
   `proceed`. The Git-common-dir immutable chain remains the sole authority for
   ordinals, cumulative attempt/line budgets, runtime evidence, and ordinary SDD
-  failed-evidence remediation. Full `status|begin|finish|reset` payloads MUST NOT
+  failed-evidence remediation. A `passed` settle completes ONLY the work unit
+  it settled: the change continues through a fresh `acquire` with a DIFFERENT
+  `--work-unit`, which opens a successor generation with its own budget over
+  the preserved attempt chain (repeating the settled label is refused with
+  `work_unit_complete`); `reset` discards the live scope instead of succeeding
+  it. Full `status|begin|finish|reset` payloads MUST NOT
   be embedded in the SDD v2 status document.
 - A phase actor launched by a parent that already holds a `proceed` acquire for
   that exact work unit authenticates as that same attempt with the returned
@@ -226,7 +231,7 @@ so consumers can parse native and manual status the same way.
 - Failed evidence may route to `remediate` only through ordinary SDD failed-evidence accounting for the same failed evidence revision. Remediation completion requires concrete focused-test, runtime-harness (or justified N/A), and rollback evidence; a bare envelope never passes.
 - `archive` is `ready` only when tasks are complete and strict SDD verification passes. A `reviewOffer` never authorizes, blocks, or governs archive or delivery.
 - A passing remediation settlement requires a fresh verification report before archive. The historical failed report is preserved and never erased, no PASS is fabricated, and archive stays blocked until a current passing report exists.
-- Before a runtime-bearing continuation, call compact `sdd-attempt acquire` with `<acquire-id>` and launch only for `state: proceed`; retain its opaque token and call compact `sdd-attempt settle` after the external run with a distinct `<settle-id>`. Reuse each operation's own request ID only for its idempotent replay. `blocked` or `complete` stops the launch, and settle's three states alone control whether another bounded acquire is allowed. When acquire returns `settle_obligation`, RELAY IT TO THE HUMAN VERBATIM BEFORE LAUNCHING THE WORK UNIT, and carry it into the settle. It is never a block — the token is real and the launch proceeds. Reset remains an explicit maintainer scope decision and never occurs automatically.
+- Before a runtime-bearing continuation, call compact `sdd-attempt acquire` with `<acquire-id>` and launch only for `state: proceed`; retain its opaque token and call compact `sdd-attempt settle` after the external run with a distinct `<settle-id>`. Reuse each operation's own request ID only for its idempotent replay. `blocked` or `complete` stops the launch, and settle's three states alone control whether another bounded acquire is allowed: a `complete` settle closes its work unit only, and continuing is a fresh `acquire` with a DIFFERENT `--work-unit` (its own budget, chain preserved), never a re-acquire of the settled label. When acquire returns `settle_obligation`, RELAY IT TO THE HUMAN VERBATIM BEFORE LAUNCHING THE WORK UNIT, and carry it into the settle. It is never a block — the token is real and the launch proceeds. Reset remains an explicit maintainer scope decision, discards the live scope instead of succeeding it, and never occurs automatically.
 - Planning and apply phases never auto-launch ordinary 4R or Judgment Day. Only after independent SDD verification passes may status present the optional review offer. Pre-commit, pre-push, pre-PR, and release follow ordinary repository policy; review outcomes never create a delivery gate or a new review budget.
 
 ## Action Context Guard

@@ -1,0 +1,5 @@
+name: fix-attempt-ledger-scope
+created: 2026-09-13T18:31:02Z
+phase: explore
+description: "Let SDD work units (slices) advance inside one ledger generation without a reset, and stop a passed settle from closing the whole generation while the change still has pending tasks."
+status: active

@@ -182,9 +182,9 @@ A terminal `sdd_task_result_empty`/`sdd_task_result_malformed` (`BIGGZ_AI_SDD_FA
 Provider-owned Git-common-dir runtime ledger is single attempt/budget authority for `openspec` and `BigMem`; never persist caller-authored counters in artifacts/prompts/Pi state.
 
 1. Before `sdd-apply`/`sdd-verify`/remediation harness: `biggz sdd-attempt acquire --cwd <repo> --change <change> --request-id <id> --work-unit <label> --evidence-goal <goal> --max-attempts <count> --max-changed-lines <count>`.
-2. Launch only when acquire returns `state: proceed`; retain opaque `token`. `blocked`/`complete` stops launch.
+2. Launch only when acquire returns `state: proceed`; retain opaque `token`. `blocked` stops launch. `complete` closes only the WORK UNIT that settled `passed`: the continuation is a fresh `acquire` with a DIFFERENT `--work-unit` (its own budget, the attempt chain preserved), and repeating the settled label is refused.
 3. After run: `biggz sdd-attempt settle --cwd <repo> --change <change> --token <token> --request-id <settle-id> --outcome <failed|interrupted|passed> --evidence-revision <sha256:...> --diagnosis <text> --harness-disposition <reused|invalidated> --cleanup-evidence <text> --process-evidence <text>` with distinct request-id per operation. `evidence_revision` (sha256) is ledger-bound and never `none`; settle derives binding/remediation inputs. Pass `--successor-lineage` only for distinct approved successor.
-4. Route only from settle's `proceed`/`blocked`/`complete`. `status|begin|finish|reset` are diagnostic; `reset` requires explicit maintainer decision and is never automatic.
+4. Route only from settle's `proceed`/`blocked`/`complete`. `status|begin|finish|reset` are diagnostic; `reset` discards the live scope instead of succeeding it, requires explicit maintainer decision, and is never automatic.
 
 ## Authority Boundary (native vs external gentle-ai)
 
