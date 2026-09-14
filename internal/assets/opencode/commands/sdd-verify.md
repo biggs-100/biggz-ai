@@ -19,7 +19,7 @@ HARD GATES:
 4. Produce structured status before acting. Use the resolved artifact store from session preflight; do not hardcode BigMem.
 5. The active change must have tasks and implementation evidence. Missing specs/design may be handled gracefully by the verify skill, but missing tasks means there is nothing to verify.
 6. actionContext must be safe for verification. If status reports `workspace-planning`, STOP and explain that full workspace implementation verification is not supported in this slice.
-7. The native runtime ledger must be ready for final verification: `biggz sdd-attempt status <change>` must show an active or complete attempt with a review binding (`Binding lineage`/`Binding revision` set via `biggz review bind-sdd`). Missing ledger or binding means final verification has no authority anchor; STOP and report the missing ledger state.
+7. The native runtime ledger must be ready for final verification: the `verify` work unit needs an ACTIVE attempt — a `complete` ledger only means a previous work unit finished, and is continued by a fresh `biggz sdd-attempt acquire --work-unit verify` (never by `reset`) — plus a review binding (`Binding lineage`/`Binding revision` set via `biggz review bind-sdd`). Missing ledger or binding means final verification has no authority anchor; STOP and report the missing ledger state.
 
 DEPENDENCY CHECK:
 
