@@ -1248,10 +1248,12 @@ func fileExists(path string) bool {
 
 // isStaleDecisionRequired checks the admission probe for a stale
 // decision-required. It mirrors gentle-ai's applyNativeRuntimeRouting that
-// frees verify/archive when the ledger is in decision-required but the
-// probe says BlockedReason is corrupt_authority or budget_exhausted with a
-// settle obligation, so verify/archive are not stranded by a stale
-// decision-required.
+// frees verify/archive when the probe says the block is stale — a
+// budget_exhausted decision, a genuinely anomalous completion
+// (corrupt_authority), or a completed work unit (work_unit_complete: the
+// completion is legitimate and its successor is a fresh acquire) — with a
+// settle obligation still open, so verify/archive are not stranded by a
+// stale decision-required.
 func isStaleDecisionRequired(changeName, workspaceRoot, instance string) bool {
 	if !sddattempt.LedgerExists(changeName, workspaceRoot) {
 		return false
@@ -1260,7 +1262,9 @@ func isStaleDecisionRequired(changeName, workspaceRoot, instance string) bool {
 	if err != nil {
 		return false
 	}
-	if status.BlockedReason != sddattempt.BlockedReasonBudgetExhausted && status.BlockedReason != sddattempt.BlockedReasonCorruptAuthority {
+	if status.BlockedReason != sddattempt.BlockedReasonBudgetExhausted &&
+		status.BlockedReason != sddattempt.BlockedReasonCorruptAuthority &&
+		status.BlockedReason != sddattempt.BlockedReasonWorkUnitComplete {
 		return false
 	}
 	return status.SettleObligation != nil && status.SettleObligation.EvidenceRevision != ""
