@@ -195,7 +195,10 @@ func TestAcquire_BlockedWhenComplete(t *testing.T) {
 		t.Fatalf("Settle: %v", err)
 	}
 
-	// Now ledger is complete; next acquire should be blocked with corrupt_authority.
+	// The passed settle completed only its own work unit: repeating the SAME
+	// work unit is refused with the successor-naming reason (the successor is
+	// a different --work-unit, not a reset), and the ledger stays untouched.
+	revision := storeFileBytes(t, "ch-acq-4")
 	_, err = Acquire(AcquireParams{
 		ChangeName:   "ch-acq-4",
 		RepoRoot:     "r",
@@ -204,17 +207,32 @@ func TestAcquire_BlockedWhenComplete(t *testing.T) {
 		EvidenceGoal: "goal",
 	})
 	if err == nil {
-		t.Fatal("expected blocked when complete")
+		t.Fatal("expected blocked when the same work unit repeats after a passed settle")
 	}
 	var blocked *BlockedError
-	if !errors.As(err, &blocked) || blocked.Reason != BlockedReasonCorruptAuthority {
-		t.Fatalf("expected corrupt_authority, got %v", err)
+	if !errors.As(err, &blocked) || blocked.Reason != BlockedReasonWorkUnitComplete {
+		t.Fatalf("expected %s, got %v", BlockedReasonWorkUnitComplete, err)
+	}
+	for _, want := range []string{
+		`work unit "w" is complete`,
+		`--work-unit`,
+		`with a different --work-unit`,
+		`reset discards this scope instead of succeeding it`,
+	} {
+		if !strings.Contains(blocked.Exit, want) {
+			t.Fatalf("refusal exit %q must name the successor route (%q)", blocked.Exit, want)
+		}
+	}
+	if current := storeFileBytes(t, "ch-acq-4"); string(current) != string(revision) {
+		t.Fatal("refused repeat mutated the ledger")
 	}
 
-	// Status should project blocked reason.
+	// The passive probe tells the SAME story as the refused repeat: the
+	// completed work unit is named, its successor route is the way forward,
+	// and reset is the discard option — never corrupt_authority.
 	status, _ := StatusWithInstance("ch-acq-4", "r", "")
-	if status.BlockedReason != BlockedReasonCorruptAuthority {
-		t.Fatalf("status BlockedReason = %q, want %q", status.BlockedReason, BlockedReasonCorruptAuthority)
+	if status.BlockedReason != BlockedReasonWorkUnitComplete || status.BlockedExit != workUnitCompleteExit("w") {
+		t.Fatalf("status probe = %q/%q, want work_unit_complete with the successor route", status.BlockedReason, status.BlockedExit)
 	}
 }
 

@@ -142,6 +142,105 @@ func TestSDDAttemptGrantPersistsAndReplaysThroughCLI(t *testing.T) {
 	}
 }
 
+// TestSDDAttemptStatusGenerationAndResetPrint proves the two visible surface
+// fixes of this change: `status` prints the live generation and the derived
+// lifetime totals (a maintainer can see a successor generation and the
+// change-wide accounting), and `reset` reports the attempts it PRESERVES —
+// the chain survives the reset — instead of claiming they were cleared.
+func TestSDDAttemptStatusGenerationAndResetPrint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+	chdir(t, t.TempDir())
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd: %v", err)
+	}
+	change := "cli-generation"
+
+	// Seed generation 1 through the package API (the CLI exposes no
+	// --changed-lines flag), then advance to generation 2 with a distinct
+	// work unit exactly as the runtime dogfood does.
+	acq1, err := sddattempt.Acquire(sddattempt.AcquireParams{
+		ChangeName: change, RepoRoot: cwd, RequestID: "gen-seed-1",
+		WorkUnit: "apply", EvidenceGoal: "apply the slice",
+		MaxAttempts: 3, MaxLines: 400, ChangedLines: 120,
+	})
+	if err != nil {
+		t.Fatalf("Acquire generation 1: %v", err)
+	}
+	if _, err := sddattempt.Settle(sddattempt.SettleParams{
+		ChangeName: change, RepoRoot: cwd, Token: acq1.Token, RequestID: "gen-seed-1-settle",
+		Outcome: "passed", EvidenceRevision: "sha256:" + strings.Repeat("a", 64),
+		Diagnosis: "passed", ChangedLines: 120,
+	}); err != nil {
+		t.Fatalf("Settle generation 1: %v", err)
+	}
+	acq2, err := sddattempt.Acquire(sddattempt.AcquireParams{
+		ChangeName: change, RepoRoot: cwd, RequestID: "gen-seed-2",
+		WorkUnit: "verify", EvidenceGoal: "verify the slice",
+		MaxAttempts: 3, MaxLines: 400, ChangedLines: 30,
+	})
+	if err != nil {
+		t.Fatalf("Acquire successor generation: %v", err)
+	}
+	if _, err := sddattempt.Settle(sddattempt.SettleParams{
+		ChangeName: change, RepoRoot: cwd, Token: acq2.Token, RequestID: "gen-seed-2-settle",
+		Outcome: "passed", EvidenceRevision: "sha256:" + strings.Repeat("b", 64),
+		Diagnosis: "passed", ChangedLines: 30,
+	}); err != nil {
+		t.Fatalf("Settle successor generation: %v", err)
+	}
+
+	// Status shows the live generation and the change-wide totals.
+	code, stdout, stderr := runSDDAttemptCLI(t, "status", change)
+	if code != 0 {
+		t.Fatalf("status exit code = %d (stderr: %q)", code, stderr)
+	}
+	for _, want := range []string{
+		"Generation:        2",
+		"Lifetime attempts: 2",
+		"Lifetime lines:    150",
+		"Complete:         true",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("status stdout missing %q:\n%s", want, stdout)
+		}
+	}
+	// The legitimately complete ledger names its successor route instead of
+	// claiming a corrupt authority: the status projection and the acquire
+	// path tell the same story.
+	for _, want := range []string{
+		"Blocked reason:   work_unit_complete",
+		`work unit "verify" is complete`,
+		"with a different --work-unit",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("complete status stdout missing %q:\n%s", want, stdout)
+		}
+	}
+
+	// Reset discards the live scope and PRESERVES the chain; the printed
+	// count must match the chain that actually survives.
+	code, stdout, stderr = runSDDAttemptCLI(t, "reset", change, "--reason", "dogfood discard", "--request-id", "gen-reset")
+	if code != 0 {
+		t.Fatalf("reset exit code = %d (stderr: %q)", code, stderr)
+	}
+	if !strings.Contains(stdout, "Previous attempts preserved: 2") {
+		t.Fatalf("reset stdout missing the preserved count:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "cleared") {
+		t.Fatalf("reset stdout still claims attempts were cleared:\n%s", stdout)
+	}
+	store, err := sddattempt.LoadStore(change, cwd)
+	if err != nil {
+		t.Fatalf("LoadStore after reset: %v", err)
+	}
+	if len(store.Attempts) != 2 {
+		t.Fatalf("attempts after reset = %d, want 2 (the chain survives, matching the printed count)", len(store.Attempts))
+	}
+}
+
 // TestSDDAttemptGrantMissingFlags pins the missing-flag refusal: it
 // enumerates every missing flag and names the rerunnable continuation.
 func TestSDDAttemptGrantMissingFlags(t *testing.T) {

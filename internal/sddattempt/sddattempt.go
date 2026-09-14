@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -62,6 +63,14 @@ type RuntimeStore struct {
 	MaxLines               int    `json:"max_changed_lines,omitempty"`
 	CumulativeChangedLines int    `json:"cumulative_changed_lines,omitempty"`
 
+	// Generation is the live objective generation: 1 names the objective
+	// opened by the first acquire/begin. Generation 1 is represented by
+	// field ABSENCE — the zero value is never stamped, because records are
+	// content-addressed full snapshots re-verified on load and any value on
+	// a generation-1 record would change its canonical bytes and break
+	// every pre-change ledger. Readers derive 0 as 1 (never persisted).
+	Generation int `json:"generation,omitempty"`
+
 	// Evidence tracking
 	WorkUnit     string `json:"work_unit,omitempty"`
 	EvidenceGoal string `json:"evidence_goal,omitempty"`
@@ -76,6 +85,13 @@ type RuntimeStore struct {
 
 	// Reset history (provenance tracking)
 	Resets []RuntimeReset `json:"resets,omitempty"`
+
+	// Advances is the objective-generation provenance history, one entry
+	// per successor advance. It follows the Resets append-only pattern but
+	// is purely additive (an advance never removes anything). omitempty
+	// keeps generation-1 ledgers byte-identical to records written before
+	// the field existed.
+	Advances []RuntimeAdvance `json:"advances,omitempty"`
 
 	// Requests records idempotency receipts for supplied request IDs: the
 	// operation, the digest of the original request, and the recorded
@@ -103,7 +119,14 @@ type RuntimeStore struct {
 type RuntimeAttempt struct {
 	Ordinal     int    `json:"ordinal"`
 	ObjectiveID string `json:"objective_id,omitempty"`
-	WorkUnit    string `json:"work_unit,omitempty"`
+
+	// ObjectiveGeneration is the objective generation this attempt was
+	// spent under. Generation 1 is represented by field ABSENCE (never an
+	// explicit 1), so pre-change attempt records keep their content
+	// address; readers derive 0 as 1.
+	ObjectiveGeneration int `json:"objective_generation,omitempty"`
+
+	WorkUnit string `json:"work_unit,omitempty"`
 
 	// Timing
 	BeganAt string `json:"began_at"`
@@ -139,6 +162,29 @@ type RuntimeReset struct {
 	ResetBy      string `json:"reset_by"`
 	ResetAt      string `json:"reset_at"`
 	PrevRevision string `json:"prev_revision"`
+
+	// ToGeneration is the budget epoch the reset opened: the generation every
+	// preserved attempt stops counting as live under, for the budget, the 2x
+	// cap, the refund allowance and the accumulator. omitempty keeps reset
+	// entries written before the boundary existed byte-identical.
+	ToGeneration int `json:"to_generation,omitempty"`
+}
+
+// RuntimeAdvance records one objective-generation advance: the admission of
+// a successor objective after its predecessor completed. The store keeps
+// one entry per advance (provenance only — Attempts already carries the full
+// attempt chain); every field is omitempty and generation-1 ledgers never
+// carry an entry, so the slice is invisible to pre-change canonical bytes.
+type RuntimeAdvance struct {
+	RequestID      string `json:"request_id,omitempty"`
+	FromWorkUnit   string `json:"from_work_unit,omitempty"`
+	ToWorkUnit     string `json:"to_work_unit,omitempty"`
+	FromGeneration int    `json:"from_generation,omitempty"`
+	ToGeneration   int    `json:"to_generation,omitempty"`
+	MaxAttempts    int    `json:"max_attempts,omitempty"`
+	MaxLines       int    `json:"max_changed_lines,omitempty"`
+	PrevRevision   string `json:"prev_revision,omitempty"`
+	AdvancedAt     string `json:"advanced_at,omitempty"`
 }
 
 // RuntimeRequestRecord is the idempotency receipt for one request ID. It is
@@ -179,7 +225,21 @@ const (
 	BlockedReasonCorruptAuthority    = "corrupt_authority"
 	BlockedReasonActiveAttempt       = "active_attempt"
 	BlockedReasonInvalidContinuation = "invalid_continuation"
+	// BlockedReasonWorkUnitComplete classifies a repeat of the work unit a
+	// passed settle already completed: that objective is done, so the change
+	// continues through a successor work unit (a different --work-unit) and
+	// never through this one again. corrupt_authority stays reserved for a
+	// completion that is genuinely anomalous — no passed attempt to name.
+	BlockedReasonWorkUnitComplete = "work_unit_complete"
 )
+
+// budgetRecoveryHint is the remedy every exhausted-budget exit names: a reset
+// opens a fresh budget epoch (the generation advances), so the preserved
+// attempt chain stops counting as live while every recorded outcome, its
+// evidence and the refund history stay in the audit. The exits append it
+// verbatim, because an exit that advertises a remedy that does not work
+// strands the ledger it describes.
+const budgetRecoveryHint = "; run sdd-attempt reset to open a fresh budget — the preserved attempt chain and its evidence stay in the audit"
 
 // RuntimeRecordRejectedError is the single typed error for all record rejections.
 type RuntimeRecordRejectedError struct {
@@ -225,8 +285,12 @@ func runtimeRefundedAttempts(store *RuntimeStore) int {
 	if store == nil {
 		return 0
 	}
-	delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
-	refunded := len(store.Attempts) - delivered
+	// The refund cap belongs to the generation currently open: attempts of a
+	// generation that already succeeded stay in the chain but are never
+	// charged against the successor's fresh 2x allowance.
+	live := liveGenerationAttempts(store)
+	delivered := runtimeAttemptDeliveredIncrementSlice(live)
+	refunded := len(live) - delivered
 	if refunded < 0 {
 		refunded = 0
 	}
@@ -234,6 +298,62 @@ func runtimeRefundedAttempts(store *RuntimeStore) int {
 		refunded = store.MaxAttempts
 	}
 	return refunded
+}
+
+// derivedGeneration renders the persisted objective generation: the wire
+// represents generation 1 by field ABSENCE, so every reader derives the same
+// value (0 reads as 1) without touching canonical bytes.
+func derivedGeneration(store *RuntimeStore) int {
+	if store == nil {
+		return 1
+	}
+	return max(store.Generation, 1)
+}
+
+// liveGenerationAttempts returns the attempts recorded under the store's
+// live objective generation. A succeeded generation's attempts stay in the
+// chain for the audit but must not charge the open generation's budget,
+// refund cap or accumulator.
+func liveGenerationAttempts(store *RuntimeStore) []RuntimeAttempt {
+	if store == nil {
+		return nil
+	}
+	generation := derivedGeneration(store)
+	live := make([]RuntimeAttempt, 0, len(store.Attempts))
+	for _, attempt := range store.Attempts {
+		if max(attempt.ObjectiveGeneration, 1) == generation {
+			live = append(live, attempt)
+		}
+	}
+	return live
+}
+
+// lifetimeChangedLines totals the changed lines of the whole preserved chain:
+// the lifetime view survives advances and resets because it is derived from
+// the attempts themselves.
+func lifetimeChangedLines(store *RuntimeStore) int {
+	if store == nil {
+		return 0
+	}
+	total := 0
+	for _, attempt := range store.Attempts {
+		total += attempt.ChangedLines
+	}
+	return total
+}
+
+// lastAdvanceEntry returns the most recent advance provenance entry, if any.
+func lastAdvanceEntry(store *RuntimeStore) *RuntimeAdvance {
+	if store == nil || len(store.Advances) == 0 {
+		return nil
+	}
+	return &store.Advances[len(store.Advances)-1]
+}
+
+// lastAttemptPassed reports whether the chain's last recorded attempt is a
+// passed one — the only shape a completed objective can carry.
+func lastAttemptPassed(store *RuntimeStore) bool {
+	return len(store.Attempts) > 0 && store.Attempts[len(store.Attempts)-1].Outcome == "passed"
 }
 
 // requestDigest hashes the canonical JSON of a request under a schema domain,
@@ -285,6 +405,16 @@ type RuntimeStatus struct {
 	NextAction             string `json:"next_action"`
 	AttemptCount           int    `json:"attempt_count"`
 	CumulativeChangedLines int    `json:"cumulative_changed_lines,omitempty"`
+
+	// Generation is the DERIVED live objective generation: the wire
+	// represents generation 1 by field absence, so readers render 0 as 1.
+	// LifetimeAttempts, LifetimeChangedLines and LastAdvance are read-time
+	// projections of the preserved attempt chain and the advance provenance —
+	// none of them is ever persisted.
+	Generation           int             `json:"generation,omitempty"`
+	LifetimeAttempts     int             `json:"lifetime_attempts,omitempty"`
+	LifetimeChangedLines int             `json:"lifetime_changed_lines,omitempty"`
+	LastAdvance          *RuntimeAdvance `json:"last_advance,omitempty"`
 
 	// Migrated is true when this access imported the legacy home-dir
 	// ledger into the clone-scoped store (reported once).
@@ -355,21 +485,28 @@ func StatusWithInstance(changeName, repoRoot, instance string) (*RuntimeStatus, 
 			Complete:         store.Complete,
 			NextAction:       deriveNextAction(store),
 			AttemptCount:     len(store.Attempts),
-			Migrated:         migrated,
-			Scope:            s.Scope,
-			GrantedRoots:     grantedRootsFor(store, instance),
-			BindingRevision:  store.BindingRevision,
-			BindingLineage:   store.BindingLineage,
-			EvidenceRevision: store.EvidenceRevision,
+
+			CumulativeChangedLines: store.CumulativeChangedLines,
+			Migrated:               migrated,
+			Scope:                  s.Scope,
+			GrantedRoots:           grantedRootsFor(store, instance),
+			BindingRevision:        store.BindingRevision,
+			BindingLineage:         store.BindingLineage,
+			EvidenceRevision:       store.EvidenceRevision,
+			Generation:             derivedGeneration(store),
+			LifetimeAttempts:       len(store.Attempts),
+			LifetimeChangedLines:   lifetimeChangedLines(store),
+			LastAdvance:            lastAdvanceEntry(store),
 		}
 		// Admission probe: would an acquire be admitted against this ledger
 		// head? Populates BlockedReason/BlockedExit/SettleObligation so
 		// sdd status can free verify/archive from a stale decision-required,
-		// mirroring gentle-ai's AdmissionStatus / runtimeReadiness.
-		if reason, exit, obligation := deriveAdmissionBlocked(store); reason != "" {
-			status.BlockedReason = reason
-			status.BlockedExit = exit
-			status.SettleObligation = obligation
+		// mirroring gentle-ai's AdmissionStatus / runtimeReadiness. The
+		// classification comes exclusively from deriveScopeAdmission.
+		if decision := deriveScopeAdmission(store, ScopeRequest{}); decision.Reason != "" {
+			status.BlockedReason = decision.Reason
+			status.BlockedExit = decision.Exit
+			status.SettleObligation = deriveSettleObligation(store)
 		} else {
 			// Even when not blocked, expose the settle obligation so a
 			// successful acquire's caller knows what its passing settle will
@@ -441,36 +578,165 @@ func deriveSettleObligation(store *RuntimeStore) *SettleObligation {
 	return nil
 }
 
-// deriveAdmissionBlocked answers "would an acquire be admitted?" in the
-// minimal runtimeReadiness style required for biggz. Returns a blocked
-// reason, a human exit, and the settle obligation that a blocked ledger
-// still carries. Empty reason means proceed.
-func deriveAdmissionBlocked(store *RuntimeStore) (string, string, *SettleObligation) {
+// ScopeRequest is the scope an admission wants to open or continue: the
+// work unit and evidence goal plus the budget the caller requests. It gives
+// Acquire, Begin and the status probe one admission shape, so the
+// successor-advance branch (a later slice) has a single place to compare
+// the requested scope against the live objective.
+type ScopeRequest struct {
+	WorkUnit     string
+	EvidenceGoal string
+	MaxAttempts  int
+	MaxLines     int
+}
+
+// ScopeDecision is the single admission verdict. An empty Reason admits;
+// Advance reports that an admission opens a successor generation over a
+// completed objective. When blocked, Reason and Exit are exactly what
+// BlockedError and the status probe project.
+type ScopeDecision struct {
+	Advance bool
+	Reason  string
+	Exit    string
+}
+
+// deriveScopeAdmission is the SINGLE owner of scope admission: it answers
+// "would this acquire/begin be admitted?" for the current ledger head and is
+// the one classification consumed by Acquire, Begin and the
+// StatusWithInstance probe.
+//
+// Classification order:
+//   - complete: a passed objective hands the change to a successor that
+//     names a DIFFERENT work unit (Advance); repeating the settled work unit
+//     — or probing it passively with no work unit named — is refused with
+//     work_unit_complete and the successor route, so the status projection
+//     tells the same story as the acquire path. A completion that is
+//     genuinely anomalous (decision-required, a dangling active attempt, or
+//     no passed attempt to name) stays corrupt_authority;
+//   - decision-required: budget_exhausted (advance never launders it);
+//   - an open attempt: active_attempt.
+//
+// The unified scope guard over the four scope fields is enforced by the
+// compact acquire path (scopeChangeRefusal), not here: begin records the
+// scope the caller declares, which is the behavior its callers rely on.
+func deriveScopeAdmission(store *RuntimeStore, req ScopeRequest) ScopeDecision {
 	if store == nil {
-		return "", "", nil
+		return ScopeDecision{}
 	}
-	obligation := deriveSettleObligation(store)
 	if store.Complete {
-		return BlockedReasonCorruptAuthority, "ledger is complete; reset required to continue", obligation
+		// Completion is scoped to one work unit: a passed objective is
+		// terminal for its own scope while remaining an ordinary predecessor
+		// for the distinct work unit the SDD graph still owes. The passive
+		// probe (a request that names no work unit) tells the SAME story as
+		// the acquire path — the work unit is complete and continues through
+		// a successor — so status never claims a corrupt authority nor offers
+		// reset as the only exit. corrupt_authority stays reserved for a
+		// genuinely anomalous completion: decision-required, a dangling
+		// active attempt, or no passed attempt to name.
+		if !store.DecisionRequired && store.ActiveAttempt == 0 && lastAttemptPassed(store) {
+			if req.WorkUnit != "" && req.WorkUnit != store.WorkUnit {
+				return ScopeDecision{Advance: true}
+			}
+			return ScopeDecision{Reason: BlockedReasonWorkUnitComplete, Exit: workUnitCompleteExit(store.WorkUnit)}
+		}
+		return ScopeDecision{Reason: BlockedReasonCorruptAuthority, Exit: "ledger is complete; reset required to continue"}
 	}
 	if store.DecisionRequired {
 		// Minimal budget-exhausted mapping: decision-required with
 		// attempts at or beyond the objective's budget is the stale
 		// decision that verify/archive should be freed from when the
 		// probe reports a settle obligation.
-		if store.MaxAttempts > 0 && len(store.Attempts) >= store.MaxAttempts {
-			return BlockedReasonBudgetExhausted, "attempt budget exhausted; decision required — run sdd-attempt reset or settle the obligated evidence", obligation
+		if store.MaxAttempts > 0 && len(liveGenerationAttempts(store)) >= store.MaxAttempts {
+			return ScopeDecision{Reason: BlockedReasonBudgetExhausted, Exit: "attempt budget exhausted; decision required" + budgetRecoveryHint}
 		}
-		return BlockedReasonBudgetExhausted, "decision required; run sdd-attempt reset to continue", obligation
+		return ScopeDecision{Reason: BlockedReasonBudgetExhausted, Exit: "decision required; run sdd-attempt reset to continue"}
 	}
-	if store.ActiveAttempt > 0 {
-		for _, attempt := range store.Attempts {
-			if attempt.Ordinal == store.ActiveAttempt && attempt.Outcome == "" {
-				return BlockedReasonActiveAttempt, "an attempt is already active; settle it before acquiring", obligation
-			}
-		}
+	if store.ActiveAttempt > 0 && slices.IndexFunc(store.Attempts, func(a RuntimeAttempt) bool {
+		return a.Ordinal == store.ActiveAttempt && a.Outcome == ""
+	}) >= 0 {
+		return ScopeDecision{Reason: BlockedReasonActiveAttempt, Exit: "an attempt is already active; settle it before acquiring"}
 	}
-	return "", "", obligation
+	return ScopeDecision{}
+}
+
+// workUnitCompleteExit is the exact refusal for repeating the work unit a
+// passed settle already completed: it names the successor route (a different
+// --work-unit) instead of pointing at reset as the only way out.
+func workUnitCompleteExit(workUnit string) string {
+	return fmt.Sprintf("work unit %q is complete; it continues through a successor work unit: run `biggz sdd-attempt acquire <change> --work-unit \"<a different label>\" --request-id \"<unique-id>\"` with a different --work-unit; reset discards this scope instead of succeeding it", workUnit)
+}
+
+// scopeChangeRefusal is the ONE unified scope guard over the four scope
+// fields: while an objective is open, changing --work-unit, --evidence-goal,
+// --max-attempts or --max-lines without an explicit reset is an invalid
+// continuation. An empty request value means "unchanged", and a zero stored
+// value records no scope to preserve. It replaces the two narrow guards the
+// acquire path carried (one field each, silently incomplete).
+//
+// The budget fields are compared only while the live generation holds at
+// least one attempt: an objective that has spent nothing yet — the budget
+// epoch a reset just opened, a successor the advance just opened, or a
+// pre-attempt ledger — has no consumed scope to preserve, so its opening
+// acquire DECLARES the budget instead of inheriting it. Refusing it there
+// told a caller that had just reset to reset. The work unit and evidence
+// goal guards stay unconditional: a live objective's label is never cleared
+// while its attempts exist.
+func scopeChangeRefusal(store *RuntimeStore, req ScopeRequest) (reason, exit string) {
+	objectiveOpen := len(liveGenerationAttempts(store)) > 0
+	switch {
+	case req.WorkUnit != "" && store.WorkUnit != "" && req.WorkUnit != store.WorkUnit:
+		return BlockedReasonInvalidContinuation, fmt.Sprintf("work unit scope changed without reset: have %q, acquire wants %q", store.WorkUnit, req.WorkUnit)
+	case req.EvidenceGoal != "" && store.EvidenceGoal != "" && req.EvidenceGoal != store.EvidenceGoal:
+		return BlockedReasonInvalidContinuation, fmt.Sprintf("evidence goal changed without reset: have %q, acquire wants %q", store.EvidenceGoal, req.EvidenceGoal)
+	case objectiveOpen && req.MaxAttempts > 0 && store.MaxAttempts > 0 && req.MaxAttempts != store.MaxAttempts:
+		return BlockedReasonInvalidContinuation, fmt.Sprintf("attempt budget changed without reset: have %d, acquire wants %d", store.MaxAttempts, req.MaxAttempts)
+	case objectiveOpen && req.MaxLines > 0 && store.MaxLines > 0 && req.MaxLines != store.MaxLines:
+		return BlockedReasonInvalidContinuation, fmt.Sprintf("line budget changed without reset: have %d, acquire wants %d", store.MaxLines, req.MaxLines)
+	}
+	return "", ""
+}
+
+// applyScopeAdvance records the admission of a successor objective over a
+// completed one: the live scope becomes the request's (its own budget, with
+// the predecessor's only as the fallback when the request omits it), the
+// generation advances with one provenance entry, and every prior attempt
+// stays untouched. Completion, the decision, the active pointer and the live
+// evidence are cleared so the caller can open the successor's first attempt;
+// the accumulator restarts while the lifetime view keeps the whole chain.
+// The caller appends the successor's attempt and sets the next action.
+func applyScopeAdvance(store *RuntimeStore, req ScopeRequest, requestID string) {
+	fromGeneration := derivedGeneration(store)
+	toGeneration := fromGeneration + 1
+	if req.MaxAttempts > 0 {
+		store.MaxAttempts = req.MaxAttempts
+	}
+	if req.MaxLines > 0 {
+		store.MaxLines = req.MaxLines
+	}
+	store.Advances = append(store.Advances, RuntimeAdvance{
+		RequestID:      requestID,
+		FromWorkUnit:   store.WorkUnit,
+		ToWorkUnit:     req.WorkUnit,
+		FromGeneration: fromGeneration,
+		ToGeneration:   toGeneration,
+		MaxAttempts:    store.MaxAttempts,
+		MaxLines:       store.MaxLines,
+		PrevRevision:   store.Revision,
+		AdvancedAt:     time.Now().UTC().Format(time.RFC3339),
+	})
+	store.Generation = toGeneration
+	store.WorkUnit = req.WorkUnit
+	if req.EvidenceGoal != "" {
+		store.EvidenceGoal = req.EvidenceGoal
+	}
+	store.Complete = false
+	store.DecisionRequired = false
+	store.ActiveAttempt = 0
+	store.CumulativeChangedLines = 0
+	store.EvidenceRevision = ""
+	store.BindingRevision = ""
+	store.BindingLineage = ""
+	store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 }
 
 // isStaleDecisionRequired reports whether a ledger that is in
@@ -666,15 +932,37 @@ func Begin(params BeginParams) (*BeginResult, error) {
 			}
 		}
 
+		// Admission seam: the same single classification that gates Acquire
+		// and the status probe gates Begin too. A completed objective that a
+		// distinct work unit names opens its successor generation here exactly
+		// as the compact acquire path does; a repeat or a genuinely anomalous
+		// completion is refused with the seam's reason and exit.
+		request := ScopeRequest{
+			WorkUnit:     params.WorkUnit,
+			EvidenceGoal: params.EvidenceGoal,
+			MaxAttempts:  params.MaxAttempts,
+			MaxLines:     params.MaxLines,
+		}
+		decision := deriveScopeAdmission(store, request)
+		if decision.Reason != "" {
+			return &BlockedError{Reason: decision.Reason, Exit: decision.Exit, SettleObligation: deriveSettleObligation(store)}
+		}
+		if decision.Advance {
+			applyScopeAdvance(store, request, params.RequestID)
+		}
+
 		if runtimeChangedLineBudgetExceeded(store, params.ChangedLines) {
 			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: fmt.Sprintf("changed lines %d would exceed budget %d (cumulative %d)", params.ChangedLines, store.MaxLines, store.CumulativeChangedLines), SettleObligation: deriveSettleObligation(store)}
 		}
-		delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
+		// Budget and refund bookkeeping is scoped to the live generation, so
+		// an advanced ledger starts its successor with a fresh allowance.
+		live := liveGenerationAttempts(store)
+		delivered := runtimeAttemptDeliveredIncrementSlice(live)
 		refunded := runtimeRefundedAttempts(store)
 		if store.MaxAttempts > 0 {
 			if delivered >= store.MaxAttempts {
-				if refunded >= store.MaxAttempts || len(store.Attempts) >= 2*store.MaxAttempts {
-					return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "attempt budget exhausted (2x cap with refunds)", SettleObligation: deriveSettleObligation(store)}
+				if refunded >= store.MaxAttempts || len(live) >= 2*store.MaxAttempts {
+					return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "attempt budget exhausted (2x cap with refunds)" + budgetRecoveryHint, SettleObligation: deriveSettleObligation(store)}
 				}
 				store.DecisionRequired = true
 				store.NextAction = "decision-required"
@@ -682,10 +970,10 @@ func Begin(params BeginParams) (*BeginResult, error) {
 				if err := s.commit(store); err != nil {
 					return fmt.Errorf("save store: %w", err)
 				}
-				return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "max attempts reached, decision required", SettleObligation: deriveSettleObligation(store)}
+				return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "max attempts reached, decision required" + budgetRecoveryHint, SettleObligation: deriveSettleObligation(store)}
 			}
-			if len(store.Attempts) >= 2*store.MaxAttempts {
-				return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "attempt budget exhausted (2x cap)", SettleObligation: deriveSettleObligation(store)}
+			if len(live) >= 2*store.MaxAttempts {
+				return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "attempt budget exhausted (2x cap)" + budgetRecoveryHint, SettleObligation: deriveSettleObligation(store)}
 			}
 		}
 		// Start new attempt: derive ordinal from history when no active attempt (cumulative never reset).
@@ -702,10 +990,11 @@ func Begin(params BeginParams) (*BeginResult, error) {
 		store.DecisionRequired = false
 		store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 		store.Attempts = append(store.Attempts, RuntimeAttempt{
-			Ordinal:     nextOrdinal,
-			ObjectiveID: params.ObjectiveID,
-			WorkUnit:    params.WorkUnit,
-			BeganAt:     time.Now().UTC().Format(time.RFC3339),
+			Ordinal:             nextOrdinal,
+			ObjectiveID:         params.ObjectiveID,
+			ObjectiveGeneration: store.Generation,
+			WorkUnit:            params.WorkUnit,
+			BeganAt:             time.Now().UTC().Format(time.RFC3339),
 		})
 		outcome := &BeginResult{ActiveAttempt: nextOrdinal, Scope: s.Scope}
 		recordRequest(store, params.RequestID, opBegin, digest, outcome)
@@ -861,8 +1150,9 @@ func Finish(params FinishParams) (*FinishResult, error) {
 		} else {
 			// Failed or interrupted — check if more attempts allowed (refund-aware)
 			store.ActiveAttempt = 0
-			delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
-			if store.MaxAttempts > 0 && (delivered >= store.MaxAttempts || len(store.Attempts) >= 2*store.MaxAttempts) {
+			live := liveGenerationAttempts(store)
+			delivered := runtimeAttemptDeliveredIncrementSlice(live)
+			if store.MaxAttempts > 0 && (delivered >= store.MaxAttempts || len(live) >= 2*store.MaxAttempts) {
 				store.DecisionRequired = true
 				store.NextAction = "decision-required"
 			} else {
@@ -870,7 +1160,7 @@ func Finish(params FinishParams) (*FinishResult, error) {
 			}
 		}
 
-		delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
+		delivered := runtimeAttemptDeliveredIncrementSlice(liveGenerationAttempts(store))
 		remaining := store.MaxAttempts - delivered
 		if remaining < 0 {
 			remaining = 0
@@ -923,16 +1213,26 @@ type ResetParams struct {
 
 // ResetResult describes the result of resetting the ledger.
 type ResetResult struct {
-	Revision      string `json:"revision"`
-	AttemptsReset int    `json:"attempts_reset"`
-	NewStore      bool   `json:"new_store,omitempty"`
-	Migrated      bool   `json:"migrated,omitempty"`
-	Scope         string `json:"scope,omitempty"`
+	Revision string `json:"revision"`
+	// AttemptsPreserved is the attempt-chain length at the moment of the
+	// reset: reset clears only the LIVE objective, so the chain — and its
+	// count — survives as the audit. The field states what the operation
+	// KEEPS, never what it destroys, and the printed CLI text says the same.
+	AttemptsPreserved int    `json:"attempts_preserved"`
+	NewStore          bool   `json:"new_store,omitempty"`
+	Migrated          bool   `json:"migrated,omitempty"`
+	Scope             string `json:"scope,omitempty"`
 }
 
-// Reset clears the attempt history and creates a fresh ledger for a new
-// objective. Requires an explicit maintainer scope decision.
-// If change doesn't exist yet, creates a minimal fresh ledger.
+// Reset clears the LIVE objective — completion, the decision, the active
+// attempt and its evidence, plus the live scope — so a new objective can
+// open, while the attempt chain stays as the audit: attempts are never
+// discarded, so len(Attempts) never decreases and every prior attempt keeps
+// its outcome and evidence. The reset opens a FRESH budget epoch: it advances
+// the generation, so the preserved attempts stop counting as live for the
+// budget, the 2x cap, the refund allowance and the accumulator, while the
+// lifetime views keep the whole chain. Requires an explicit maintainer scope
+// decision. If change doesn't exist yet, creates a minimal fresh ledger.
 //
 // When a RequestID is supplied, the operation is idempotent: a replayed
 // request ID returns the recorded outcome without mutating the ledger.
@@ -1002,22 +1302,37 @@ func Reset(params ResetParams) (*ResetResult, error) {
 		}
 
 		prevRev := store.Revision
-		attemptCount := len(store.Attempts)
+		// The chain survives the reset untouched, so the recorded count is
+		// the number of attempts PRESERVED, never the number cleared.
+		preservedAttempts := len(store.Attempts)
 
-		// Record reset in provenance
+		// The reset opens a FRESH budget epoch: advancing the generation makes
+		// every preserved attempt stop counting as live for the budget, the 2x
+		// cap, the refund allowance and the accumulator. Without the boundary
+		// the closed generation's 2x cap would gate every later objective
+		// forever, so the remedy the blocked exits advertise would not work.
+		nextGeneration := derivedGeneration(store) + 1
+
+		// Record reset in provenance, including the budget epoch it opened.
 		store.Resets = append(store.Resets, RuntimeReset{
 			Reason:       params.Reason,
 			ResetBy:      params.ResetBy,
 			ResetAt:      time.Now().UTC().Format(time.RFC3339),
 			PrevRevision: prevRev,
+			ToGeneration: nextGeneration,
 		})
 
-		// Reset state
+		// Reset clears the live objective and nothing else: the attempt chain
+		// is the audit, so it survives untouched (count never decreases, every
+		// attempt keeps its outcome and evidence). The generation advances so
+		// the preserved attempts cannot charge the re-opened objective, and the
+		// line accumulator restarts exactly as it does for a successor.
+		store.Generation = nextGeneration
+		store.CumulativeChangedLines = 0
 		store.ActiveAttempt = 0
 		store.DecisionRequired = false
 		store.Complete = false
 		store.NextAction = "begin"
-		store.Attempts = nil // Clear attempt history
 		store.EvidenceRevision = ""
 		store.BindingRevision = ""
 		store.BindingLineage = ""
@@ -1036,7 +1351,7 @@ func Reset(params ResetParams) (*ResetResult, error) {
 		}
 
 		store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-		outcome := &ResetResult{AttemptsReset: attemptCount, Scope: s.Scope}
+		outcome := &ResetResult{AttemptsPreserved: preservedAttempts, Scope: s.Scope}
 		recordRequest(store, params.RequestID, opReset, digest, outcome)
 		if params.RequestID != "" {
 			setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
@@ -1046,9 +1361,9 @@ func Reset(params ResetParams) (*ResetResult, error) {
 		}
 
 		result = &ResetResult{
-			Revision:      store.Revision,
-			AttemptsReset: attemptCount,
-			Scope:         s.Scope,
+			Revision:          store.Revision,
+			AttemptsPreserved: preservedAttempts,
+			Scope:             s.Scope,
 		}
 		return nil
 	})
@@ -1148,13 +1463,15 @@ func mintAcquireToken(changeName, requestID string, ordinal int) string {
 // request ID with identical inputs returns the same token without mutating
 // the ledger. A reused request ID with different inputs fails.
 //
-// Readiness is checked via deriveAdmissionBlocked (the minimal
-// runtimeReadiness predicate): a complete ledger or a decision-required
-// ledger is blocked with BlockedReasonCorruptAuthority or
-// BlockedReasonBudgetExhausted and the current SettleObligation. An
-// already-active attempt is blocked with BlockedReasonActiveAttempt unless
-// the caller presents the active token as ownership proof (gentle-ai's
-// Token continuation).
+// Readiness is checked via deriveScopeAdmission (the minimal
+// runtimeReadiness predicate): a completed work unit is continued by a
+// distinct --work-unit (successor advance) and refused with
+// BlockedReasonWorkUnitComplete when the settled label repeats; a
+// decision-required ledger is blocked with BlockedReasonBudgetExhausted and
+// the current SettleObligation; only a genuinely anomalous completion stays
+// BlockedReasonCorruptAuthority. An already-active attempt is blocked with
+// BlockedReasonActiveAttempt unless the caller presents the active token as
+// ownership proof (gentle-ai's Token continuation).
 func Acquire(params AcquireParams) (*AcquireResult, error) {
 	if params.RequestID != "" && !requestIDPattern.MatchString(params.RequestID) {
 		return nil, errors.New("request_id must be a canonical lowercase identifier")
@@ -1308,9 +1625,28 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 			}
 		}
 
-		// Admission check: complete or decision-required or active-attempt.
-		if reason, exit, obligation := deriveAdmissionBlocked(store); reason != "" {
-			return &BlockedError{Reason: reason, Exit: exit, SettleObligation: obligation}
+		// Admission check: complete or decision-required or active-attempt,
+		// classified by the single deriveScopeAdmission seam. An admitted
+		// advance opens the successor generation FIRST, so every budget check
+		// below measures the successor's own budget and accumulator.
+		request := ScopeRequest{
+			WorkUnit:     params.WorkUnit,
+			EvidenceGoal: params.EvidenceGoal,
+			MaxAttempts:  params.MaxAttempts,
+			MaxLines:     params.MaxLines,
+		}
+		decision := deriveScopeAdmission(store, request)
+		if decision.Reason != "" {
+			return &BlockedError{Reason: decision.Reason, Exit: decision.Exit, SettleObligation: deriveSettleObligation(store)}
+		}
+		if decision.Advance {
+			applyScopeAdvance(store, request, params.RequestID)
+		} else if reason, exit := scopeChangeRefusal(store, request); reason != "" {
+			// The one unified scope guard: an open objective admits only its
+			// exact recorded scope (empty request values mean "unchanged").
+			// A completed objective's change of work unit is not drift — it is
+			// the successor advance handled above.
+			return &BlockedError{Reason: reason, Exit: exit, SettleObligation: deriveSettleObligation(store)}
 		}
 
 		// Remediation satisfiability pre-check (acquire-time fail-fast,
@@ -1348,10 +1684,14 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 		if runtimeChangedLineBudgetExceeded(store, params.ChangedLines) {
 			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: fmt.Sprintf("changed lines %d would exceed budget %d (cumulative %d)", params.ChangedLines, store.MaxLines, store.CumulativeChangedLines), SettleObligation: deriveSettleObligation(store)}
 		}
-		if store.MaxAttempts > 0 && len(store.Attempts) >= 2*store.MaxAttempts {
-			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "attempt budget exhausted (2x cap)", SettleObligation: deriveSettleObligation(store)}
+		// The 2x cap and the delivered budget belong to the LIVE generation:
+		// a succeeded predecessor may neither block its successor nor load
+		// its refunds against the successor's fresh allowance.
+		live := liveGenerationAttempts(store)
+		if store.MaxAttempts > 0 && len(live) >= 2*store.MaxAttempts {
+			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "attempt budget exhausted (2x cap)" + budgetRecoveryHint, SettleObligation: deriveSettleObligation(store)}
 		}
-		deliveredEarly := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
+		deliveredEarly := runtimeAttemptDeliveredIncrementSlice(live)
 		if store.MaxAttempts > 0 && deliveredEarly >= store.MaxAttempts {
 			// Check if refund cap already allows: if refunded < Max, we could still allow one more? But delivered at limit means budget exhausted regardless
 			// For refund case, delivered would be < Max because refunded not counted, so this branch not taken
@@ -1361,9 +1701,9 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 			if err := s.commit(store); err != nil {
 				return fmt.Errorf("save store: %w", err)
 			}
-			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "max attempts reached, decision required", SettleObligation: deriveSettleObligation(store)}
+			return &BlockedError{Reason: BlockedReasonBudgetExhausted, Exit: "max attempts reached, decision required" + budgetRecoveryHint, SettleObligation: deriveSettleObligation(store)}
 		}
-		// Budget check already covered by deriveAdmissionBlocked, but also
+		// Budget check already covered by deriveScopeAdmission, but also
 		// enforce maxAttempts guard for the new attempt ordinal.
 		nextOrdinal := store.ActiveAttempt + 1
 		// For a store that had an active attempt previously closed, ActiveAttempt
@@ -1375,10 +1715,16 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 				nextOrdinal = store.Attempts[len(store.Attempts)-1].Ordinal + 1
 			}
 		}
-		if store.MaxAttempts == 0 {
+		// The objective-opening acquire declares the live budget: when the live
+		// generation holds no attempt yet — the budget epoch a reset just
+		// opened, a successor the advance just opened, or a pre-attempt ledger
+		// — the request's budget becomes the objective's, exactly as the first
+		// acquire of a ledger does. Once an attempt is spent, scopeChangeRefusal
+		// owns the invariant and the stored budget stays untouched.
+		if len(live) == 0 || store.MaxAttempts == 0 {
 			store.MaxAttempts = params.MaxAttempts
 		}
-		if store.MaxLines == 0 {
+		if len(live) == 0 || store.MaxLines == 0 {
 			store.MaxLines = params.MaxLines
 		}
 
@@ -1388,23 +1734,6 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 		if params.RequestID == "" {
 			h := sha256.Sum256([]byte(fmt.Sprintf("%s|%d|%d", params.ChangeName, ordinal, time.Now().UnixNano())))
 			token = "tok-" + hex.EncodeToString(h[:])[:24]
-		}
-		// Ensure work-unit scope does not drift without an explicit reset
-		// (minimal scope-change guard, mirroring gentle-ai's
-		// runtimeObjectiveScopeChanged check).
-		if store.WorkUnit != "" && params.WorkUnit != "" && store.WorkUnit != params.WorkUnit {
-			return &BlockedError{
-				Reason:           BlockedReasonInvalidContinuation,
-				Exit:             fmt.Sprintf("work unit scope changed without reset: have %q, acquire wants %q", store.WorkUnit, params.WorkUnit),
-				SettleObligation: deriveSettleObligation(store),
-			}
-		}
-		if store.EvidenceGoal != "" && params.EvidenceGoal != "" && store.EvidenceGoal != params.EvidenceGoal {
-			return &BlockedError{
-				Reason:           BlockedReasonInvalidContinuation,
-				Exit:             fmt.Sprintf("evidence goal changed without reset: have %q, acquire wants %q", store.EvidenceGoal, params.EvidenceGoal),
-				SettleObligation: deriveSettleObligation(store),
-			}
 		}
 
 		if store.Tokens == nil {
@@ -1416,12 +1745,6 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 		store.DecisionRequired = false
 		store.Complete = false
 		store.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-		if store.MaxAttempts == 0 {
-			store.MaxAttempts = params.MaxAttempts
-		}
-		if store.MaxLines == 0 {
-			store.MaxLines = params.MaxLines
-		}
 		if params.WorkUnit != "" {
 			store.WorkUnit = params.WorkUnit
 		}
@@ -1429,10 +1752,11 @@ func Acquire(params AcquireParams) (*AcquireResult, error) {
 			store.EvidenceGoal = params.EvidenceGoal
 		}
 		store.Attempts = append(store.Attempts, RuntimeAttempt{
-			Ordinal:      ordinal,
-			WorkUnit:     params.WorkUnit,
-			BeganAt:      time.Now().UTC().Format(time.RFC3339),
-			ChangedLines: params.ChangedLines,
+			Ordinal:             ordinal,
+			ObjectiveGeneration: store.Generation,
+			WorkUnit:            params.WorkUnit,
+			BeganAt:             time.Now().UTC().Format(time.RFC3339),
+			ChangedLines:        params.ChangedLines,
 		})
 		outcome := &AcquireResult{Token: token, SettleObligation: deriveSettleObligation(store), Scope: s.Scope}
 		recordRequest(store, params.RequestID, opAcquire, digest, outcome)
@@ -1662,8 +1986,9 @@ func Settle(params SettleParams) (*SettleResult, error) {
 			store.NextAction = "complete"
 			store.ActiveAttempt = 0
 		} else {
-			delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
-			if store.MaxAttempts > 0 && (delivered >= store.MaxAttempts || len(store.Attempts) >= 2*store.MaxAttempts) {
+			live := liveGenerationAttempts(store)
+			delivered := runtimeAttemptDeliveredIncrementSlice(live)
+			if store.MaxAttempts > 0 && (delivered >= store.MaxAttempts || len(live) >= 2*store.MaxAttempts) {
 				store.DecisionRequired = true
 				store.NextAction = "decision-required"
 			} else {
@@ -1672,7 +1997,7 @@ func Settle(params SettleParams) (*SettleResult, error) {
 			}
 		}
 
-		delivered := runtimeAttemptDeliveredIncrementSlice(store.Attempts)
+		delivered := runtimeAttemptDeliveredIncrementSlice(liveGenerationAttempts(store))
 		remaining := store.MaxAttempts - delivered
 		if remaining < 0 {
 			remaining = 0
@@ -2166,7 +2491,7 @@ func Rescope(params RescopeParams) (*ResetResult, error) {
 		store.NextAction = "begin"
 		store.DecisionRequired = false
 		store.Complete = false
-		out := &ResetResult{AttemptsReset: 0, Scope: s.Scope}
+		out := &ResetResult{AttemptsPreserved: len(store.Attempts), Scope: s.Scope}
 		recordRequest(store, params.RequestID, opRescope, digest, out)
 		if params.RequestID != "" {
 			setRequestOutcomeRevision(store, params.RequestID, recordRevision(store))
@@ -2174,7 +2499,7 @@ func Rescope(params RescopeParams) (*ResetResult, error) {
 		if err := s.commit(store); err != nil {
 			return fmt.Errorf("save store: %w", err)
 		}
-		result = &ResetResult{Revision: store.Revision, Scope: s.Scope}
+		result = &ResetResult{Revision: store.Revision, AttemptsPreserved: len(store.Attempts), Scope: s.Scope}
 		return nil
 	})
 	if err != nil {
