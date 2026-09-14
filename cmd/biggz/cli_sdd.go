@@ -686,6 +686,13 @@ func sddAttemptRun() int {
 		fmt.Printf("Attempts:         %d\n", status.AttemptCount)
 		fmt.Printf("Decision needed:  %v\n", status.DecisionRequired)
 		fmt.Printf("Complete:         %v\n", status.Complete)
+		// Live objective generation (derived: generation 1 renders as 1 even
+		// though the wire represents it by field absence) plus the derived
+		// lifetime totals of the preserved attempt chain, so a maintainer can
+		// see a successor generation and the change-wide accounting.
+		fmt.Printf("Generation:        %d\n", status.Generation)
+		fmt.Printf("Lifetime attempts: %d\n", status.LifetimeAttempts)
+		fmt.Printf("Lifetime lines:    %d\n", status.LifetimeChangedLines)
 		if status.BlockedReason != "" {
 			fmt.Printf("Blocked reason:   %s\n", status.BlockedReason)
 		}
@@ -840,7 +847,7 @@ func sddAttemptRun() int {
 		if result.NewStore {
 			fmt.Println("New store created")
 		} else {
-			fmt.Printf("Previous attempts cleared: %d\n", result.AttemptsReset)
+			fmt.Printf("Previous attempts preserved: %d\n", result.AttemptsPreserved)
 		}
 
 	case "acquire":

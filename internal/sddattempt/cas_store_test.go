@@ -121,6 +121,163 @@ func TestMigration_ImportsLegacyLedgerOnce(t *testing.T) {
 	if result.Migrated {
 		t.Fatal("replay after migration must not re-report migration")
 	}
+
+	// The migrated pre-change ledger is complete: a DIFFERENT work unit opens
+	// its successor generation in the SAME clone-scoped store — a new record
+	// under the same dir with HEAD moved forward, and no reset on record.
+	advanced, err := Acquire(AcquireParams{
+		ChangeName: "ch-migrate", RepoRoot: "r", RequestID: "req-migrate-advance",
+		WorkUnit: "verify", EvidenceGoal: "goal", MaxAttempts: 2, MaxLines: 30,
+	})
+	if err != nil {
+		t.Fatalf("advance over a migrated pre-change ledger: %v", err)
+	}
+	if advanced.Token == "" {
+		t.Fatal("advance over the migrated ledger returned no token")
+	}
+	headAfter, err := readLedgerHead(storeDir)
+	if err != nil {
+		t.Fatalf("read HEAD after advance: %v", err)
+	}
+	if headAfter == "" || headAfter == head {
+		t.Fatalf("advance must publish a new record: HEAD %q -> %q", head, headAfter)
+	}
+	if _, err := os.Stat(filepath.Join(storeDir, "record-"+headAfter+".json")); err != nil {
+		t.Fatalf("advanced record missing: %v", err)
+	}
+	if got := recordCount(t, storeDir); got != 2 {
+		t.Fatalf("records after advance = %d, want 2 (migrated + advance)", got)
+	}
+	migrated, _, err := loadStore("ch-migrate", "r")
+	if err != nil {
+		t.Fatalf("loadStore after advance: %v", err)
+	}
+	if migrated.Generation != 2 || len(migrated.Advances) != 1 || len(migrated.Attempts) != 2 || len(migrated.Resets) != 0 {
+		t.Fatalf("advanced migrated ledger = generation %d, %d advances, %d attempts, %d resets",
+			migrated.Generation, len(migrated.Advances), len(migrated.Attempts), len(migrated.Resets))
+	}
+	if migrated.Attempts[0].ObjectiveGeneration != 0 {
+		t.Fatalf("migrated predecessor attempt generation = %d, want 0 (generation 1 by absence)", migrated.Attempts[0].ObjectiveGeneration)
+	}
+}
+
+// TestAdvance_GitRepositorySelection is the design's git-repository-selection
+// threat case: the advance must be issued into the store the ledger was read
+// from. An advance from the repository root and one from a subdirectory
+// resolve to the SAME <git-common-dir> store (new record + HEAD), while a
+// non-git invocation keeps its own machine-scoped directory.
+func TestAdvance_GitRepositorySelection(t *testing.T) {
+	redirectHome(t)
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "init", "-q", repo).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v (%s)", err, out)
+	}
+	sub := filepath.Join(repo, "nested", "deep")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatalf("mkdir subdir: %v", err)
+	}
+
+	// Generation 1 is acquired from the repository root and passes.
+	apply, err := Acquire(AcquireParams{
+		ChangeName: "ch-advance-git", RepoRoot: repo, RequestID: "git-apply-acquire",
+		WorkUnit: "apply", EvidenceGoal: "goal", MaxAttempts: 3, MaxLines: 400,
+	})
+	if err != nil {
+		t.Fatalf("Acquire(apply) from the repo root: %v", err)
+	}
+	if _, err := Settle(SettleParams{
+		ChangeName: "ch-advance-git", RepoRoot: repo, Token: apply.Token,
+		RequestID: "git-apply-settle", Outcome: "passed", EvidenceRevision: advanceEvidence('1'),
+		Diagnosis: "passed",
+	}); err != nil {
+		t.Fatalf("Settle(passed): %v", err)
+	}
+
+	// The successor is issued from a SUBDIRECTORY: it must land in the same
+	// clone-scoped store (git -C handles the worktree subdirectory).
+	if _, err := Acquire(AcquireParams{
+		ChangeName: "ch-advance-git", RepoRoot: sub, RequestID: "git-verify-acquire",
+		WorkUnit: "verify", EvidenceGoal: "goal", MaxAttempts: 3, MaxLines: 400,
+	}); err != nil {
+		t.Fatalf("advance issued from a subdirectory: %v", err)
+	}
+
+	// A read from the root observes the successor: one store, not two.
+	status, err := Status("ch-advance-git", repo)
+	if err != nil {
+		t.Fatalf("Status from the repo root: %v", err)
+	}
+	if status.Scope != ScopeClone || status.Complete || status.Generation != 2 || status.AttemptCount != 2 {
+		t.Fatalf("root read after a subdirectory advance = %+v, want the same clone-scoped store", status)
+	}
+
+	// Physically: the new record and the moved HEAD live under the git common
+	// dir, and the machine-scoped fallback stays untouched.
+	commonOut, err := exec.Command("git", "-C", repo, "rev-parse", "--git-common-dir").Output()
+	if err != nil {
+		t.Fatalf("rev-parse: %v", err)
+	}
+	commonDir := strings.TrimSpace(string(commonOut))
+	storeDir := filepath.Join(filepath.Clean(filepath.Join(repo, commonDir)), runtimeStoreContainer, RuntimeDir, RuntimeVersion, "ch-advance-git")
+	headData, err := os.ReadFile(filepath.Join(storeDir, "HEAD"))
+	if err != nil {
+		t.Fatalf("clone-scoped HEAD missing: %v", err)
+	}
+	head := strings.TrimSpace(string(headData))
+	if _, err := os.Stat(filepath.Join(storeDir, "record-"+head+".json")); err != nil {
+		t.Fatalf("advanced record missing under the git common dir: %v", err)
+	}
+	if got := recordCount(t, storeDir); got != 3 {
+		t.Fatalf("clone-scoped records = %d, want 3 (acquire + settle + advance)", got)
+	}
+	if _, err := os.Stat(MachineLedgerDir()); !os.IsNotExist(err) {
+		t.Fatalf("machine-scoped ledger must not exist inside a git repo (stat err: %v)", err)
+	}
+
+	// A non-git invocation is its own machine-scoped directory, unaffected by
+	// the clone-scoped ledger above.
+	nogit := t.TempDir()
+	applyNoGit, err := Acquire(AcquireParams{
+		ChangeName: "ch-advance-git", RepoRoot: nogit, RequestID: "nogit-apply-acquire",
+		WorkUnit: "apply", EvidenceGoal: "goal", MaxAttempts: 3, MaxLines: 400,
+	})
+	if err != nil {
+		t.Fatalf("Acquire outside git: %v", err)
+	}
+	if applyNoGit.Scope != ScopeMachine {
+		t.Fatalf("non-git scope = %q, want %q", applyNoGit.Scope, ScopeMachine)
+	}
+	if _, err := Settle(SettleParams{
+		ChangeName: "ch-advance-git", RepoRoot: nogit, Token: applyNoGit.Token,
+		RequestID: "nogit-apply-settle", Outcome: "passed", EvidenceRevision: advanceEvidence('2'),
+		Diagnosis: "passed",
+	}); err != nil {
+		t.Fatalf("Settle outside git: %v", err)
+	}
+	if _, err := Acquire(AcquireParams{
+		ChangeName: "ch-advance-git", RepoRoot: nogit, RequestID: "nogit-verify-acquire",
+		WorkUnit: "verify", EvidenceGoal: "goal", MaxAttempts: 3, MaxLines: 400,
+	}); err != nil {
+		t.Fatalf("advance outside git: %v", err)
+	}
+	nogitDir := machineStoreDir(t, "ch-advance-git")
+	nogitHead, err := os.ReadFile(filepath.Join(nogitDir, "HEAD"))
+	if err != nil {
+		t.Fatalf("machine-scoped HEAD missing: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(nogitDir, "record-"+strings.TrimSpace(string(nogitHead))+".json")); err != nil {
+		t.Fatalf("machine-scoped record missing: %v", err)
+	}
+	machineStatus, err := Status("ch-advance-git", nogit)
+	if err != nil {
+		t.Fatalf("Status outside git: %v", err)
+	}
+	if machineStatus.Scope != ScopeMachine || machineStatus.Generation != 2 {
+		t.Fatalf("machine-scoped status = %+v, want its own advanced ledger", machineStatus)
+	}
 }
 
 func TestMigration_RejectsBrokenLegacyLedger(t *testing.T) {
