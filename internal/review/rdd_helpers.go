@@ -1,14 +1,15 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 	"time"
+
+	"github.com/biggs-100/biggz-ai/internal/git"
 )
 
 func validateCloneLocalPreconditions(commonGitDir string, mode RDDMode) (string, string, error) {
@@ -363,16 +364,8 @@ func ResolveRDDDirs(repo string) (worktreeDir, commonDir string) {
 }
 
 func revParseRDDDir(repo, flag string) string {
-	args := []string{"rev-parse", flag}
-	if repo != "" {
-		args = append([]string{"-C", repo}, args...)
-	}
-	out, err := exec.Command("git", args...).Output()
-	if err != nil {
-		return ""
-	}
-	dir := strings.TrimSpace(string(out))
-	if dir == "" {
+	dir, err := git.RevParse(context.Background(), repo, flag)
+	if err != nil || dir == "" {
 		return ""
 	}
 	if !filepath.IsAbs(dir) {

@@ -1,9 +1,11 @@
 package review
 
 import (
+	"context"
 	"fmt"
-	"os/exec"
 	"strings"
+
+	"github.com/biggs-100/biggz-ai/internal/git"
 )
 
 // ─── Gate Diagnostics ────────────────────────────────────────────────────────
@@ -44,8 +46,7 @@ type GateDiagnostics struct {
 
 // detectScopeChange runs git diff-tree to find changed files between trees.
 func detectScopeChange(baseTree, candidateTree string) (*ScopeChangeDetail, error) {
-	cmd := exec.Command("git", "diff-tree", "--no-commit-id", "-r", "--name-only", baseTree, candidateTree)
-	out, err := cmd.Output()
+	out, err := git.Run(context.Background(), "", "diff-tree", "--no-commit-id", "-r", "--name-only", baseTree, candidateTree)
 	if err != nil {
 		return nil, fmt.Errorf("git diff-tree: %w", err)
 	}
@@ -55,8 +56,7 @@ func detectScopeChange(baseTree, candidateTree string) (*ScopeChangeDetail, erro
 	}
 
 	// Count changed lines
-	statCmd := exec.Command("git", "diff", "--shortstat", baseTree, candidateTree)
-	statOut, _ := statCmd.Output()
+	statOut, _ := git.Run(context.Background(), "", "diff", "--shortstat", baseTree, candidateTree)
 	lines := 0
 	if _, err := fmt.Sscanf(string(statOut), "%d file changed, %d insertions", new(int), &lines); err != nil {
 		// Try alternate format
@@ -73,8 +73,7 @@ func detectScopeChange(baseTree, candidateTree string) (*ScopeChangeDetail, erro
 
 // detectBaseAdvance checks if the base branch has advanced.
 func detectBaseAdvance(oldBase, upstreamRef string) *BaseAdvanceEvidence {
-	cmd := exec.Command("git", "rev-parse", upstreamRef)
-	newBase, err := cmd.Output()
+	newBase, err := git.Run(context.Background(), "", "rev-parse", upstreamRef)
 	if err != nil {
 		return nil
 	}
@@ -84,8 +83,7 @@ func detectBaseAdvance(oldBase, upstreamRef string) *BaseAdvanceEvidence {
 	}
 
 	// Count new commits
-	logCmd := exec.Command("git", "rev-list", "--count", fmt.Sprintf("%s..%s", oldBase, newBaseStr))
-	logOut, _ := logCmd.Output()
+	logOut, _ := git.Run(context.Background(), "", "rev-list", "--count", fmt.Sprintf("%s..%s", oldBase, newBaseStr))
 	commits := 0
 	fmt.Sscanf(string(logOut), "%d", &commits)
 
