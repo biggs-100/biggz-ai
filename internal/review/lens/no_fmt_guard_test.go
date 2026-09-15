@@ -80,35 +80,71 @@ func filterPromptSprintf(lines []string) []string {
 	return out
 }
 
+// TestCIGuard_CurrentLensClean is the CI enforcement step for the lens
+// fmt.Sprintf contract: every non-test Go file under internal/review/lens must
+// either avoid fmt.Sprintf or carry the `//lint:ignore no-fmtSprintf` marker
+// on the same line. Paths are resolved from the repository root, and an
+// unreadable file or an empty scan is a hard failure — a scan that cannot
+// read its targets must never pass.
 func TestCIGuard_CurrentLensClean(t *testing.T) {
-	// Verify current internal/review/lens has no non-allowlisted fmt.Sprintf via direct file scan
-	// Walk files (non-test) and check
-	files := []string{
-		"internal/review/lens/readability/lens.go",
-		"internal/review/lens/readability/complexity.go",
-		"internal/review/lens/reliability/lens.go",
-		"internal/review/lens/resilience/lens.go",
-		"internal/review/lens/external/adapter.go",
-	}
+	root := repoRoot(t)
+	files := lensGoFiles(t, root)
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil {
-			continue
+			t.Fatalf("unreadable target %s: %v (an unreadable file fails the guard, never passes it)", f, err)
 		}
-		lines := strings.Split(string(data), "\n")
-		filtered := filterPromptSprintf(lines)
-		if len(filtered) != 0 {
+		if filtered := filterPromptSprintf(strings.Split(string(data), "\n")); len(filtered) != 0 {
 			t.Errorf("%s has non-allowlisted fmt.Sprintf: %v", f, filtered)
-		}
-	}
-	// Also ensure html/template not used for prompts
-	for _, f := range files {
-		data, err := os.ReadFile(f)
-		if err != nil {
-			continue
 		}
 		if strings.Contains(string(data), "html/template") {
 			t.Errorf("should not use html/template in %s", f)
 		}
 	}
+}
+
+// repoRoot resolves the repository root from the package working directory
+// (`go test` sets cwd to the package dir), so repository-relative paths are
+// read from where they actually live instead of silently failing open.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("repository root (go.mod) not found above %s", dir)
+		}
+		dir = parent
+	}
+}
+
+// lensGoFiles lists every non-test .go file under internal/review/lens.
+// Zero resolved files is a hard failure: a scan with no targets is not a pass.
+func lensGoFiles(t *testing.T, root string) []string {
+	t.Helper()
+	base := filepath.Join(root, "internal", "review", "lens")
+	var files []string
+	err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		files = append(files, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s: %v", base, err)
+	}
+	if len(files) == 0 {
+		t.Fatalf("scan resolved zero non-test .go files under %s", base)
+	}
+	return files
 }
