@@ -298,11 +298,16 @@ func TestAbsentCheckerCannotPass(t *testing.T) {
 	}
 	sh, lookErr := exec.LookPath("sh")
 	if lookErr != nil {
-		t.Skip("no sh to check the 127 contract")
+		t.Skip("no sh to check the could-not-execute contract")
 	}
 	var exit *exec.ExitError
-	if err := exec.Command(sh, "-c", "exec "+strconv.Quote(missing)+" -root .").Run(); !errors.As(err, &exit) || exit.ExitCode() != 127 {
-		t.Fatalf("absent checker through sh: %v, want exit 127", err)
+	// Both 126 (found but not executable) and 127 (not found) mean the shell could
+	// not run the command at all. The exact code is an sh implementation detail and
+	// differs across platforms, so pinning one of them would test the shell instead
+	// of the invariant. Any other code would mean the checker actually ran and
+	// returned a verdict, which is the failure this guards against.
+	if err := exec.Command(sh, "-c", "exec "+strconv.Quote(missing)+" -root .").Run(); !errors.As(err, &exit) || (exit.ExitCode() != 126 && exit.ExitCode() != 127) {
+		t.Fatalf("absent checker through sh: %v, want exit 126 or 127 (could not execute)", err)
 	}
 }
 
