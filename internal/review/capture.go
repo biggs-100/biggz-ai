@@ -14,16 +14,17 @@ package review
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/model"
 )
 
@@ -518,25 +519,19 @@ func resolveCaptureBinding(binding CaptureBinding) (ArtifactSubject, []ChangedPa
 // changed-path manifest for a reviewed commit. The base tree is the parent
 // tree; a root commit's base is git's empty tree.
 func candidateManifest(repo, commitSHA string) (string, string, []ChangedPathManifestEntry, error) {
-	repoArgs := func(args ...string) []string {
-		if repo != "" {
-			return append([]string{"-C", repo}, args...)
-		}
-		return args
-	}
-	candidate, err := gitOutput(exec.Command("git", repoArgs("rev-parse", commitSHA+"^{tree}")...))
+	candidate, err := gitOutput(repo, "rev-parse", commitSHA+"^{tree}")
 	if err != nil {
 		return "", "", nil, wrapRuntimeCandidateUnavailable(fmt.Errorf("capture binding: resolve candidate tree for %s: %w", commitSHA, err))
 	}
 	if strings.TrimSpace(candidate) == "" {
 		return "", "", nil, wrapRuntimeCandidateUnavailable(fmt.Errorf("capture binding: candidate tree for %s is empty", commitSHA))
 	}
-	base, err := gitOutput(exec.Command("git", repoArgs("rev-parse", commitSHA+"^^{tree}")...))
+	base, err := gitOutput(repo, "rev-parse", commitSHA+"^^{tree}")
 	if err != nil {
 		base = emptyTreeSHA
 	}
-	raw, err := gitOutput(exec.Command("git", repoArgs("diff", "--raw", "-z", "--no-renames",
-		"--no-ext-diff", "--no-textconv", "--ignore-submodules=none", base, candidate, "--")...))
+	raw, err := gitOutput(repo, "diff", "--raw", "-z", "--no-renames",
+		"--no-ext-diff", "--no-textconv", "--ignore-submodules=none", base, candidate, "--")
 	if err != nil {
 		return "", "", nil, fmt.Errorf("capture binding: render candidate manifest: %w", err)
 	}
@@ -577,12 +572,26 @@ func parseRawManifest(raw []byte) ([]ChangedPathManifestEntry, error) {
 	return entries, nil
 }
 
-func gitOutput(cmd *exec.Cmd) (string, error) {
-	output, err := cmd.Output()
+// gitOutput runs git with args in the repository selected by repo (empty keeps
+// the process working directory) and returns the trimmed stdout. On failure
+// stdout is discarded and the error is the *exec.ExitError carrying git's
+// unmodified stderr — the contract the retired exec.Command call sites relied on.
+func gitOutput(repo string, args ...string) (string, error) {
+	out, err := git.Run(context.Background(), "", repoArgs(repo, args...)...)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(string(output)), nil
+	return strings.TrimSpace(string(out)), nil
+}
+
+// repoArgs prefixes -C repo when a repository was supplied and returns args
+// untouched otherwise, preserving the explicit repository selection these call
+// sites always had (TM-2): the root travels as -C, never as the runner's dir.
+func repoArgs(repo string, args ...string) []string {
+	if repo == "" {
+		return args
+	}
+	return append([]string{"-C", repo}, args...)
 }
 
 // writeManifestLocked persists the content-addressed changed-path manifest

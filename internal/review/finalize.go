@@ -20,7 +20,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -279,46 +278,71 @@ func DeriveCorrectionBudget(originalChangedLines int) (int, error) {
 // tree for a root commit — the same base derivation candidateManifest uses.
 // It returns the resolved base tree SHA and the line count.
 func DeriveOriginalChangedLines(repo, commitSHA, baseRef string) (base string, lines int, err error) {
-	repoArgs := func(args ...string) []string {
-		if repo != "" {
-			return append([]string{"-C", repo}, args...)
-		}
-		return args
-	}
-	// Legacy subjects (diff/files only, no commit SHA) bind to the current
-	// HEAD: the candidate tree is HEAD's tree and the base is HEAD's parent.
-	target := commitSHA
-	if target == "" {
-		target = "HEAD"
-	}
-	candidate, err := gitOutput(exec.Command("git", repoArgs("rev-parse", target+"^{tree}")...))
+	base, _, raw, err := resolveNumstatTrees(repo, commitSHA, baseRef)
 	if err != nil {
-		return "", 0, wrapRuntimeCandidateUnavailable(fmt.Errorf("derive original changed lines: resolve candidate tree for %s: %w", commitSHA, err))
-	}
-	if strings.TrimSpace(candidate) == "" {
-		return "", 0, wrapRuntimeCandidateUnavailable(fmt.Errorf("derive original changed lines: candidate tree for %s is empty", commitSHA))
-	}
-	if baseRef != "" {
-		base, err = gitOutput(exec.Command("git", repoArgs("rev-parse", baseRef+"^{tree}")...))
-		if err != nil {
-			return "", 0, fmt.Errorf("derive original changed lines: resolve base tree for %s: %w", baseRef, err)
+		// A candidate-tree failure keeps its typed runtime classification;
+		// base and diff failures stay plain, as they always were.
+		err = fmt.Errorf("derive original changed lines: %w", err)
+		var candidateErr *candidateTreeUnavailableError
+		if errors.As(err, &candidateErr) {
+			err = wrapRuntimeCandidateUnavailable(err)
 		}
-	} else {
-		base, err = gitOutput(exec.Command("git", repoArgs("rev-parse", target+"^^{tree}")...))
-		if err != nil {
-			base = emptyTreeSHA
-		}
-	}
-	raw, err := gitOutput(exec.Command("git", repoArgs("diff", "--numstat", "--no-renames",
-		"--no-ext-diff", "--no-textconv", "--ignore-submodules=none", base, candidate, "--")...))
-	if err != nil {
-		return "", 0, fmt.Errorf("derive original changed lines: diff %s vs %s: %w", base, candidate, err)
+		return "", 0, err
 	}
 	lines, err = countNumstatLines(raw)
 	if err != nil {
 		return "", 0, fmt.Errorf("derive original changed lines: %w", err)
 	}
 	return base, lines, nil
+}
+
+// candidateTreeUnavailableError marks the candidate-tree failure kind — an
+// unresolved or empty tree — without altering its message, so each caller
+// keeps its own classification: DeriveOriginalChangedLines wraps it as a
+// RuntimeCandidateUnavailableError, DeriveRiskInput reports it plain.
+type candidateTreeUnavailableError struct{ cause error }
+
+func (e *candidateTreeUnavailableError) Error() string { return e.cause.Error() }
+
+func (e *candidateTreeUnavailableError) Unwrap() error { return e.cause }
+
+// resolveNumstatTrees is the single tree-resolution and numstat diff shared by
+// DeriveOriginalChangedLines and DeriveRiskInput: the candidate is the target
+// commit's tree (an empty commitSHA binds to HEAD for legacy subjects, whose
+// diff/files carry no commit SHA), and the base is the explicit baseRef tree
+// when given, otherwise the target's parent tree, falling back to git's empty
+// tree for a root commit. It returns the resolved trees plus the raw
+// `git diff --numstat` output; parsing and failure classification stay with
+// the callers.
+func resolveNumstatTrees(repo, commitSHA, baseRef string) (base, candidate, raw string, err error) {
+	target := commitSHA
+	if target == "" {
+		target = "HEAD"
+	}
+	candidate, err = gitOutput(repo, "rev-parse", target+"^{tree}")
+	if err != nil {
+		return "", "", "", &candidateTreeUnavailableError{cause: fmt.Errorf("resolve candidate tree for %s: %w", commitSHA, err)}
+	}
+	if candidate == "" {
+		return "", "", "", &candidateTreeUnavailableError{cause: fmt.Errorf("candidate tree for %s is empty", commitSHA)}
+	}
+	if baseRef != "" {
+		base, err = gitOutput(repo, "rev-parse", baseRef+"^{tree}")
+		if err != nil {
+			return "", "", "", fmt.Errorf("resolve base tree for %s: %w", baseRef, err)
+		}
+	} else {
+		base, err = gitOutput(repo, "rev-parse", target+"^^{tree}")
+		if err != nil {
+			base = emptyTreeSHA
+		}
+	}
+	raw, err = gitOutput(repo, "diff", "--numstat", "--no-renames",
+		"--no-ext-diff", "--no-textconv", "--ignore-submodules=none", base, candidate, "--")
+	if err != nil {
+		return "", "", "", fmt.Errorf("diff %s vs %s: %w", base, candidate, err)
+	}
+	return base, candidate, raw, nil
 }
 
 // countNumstatLines sums additions and deletions from `git diff --numstat`

@@ -31,7 +31,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -390,36 +389,9 @@ func PlanLenses(tier RiskTier, declared []string) []string {
 // tree for a root commit. Legacy subjects without a commit SHA bind to the
 // current HEAD.
 func DeriveRiskInput(repo, commitSHA, baseRef string) (RiskInput, error) {
-	repoArgs := func(args ...string) []string {
-		if repo != "" {
-			return append([]string{"-C", repo}, args...)
-		}
-		return args
-	}
-	target := commitSHA
-	if target == "" {
-		target = "HEAD"
-	}
-	candidate, err := gitOutput(exec.Command("git", repoArgs("rev-parse", target+"^{tree}")...))
+	base, _, raw, err := resolveNumstatTrees(repo, commitSHA, baseRef)
 	if err != nil {
-		return RiskInput{}, fmt.Errorf("derive risk input: resolve candidate tree for %s: %w", commitSHA, err)
-	}
-	base := ""
-	if baseRef != "" {
-		base, err = gitOutput(exec.Command("git", repoArgs("rev-parse", baseRef+"^{tree}")...))
-		if err != nil {
-			return RiskInput{}, fmt.Errorf("derive risk input: resolve base tree for %s: %w", baseRef, err)
-		}
-	} else {
-		base, err = gitOutput(exec.Command("git", repoArgs("rev-parse", target+"^^{tree}")...))
-		if err != nil {
-			base = emptyTreeSHA
-		}
-	}
-	raw, err := gitOutput(exec.Command("git", repoArgs("diff", "--numstat", "--no-renames",
-		"--no-ext-diff", "--no-textconv", "--ignore-submodules=none", base, candidate, "--")...))
-	if err != nil {
-		return RiskInput{}, fmt.Errorf("derive risk input: diff %s vs %s: %w", base, candidate, err)
+		return RiskInput{}, fmt.Errorf("derive risk input: %w", err)
 	}
 	summary, err := parseNumstatPerPath(raw)
 	if err != nil {
