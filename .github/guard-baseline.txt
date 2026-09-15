@@ -30,10 +30,6 @@ go-git-spawn	internal/release/release.go	99
 go-git-spawn	internal/review/capture.go	527
 go-git-spawn	internal/review/capture.go	534
 go-git-spawn	internal/review/capture.go	538
-go-git-spawn	internal/review/convergence.go	34
-go-git-spawn	internal/review/convergence.go	42
-go-git-spawn	internal/review/convergence.go	45
-go-git-spawn	internal/review/convergence.go	72
 go-git-spawn	internal/review/finalize.go	294
 go-git-spawn	internal/review/finalize.go	302
 go-git-spawn	internal/review/finalize.go	307
