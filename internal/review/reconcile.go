@@ -15,14 +15,14 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/git"
 )
 
 const (
@@ -311,17 +311,9 @@ func mirrorTitle(lineageID, kind string) string {
 // detectProjectName derives the BigMem project name from the repository
 // top-level directory name, mirroring the `biggz bigmem` CLI's auto-detection.
 func detectProjectName(repo string) string {
-	args := []string{"rev-parse", "--show-toplevel"}
-	if repo != "" {
-		args = append([]string{"-C", repo}, args...)
-	}
-	out, err := exec.Command("git", args...).Output()
+	root, err := git.TopLevel(context.Background(), repo)
 	if err != nil {
 		return ""
 	}
-	root := strings.TrimSpace(string(out))
-	if root == "" {
-		return ""
-	}
-	return filepath.Base(filepath.Clean(root))
+	return filepath.Base(root)
 }

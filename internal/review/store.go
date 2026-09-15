@@ -2,17 +2,19 @@ package review
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
+
+	"github.com/biggs-100/biggz-ai/internal/git"
 )
 
 // ---------------------------------------------------------------------------
@@ -432,33 +434,16 @@ func canonicalGitDirectory(commonDir string) (string, error) {
 	return cleaned, nil
 }
 
+// resolveGitCommonDir returns the canonical common git directory of the
+// repository selected by repo via the single-owner internal/git resolver.
+// When the common dir cannot be resolved it falls back to the git dir, so
+// linked worktrees and plain repositories share the same answer.
 func resolveGitCommonDir(repo string) (string, error) {
-	args := []string{"rev-parse", "--git-common-dir"}
-	if repo != "" {
-		args = append([]string{"-C", repo}, args...)
-	}
-	out, err := exec.Command("git", args...).Output()
+	_, commonDir, err := git.ResolveGitDirs(context.Background(), repo)
 	if err != nil {
-		return resolveGitDir(repo)
+		return "", fmt.Errorf("not a git repository: %w", err)
 	}
-	dir := strings.TrimSpace(string(out))
-	if dir == "" {
-		return resolveGitDir(repo)
-	}
-	if !filepath.IsAbs(dir) {
-		base := repo
-		if base == "" {
-			base, _ = os.Getwd()
-		}
-		dir = filepath.Join(base, dir)
-	}
-	dir = filepath.Clean(dir)
-	if canonical, err := canonicalGitDirectory(dir); err == nil {
-		dir = canonical
-	} else {
-		return "", err
-	}
-	return dir, nil
+	return commonDir, nil
 }
 
 var reviewRuntimeGOOS = func() string { return runtime.GOOS }
@@ -574,36 +559,15 @@ func chainIdentityHash(fields ...[]byte) string {
 	return domainHash(StoreChainDomain, payload)
 }
 
-// resolveGitDir runs `git rev-parse --git-dir` to find the git directory
-// for the given repository path. If repo is empty, uses the current
-// working directory.
+// resolveGitDir returns the canonical git directory for the given repository
+// path via the single-owner internal/git resolver. If repo is empty, uses the
+// current working directory.
 func resolveGitDir(repo string) (string, error) {
-	args := []string{"rev-parse", "--git-dir"}
-	if repo != "" {
-		args = append([]string{"-C", repo}, args...)
-	}
-	out, err := exec.Command("git", args...).Output()
+	gitDir, _, err := git.ResolveGitDirs(context.Background(), repo)
 	if err != nil {
 		return "", fmt.Errorf("not a git repository: %w", err)
 	}
-	gitDir := strings.TrimSpace(string(out))
-	if gitDir == "" {
-		return "", fmt.Errorf("empty git dir from rev-parse")
-	}
-
-	// Resolve relative paths.
-	if !filepath.IsAbs(gitDir) {
-		base := repo
-		if base == "" {
-			base, err = os.Getwd()
-			if err != nil {
-				return "", fmt.Errorf("getwd: %w", err)
-			}
-		}
-		gitDir = filepath.Join(base, gitDir)
-	}
-
-	return filepath.Clean(gitDir), nil
+	return gitDir, nil
 }
 
 // sha256HexBytes returns the SHA-256 hex of a string content.
