@@ -73,9 +73,7 @@ jobs:
           - os: macos-latest
             test_timeout: 180s
           - os: windows-latest
-            test_timeout: 300s
-    env:
-      BIGGZ_TEST_TIMEOUT: ${{ matrix.test_timeout }}
+            test_timeout: 600s
     steps:
       - name: Require successful format
         if: needs.format.result != 'success'
@@ -100,7 +98,12 @@ jobs:
       # -short skips the e2e suite (it needs the prebuilt binary and runs in
       # its own matrix job below) and a slow store integration test.
       # Windows runners are markedly slower (cold build cache + Defender);
-      # the package timeout is 300s on windows, 180s elsewhere.
+      # the package timeout is 600s on windows, 180s elsewhere.
+      # On a green run the slowest windows packages measured internal/review
+      # 288.5s, cmd/biggz 236.4s and internal/bigmem 196.0s, against 64.9s and
+      # 106.2s for the slowest packages on ubuntu and macos. The 300s ceiling
+      # this replaces left 3.8% of headroom and turned runner noise into red
+      # checks that read as random test faults.
       - name: Test
         run: go test ./... -short -count=1 -timeout ${{ matrix.test_timeout }}
 
