@@ -36,6 +36,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/biggs-100/biggz-ai/internal/git"
 )
 
 const (
@@ -311,14 +313,23 @@ func (i *FrozenInspector) gitSmall(args ...string) ([]byte, error) {
 // gitLimited runs one git invocation inside the isolated view: rooted at the
 // resolved repository (never the caller's cwd), with the sanitized isolated
 // environment, capturing stdout up to the limit while counting the total so
-// an over-limit read can refuse with its true size.
+// an over-limit read can refuse with its true size. The byte caps stay with
+// the caller's writers; NewCommand only carries them onto the command.
+//
+// i.env is the environment frozenGitEnvironment already assembled. NewCommand
+// re-applies the same stripping and appends i.env whole as extras, so no
+// binding is lost or changed: the isolated GIT_* set, LANG=C and LC_ALL=C all
+// survive. Only the base entries appear twice, as identical pairs.
 func (i *FrozenInspector) gitLimited(limit int, args ...string) ([]byte, int, error) {
-	command := exec.Command("git", append([]string{"--no-pager", "-C", i.repoRoot}, args...)...)
-	command.Env = i.env
 	stdout := &frozenOutput{limit: limit}
 	stderr := &frozenOutput{limit: frozenGitStderrLimit}
-	command.Stdout = stdout
-	command.Stderr = stderr
+	command := git.NewCommand(git.ExecOptions{
+		Repo:     i.repoRoot,
+		NoPager:  true,
+		ExtraEnv: i.env,
+		Stdout:   stdout,
+		Stderr:   stderr,
+	}, args...)
 	if err := command.Run(); err != nil {
 		return nil, stdout.total, fmt.Errorf("frozen inspector: git %s: %w: %s",
 			strings.Join(args, " "), err, strings.TrimSpace(stderr.buffer.String()))
@@ -564,14 +575,9 @@ func frozenGitOutput(env []string, repo string, args ...string) (string, error) 
 	return strings.TrimSpace(string(out)), nil
 }
 
-// frozenGitCommand builds one git command rooted at repo (when given).
+// frozenGitCommand builds one git command rooted at repo (when given). env is
+// the pre-assembled environment (frozenGitEnvironment); NewCommand appends it
+// whole after its own sanitized base, preserving every binding.
 func frozenGitCommand(env []string, repo string, args ...string) *exec.Cmd {
-	var command *exec.Cmd
-	if repo != "" {
-		command = exec.Command("git", append([]string{"-C", repo}, args...)...)
-	} else {
-		command = exec.Command("git", args...)
-	}
-	command.Env = env
-	return command
+	return git.NewCommand(git.ExecOptions{Repo: repo, ExtraEnv: env}, args...)
 }

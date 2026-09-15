@@ -1,6 +1,7 @@
 package review
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/policy"
 	"github.com/biggs-100/biggz-ai/model"
 	"gopkg.in/yaml.v3"
@@ -218,8 +220,10 @@ func ScopeDiff(snapshotTree string) ([]string, error) {
 		return nil, nil
 	}
 
-	out, err := exec.Command("git", "diff-tree", "--no-commit-id", "-r",
-		"--name-only", snapshotTree, "HEAD").Output()
+	// This read carries no repository selector, so it runs in the process
+	// working directory and the runner gets no -C.
+	out, err := git.Run(context.Background(), "", "diff-tree", "--no-commit-id", "-r",
+		"--name-only", snapshotTree, "HEAD")
 	if err != nil {
 		return nil, fmt.Errorf("scope diff: git diff-tree: %w", err)
 	}
@@ -1180,49 +1184,21 @@ func releaseChecks(repo string, receipt PersistedReceipt) []string {
 
 // detectRDDDirs resolves the worktree and common git dirs for RDD resolution.
 // Outside a git repository both are empty and RDDStatus falls back to the
-// global mode.
+// global mode. It shares revParseRDDDir with ResolveRDDDirs so the package
+// keeps a single rev-parse helper.
 func detectRDDDirs(repo string) (worktreeDir, commonDir string) {
-	worktreeDir = revParseRepoDir(repo, "--git-dir")
-	commonDir = revParseRepoDir(repo, "--git-common-dir")
+	worktreeDir = revParseRDDDir(repo, "--git-dir")
+	commonDir = revParseRDDDir(repo, "--git-common-dir")
 	if commonDir == "" {
 		commonDir = worktreeDir
 	}
 	return worktreeDir, commonDir
 }
 
-// revParseRepoDir runs `git rev-parse <flag>` in repo and resolves the result
-// to an absolute path. Returns "" on any failure.
-func revParseRepoDir(repo, flag string) string {
-	args := []string{"rev-parse", flag}
-	if repo != "" {
-		args = append([]string{"-C", repo}, args...)
-	}
-	out, err := exec.Command("git", args...).Output()
-	if err != nil {
-		return ""
-	}
-	dir := strings.TrimSpace(string(out))
-	if dir == "" {
-		return ""
-	}
-	if !filepath.IsAbs(dir) {
-		base := repo
-		if base == "" {
-			base, _ = os.Getwd()
-		}
-		dir = filepath.Join(base, dir)
-	}
-	return filepath.Clean(dir)
-}
-
-// gitIn runs a git command in repo and returns trimmed stdout.
+// gitIn runs a git command in repo and returns trimmed stdout. The repository
+// selection travels as -C (TM-2), never as the runner's working directory.
 func gitIn(repo string, args ...string) (string, error) {
-	full := make([]string, 0, len(args)+2)
-	if repo != "" {
-		full = append(full, "-C", repo)
-	}
-	full = append(full, args...)
-	out, err := exec.Command("git", full...).Output()
+	out, err := git.Run(context.Background(), "", repoArgs(repo, args...)...)
 	if err != nil {
 		return "", err
 	}

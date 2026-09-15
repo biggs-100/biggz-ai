@@ -27,12 +27,6 @@ go-git-spawn	internal/release/release.go	49
 go-git-spawn	internal/release/release.go	55
 go-git-spawn	internal/release/release.go	83
 go-git-spawn	internal/release/release.go	99
-go-git-spawn	internal/review/frozen_inspector.go	316
-go-git-spawn	internal/review/frozen_inspector.go	571
-go-git-spawn	internal/review/frozen_inspector.go	573
-go-git-spawn	internal/review/gate.go	221
-go-git-spawn	internal/review/gate.go	1200
-go-git-spawn	internal/review/gate.go	1225
 go-git-spawn	internal/sdd/complexity_gate.go	110
 go-git-spawn	internal/sdd/edit_authority.go	246
 go-git-spawn	internal/sdd/session_guard.go	353
