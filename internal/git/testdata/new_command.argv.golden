@@ -1,0 +1,6 @@
+git
+--no-pager
+-C
+/repo/root
+rev-parse
+HEAD^{tree}
