@@ -19,7 +19,15 @@ jobs:
           go-version: stable
       - name: Check formatting
         run: |
-          unformatted=$(gofmt -l .)
+          set -eo pipefail
+          if ! command -v gofmt >/dev/null 2>&1; then
+            echo "::error::gofmt is not available on PATH — formatting state unknown, failing closed"
+            exit 1
+          fi
+          if ! unformatted=$(gofmt -l .); then
+            echo "::error::gofmt exited non-zero — formatting state unknown, failing closed"
+            exit 1
+          fi
           if [ -n "$unformatted" ]; then
             echo "Unformatted files:"
             echo "$unformatted"
@@ -119,7 +127,7 @@ jobs:
       # CostQuick/ReadOnly: no writes, just checks
       - name: Complexity gate (15/20 diff-aware)
         run: |
-          set -e
+          set -eo pipefail
           pinned_cyclo=$(go list -m -f '{{.Version}}' github.com/fzipp/gocyclo 2>/dev/null || echo "")
           pinned_cognit=$(go list -m -f '{{.Version}}' github.com/uudashr/gocognit 2>/dev/null || echo "")
           echo "Pinned gocyclo $pinned_cyclo, gocognit $pinned_cognit"
@@ -146,54 +154,88 @@ jobs:
             base="HEAD"
           fi
           echo "Base: $base Head: $(git rev-parse HEAD)"
-          git diff --name-only "$base"...HEAD -- internal/review internal/sdd internal/verification > /tmp/changed_files.txt 2>/dev/null || true
-          cat /tmp/changed_files.txt || true
-          grep -v "_test.go" /tmp/changed_files.txt > /tmp/changed_blocking.txt 2>/dev/null || true
-          echo "Changed blocking files:"
-          cat /tmp/changed_blocking.txt || echo "(none)"
-          echo "Running gocyclo..."
-          cyclo_out=$(go run github.com/fzipp/gocyclo/cmd/gocyclo -over 15 ./internal/review ./internal/sdd ./internal/verification 2>&1 || true)
-          echo "$cyclo_out"
-          echo "Running gocognit..."
-          cognit_out=$(go run github.com/uudashr/gocognit/cmd/gocognit -over 20 ./internal/review ./internal/sdd ./internal/verification 2>&1 || true)
-          echo "$cognit_out"
+          if ! git diff --name-only "$base"...HEAD -- internal/review internal/sdd internal/verification > /tmp/changed_files.txt 2>/dev/null; then
+            echo "::error::git diff against $base failed — cannot scope the complexity gate, failing closed"
+            exit 1
+          fi
+          cat /tmp/changed_files.txt
+          # Producers are scoped to the diff and their own exit status is the
+          # verdict: gocyclo/gocognit exit 1 when a target exceeds the
+          # threshold, so `-over` is never masked with `|| true`. A
+          # zero-function scan while the diff changes in-scope files fails.
+          blocking_files=""
+          test_files=""
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            [ -f "$f" ] || continue
+            case "$f" in
+              *_test.go) test_files="$test_files $f" ;;
+              *) blocking_files="$blocking_files $f" ;;
+            esac
+          done < /tmp/changed_files.txt
+          echo "Changed blocking files:$blocking_files"
+          echo "Changed test files (informational):$test_files"
           if git diff --name-status "$base"...HEAD 2>/dev/null | grep -q "^R"; then
             echo "::warning::File rename detected where git diff reports no mappable function hunks — not blocking"
           fi
           fail=0
-          cyclo_filtered=""
-          cognit_filtered=""
-          if [ -s /tmp/changed_blocking.txt ]; then
-            for f in $(cat /tmp/changed_blocking.txt); do
-              nf=$(echo "$f" | sed 's|^\./||')
-              m=$(echo "$cyclo_out" | grep -F "$nf" || true)
-              if [ -n "$m" ]; then cyclo_filtered="$cyclo_filtered$m\n"; fi
-              m2=$(echo "$cognit_out" | grep -F "$nf" || true)
-              if [ -n "$m2" ]; then cognit_filtered="$cognit_filtered$m2\n"; fi
-            done
+          cyclo_evaluated=0
+          cognit_evaluated=0
+          if [ -n "$blocking_files" ]; then
+            echo "Running gocyclo over changed blocking files (producer exit status is the verdict)..."
+            cyclo_rc=0
+            cyclo_out=$(go run github.com/fzipp/gocyclo/cmd/gocyclo -over 15 $blocking_files 2>&1) || cyclo_rc=$?
+            echo "$cyclo_out"
+            if [ "$cyclo_rc" -ne 0 ]; then
+              echo "::error::gocyclo exited $cyclo_rc on changed files (violation >15, parse error, or tool failure):"
+              fail=1
+            fi
+            echo "Running gocognit over changed blocking files (producer exit status is the verdict)..."
+            cognit_rc=0
+            cognit_out=$(go run github.com/uudashr/gocognit/cmd/gocognit -over 20 $blocking_files 2>&1) || cognit_rc=$?
+            echo "$cognit_out"
+            if [ "$cognit_rc" -ne 0 ]; then
+              echo "::error::gocognit exited $cognit_rc on changed files (violation >20, parse error, or tool failure):"
+              fail=1
+            fi
+            # Census: prove both producers evaluated functions from the diff.
+            census_rc=0
+            census_cyclo=$(go run github.com/fzipp/gocyclo/cmd/gocyclo -over 0 $blocking_files 2>&1) || census_rc=$?
+            if [ "$census_rc" -ne 0 ]; then
+              echo "::error::gocyclo census run failed (exit $census_rc) — complexity state unknown, failing closed"
+              exit 1
+            fi
+            if [ -n "$census_cyclo" ]; then
+              cyclo_evaluated=$(printf '%s\n' "$census_cyclo" | wc -l | tr -d ' ')
+            fi
+            census_rc=0
+            census_cognit=$(go run github.com/uudashr/gocognit/cmd/gocognit -over 0 $blocking_files 2>&1) || census_rc=$?
+            if [ "$census_rc" -ne 0 ]; then
+              echo "::error::gocognit census run failed (exit $census_rc) — complexity state unknown, failing closed"
+              exit 1
+            fi
+            if [ -n "$census_cognit" ]; then
+              cognit_evaluated=$(printf '%s\n' "$census_cognit" | wc -l | tr -d ' ')
+            fi
+            if [ "$cyclo_evaluated" -eq 0 ] || [ "$cognit_evaluated" -eq 0 ]; then
+              echo "::error::producer evaluated zero functions while the diff modifies in-scope Go files — an empty scan is not a clean tree"
+              exit 1
+            fi
           else
             echo "No changed blocking files, skipping gate check (legacy/test/rename warn)"
           fi
-          test_cyclo=$(echo "$cyclo_out" | grep "_test.go" || true)
-          test_cognit=$(echo "$cognit_out" | grep "_test.go" || true)
-          if [ -n "$test_cyclo" ] || [ -n "$test_cognit" ]; then
-            echo "::warning::Informational test file violations (never block):"
-            echo "$test_cyclo"
-            echo "$test_cognit"
+          if [ -n "$test_files" ]; then
+            # Test-file findings stay informational; their exit status never blocks.
+            test_rc=0
+            test_cyclo=$(go run github.com/fzipp/gocyclo/cmd/gocyclo -over 15 $test_files 2>&1) || test_rc=$?
+            test_cognit=$(go run github.com/uudashr/gocognit/cmd/gocognit -over 20 $test_files 2>&1) || test_rc=$?
+            if [ -n "$test_cyclo" ] || [ -n "$test_cognit" ]; then
+              echo "::warning::Informational test file violations (never block):"
+              echo "$test_cyclo"
+              echo "$test_cognit"
+            fi
           fi
-          if [ -n "$cyclo_filtered" ]; then
-            echo "::error::Cyclomatic violations in changed files (>15):"
-            echo -e "$cyclo_filtered"
-            fail=1
-          fi
-          if [ -n "$cognit_filtered" ]; then
-            echo "::error::Cognitive violations in changed files (>20):"
-            echo -e "$cognit_filtered"
-            fail=1
-          fi
-          if [ -n "$cyclo_out" ] || [ -n "$cognit_out" ]; then
-            echo "Complexity debt: cyclomatic $(echo "$cyclo_out" | grep -c . || echo 0), cognitive $(echo "$cognit_out" | grep -c . || echo 0)"
-          fi
+          echo "Complexity scan: cyclomatic evaluated $cyclo_evaluated, cognitive evaluated $cognit_evaluated (changed blocking files)"
           if [ "$fail" -eq 1 ]; then
             echo "Complexity gate failed: new/modified functions exceed 15/20 in critical packages"
             exit 1
@@ -213,19 +255,16 @@ jobs:
         with:
           fetch-depth: 0
           autocrlf: false
-      - name: Forbid exec.Command git outside internal/git
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - name: Forbid git spawns outside internal/git (compiled gitexec checker)
         run: |
-          set -e
-          # tui-sanitize: internal/git is sole exec.Command("git") owner.
-          # Hard-fail if any Go file outside internal/git contains exec.Command with git.
-          # Allowlist: internal/git/** and test files (*_test.go); e2e and openspec are excluded as fixtures/docs.
-          echo "Checking for forbidden exec.Command git outside internal/git (global)..."
-          if rg -n 'exec\.Command.*git' --glob '!internal/git/**' --glob '!*_test.go' --glob '!e2e/**' --glob '!openspec/**' . 2>/dev/null | grep -q .; then
-            echo "::error::Forbidden exec.Command git found outside internal/git:"
-            rg -n 'exec\.Command.*git' --glob '!internal/git/**' --glob '!*_test.go' --glob '!e2e/**' --glob '!openspec/**' . || true
-            exit 1
-          fi
-          echo "No forbidden git exec found outside internal/git."
+          # The checker is built from this repository and run bare: a build
+          # failure fails the step, and there is no pipeline, no `2>/dev/null`,
+          # and no absence check that could print a pass verdict for it.
+          go build -o /tmp/gitexec ./tools/gitexec/cmd/gitexec && /tmp/gitexec -root .
 
   no-fmtSprintf:
     name: No fmt.Sprintf in lens prompts
@@ -240,16 +279,12 @@ jobs:
         with:
           fetch-depth: 0
           autocrlf: false
-      - name: No fmt.Sprintf in lens prompts
-        run: |
-          set -e
-          echo "Checking for prompt fmt.Sprintf in internal/review/lens (allowlist //lint:ignore no-fmtSprintf)..."
-          if rg -n 'fmt\.Sprintf' internal/review/lens --glob '!*_test.go' 2>/dev/null | grep -v '//lint:ignore no-fmtSprintf' | grep -q .; then
-            echo "::error::Prompt fmt.Sprintf found without allowlist in internal/review/lens:"
-            rg -n 'fmt\.Sprintf' internal/review/lens --glob '!*_test.go' | grep -v '//lint:ignore no-fmtSprintf' || true
-            exit 1
-          fi
-          echo "No prompt fmt.Sprintf found — guard passed."
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+      - name: No fmt.Sprintf in lens files without allowlist (Go guard test)
+        run: go test ./internal/review/lens/ -run 'TestCIGuard_' -count=1
 
   lint-no-source-grep:
     name: Lint No Source-Grep
@@ -270,9 +305,11 @@ jobs:
           cache: true
       - name: Build nosourcegrep vet tool
         run: go build -o /tmp/nosourcegrep ./tools/nosourcegrep/cmd/nosourcegrep
-      - name: Run nosourcegrep vet (primary)
+      - name: Run nosourcegrep vet (primary, observed exit status)
         run: |
-          set -e
+          # pipefail: without it the pipeline reports tee's status, so a real
+          # analyzer violation would print "nosourcegrep vet passed".
+          set -eo pipefail
           echo "Running go vet -vettool nosourcegrep..."
           if ! go vet -vettool=/tmp/nosourcegrep ./... 2>&1 | tee /tmp/vet.log; then
             echo "::error::nosourcegrep vet flagged source-grep"
@@ -280,31 +317,15 @@ jobs:
             exit 1
           fi
           echo "nosourcegrep vet passed"
+          # The analyzer's own code path covers both former fallback domains
+          # (tools/nosourcegrep/analyzer.go): os.ReadFile on source + Contains,
+          # expect(...).ToContain/literals, and mock.module calls, selectors and
+          # string literals — so the weaker duplicate `rg` steps were removed.
           # Optional golangci-lint custom (plugin not supported on all platforms, non-blocking if missing)
           if command -v golangci-lint >/dev/null 2>&1; then
             echo "Attempting golangci-lint run (custom nosourcegrep)..."
             golangci-lint run ./... 2>&1 | tee /tmp/golint.log || echo "::warning::golangci-lint custom nosourcegrep not available (plugin not implemented on this runner)"
           fi
-      - name: Fallback rg guard for source-grep
-        run: |
-          set -e
-          echo "Checking rg fallback for source-grep..."
-          if rg -n "os\.ReadFile.*Contains|expect\(src\)" --glob '*_test.go' . 2>/dev/null | grep -v "tools/nosourcegrep/testdata" | grep -v "internal/extension/shim_test.go" | grep -q .; then
-            echo "::error::rg fallback flagged source-grep:"
-            rg -n "os\.ReadFile.*Contains|expect\(src\)" --glob '*_test.go' . | grep -v "tools/nosourcegrep/testdata" | grep -v "internal/extension/shim_test.go" || true
-            exit 1
-          fi
-          echo "rg source-grep check passed"
-      - name: Ban mock.module (oven-sh/bun#12823)
-        run: |
-          set -e
-          echo "Checking for mock.module..."
-          if rg -n "mock\.module" --glob '*_test.go' . 2>/dev/null | grep -q .; then
-            echo "::error::mock.module found (banned per oven-sh/bun#12823):"
-            rg -n "mock\.module" --glob '*_test.go' . || true
-            exit 1
-          fi
-          echo "No mock.module found — guard passed."
 
   rapid:
     name: TestRapid

@@ -7,7 +7,14 @@ if [ "$SKIP_RDD_GATE" = "1" ]; then
   audit_path="$git_common/biggz/rdd-audit.log"
   mkdir -p "$(dirname "$audit_path")"
   ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date)
-  rdd_mode=$(biggz rdd status 2>/dev/null | grep -o "enabled\\|disabled" | head -n1 || echo "enabled")
+  # Fail-closed audit: the `|| rdd_out="enabled"` fallback is pinned — only an
+  # explicit, successful "RDD Status: disabled" may record disabled; an absent
+  # or failing producer records enabled, never disabled.
+  rdd_out=$(biggz rdd status 2>/dev/null) || rdd_out="enabled"
+  rdd_mode="enabled"
+  case "$rdd_out" in
+    *"RDD Status: disabled"*) rdd_mode="disabled" ;;
+  esac
   printf '{"ts":"%s","hook":"pre-push","bypass":true,"git_dir":"%s","rdd":"%s"}\n' "$ts" "$git_common" "$rdd_mode" >> "$audit_path" 2>/dev/null || true
   exit 0
 fi
@@ -37,11 +44,27 @@ if [ -z "$lineage" ]; then
   if biggz sdd-status --json 2>/dev/null | grep -q '"verifyReport": "done"'; then
     exit 0
   fi
-  if biggz rdd status 2>/dev/null | grep -q "RDD Status: enabled"; then
-    echo "biggz RDD gate blocked: enabled but unmanaged (no lineage). Hint: biggz review start or biggz rdd disable" >&2
+  # Three RDD states: enabled (block), disabled (allow), unknown (never a
+  # silent skip). A failed or absent producer is unknown and fails closed.
+  rdd_rc=0
+  rdd_out=$(biggz rdd status 2>/dev/null) || rdd_rc=$?
+  if [ "$rdd_rc" -ne 0 ]; then
+    echo "biggz RDD gate blocked push: RDD status unavailable (biggz rdd status failed or biggz is not on PATH) — unknown is never a silent skip. Fix PATH or install biggz, or set SKIP_RDD_GATE=1 to bypass explicitly." >&2
     exit 1
   fi
-  exit 0
+  case "$rdd_out" in
+    *"RDD Status: enabled"*)
+      echo "biggz RDD gate blocked: enabled but unmanaged (no lineage). Hint: biggz review start or biggz rdd disable" >&2
+      exit 1
+      ;;
+    *"RDD Status: disabled"*)
+      exit 0
+      ;;
+    *)
+      echo "biggz RDD gate blocked push: RDD status unknown (unrecognized biggz rdd status output) — unknown is never a silent skip. Upgrade biggz, or set SKIP_RDD_GATE=1 to bypass explicitly." >&2
+      exit 1
+      ;;
+  esac
 fi
 if command -v biggz >/dev/null 2>&1; then
   set +e
@@ -57,4 +80,5 @@ if command -v biggz >/dev/null 2>&1; then
   fi
   exit $rc
 fi
+echo "biggz RDD gate notice: biggz is not on PATH — review gate not enforced for this push (explicit notice, never a silent skip)." >&2
 exit 0

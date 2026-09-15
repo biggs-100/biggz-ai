@@ -63,7 +63,7 @@ A test is **Bad** iff it is **any** of:
 - **Banned:** `mock.module` (Bun/Jest global mock) in any `*_test.go`, any import or call containing `mock.module`.
 - **Rationale:** Global leak — `oven-sh/bun#12823` documents `mock.module` leaking across tests via global registry, causing order-dependent flakes and cross-test pollution. biggz-ai forbids it repository-wide.
 - **Allowed instead:** Explicit interfaces, `t.TempDir()`-scoped fakes, `sql.Open("sqlite", t.TempDir()+"/db")` with `modernc.org/sqlite`, or `httptest.NewServer`. No global mutation.
-- **Enforcement:** `rg -n "mock\.module" --glob '*_test.go'` in CI (`lint-no-source-grep` job) — fails on any hit. Analyzer also flags string literal `mock.module` in `*_test.go`.
+- **Enforcement:** `tools/nosourcegrep` vet analyzer in CI (`lint-no-source-grep` job, `go vet -vettool=/tmp/nosourcegrep ./...`) — flags `mock.module` calls, selectors, and string literals in `*_test.go`; any hit fails the job. There is no `rg` step.
 
 ### Ban: Source-grep assertions — never assert on source text
 
@@ -72,7 +72,7 @@ A test is **Bad** iff it is **any** of:
   - `expect(src).toContain(...)` / `expect(source).toContain` / any `ToContain` on source
   - `os.ReadFile("internal/foo.go")` + `Contains`, `ReadFile("docs/architecture.md")` + `Contains`, or equivalent grep on source
 - **Allowed:** `os.ReadFile` on `testdata/` fixtures, `t.TempDir()` outputs, or `BlobRoot()` artifacts — `testdata/` is allowlisted. DB-query assertions via `modernc.org/sqlite` are the canonical alternative.
-- **Enforcement:** Primary `tools/nosourcegrep` analyzer (`go vet -vettool=./tools/nosourcegrep ./...` + `golangci-lint` custom `nosourcegrep`), fallback `rg -n "os\.ReadFile.*Contains|expect\(src\)" --glob '*_test.go'` in CI. Scoped to `*_test.go`, `testdata/` excluded.
+- **Enforcement:** `tools/nosourcegrep` analyzer (`go vet -vettool=./tools/nosourcegrep ./...` + `golangci-lint` custom `nosourcegrep`) — the only source-grep contract; no `rg` fallback exists. The step observes the analyzer's own exit status (`pipefail` or no pipeline), so a violation cannot print a pass verdict. Scoped to `*_test.go`, `testdata/` excluded.
 
 ## bench:guard
 
@@ -88,13 +88,17 @@ A test is **Bad** iff it is **any** of:
 ```
 *_test.go → go vet -vettool=./tools/nosourcegrep ./...   (local, *_test.go only)
          → golangci-lint -E nosourcegrep (.golangci.yml)
-         → CI lint-no-source-grep (analyzer || rg fallback)
+         → CI lint-no-source-grep: go vet -vettool=/tmp/nosourcegrep ./... (pipefail; no rg fallback)
+         → CI no-fmtSprintf: go test ./internal/review/lens/ -run TestCIGuard_
+         → CI forbid-git: go build ./tools/gitexec/cmd/gitexec && /tmp/gitexec -root .
          → go test -run TestRapid ./... -count=1 -timeout 180s
-         → go test ./... -count=1 -timeout 180s + go vet ./... + gofmt -l
+         → go test ./... -count=1 -timeout 180s + go vet ./... + gofmt -l (missing/failing tool fails)
 ```
 
-- `testdata/` is allowlisted in both analyzer and `rg` fallback.
-- `rg -n "mock\.module"` must be empty — any hit fails CI.
+- `testdata/` is allowlisted in the analyzer; no `rg` fallback exists.
+- `mock.module` must be absent — the analyzer flags calls, selectors, and string literals in `*_test.go`; any hit fails CI.
+- The lens `fmt.Sprintf` allowlist (`//lint:ignore no-fmtSprintf`) is enforced by the repo-root-anchored `TestCIGuard_CurrentLensClean` Go test (`go test ./internal/review/lens/ -run TestCIGuard_`), not by `rg`.
+- The git-spawn guard is the compiled `tools/gitexec` checker: the workflow builds it from the repository and runs it bare, so its exit status is the verdict and a build failure fails the step.
 
 ## References
 
