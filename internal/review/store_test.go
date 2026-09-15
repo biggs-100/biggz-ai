@@ -255,13 +255,22 @@ func TestResolveGitDir_RelativePath(t *testing.T) {
 	}
 
 	expected := filepath.Join(repoDir, ".git")
-	if gitDir != expected {
-		t.Errorf("expected %s, got %s", expected, gitDir)
-	}
 
-	// Must exist.
-	if _, err := os.Stat(gitDir); os.IsNotExist(err) {
-		t.Errorf("resolved git dir does not exist: %s", gitDir)
+	// Compare directories, not spellings: the single-owner resolver
+	// canonicalises symlinks, and on macOS t.TempDir() lives under
+	// /var/folders, which is a symlink to /private/var. The contract this
+	// test guards is that the relative ".git" rev-parse prints resolves to
+	// THIS repository's git dir, not that the string is copied verbatim.
+	want, err := os.Stat(expected)
+	if err != nil {
+		t.Fatalf("stat expected git dir %s: %v", expected, err)
+	}
+	got, err := os.Stat(gitDir)
+	if err != nil {
+		t.Fatalf("resolved git dir does not exist: %s: %v", gitDir, err)
+	}
+	if !os.SameFile(want, got) {
+		t.Errorf("expected the git dir at %s, got %s", expected, gitDir)
 	}
 }
 
