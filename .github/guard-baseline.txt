@@ -1,7 +1,6 @@
-go-git-spawn	internal/doctor/git.go	71
 declared-boundary	internal/assets/pi/biggz-footer.js	422
 declared-boundary	internal/assets/pi/codegraph-tools.ts	80
-declared-boundary	internal/doctor/git.go	76
+declared-boundary	internal/doctor/git.go	69
 declared-boundary	internal/doctor/review.go	82
 declared-boundary	internal/doctor/review.go	93
 declared-boundary	internal/doctor/review.go	251
