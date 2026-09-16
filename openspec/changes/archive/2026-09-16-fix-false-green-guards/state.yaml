@@ -1,0 +1,231 @@
+# DAG state for SDD change
+phases:
+  explore: done
+  propose: done
+  spec: done
+  design: done
+  tasks: done
+  apply: done
+  verify: done
+  sync: done
+  archive: done
+spec_counts:
+  requirements: 15
+  scenarios: 56
+  given_when_then: 56/56/56
+  note: >-
+    ci-guard-integrity was split into two domains at the maintainer's decision because the single file
+    measured 859 words against the 650-word spec budget and could not be trimmed below a ~731-word
+    floor without deleting mandated coverage. The two invariants fail independently: a scanner that
+    cannot lie, versus a baseline that cannot rot. Requirement and scenario counts are unchanged by
+    the split (15/56); only the domain count went 7 to 8. Provenance: byte-level diffs against the
+    pre-split BigMem source (obs-1789402583911915000-1) proved the requirement blocks moved verbatim;
+    the six untouched spec files were verified byte-identical by sha256.
+  divergence:
+    - >-
+      proposal.md still lists a single new capability (ci-guard-integrity). The spec phase refined it
+      into two domains (ci-guard-integrity plus ci-guard-baseline). Recorded here as the authoritative
+      divergence, NOT as a broken contract: the proposal states which capabilities change, not how many
+      files they occupy, and the same three invariants (checker, positive control, baseline) are still
+      the scope. Carried forward in the sdd-tasks handoff and the archive final-state handoff.
+discovered_defects:
+  - id: gatekeeper-routing-static-table
+    severity: medium
+    where: internal/sdd/gatekeeper.go:92 nextPhaseValid + checkRouting at :317
+    detail: >-
+      checkRouting validates next_recommended against a hardcoded linear successor table
+      (nextPhaseValid["spec"] = {"design"}) instead of the real dependency state. A spec phase result
+      that accurately reports the successor now due ("tasks", because design already completed) FAILS
+      with routing_coherence, and the only passing token is the stale "design". The gate's verdict
+      therefore depends on how the declaration is phrased, not on the actual state — the same root
+      cause as the two defects already in scope (checkArtifacts double-prefixing repo-relative paths,
+      and validating BigMem topic keys as filesystem paths).
+    status: >-
+      Recorded, not yet folded into scope. Same file and same root cause as the in-scope gatekeeper
+      defect, but extending the requirement would require a further spec amendment. Awaiting the
+      maintainer's call: fold into the sdd Gatekeeper requirement, or split into its own change.
+  - id: gofmt-not-toolchain-stable
+    severity: low
+    where: ".github/workflows/ci.yml Go Format job (go-version: stable) + internal/review/rdd_helpers.go"
+    detail: >-
+      gofmt output is NOT stable across Go releases, and the Go Format job floats on `stable`.
+      On Go 1.26.1 locally, `gofmt -l .` flags internal/review/rdd_helpers.go; the committed form is
+      what gofmt 1.27 wants, so CI is green (commit 7b24b7a1 exists precisely for this: "dedent
+      composite literal per go1.27 gofmt"). Consequence: a future `stable` bump can turn the format
+      job red for reasons unrelated to any PR. Not a defect introduced by this change, and not fixed
+      here; recorded so the next occurrence is not misdiagnosed as a bad PR.
+    evidence: >-
+      `gofmt -l .` -> internal/review/rdd_helpers.go; `git diff HEAD` on that file empty (identical to
+      the commit, LF endings); `gh run view 34860417409` shows Go Format completed success on master.
+  - id: pr-skill-references-nonexistent-tool
+    severity: low
+    where: ~/.pi/agent/skills/branch-pr/SKILL.md (also internal/assets/skills/branch-pr/)
+    detail: >-
+      The branch-pr skill instructs `go run ./internal/gofmtcheck` as the local format check, but that
+      package exists only in the upstream gentle-ai tree - biggz-ai has no internal/gofmtcheck. The
+      skill was carried over by copy. Whoever follows it gets "directory not found" and, if they pipe
+      the command, can mistake the pipeline's exit status for the check's.
+    status: recorded only; a bounded docs fix for a future slice.
+    evidence: >-
+      Observed live: biggz sdd-gatekeeper fix-false-green-guards spec --result '{...next_recommended:"tasks"}'
+      returned routing_coherence FAIL naming valid: [design], while biggz sdd-continue correctly
+      reported Next phase: tasks.
+  - id: unassigned-git-spawn-baseline-entries
+    severity: medium
+    where: internal/sdd/session_guard.go:353, internal/project/detect.go:357, internal/project/detect.go:416
+    detail: >-
+      Phase 7.3 requires the go-git-spawn debt to reach zero, but three baseline entries have no
+      owning slice. The design's File Changes table gives slice 4
+      internal/sdd/{gatekeeper,status,complexity_gate,edit_authority}.go and slice 6
+      internal/release, internal/install, internal/sddattempt and the dead doctor spawn. Neither
+      internal/sdd/session_guard.go nor internal/project appears anywhere in design.md or tasks.md,
+      so Phase 7 would land with three entries nobody was assigned to remove and the debt-zero task
+      would stay unreachable while the ratchet still demanded those sites be gone.
+    status: >-
+      Recorded during the PR4 delivery; deliberately NOT folded into slice 4's scope. Assign the
+      three to the Phase 7 unit, or split them into their own change, before apply reaches Phase 7.
+    evidence: >-
+      .github/guard-baseline.txt lists go-git-spawn internal/sdd/session_guard.go:353,
+      internal/project/detect.go:357 and internal/project/detect.go:416; `grep -n "internal/project"
+      design.md tasks.md` returns nothing; the guard checker reads 31 debt after slice 4b merges.
+  - id: git-write-ops-lose-live-output
+    severity: low
+    where: cmd/biggz/pr.go runGitCommand (PR #97) versus the former runCmd helper
+    detail: >-
+      The former runCmd wired cmd.Stdout and cmd.Stderr straight to os.Stdout/os.Stderr, so git
+      streamed live and its success messages reached the terminal - git writes "Switched to a new
+      branch" and the push progress to stderr, not stdout. Routing to git.Run buffers stdout until
+      the command exits and drops success stderr, because git.Run only exposes stderr on failure.
+      Declared in PR #97's body. Scripts are unaffected; interactive `biggz pr create` loses the
+      branch-switch line and the push progress. Failure stderr is still re-emitted raw (TM-4).
+    status: >-
+      Accepted with the declaration (maintainer decision). A faithful restoration needs a streaming
+      runner in internal/git that keeps the INHERITED environment; git.NewCommand is not usable
+      here because it strips GIT_* and a commit would lose GIT_AUTHOR_*. Candidate for the Phase 7
+      unit, where internal/git has budget room: roughly 25 lines plus a test.
+    evidence: >-
+      `git show master:cmd/biggz/pr.go` shows the old runCmd assigning cmd.Stdout = os.Stdout and
+      cmd.Stderr = os.Stderr; PR #97's body declares the difference; the checker reads 18 debt after
+      slice 5a.
+  - id: tui-throttle-test-timing-fragile
+    severity: medium
+    where: internal/tui/tui_test.go:291-306 TestSyncOutput_ThrottleCoalesceBurst
+    detail: >-
+      The test drives a real 16ms throttle window with time.Sleep(5ms) calls and then asserts that
+      pendingFrame was cleared after a trailing flush. On a loaded runner the trailing flush has not
+      happened yet when the assertion runs, so the test fails with "expected pendingFrame cleared
+      after flush, got frame-c" on code that is correct. It went red on Test (windows-latest) in PR
+      #98 (a slice that touches only cmd/biggz), passed on ubuntu and macos in the same run, and went
+      green on a plain rerun. This is a false RED, the mirror of the false greens this change exists
+      to remove: it costs a rerun every time and it trains readers to retry red checks.
+    status: >-
+      Recorded during the PR5 delivery; deliberately NOT fixed here (different package, different
+      invariant, and the fix is a test-quality one: inject the clock or assert on the flush signal
+      instead of sleeping). Candidate for its own bounded change.
+    evidence: >-
+      Run 35055640115 job 104665195699: "--- FAIL: TestSyncOutput_ThrottleCoalesceBurst (0.08s)
+      tui_test.go:304: expected pendingFrame cleared after flush, got \"frame-c\""; `gh run rerun
+      35055640115 --failed` turned Test (windows-latest) green on the same commit.
+  - id: r11-hook-regression-test-missing
+    severity: medium
+    where: internal/sdd/hook_test.go; the pre-push template (tasks.md 3.1)
+    detail: >-
+      W1 (raised at verify): the R11 three-state hook branches (enabled/unmanaged blocks,
+      explicitly-disabled allows, dead-producer fails closed) have no checked-in regression test.
+      tasks.md 3.1 claims a "RED hook test"; the only hook test in the tree, TestHookLineage,
+      covers lineage selection only. The branches were verified by a live harness run at verify
+      time (exit codes and messages recorded in the verify report), not regression-locked.
+    status: recorded; candidate for a bounded test-quality follow-up that checks the harness in as a test.
+    evidence: >-
+      Fresh search over all *_test.go at verify found no three-state harness test; verify-report W1.
+  - id: state-yaml-stale-bookkeeping
+    severity: low
+    where: openspec/changes/fix-false-green-guards/state.yaml
+    detail: >-
+      W2/S2 (raised at verify): state.yaml reported design/tasks/apply/verify as pending and carried
+      a pending_question about phase 4 while tasks were 32/32 and the chain PRs #86-#99 were
+      delivered. Final-state facts outranked it. Resolved by the archive refresh (phases now done
+      through archive; stale envelope removed). S2 process recommendation: refresh state.yaml at
+      the verify gate so the archive handoff starts from true state.
+    status: resolved by the archive refresh; the finding and the S2 recommendation are preserved here.
+  - id: deployed-pre-push-hook-predates-fix
+    severity: medium
+    where: .git/hooks/pre-push (workstation runtime) vs internal/install/assets/hooks/pre-push.tmpl
+    detail: >-
+      W3 (raised at verify): the deployed .git/hooks/pre-push on this workstation (mtime
+      2026-08-31) still runs the pre-fix audit/three-state logic; no code path in the repo
+      re-deploys the template (the only reference is the test fallback in internal/sdd/hook_test.go).
+      The change's artifact (the template) is fixed and verified; runtime pickup needs an
+      install/reinstall or a manual copy. The requirement text says "deployed as .git/hooks/pre-push",
+      so this is a deployment gap, not a template gap.
+    status: recorded; maintainer note required.
+  - id: verification-plan-dead-surface
+    severity: low
+    where: internal/verification/plan.go
+    detail: >-
+      W4 (raised at verify): adjacent dead surface left out of scope - internal/verification/plan.go
+      still carries an unrouted verification-subject surface (NewVerificationSubjectFromSnapshot
+      accepts raw tree strings; CheckConvergence compares digests; zero importers). Not the surface
+      R12-R15 name (that one was deleted as a7003e38, PR #89); candidate for its own bounded change.
+    status: recorded, deliberately not in scope.
+  - id: workflow-guards-lack-negative-control-job
+    severity: low
+    where: .github/workflows/ci.yml (R5/R7/R8/R9 guard steps)
+    detail: >-
+      S1 (suggestion at verify): the workflow-level guards' fail paths are exercised in-process
+      and by manual probes, not in vivo in CI. Consider a scheduled negative-control job that
+      plants a violation on a disposable ref and asserts the guard step fails.
+    status: recorded as a suggestion.
+  - id: sdd-sync-discards-full-spec-shaped-new-domain
+    severity: high
+    where: internal/sdd/openspec-deltas.go ApplyDeltas (native sdd-sync write path)
+    detail: >-
+      F1 (raised during sync): the native sdd-sync write path discards requirements for a
+      full-spec-shaped NEW domain - ApplyDeltas("", []) returns "" on a file with no
+      "## ADDED Requirements" section, so it would have created empty main specs for
+      ci-guard-integrity and ci-guard-baseline. Worked around by a verbatim copy of the delta
+      files into openspec/specs/{ci-guard-integrity,ci-guard-baseline}/spec.md. Recorded as a
+      sync write-path correctness candidate for its own bounded change.
+    status: recorded; candidate for its own bounded change.
+  - id: sdd-spec-header-stale
+    severity: low
+    where: openspec/specs/sdd/spec.md:1
+    detail: >-
+      F2 (raised during sync): line 1 still reads "# Delta for sdd". Pre-existing at 0ffedac1
+      (introduced by an earlier sync), NOT introduced by this change; a cosmetic audit-trail fix
+      for a docs-only follow-up.
+    status: recorded.
+  - id: sdd-continue-renderer-mismaps-phase
+    severity: medium
+    where: cmd/biggz (human-readable sdd-continue renderer)
+    detail: >-
+      F3 (raised during the archive handoff): biggz sdd-continue's human-readable renderer printed
+      "Next phase: apply" while biggz sdd-status --json correctly said nextRecommended: sync. The
+      JSON is authoritative; the text renderer's phase mapping is wrong. Same family as the
+      gatekeeper-routing-static-table defect (declaration surface vs real state misalignment).
+    status: recorded; candidate for a bounded routing/renderer fix.
+budget_deviations:
+  tasks_md: "1203 words against the sdd-tasks MUST budget of 530 — accepted by the maintainer and declared,
+    not hidden. The budget is arithmetically unreachable for a six-slice change: its own mandated
+    components sum to about 853 words before any prose (threat matrix propagated 173, six work units
+    with mandated columns 215, forecast table plus guard lines 75, minimum 28 tasks for 15 requirements
+    plus 5 threat-matrix RED tests 390). Coverage was prioritised over the number, and the full scope
+    is intact at 15/15 requirements and 5/5 threat rows."
+  spec_split: "ci-guard-integrity measured 859 words against the 650-word spec budget with a ~731-word
+    floor; resolved by splitting the domain in two rather than deleting coverage. Both files now fit."
+  design_md: "798 words against the 800-word budget — fits, with 2 words of headroom."
+systemic_finding: >-
+  The per-artifact size budgets (spec 650, design 800, tasks 530) are calibrated for small changes and
+  do not scale with change size. This change hit a ceiling on all three. The tasks budget is below the
+  sum of its own mandated components for any change with several slices and an applicable threat
+  matrix. Recorded as a defect of the pipeline, deliberately NOT folded into this change (scope already
+  grew twice), and a candidate for its own SDD change.
+  domains:
+    ci-guard-integrity: "2/5 (new domain, full spec, 389 w)"
+    ci-guard-baseline: "1/8 (new domain, full spec, 530 w)"
+    tui-sanitize: "2/8 (MODIFIED, 4 pre-existing scenarios preserved, 517 w)"
+    prompt-skill-resolver: "1/6 (MODIFIED, 350 w)"
+    testing-guidance: "1/5 (MODIFIED, 353 w)"
+    complexity-gates: "2/8 (MODIFIED, 504 w)"
+    review-authority: "4/8 (ADDED, 621 w)"
+    sdd: "2/8 (ADDED, 612 w)"

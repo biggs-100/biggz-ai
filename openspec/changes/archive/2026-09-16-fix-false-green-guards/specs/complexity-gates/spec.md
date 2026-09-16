@@ -1,10 +1,6 @@
-# Complexity Gates Specification
+# Delta for complexity-gates
 
-## Purpose
-
-Fixed thresholds cyclomatic >15 and cognitive >20 on new/modified Go functions in critical packages. CI blocks only diff-aware violations; legacy and test files are visible but never block.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: CI Cyclomatic Gate
 
@@ -63,57 +59,3 @@ The CI `complexity` job MUST fail when any new/modified Go function in critical 
 - GIVEN the pinned `gocognit` fails to build or exits non-zero
 - WHEN the `complexity` job runs
 - THEN the job MUST exit non-zero and MUST NOT report zero violations
-
-### Requirement: Grandfather Diff Semantics
-
-Existing violations on `base` MUST be reported but MUST NOT block. The system MUST map violations to changed functions via `git diff base...HEAD` filtered to function boundaries. Renames or ambiguous diffs MUST NOT block and MUST emit a warning fallback.
-
-#### Scenario: Legacy violation not re-blocked
-
-- GIVEN `internal/verification/old.go:FuncOld` has cyclomatic 20 on `base` unmodified
-- WHEN PR changes unrelated files
-- THEN CI MUST report `FuncOld` in totals but exit zero
-
-#### Scenario: Modified legacy function now blocks
-
-- GIVEN `FuncOld` (cyclomatic 20 on base) is modified in the PR diff
-- WHEN CI runs
-- THEN CI MUST fail for `FuncOld`
-
-#### Scenario: Rename with no function mapping
-
-- GIVEN a file rename where `git diff` reports no mappable function hunks
-- WHEN CI evaluates complexity
-- THEN CI MUST emit a warning including the file path and MUST exit zero
-
-### Requirement: Debt Report
-
-`verify-report.md` MUST contain a `Complexity Debt` section listing per-package totals (scanned, violations by threshold) and top 10 offenders per package sorted by max complexity descending. `*_test.go` findings MUST be informational only.
-
-#### Scenario: Report with violations
-
-- GIVEN CI reports 12 cyclomatic and 5 cognitive violations in `internal/review`
-- WHEN `verify-report.md` is generated
-- THEN debt section MUST show counts and top 10 offenders with file:line, function, cyclomatic, cognitive
-
-#### Scenario: No violations
-
-- GIVEN no functions exceed thresholds
-- WHEN `verify-report.md` is generated
-- THEN the debt section MUST state `0 violations` and list totals
-
-### Requirement: Tool Pinning and Version Parity
-
-`gocyclo` and `gocognit` versions MUST be pinned in `go.mod` (or `tools.go`/`tool` directive). CI MUST invoke the same pinned versions as local `go run`. Drift MUST emit a CI warning with expected vs actual.
-
-#### Scenario: Pinned versions used
-
-- GIVEN `go.mod` pins `gocyclo v0.1.0` and `gocognit v1.2.0`
-- WHEN CI `complexity` job runs
-- THEN it MUST invoke those exact versions
-
-#### Scenario: Version drift detected
-
-- GIVEN CI resolves a different tool version than `go.mod`
-- WHEN CI runs
-- THEN output MUST contain a warning with expected vs actual versions
