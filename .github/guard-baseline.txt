@@ -1,6 +1,4 @@
 go-git-spawn	internal/doctor/git.go	71
-go-git-spawn	internal/install/install.go	372
-go-git-spawn	internal/install/install.go	375
 go-git-spawn	internal/project/detect.go	357
 go-git-spawn	internal/project/detect.go	416
 go-git-spawn	internal/sdd/session_guard.go	353
