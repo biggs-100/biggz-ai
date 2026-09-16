@@ -75,6 +75,7 @@ func piExtensionsDeployList() []struct{ asset, target string } {
 		{"pi/biggz-tool-interception.js", "biggz-tool-interception.js"},
 		{"pi/biggz-extension-api.js", "biggz-extension-api.js"},
 		{"pi/biggz-session-guard.js", "biggz-session-guard.js"},
+		{"pi/biggz-ask-guard.js", "biggz-ask-guard.js"},
 		{"pi/biggz-last-model.js", "biggz-last-model.js"},
 		{"pi/biggz-wait-pretty.js", "biggz-wait-pretty.js"},
 		{"pi/biggz-footer.js", "biggz-footer.js"},

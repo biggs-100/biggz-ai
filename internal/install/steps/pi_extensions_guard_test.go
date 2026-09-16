@@ -15,7 +15,7 @@ import (
 // ~/.pi/agent/extensions to export `export default function(pi)` — missing
 // factory crashes pi with "Extension does not export a valid factory function".
 func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
-	// Must mirror the deploy list in pi_extensions.go (12 JS + 3 TS).
+	// Must mirror the deploy list in pi_extensions.go (13 JS + 3 TS).
 	// TS entries are not pi ExtensionAPI factories and are intentionally skipped.
 	deployList := []struct{ asset, target string }{
 		{"pi/biggz-thinking-wrap.js", "biggz-thinking-wrap.js"},
@@ -23,6 +23,7 @@ func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
 		{"pi/biggz-tool-interception.js", "biggz-tool-interception.js"},
 		{"pi/biggz-extension-api.js", "biggz-extension-api.js"},
 		{"pi/biggz-session-guard.js", "biggz-session-guard.js"},
+		{"pi/biggz-ask-guard.js", "biggz-ask-guard.js"},
 		{"pi/biggz-last-model.js", "biggz-last-model.js"},
 		{"pi/biggz-wait-pretty.js", "biggz-wait-pretty.js"},
 		{"pi/biggz-footer.js", "biggz-footer.js"},
@@ -51,8 +52,8 @@ func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
 			}
 		}
 	}
-	if jsCount != 12 {
-		t.Errorf("deploy list drift: expected 12 JS extensions, got %d — sync with pi_extensions.go and biggz-pi-extensions-factory.test.mjs", jsCount)
+	if jsCount != 13 {
+		t.Errorf("deploy list drift: expected 13 JS extensions, got %d — sync with pi_extensions.go and biggz-pi-extensions-factory.test.mjs", jsCount)
 	}
 	// Also verify our canonical helper lists the same JS count — catches drift
 	// where pi_extensions.go was updated but this test wasn't (or vice versa).
@@ -81,7 +82,7 @@ func truncateForTest(s string, n int) string {
 // TestPiExtensionsPrepare_RejectsBrokenFactory ensures validatePiExtensionsFactory
 // fails fast on a broken JS asset rather than deploying it and crashing pi.
 func TestPiExtensionsPrepare_RejectsBrokenFactory(t *testing.T) {
-	// Build a synthetic FS with all 11 JS assets valid except one broken.
+	// Build a synthetic FS with all 13 JS assets valid except one broken.
 	validStub := "export default function broken(pi){ if(typeof pi?.on==='function') pi.on('session_stop', async()=>{}); }\n"
 	brokenContent := "// no factory here\nconsole.log('broken');\n"
 
