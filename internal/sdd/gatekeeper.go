@@ -6,8 +6,8 @@
 //
 // Checks performed:
 //   - Contract conformance: phase returned required fields (status, executive_summary, artifacts, etc.)
-//   - Artifact existence: declared artifacts actually exist and are readable
-//   - No hallucination: file paths, symbols, commands referenced actually exist
+//   - Artifact existence: the completed phase's canonical artifact exists under the active store
+//   - No hallucination: declared paths resolve (repo-relative or change-relative)
 //   - No drift from inputs: output is consistent with phase's required inputs
 //   - Routing coherence: next_recommended follows the dependency graph
 package sdd
@@ -107,23 +107,26 @@ var nextPhaseValid = map[string][]string{
 //   - openspecRoot: the openspec/ directory root (e.g., "/path/to/project/openspec")
 //   - changeName: the SDD change name (e.g., "add-dark-mode")
 //   - completedPhase: the phase that just completed (e.g., "spec")
+//   - store: the active artifact store (openspec, hybrid, or "" for none, as
+//     produced by ResolvePreflightPrefs); never inferred from the result
 //   - result: the phase's declared result (parsed from sub-agent output)
 //
 // Returns a GatekeeperResult with passed=true if all checks pass, or passed=false
 // with specific reasons for the orchestrator to act on.
-func Gatekeeper(openspecRoot, changeName, completedPhase string, result *PhaseResult) *GatekeeperResult {
+func Gatekeeper(openspecRoot, changeName, completedPhase string, store ArtifactStore, result *PhaseResult) *GatekeeperResult {
 	gr := &GatekeeperResult{
 		Passed: true,
 		Phase:  completedPhase,
 	}
+	store = normalizeGatekeeperStore(store)
 
 	// 1. Contract conformance
 	gr.checkContract(result)
 
-	// 2. Artifact existence
-	gr.checkArtifacts(openspecRoot, changeName, completedPhase, result)
+	// 2. Artifact existence (canonical artifact per store)
+	gr.checkArtifacts(openspecRoot, changeName, completedPhase, store, result)
 
-	// 3. No hallucination (validate paths exist)
+	// 3. No hallucination (declared paths must resolve)
 	gr.checkNoHallucination(openspecRoot, changeName, result)
 
 	// 4. No drift from inputs
@@ -179,8 +182,18 @@ func (gr *GatekeeperResult) checkContract(result *PhaseResult) {
 	gr.Details = append(gr.Details, check)
 }
 
-// checkArtifacts validates that declared artifacts actually exist on disk.
-func (gr *GatekeeperResult) checkArtifacts(openspecRoot, changeName, completedPhase string, result *PhaseResult) {
+// normalizeGatekeeperStore maps the raw store input onto the normalized
+// preflight values (openspec, hybrid, or "" for none), so the gatekeeper
+// accepts exactly what ResolvePreflightPrefs produces.
+func normalizeGatekeeperStore(store ArtifactStore) ArtifactStore {
+	return ArtifactStore(NormalizePreflightArtifactStore(string(store)))
+}
+
+// checkArtifacts validates that the completed phase's canonical artifact
+// exists under the active store (design D4). The canonical artifact decides
+// pass/fail; declared paths are never accepted as proof of existence. Store
+// "" expects no filesystem artifact and skips with an explicit reason.
+func (gr *GatekeeperResult) checkArtifacts(openspecRoot, changeName, completedPhase string, store ArtifactStore, result *PhaseResult) {
 	check := GatekeeperCheck{Name: "artifact_existence", Passed: true}
 
 	if result == nil || len(result.Artifacts) == 0 {
@@ -189,32 +202,69 @@ func (gr *GatekeeperResult) checkArtifacts(openspecRoot, changeName, completedPh
 		return
 	}
 
-	changeDir := filepath.Join(openspecRoot, "changes", changeName)
-	var missing []string
-
-	for _, art := range result.Artifacts {
-		if art.Path == "" {
-			continue
-		}
-		// Resolve path relative to change directory
-		fullPath := art.Path
-		if !filepath.IsAbs(fullPath) {
-			fullPath = filepath.Join(changeDir, art.Path)
-		}
-		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
-			missing = append(missing, art.Path)
-		}
-	}
-
-	if len(missing) > 0 {
+	if store == "" {
 		check.Passed = false
-		check.Reason = fmt.Sprintf("declared artifacts do not exist: %s", strings.Join(missing, ", "))
+		check.Skipped = true
+		check.Reason = "artifact store is none: no filesystem artifact is expected, so the canonical artifact cannot be reported as passed"
+		gr.Details = append(gr.Details, check)
+		return
+	}
+	if store != ArtifactStoreOpenSpec && store != ArtifactStoreHybrid {
+		check.Passed = false
+		check.Reason = fmt.Sprintf("unknown artifact store %q: the canonical artifact for phase %q cannot be resolved", string(store), completedPhase)
+		gr.Details = append(gr.Details, check)
+		return
 	}
 
+	changeDir := filepath.Join(openspecRoot, "changes", changeName)
+	existing, expected, defined := canonicalArtifacts(changeDir, store, completedPhase)
+	if !defined {
+		check.Passed = false
+		check.Skipped = true
+		check.Reason = fmt.Sprintf("no canonical artifact location is defined for phase %q; declared paths are not accepted as proof", completedPhase)
+		gr.Details = append(gr.Details, check)
+		return
+	}
+	if len(existing) == 0 {
+		check.Passed = false
+		check.Reason = fmt.Sprintf("missing canonical artifact for phase %q: expected %s", completedPhase, strings.Join(expected, " or "))
+		gr.Details = append(gr.Details, check)
+		return
+	}
+	check.Reason = "canonical artifact resolved: " + strings.Join(existing, ", ")
 	gr.Details = append(gr.Details, check)
 }
 
-// checkNoHallucination validates that referenced paths in the result actually exist.
+// canonicalArtifacts resolves the completed phase's canonical artifact under
+// store: existing holds the paths that exist (resolveArtifactPaths is the
+// single canonical resolver for openspec/hybrid) and expected names the
+// absolute locations to report when nothing exists yet. defined is false for
+// phases without a canonical artifact slot (explore, archive).
+func canonicalArtifacts(changeDir string, store ArtifactStore, phase string) (existing, expected []string, defined bool) {
+	resolved := resolveArtifactPaths(changeDir, store)
+	plan := filepath.Join(changeDir, "plan.md")
+	switch phase {
+	case "propose":
+		return resolved.Proposal, []string{filepath.Join(changeDir, "proposal.md"), plan}, true
+	case "spec":
+		return resolved.Specs, []string{filepath.Join(changeDir, "specs", "*", "spec.md"), plan}, true
+	case "design":
+		return resolved.Design, []string{filepath.Join(changeDir, "design.md"), plan}, true
+	case "tasks":
+		return resolved.Tasks, []string{filepath.Join(changeDir, "tasks.md"), plan}, true
+	case "apply":
+		return resolved.ApplyProgress, []string{filepath.Join(changeDir, "apply-progress.md")}, true
+	case "verify":
+		return resolved.VerifyReport, []string{filepath.Join(changeDir, "verify-report.md")}, true
+	default:
+		return nil, nil, false
+	}
+}
+
+// checkNoHallucination validates that declared artifact paths resolve against
+// the workspace root (repo-relative) or the change dir (change-relative).
+// BigMem topic keys, PR references and URLs are declarations, not filesystem
+// paths, and are never stat'ed as files.
 func (gr *GatekeeperResult) checkNoHallucination(openspecRoot, changeName string, result *PhaseResult) {
 	check := GatekeeperCheck{Name: "no_hallucination", Passed: true}
 
@@ -224,19 +274,15 @@ func (gr *GatekeeperResult) checkNoHallucination(openspecRoot, changeName string
 		return
 	}
 
+	workspaceRoot := filepath.Dir(openspecRoot)
 	changeDir := filepath.Join(openspecRoot, "changes", changeName)
 	var hallucinated []string
 
-	// Check all artifact paths
 	for _, art := range result.Artifacts {
-		if art.Path == "" {
+		if !isFilesystemArtifactDeclaration(changeName, art.Path) {
 			continue
 		}
-		fullPath := art.Path
-		if !filepath.IsAbs(fullPath) {
-			fullPath = filepath.Join(changeDir, art.Path)
-		}
-		if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		if _, ok := resolveDeclaredArtifactPath(workspaceRoot, changeDir, art.Path); !ok {
 			hallucinated = append(hallucinated, art.Path)
 		}
 	}
@@ -247,6 +293,47 @@ func (gr *GatekeeperResult) checkNoHallucination(openspecRoot, changeName string
 	}
 
 	gr.Details = append(gr.Details, check)
+}
+
+// isFilesystemArtifactDeclaration reports whether a declared artifact names a
+// filesystem location. Empty paths, BigMem topic keys of this change, PR
+// references and URLs are declarations but not paths.
+func isFilesystemArtifactDeclaration(changeName, decl string) bool {
+	if decl == "" || strings.HasPrefix(decl, "#") || strings.Contains(decl, "://") {
+		return false
+	}
+	return !isBigMemTopicRef(changeName, decl)
+}
+
+// isBigMemTopicRef reports whether a declaration names a BigMem topic of this
+// change (sdd/{change}/…, optionally prefixed with bigmem:), which the engram
+// and hybrid stores use instead of filesystem paths.
+func isBigMemTopicRef(changeName, decl string) bool {
+	trimmed := strings.TrimPrefix(decl, "bigmem:")
+	return strings.HasPrefix(trimmed, "sdd/"+changeName+"/")
+}
+
+// resolveDeclaredArtifactPath resolves one declared artifact path against the
+// workspace root (repo-relative) and then the change directory
+// (change-relative); absolute declarations resolve to themselves. The second
+// result reports whether the declaration matched an existing path.
+func resolveDeclaredArtifactPath(workspaceRoot, changeDir, decl string) (string, bool) {
+	if decl == "" {
+		return "", false
+	}
+	if filepath.IsAbs(decl) {
+		if _, err := os.Stat(decl); err == nil {
+			return decl, true
+		}
+		return "", false
+	}
+	for _, base := range []string{workspaceRoot, changeDir} {
+		candidate := filepath.Join(base, filepath.FromSlash(decl))
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, true
+		}
+	}
+	return "", false
 }
 
 // checkNoDrift validates that the output is consistent with the phase's required inputs.
@@ -403,7 +490,7 @@ func ParsePhaseResult(jsonStr string) (*PhaseResult, error) {
 }
 
 // GatekeeperFromJSON is a convenience that parses JSON and runs the gatekeeper.
-func GatekeeperFromJSON(openspecRoot, changeName, completedPhase, resultJSON string) (*GatekeeperResult, error) {
+func GatekeeperFromJSON(openspecRoot, changeName, completedPhase string, store ArtifactStore, resultJSON string) (*GatekeeperResult, error) {
 	result, err := ParsePhaseResult(resultJSON)
 	if err != nil {
 		return &GatekeeperResult{
@@ -412,7 +499,7 @@ func GatekeeperFromJSON(openspecRoot, changeName, completedPhase, resultJSON str
 			Reasons: []string{fmt.Sprintf("failed to parse phase result: %v", err)},
 		}, nil
 	}
-	return Gatekeeper(openspecRoot, changeName, completedPhase, result), nil
+	return Gatekeeper(openspecRoot, changeName, completedPhase, store, result), nil
 }
 
 // GatekeeperSummary returns a one-line summary suitable for orchestrator logging.

@@ -1331,8 +1331,14 @@ func runSddGatekeeper(args []string, stdout, stderr io.Writer) int {
 	}
 	openspecRoot := filepath.Join(cwd, "openspec")
 
+	// The active artifact store comes from preflight (already normalized:
+	// openspec, hybrid, or "" for none) and is passed explicitly, so the
+	// gatekeeper resolves canonical artifacts per store instead of joining
+	// declared paths onto the change directory.
+	store := sdd.ArtifactStore(sdd.ResolvePreflightPrefs(cwd).ArtifactStore)
+
 	// Run gatekeeper
-	gk, err := sdd.GatekeeperFromJSON(openspecRoot, change, phase, resultJSON)
+	gk, err := sdd.GatekeeperFromJSON(openspecRoot, change, phase, store, resultJSON)
 	if err != nil {
 		fmt.Fprintf(stderr, "error: %v", err)
 		return 1

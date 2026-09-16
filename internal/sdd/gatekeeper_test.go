@@ -3,6 +3,7 @@ package sdd
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -23,7 +24,7 @@ func TestGatekeeper_AllChecksPass(t *testing.T) {
 		NextRecommended: "spec",
 	}
 
-	gk := Gatekeeper(openspecRoot, "test-change", "explore", result)
+	gk := Gatekeeper(openspecRoot, "test-change", "explore", ArtifactStoreOpenSpec, result)
 	if !gk.Passed {
 		t.Errorf("expected gatekeeper to pass, got reasons: %v", gk.Reasons)
 		for _, d := range gk.Details {
@@ -38,7 +39,7 @@ func TestGatekeeper_NilResult(t *testing.T) {
 	tmpDir := t.TempDir()
 	openspecRoot := filepath.Join(tmpDir, "openspec")
 
-	gk := Gatekeeper(openspecRoot, "test-change", "explore", nil)
+	gk := Gatekeeper(openspecRoot, "test-change", "explore", ArtifactStoreOpenSpec, nil)
 	if gk.Passed {
 		t.Error("expected gatekeeper to fail with nil result")
 	}
@@ -56,7 +57,7 @@ func TestGatekeeper_MissingRequiredFields(t *testing.T) {
 
 	// Missing all fields
 	result := &PhaseResult{}
-	gk := Gatekeeper(openspecRoot, "test-change", "explore", result)
+	gk := Gatekeeper(openspecRoot, "test-change", "explore", ArtifactStoreOpenSpec, result)
 	if gk.Passed {
 		t.Error("expected gatekeeper to fail with missing fields")
 	}
@@ -84,7 +85,7 @@ func TestGatekeeper_ArtifactNotExist(t *testing.T) {
 		NextRecommended: "spec",
 	}
 
-	gk := Gatekeeper(openspecRoot, "test-change", "propose", result)
+	gk := Gatekeeper(openspecRoot, "test-change", "propose", ArtifactStoreOpenSpec, result)
 	if gk.Passed {
 		t.Error("expected gatekeeper to fail with missing artifact")
 	}
@@ -118,7 +119,7 @@ func TestGatekeeper_InvalidRouting(t *testing.T) {
 		NextRecommended: "archive", // Invalid: can't go from propose to archive
 	}
 
-	gk := Gatekeeper(openspecRoot, "test-change", "propose", result)
+	gk := Gatekeeper(openspecRoot, "test-change", "propose", ArtifactStoreOpenSpec, result)
 	if gk.Passed {
 		t.Error("expected gatekeeper to fail with invalid routing")
 	}
@@ -155,7 +156,7 @@ func TestGatekeeper_DriftDetection(t *testing.T) {
 	}
 
 	// spec phase requires propose to be done
-	gk := Gatekeeper(openspecRoot, "test-change", "spec", result)
+	gk := Gatekeeper(openspecRoot, "test-change", "spec", ArtifactStoreOpenSpec, result)
 	if gk.Passed {
 		t.Error("expected gatekeeper to fail due to drift (missing prerequisite)")
 	}
@@ -194,7 +195,7 @@ func TestGatekeeper_ApplyCanLoop(t *testing.T) {
 		NextRecommended: "apply (1/2 tasks)", // apply can loop
 	}
 
-	gk := Gatekeeper(openspecRoot, "test-change", "apply", result)
+	gk := Gatekeeper(openspecRoot, "test-change", "apply", ArtifactStoreOpenSpec, result)
 	if !gk.Passed {
 		t.Errorf("expected gatekeeper to pass for apply loop, got: %v", gk.Reasons)
 		for _, d := range gk.Details {
@@ -227,7 +228,7 @@ func TestGatekeeper_VerifyCanRemediate(t *testing.T) {
 		NextRecommended: "apply", // verify can remediate back to apply
 	}
 
-	gk := Gatekeeper(openspecRoot, "test-change", "verify", result)
+	gk := Gatekeeper(openspecRoot, "test-change", "verify", ArtifactStoreOpenSpec, result)
 	if !gk.Passed {
 		t.Errorf("expected gatekeeper to pass for verify remediation, got: %v", gk.Reasons)
 		for _, d := range gk.Details {
@@ -288,5 +289,174 @@ func TestGatekeeperSummary_Fail(t *testing.T) {
 	summary := GatekeeperSummary(gr)
 	if summary != "◆ apply · gatekeeper FAIL (artifact_existence, routing_coherence)" {
 		t.Errorf("unexpected summary: %q", summary)
+	}
+}
+
+// TestGatekeeper_StoreAwareArtifactResolution pins the store-aware artifact
+// contract (design D4): the canonical artifact for the completed phase
+// decides pass/fail under the active store, declared paths resolve from the
+// workspace root or the change dir but are never proof of existence, a
+// missing canonical artifact names the absolute path it looked for, store
+// "" skips with an explicit reason, and an unknown store fails closed.
+func TestGatekeeper_StoreAwareArtifactResolution(t *testing.T) {
+	tests := []struct {
+		name             string
+		store            ArtifactStore
+		phase            string
+		next             string
+		setup            func(t *testing.T, changeDir string)
+		declared         []ArtifactRef
+		wantPass         bool
+		wantArtifactSkip bool
+		wantArtifactFail bool
+		wantReasonPaths  []string
+		wantReasonText   []string
+	}{
+		{
+			name:  "repo-relative declaration resolves from the workspace root",
+			store: ArtifactStoreOpenSpec,
+			phase: "spec",
+			next:  "design",
+			setup: func(t *testing.T, changeDir string) {
+				t.Helper()
+				writeGatekeeperFixture(t, changeDir, "proposal.md")
+				writeGatekeeperFixture(t, filepath.Join(changeDir, "specs", "sdd"), "spec.md")
+			},
+			declared: []ArtifactRef{{Path: "openspec/changes/test-change/specs/sdd/spec.md", Type: "spec"}},
+			wantPass: true,
+		},
+		{
+			name:  "change-relative declaration still resolves",
+			store: ArtifactStoreOpenSpec,
+			phase: "propose",
+			next:  "spec",
+			setup: func(t *testing.T, changeDir string) {
+				t.Helper()
+				writeGatekeeperFixture(t, changeDir, "proposal.md")
+			},
+			declared: []ArtifactRef{{Path: "proposal.md", Type: "proposal"}},
+			wantPass: true,
+		},
+		{
+			name:  "declared path is never proof of the canonical artifact",
+			store: ArtifactStoreOpenSpec,
+			phase: "spec",
+			next:  "design",
+			setup: func(t *testing.T, changeDir string) {
+				t.Helper()
+				writeGatekeeperFixture(t, changeDir, "proposal.md")
+				// The declared path exists, but the delta spec at the canonical
+				// location does not: the declaration must not save the check.
+				writeGatekeeperFixture(t, changeDir, "spec.md")
+			},
+			declared:         []ArtifactRef{{Path: "spec.md", Type: "spec"}},
+			wantArtifactFail: true,
+			wantReasonPaths:  []string{"specs"},
+		},
+		{
+			name:             "missing canonical artifact names the absolute path it looked for",
+			store:            ArtifactStoreOpenSpec,
+			phase:            "propose",
+			next:             "spec",
+			declared:         []ArtifactRef{{Path: "sdd/test-change/proposal", Type: "proposal"}},
+			wantArtifactFail: true,
+			wantReasonPaths:  []string{"proposal.md"},
+		},
+		{
+			name:             "hybrid with only BigMem topics fails on the missing copy",
+			store:            ArtifactStoreHybrid,
+			phase:            "propose",
+			next:             "spec",
+			declared:         []ArtifactRef{{Path: "sdd/test-change/proposal", Type: "proposal"}},
+			wantArtifactFail: true,
+			wantReasonPaths:  []string{"proposal.md"},
+		},
+		{
+			name:             "none store reports skip with a reason, never a pass",
+			store:            "",
+			phase:            "propose",
+			next:             "spec",
+			declared:         []ArtifactRef{{Path: "sdd/test-change/proposal", Type: "proposal"}},
+			wantPass:         true,
+			wantArtifactSkip: true,
+			wantReasonText:   []string{"artifact store is none"},
+		},
+		{
+			name:  "unknown store fails closed",
+			store: ArtifactStore("carrier-pigeon"),
+			phase: "propose",
+			next:  "spec",
+			setup: func(t *testing.T, changeDir string) {
+				t.Helper()
+				writeGatekeeperFixture(t, changeDir, "proposal.md")
+			},
+			declared:         []ArtifactRef{{Path: "proposal.md", Type: "proposal"}},
+			wantArtifactFail: true,
+			wantReasonText:   []string{"unknown artifact store"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			openspecRoot := filepath.Join(t.TempDir(), "openspec")
+			changeDir := filepath.Join(openspecRoot, "changes", "test-change")
+			if err := os.MkdirAll(changeDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if tt.setup != nil {
+				tt.setup(t, changeDir)
+			}
+			result := &PhaseResult{
+				Status:           "success",
+				ExecutiveSummary: "phase done",
+				Artifacts:        tt.declared,
+				NextRecommended:  tt.next,
+			}
+			gk := Gatekeeper(openspecRoot, "test-change", tt.phase, tt.store, result)
+			if gk.Passed != tt.wantPass {
+				t.Fatalf("gatekeeper passed=%v, want %v; details: %+v", gk.Passed, tt.wantPass, gk.Details)
+			}
+			artifact := findCheck(gk, "artifact_existence")
+			if artifact == nil {
+				t.Fatal("expected artifact_existence detail")
+			}
+			if artifact.Skipped != tt.wantArtifactSkip {
+				t.Errorf("artifact_existence skipped=%v, want %v (reason: %q)", artifact.Skipped, tt.wantArtifactSkip, artifact.Reason)
+			}
+			if tt.wantArtifactFail && (artifact.Passed || artifact.Skipped) {
+				t.Errorf("expected a failing artifact_existence, got %+v", artifact)
+			}
+			if tt.wantPass && !tt.wantArtifactSkip && !artifact.Passed {
+				t.Errorf("expected a passing artifact_existence, got %+v", artifact)
+			}
+			if tt.wantArtifactSkip && artifact.Passed {
+				t.Errorf("a skipped artifact_existence must not be reported as passed, got %+v", artifact)
+			}
+			for _, path := range tt.wantReasonPaths {
+				want := filepath.Join(changeDir, path)
+				if !strings.Contains(artifact.Reason, want) {
+					t.Errorf("artifact_existence reason %q must name the absolute path %q", artifact.Reason, want)
+				}
+			}
+			for _, text := range tt.wantReasonText {
+				if !strings.Contains(artifact.Reason, text) {
+					t.Errorf("artifact_existence reason %q must contain %q", artifact.Reason, text)
+				}
+			}
+			if h := findCheck(gk, "no_hallucination"); h == nil || !h.Passed {
+				t.Errorf("declarations must resolve or be recognized as non-paths, got %+v", h)
+			}
+		})
+	}
+}
+
+// writeGatekeeperFixture writes a non-trivial artifact fixture so existence
+// and content-size checks agree on it.
+func writeGatekeeperFixture(t *testing.T, dir, name string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte("# "+name+"\n\nfixture body\n"), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
