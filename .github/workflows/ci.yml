@@ -1,10 +1,16 @@
 name: CI
 
 on:
+  # `push` stays filtered to the trunk: the matrix runs there once a PR lands.
   push:
     branches: [master, main]
+  # `pull_request` is deliberately NOT filtered by base branch. A chained or stacked PR
+  # targets the previous PR's branch rather than the trunk, and filtering here silently
+  # skipped the whole matrix for those children: three hygiene checks from pr-check.yml
+  # ran and looked like validation while tests, complexity and E2E never did. chained-pr
+  # step 5 requires every PR in a chain to be verified independently, so every PR runs
+  # the matrix. Recorded defect: stacked-prs-run-pr-check-only.
   pull_request:
-    branches: [master, main]
   schedule:
     - cron: "0 3 * * *"
 
