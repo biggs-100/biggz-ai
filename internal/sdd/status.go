@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -18,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/pathquote"
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/sddattempt"
@@ -817,25 +817,16 @@ func deriveReviewOffer(changeName, workspaceRoot string, applyState ApplyState, 
 	return &ReviewOfferBlock{Available: true, Invocation: invocation}
 }
 
+// detectGitDirs resolves the git dir and common dir for workspaceRoot through
+// the internal/git wrapper (absolute, symlink-resolved). A missing repository
+// or an unreadable answer yields empty dirs, preserving the prior contract:
+// RDDStatus treats empty dirs as a global-only check.
 func detectGitDirs(workspaceRoot string) (worktreeDir, commonDir string) {
-	if out, err := exec.Command("git", "-C", workspaceRoot, "rev-parse", "--git-dir").Output(); err == nil {
-		worktreeDir = strings.TrimSpace(string(out))
-		if !filepath.IsAbs(worktreeDir) {
-			worktreeDir = filepath.Join(workspaceRoot, worktreeDir)
-		}
-		worktreeDir = filepath.Clean(worktreeDir)
+	gitDir, resolvedCommon, err := git.ResolveGitDirs(context.Background(), workspaceRoot)
+	if err != nil {
+		return "", ""
 	}
-	if out, err := exec.Command("git", "-C", workspaceRoot, "rev-parse", "--git-common-dir").Output(); err == nil {
-		commonDir = strings.TrimSpace(string(out))
-		if !filepath.IsAbs(commonDir) {
-			commonDir = filepath.Join(workspaceRoot, commonDir)
-		}
-		commonDir = filepath.Clean(commonDir)
-	}
-	if commonDir == "" {
-		commonDir = worktreeDir
-	}
-	return worktreeDir, commonDir
+	return gitDir, resolvedCommon
 }
 
 func isRDDEnabled(workspaceRoot string, opts ...StatusOptions) bool {

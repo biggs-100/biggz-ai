@@ -1,14 +1,15 @@
 package sdd
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/pathidentity"
 )
 
@@ -234,29 +235,18 @@ func withinAnyRoot(target string, roots []string) bool {
 	return false
 }
 
-// gitCommonDirForPath returns the git common dir for the given path via
-// "git rev-parse --git-common-dir" memoized per Status via memo map.
-// Uses exec.Command, not shell, and validates via filepath.EvalSymlinks.
+// gitCommonDirForPath returns the git common dir for the given path via the
+// internal/git resolver (absolute, symlink-resolved), memoized per Status via
+// the memo map.
 func gitCommonDirForPath(dir string, memo map[string]string) (string, error) {
 	if memo != nil {
 		if cached, ok := memo[dir]; ok {
 			return cached, nil
 		}
 	}
-	out, err := exec.Command("git", "-C", dir, "rev-parse", "--git-common-dir").Output()
+	_, common, err := git.ResolveGitDirs(context.Background(), dir)
 	if err != nil {
 		return "", err
-	}
-	common := strings.TrimSpace(string(out))
-	if common == "" {
-		return "", fmt.Errorf("empty git common dir")
-	}
-	if !filepath.IsAbs(common) {
-		common = filepath.Join(dir, common)
-	}
-	common = filepath.Clean(common)
-	if resolved, err := filepath.EvalSymlinks(common); err == nil {
-		common = resolved
 	}
 	if memo != nil {
 		memo[dir] = common

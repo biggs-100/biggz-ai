@@ -27,11 +27,7 @@ go-git-spawn	internal/release/release.go	49
 go-git-spawn	internal/release/release.go	55
 go-git-spawn	internal/release/release.go	83
 go-git-spawn	internal/release/release.go	99
-go-git-spawn	internal/sdd/complexity_gate.go	110
-go-git-spawn	internal/sdd/edit_authority.go	246
 go-git-spawn	internal/sdd/session_guard.go	353
-go-git-spawn	internal/sdd/status.go	821
-go-git-spawn	internal/sdd/status.go	828
 go-git-spawn	internal/sddattempt/cas_store.go	287
 declared-boundary	internal/assets/pi/biggz-footer.js	422
 declared-boundary	internal/assets/pi/codegraph-tools.ts	80

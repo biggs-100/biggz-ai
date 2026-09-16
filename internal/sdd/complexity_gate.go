@@ -2,12 +2,13 @@ package sdd
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/review/lens/readability"
 )
 
@@ -106,9 +107,10 @@ func untrackedDiff(repoRoot string) string {
 	return sb.String()
 }
 
+// gitOut runs git in dir through the internal/git wrapper, keeping the
+// repository selection explicit with -C instead of the caller's cwd.
 func gitOut(dir string, args ...string) ([]byte, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	return cmd.Output()
+	return git.Run(context.Background(), "", append([]string{"-C", dir}, args...)...)
 }
 
 func isGateTestFile(path string) bool {
