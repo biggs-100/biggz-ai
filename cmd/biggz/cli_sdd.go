@@ -1678,6 +1678,57 @@ func runSddGate(args []string, stdout, stderr io.Writer) int {
 	return 1
 }
 
+// sddAskCheckRun handles the "biggz sdd-ask-check" subcommand.
+// Usage: biggz sdd-ask-check < payload.json
+// Evaluate the checkpoint-ask contract: synthesis + envelope + substance.
+func sddAskCheckRun() int {
+	return runSddAskCheck(os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
+}
+
+// runSddAskCheck is the testable core of sddAskCheckRun. It reads one JSON
+// payload from stdin and maps the ordered pipeline to process exit codes:
+// 0 allow, 1 blocked(synthesis_required), 2 blocked(envelope_invalid),
+// 3 blocked(checkpoint_option_thin), 4 indeterminate (usage/input error).
+func runSddAskCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	usage := func() {
+		fmt.Fprintln(stderr, "Usage: biggz sdd-ask-check < payload.json")
+		fmt.Fprintln(stderr, "  Evaluate the checkpoint-ask contract: synthesis precondition + envelope validation (limits, ownership, substance).")
+		fmt.Fprintln(stderr, `  payload: {"question": "<ask params/envelope JSON>", "markdown": "<current-turn markdown>"}`)
+		fmt.Fprintln(stderr, "")
+		fmt.Fprintln(stderr, "Exit codes:")
+		fmt.Fprintln(stderr, "  0 — allow (both preconditions pass)")
+		fmt.Fprintln(stderr, "  1 — synthesis required (block)")
+		fmt.Fprintln(stderr, "  2 — envelope invalid: structure/limits/ownership (block)")
+		fmt.Fprintln(stderr, "  3 — checkpoint option carries no decision context (block)")
+		fmt.Fprintln(stderr, "  4 — indeterminate (usage/input error; never a pass)")
+	}
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			usage()
+			return 0
+		}
+		fmt.Fprintf(stderr, "error: unknown argument %q\n", arg)
+		usage()
+		return 4
+	}
+	payload, err := io.ReadAll(stdin)
+	if err != nil {
+		fmt.Fprintf(stderr, "error: cannot read stdin: %v\n", err)
+		return 4
+	}
+	var req sdd.AskCheckRequest
+	if err := json.Unmarshal(payload, &req); err != nil {
+		fmt.Fprintf(stderr, "error: cannot parse stdin payload: %v\n", err)
+		usage()
+		return 4
+	}
+	res := sdd.CheckCheckpointAsk(req)
+	if res.Message != "" {
+		fmt.Fprintln(stdout, res.Message)
+	}
+	return res.Code
+}
+
 // sddTDDRun handles the "biggz sdd-tdd" subcommand.
 // Usage: biggz sdd-tdd <phase> [--project <name>]
 // Check and forward TDD instructions for sub-agents.
