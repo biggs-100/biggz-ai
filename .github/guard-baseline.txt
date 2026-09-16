@@ -1,5 +1,4 @@
 go-git-spawn	internal/doctor/git.go	71
-go-git-spawn	internal/sdd/session_guard.go	353
 declared-boundary	internal/assets/pi/biggz-footer.js	422
 declared-boundary	internal/assets/pi/codegraph-tools.ts	80
 declared-boundary	internal/doctor/git.go	76
