@@ -1,0 +1,6 @@
+name: fix-checkpoint-ask-context
+created: 2026-09-16T21:39:35Z
+phase: tasks
+description: "Issue #14: checkpoint questions are asked without decision context. REVISED SCOPE after a hard finding: the synthesis/ask gate is NOT wired in this build, so the first premise (add rules to the Go validator and mirror them in the JS gate) would have enforced nothing — ValidateQuestionEnvelope has no production call site, the JS gate is excluded from piExtensionsDeployList and self-healed out of installs, and every synthesis_gate.go entry point is called only from tests. The change now closes #14 for real: a live biggz CLI check the deployed ask asset can invoke (synthesis precondition + envelope validation incl. the decision-context substance rule), the wiring of ask-user-choice.ts to that check following the biggz-session-guard.js pattern (argv, no shell, bounded timeout, test seam), the workflow-doc checklist, and honest enforcement claims in docs/architecture.md. Mechanism (what counts as substance, the command shape) is design-owned; see proposal.md, which carries the superseded premise explicitly."
+status: active
+type: bug
