@@ -57,7 +57,7 @@ func TestGatekeeper_ComplexityBlocksVerify(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(openspecRoot, "changes", "test-change", "verify-report.md"), []byte("# V\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	gk := Gatekeeper(openspecRoot, "test-change", "verify", gatekeeperVerifyResult())
+	gk := Gatekeeper(openspecRoot, "test-change", "verify", ArtifactStoreOpenSpec, gatekeeperVerifyResult())
 	c := findCheck(gk, "complexity_gate")
 	if c == nil {
 		t.Fatal("expected complexity_gate detail")
@@ -75,7 +75,7 @@ func TestGatekeeper_ComplexityPassesCleanVerify(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(openspecRoot, "changes", "test-change", "verify-report.md"), []byte("# V\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	gk := Gatekeeper(openspecRoot, "test-change", "verify", gatekeeperVerifyResult())
+	gk := Gatekeeper(openspecRoot, "test-change", "verify", ArtifactStoreOpenSpec, gatekeeperVerifyResult())
 	c := findCheck(gk, "complexity_gate")
 	if c == nil {
 		t.Fatal("expected complexity_gate detail")
@@ -88,7 +88,7 @@ func TestGatekeeper_ComplexityPassesCleanVerify(t *testing.T) {
 func TestGatekeeper_ComplexitySkipsNonVerify(t *testing.T) {
 	tmpDir := t.TempDir()
 	openspecRoot := filepath.Join(tmpDir, "openspec")
-	gk := Gatekeeper(openspecRoot, "test-change", "spec", &PhaseResult{
+	gk := Gatekeeper(openspecRoot, "test-change", "spec", ArtifactStoreOpenSpec, &PhaseResult{
 		Status: "success", ExecutiveSummary: "s",
 		Artifacts:       []ArtifactRef{{Path: "spec.md"}},
 		NextRecommended: "design",
@@ -112,7 +112,7 @@ func TestGatekeeper_ComplexitySkipsNonRepo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(changeDir, "verify-report.md"), []byte("# V\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	gk := Gatekeeper(openspecRoot, "test-change", "verify", gatekeeperVerifyResult())
+	gk := Gatekeeper(openspecRoot, "test-change", "verify", ArtifactStoreOpenSpec, gatekeeperVerifyResult())
 	c := findCheck(gk, "complexity_gate")
 	if c == nil {
 		t.Fatal("expected complexity_gate detail")

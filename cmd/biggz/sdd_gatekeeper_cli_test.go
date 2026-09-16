@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/biggs-100/biggz-ai/internal/sdd"
 )
 
 func TestSddGatekeeperCLI_Help(t *testing.T) {
@@ -89,5 +91,41 @@ func TestSddGatekeeperCLI_MissingResult(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "--result is required") {
 		t.Errorf("expected --result error, got: %s", stderr.String())
+	}
+}
+
+// TestSddGatekeeperCLI_StoreFromPreflight pins the CLI wiring: the active
+// store comes from ResolvePreflightPrefs(cwd), so a "none" preflight makes
+// the artifact check report a skip with a reason instead of a silent pass.
+func TestSddGatekeeperCLI_StoreFromPreflight(t *testing.T) {
+	tmpDir := t.TempDir()
+	changeDir := filepath.Join(tmpDir, "openspec", "changes", "test-change")
+	if err := os.MkdirAll(changeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	origDir, _ := os.Getwd()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(origDir)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sdd.SetPreflightPrefs(cwd, sdd.PreflightPrefs{ArtifactStore: "none"})
+	defer sdd.ClearPreflightPrefs(cwd)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	resultJSON := `{"status":"success","executive_summary":"Done","artifacts":[{"path":"sdd/test-change/proposal"}],"next_recommended":"spec"}`
+	code := runSddGatekeeper([]string{"test-change", "explore", "--result", resultJSON}, stdout, stderr)
+	if code != 0 {
+		t.Fatalf("expected exit code 0 with the artifact check skipped, got %d: %s", code, stdout.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "artifact_existence") || !strings.Contains(out, `"skipped": true`) || !strings.Contains(out, "artifact store is none") {
+		t.Errorf("expected a skipped artifact check naming its reason, got: %s", out)
 	}
 }
