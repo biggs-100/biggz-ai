@@ -1,0 +1,6 @@
+name: fix-false-green-guards
+created: 2026-09-14T15:29:05Z
+phase: explore
+description: "Make the four rg-based CI guards fail closed when their scanner cannot run — they currently report success without scanning (1.35 ms of 'scan' in the real job log, 57 live violations in the tree) — and bring the repository into compliance with the invariant those guards enforce: internal/git is the sole owner of exec.Command(\"git\"), with 57 sites in 23 files to route or explicitly exempt."
+status: active
+type: bug
