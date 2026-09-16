@@ -1,17 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/project"
 )
 
@@ -967,8 +968,8 @@ func bigmemRun() int {
 		}
 		// Detect project root and project name (like engram does)
 		projectRoot, _ := os.Getwd()
-		if gitRoot, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
-			projectRoot = strings.TrimSpace(string(gitRoot))
+		if gitRoot, err := git.TopLevel(context.Background(), ""); err == nil {
+			projectRoot = gitRoot
 		}
 		engramProject := project
 		if !doAll && project == "" && !fromEngram {
@@ -1233,8 +1234,8 @@ func bigmemGraphRun(store *bigmem.Store, args []string) int {
 		// default current project detection (git root base or cwd base)
 		cwd, _ := os.Getwd()
 		projectRoot := cwd
-		if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
-			projectRoot = strings.TrimSpace(string(out))
+		if gitRoot, err := git.TopLevel(context.Background(), ""); err == nil {
+			projectRoot = gitRoot
 		}
 		if projectRoot != "" {
 			project = filepath.Base(projectRoot)
