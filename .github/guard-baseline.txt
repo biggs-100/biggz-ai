@@ -3,12 +3,6 @@ go-git-spawn	internal/install/install.go	372
 go-git-spawn	internal/install/install.go	375
 go-git-spawn	internal/project/detect.go	357
 go-git-spawn	internal/project/detect.go	416
-go-git-spawn	internal/release/release.go	36
-go-git-spawn	internal/release/release.go	43
-go-git-spawn	internal/release/release.go	49
-go-git-spawn	internal/release/release.go	55
-go-git-spawn	internal/release/release.go	83
-go-git-spawn	internal/release/release.go	99
 go-git-spawn	internal/sdd/session_guard.go	353
 go-git-spawn	internal/sddattempt/cas_store.go	287
 declared-boundary	internal/assets/pi/biggz-footer.js	422

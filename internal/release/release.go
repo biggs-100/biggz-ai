@@ -5,10 +5,14 @@
 package release
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
 	"strings"
+
+	"github.com/biggs-100/biggz-ai/internal/git"
 )
 
 // GitState describes the current git repository state.
@@ -33,27 +37,24 @@ func CheckGitState() (*GitState, error) {
 	state := &GitState{}
 
 	// Check clean working tree
-	output, err := exec.Command("git", "status", "--porcelain").Output()
+	output, err := git.Run(context.Background(), "", "status", "--porcelain")
 	if err != nil {
 		return nil, fmt.Errorf("git status: %w", err)
 	}
 	state.Clean = len(strings.TrimSpace(string(output))) == 0
 
 	// Get branch
-	branch, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
-	if err == nil {
-		state.Branch = strings.TrimSpace(string(branch))
+	if branch, err := git.RevParse(context.Background(), "", "--abbrev-ref", "HEAD"); err == nil {
+		state.Branch = branch
 	}
 
 	// Get short commit
-	commit, err := exec.Command("git", "rev-parse", "--short", "HEAD").Output()
-	if err == nil {
-		state.Commit = strings.TrimSpace(string(commit))
+	if commit, err := git.RevParse(context.Background(), "", "--short", "HEAD"); err == nil {
+		state.Commit = commit
 	}
 
 	// Get last tag
-	tag, err := exec.Command("git", "describe", "--tags", "--abbrev=0", "--always").Output()
-	if err == nil {
+	if tag, err := git.Run(context.Background(), "", "describe", "--tags", "--abbrev=0", "--always"); err == nil {
 		state.LastTag = strings.TrimSpace(string(tag))
 	}
 
@@ -80,10 +81,17 @@ func Tag(version string, sign bool) (string, error) {
 	}
 	args = append(args, "-m", fmt.Sprintf("Release %s", version), version)
 
-	cmd := exec.Command("git", args...)
-	output, err := cmd.CombinedOutput()
+	output, err := git.Run(context.Background(), "", args...)
 	if err != nil {
-		return "", fmt.Errorf("git tag: %s: %w", strings.TrimSpace(string(output)), err)
+		// The runner keeps git's raw streams apart: the failure detail is the
+		// exit error's unmodified stderr, falling back to stdout when git
+		// produced nothing there (the former CombinedOutput contract).
+		var exitErr *exec.ExitError
+		detail := strings.TrimSpace(string(output))
+		if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+			detail = strings.TrimSpace(string(exitErr.Stderr))
+		}
+		return "", fmt.Errorf("git tag: %s: %w", detail, err)
 	}
 
 	return version, nil
@@ -96,10 +104,10 @@ func VerifyTag(version string) (string, error) {
 		return "", fmt.Errorf("invalid version %q", version)
 	}
 
-	output, err := exec.Command("git", "rev-parse", "--verify", version).Output()
+	commit, err := git.RevParse(context.Background(), "", "--verify", version)
 	if err != nil {
 		return "", fmt.Errorf("tag %q not found: %w", version, err)
 	}
 
-	return strings.TrimSpace(string(output)), nil
+	return commit, nil
 }
