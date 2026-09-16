@@ -1,9 +1,7 @@
 package main
 
 import (
-	"os/exec"
-	"strings"
-
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/pathquote"
 )
 
@@ -38,9 +36,9 @@ func shortHash(hash string) string {
 	return hash
 }
 
-// detectGitDir returns the git common dir (e.g., .git) by running
-// git rev-parse --git-common-dir. Returns "" if not in a git repo.
-// detectGitDirs returns (commonDir, worktreeDir) for the current directory.
+// detectGitDirs returns (commonDir, worktreeDir) for the current directory,
+// delegating to the single owner (internal/git). The pair's order and the
+// empty-on-error behavior stay byte-compatible for its callers.
 //   - commonDir:  `git rev-parse --git-common-dir` — shared by all worktrees
 //   - worktreeDir: `git rev-parse --git-dir` — private to this worktree
 //
@@ -48,17 +46,7 @@ func shortHash(hash string) string {
 // For a linked worktree, they differ: commonDir is the shared .git dir,
 // worktreeDir is .git/worktrees/<name>.
 func detectGitDirs() (commonDir, worktreeDir string) {
-	// --git-common-dir (clone scope, shared)
-	out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output()
-	if err == nil {
-		commonDir = strings.TrimSpace(string(out))
-	}
-	// --git-dir (worktree scope, private)
-	out, err = exec.Command("git", "rev-parse", "--git-dir").Output()
-	if err == nil {
-		worktreeDir = strings.TrimSpace(string(out))
-	}
-	return
+	return git.DetectGitDirs()
 }
 
 func truncateStr(s string, max int) string {
