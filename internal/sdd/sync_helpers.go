@@ -228,14 +228,38 @@ func syncWriteBlockedMessage(reason string, info domainInfo, file, remedy string
 // Return contract: non-nil bytes + `applied` means the caller writes them;
 // nil bytes + `blocked` means fail closed; nil bytes + "" means skip.
 func syncResolveDomainWrite(info domainInfo, mainPath string) ([]byte, SyncResult, string, error) {
-	mainBytes, err := os.ReadFile(mainPath)
-	mainExists := err == nil
-	if err != nil && !os.IsNotExist(err) {
-		return nil, "", "", fmt.Errorf("read main spec %s: %w", mainPath, err)
+	mainBytes, mainExists, err := syncReadMainSpec(mainPath)
+	if err != nil {
+		return nil, "", "", err
 	}
+	nonEmpty, fullSpecs := syncSplitSources(info.sources)
+	if len(nonEmpty) == 0 {
+		return syncBlockEmptySources(info, mainPath)
+	}
+	if len(fullSpecs) > 0 {
+		return syncResolveFullSpecWrite(info, mainBytes, mainExists, nonEmpty, fullSpecs)
+	}
+	return syncResolveDeltaWrite(info, mainBytes, nonEmpty)
+}
 
-	var nonEmpty, fullSpecs []domainSource
-	for _, source := range info.sources {
+// syncReadMainSpec reads the living spec at mainPath. A missing file is not an
+// error: exists=false lets the caller treat the target as absent, while any
+// other read failure is returned wrapped.
+func syncReadMainSpec(mainPath string) ([]byte, bool, error) {
+	mainBytes, err := os.ReadFile(mainPath)
+	if err == nil {
+		return mainBytes, true, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, false, fmt.Errorf("read main spec %s: %w", mainPath, err)
+	}
+	return nil, false, nil
+}
+
+// syncSplitSources partitions the reads of one domain into the non-empty
+// sources and the full-spec shaped ones, both in input order.
+func syncSplitSources(sources []domainSource) (nonEmpty, fullSpecs []domainSource) {
+	for _, source := range sources {
 		if source.empty {
 			continue
 		}
@@ -244,13 +268,23 @@ func syncResolveDomainWrite(info domainInfo, mainPath string) ([]byte, SyncResul
 			fullSpecs = append(fullSpecs, source)
 		}
 	}
-	if len(nonEmpty) == 0 {
-		file := mainPath
-		if len(info.sources) > 0 {
-			file = info.sources[0].path
-		}
-		return nil, SyncBlocked, syncWriteBlockedMessage("delta file is empty", info, file, "add requirement content or delete the empty delta file"), nil
+	return nonEmpty, fullSpecs
+}
+
+// syncBlockEmptySources fails closed for a domain whose delta files all carry
+// no content, reporting the first source path when one exists.
+func syncBlockEmptySources(info domainInfo, mainPath string) ([]byte, SyncResult, string, error) {
+	file := mainPath
+	if len(info.sources) > 0 {
+		file = info.sources[0].path
 	}
+	return nil, SyncBlocked, syncWriteBlockedMessage("delta file is empty", info, file, "add requirement content or delete the empty delta file"), nil
+}
+
+// syncResolveFullSpecWrite classifies a domain with at least one full-spec
+// shaped source: two or more candidates and a full-spec mixed with delta
+// sources both fail closed, otherwise the single candidate decides the write.
+func syncResolveFullSpecWrite(info domainInfo, mainBytes []byte, mainExists bool, nonEmpty, fullSpecs []domainSource) ([]byte, SyncResult, string, error) {
 	if len(fullSpecs) >= 2 {
 		paths := make([]string, 0, len(fullSpecs))
 		for _, source := range fullSpecs {
@@ -258,19 +292,30 @@ func syncResolveDomainWrite(info domainInfo, mainPath string) ([]byte, SyncResul
 		}
 		return nil, SyncBlocked, syncWriteBlockedMessage("ambiguous full-spec sources: "+strings.Join(paths, ", "), info, fullSpecs[0].path, "keep exactly one full-spec file per domain, or rewrite the extras as ADDED/MODIFIED/REMOVED deltas"), nil
 	}
-	if len(fullSpecs) == 1 {
-		source := fullSpecs[0]
-		if len(nonEmpty) > 1 {
-			return nil, SyncBlocked, syncWriteBlockedMessage("full-spec source mixed with delta sources", info, source.path, "keep either the full-spec file or the delta files for this domain, not both"), nil
-		}
-		if mainExists {
-			if bytes.Equal(mainBytes, source.bytes) {
-				return nil, "", "", nil
-			}
-			return nil, SyncBlocked, syncWriteBlockedMessage("existing living spec differs from the full-spec source", info, source.path, "reconcile openspec/specs/"+info.domain+"/spec.md with the change file, or rewrite the delta as ADDED/MODIFIED/REMOVED"), nil
-		}
+	source := fullSpecs[0]
+	if len(nonEmpty) > 1 {
+		return nil, SyncBlocked, syncWriteBlockedMessage("full-spec source mixed with delta sources", info, source.path, "keep either the full-spec file or the delta files for this domain, not both"), nil
+	}
+	return syncWriteFullSpecTarget(info, mainBytes, mainExists, source)
+}
+
+// syncWriteFullSpecTarget decides one full-spec write against the living spec:
+// an absent target takes the verbatim copy, an equal target is a skip
+// (idempotent re-run) and a differing target fails closed (D8).
+func syncWriteFullSpecTarget(info domainInfo, mainBytes []byte, mainExists bool, source domainSource) ([]byte, SyncResult, string, error) {
+	if !mainExists {
 		return source.bytes, SyncApplied, "", nil
 	}
+	if bytes.Equal(mainBytes, source.bytes) {
+		return nil, "", "", nil
+	}
+	return nil, SyncBlocked, syncWriteBlockedMessage("existing living spec differs from the full-spec source", info, source.path, "reconcile openspec/specs/"+info.domain+"/spec.md with the change file, or rewrite the delta as ADDED/MODIFIED/REMOVED"), nil
+}
+
+// syncResolveDeltaWrite applies the parsed deltas of a domain whose sources
+// are all delta shaped. A contentful source without requirement blocks fails
+// closed, and a write that produced no content is never resolved as applied.
+func syncResolveDeltaWrite(info domainInfo, mainBytes []byte, nonEmpty []domainSource) ([]byte, SyncResult, string, error) {
 	for _, source := range nonEmpty {
 		if len(source.deltas) == 0 {
 			return nil, SyncBlocked, syncWriteBlockedMessage("delta file has content but no requirement blocks", info, source.path, "add a `## ADDED Requirements` section with `### Requirement:` blocks, or convert the file to full-spec shape"), nil
