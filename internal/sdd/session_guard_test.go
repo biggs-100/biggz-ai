@@ -307,12 +307,8 @@ func TestSessionGuard_EmptyFallbackGitLog(t *testing.T) {
 	ctx := context.Background()
 	origExec := execCommand
 	defer func() { execCommand = origExec }()
-	gitCalled := false
 	statusCalled := false
 	execCommand = func(ctx context.Context, name string, args ...string) *exec.Cmd {
-		if name == "git" {
-			gitCalled = true
-		}
 		if name == "biggz" {
 			for _, a := range args {
 				if a == "sdd-status" {
@@ -324,7 +320,9 @@ func TestSessionGuard_EmptyFallbackGitLog(t *testing.T) {
 	}
 	t.Setenv("BIGGZ_PROJECT", "biggz-ai")
 	ws := t.TempDir()
-	// No session_summary exists, so Verify should trigger git+status fallback yet stay blocked
+	// No session_summary exists, so Verify should trigger the fallback yet stay
+	// blocked. The git-log half runs through internal/git and is pinned against
+	// a real repository by TestGitLogFallbackAnchorsToWorkspaceRoot.
 	has, err := VerifySessionSummaryWithWorkspace(ctx, ws, "biggz-ai")
 	if err != nil {
 		t.Fatalf("VerifyWithWorkspace err %v", err)
@@ -332,18 +330,17 @@ func TestSessionGuard_EmptyFallbackGitLog(t *testing.T) {
 	if has {
 		t.Fatalf("expected has=false when BigMem empty, fallback does not satisfy gate")
 	}
-	if !gitCalled || !statusCalled {
-		t.Fatalf("expected gitCalled=%v statusCalled=%v when BigMem empty", gitCalled, statusCalled)
+	if !statusCalled {
+		t.Fatalf("expected statusCalled=true when BigMem empty")
 	}
 	// IsSessionSummaryBlocked also triggers fallback when blocked
-	gitCalled = false
 	statusCalled = false
 	blocked, _ := IsSessionSummaryBlocked(ctx, ws, "test-change")
 	if !blocked {
 		t.Fatalf("expected blocked when empty")
 	}
-	if !gitCalled || !statusCalled {
-		t.Fatalf("IsSessionSummaryBlocked should also trigger git/status fallback, got git=%v status=%v", gitCalled, statusCalled)
+	if !statusCalled {
+		t.Fatalf("IsSessionSummaryBlocked should also trigger the status fallback, got status=%v", statusCalled)
 	}
 	t.Setenv("BIGGZ_PROJECT", "")
 }
@@ -584,4 +581,40 @@ func TestEnsureSessionSummary_PassthroughWhenPresent(t *testing.T) {
 		t.Fatalf("expected silent passthrough, got blocked=%v warn=%q", blocked, warn)
 	}
 	t.Setenv("BIGGZ_PROJECT", "")
+}
+
+// TestGitLogFallbackAnchorsToWorkspaceRoot pins the cwd semantics of the
+// fallback across the single-owner migration: the log must be read from
+// workspaceRoot, never from the caller's working directory.
+func TestGitLogFallbackAnchorsToWorkspaceRoot(t *testing.T) {
+	dirA := filepath.Join(t.TempDir(), "a")
+	if err := os.MkdirAll(dirA, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dirA
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init")
+	run("config", "user.email", "test@example.com")
+	run("config", "user.name", "Test User")
+	if err := os.WriteFile(filepath.Join(dirA, "file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "anchor-marker-commit")
+
+	t.Chdir(t.TempDir())
+
+	out, err := GitLogFallback(t.Context(), dirA)
+	if err != nil {
+		t.Fatalf("GitLogFallback: %v", err)
+	}
+	if !strings.Contains(out, "anchor-marker-commit") {
+		t.Fatalf("fallback must read the log of workspaceRoot, got: %q", out)
+	}
 }

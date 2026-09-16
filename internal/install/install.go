@@ -22,6 +22,7 @@ import (
 	piadapter "github.com/biggs-100/biggz-ai/internal/agents/pi"
 	"github.com/biggs-100/biggz-ai/internal/assets"
 	"github.com/biggs-100/biggz-ai/internal/filemerge"
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/install/steps"
 	"github.com/biggs-100/biggz-ai/internal/pipeline"
 	"github.com/biggs-100/biggz-ai/internal/platform"
@@ -362,18 +363,18 @@ func verifyOrchestratorDeployment(homeDir string, adapter plugin.AgentAdapter) e
 // Clone/worktree clearing requires the actual git directories: RDDEnable with
 // empty strings only writes the global file and cannot clear a stale
 // `clone: disabled` generation that lives under .git/biggz/rdd-mode/.
-// Detection is best-effort via `git rev-parse` and never fails the install.
+// Both directories come from internal/git's single-owner resolver, which
+// dedupes the former rev-parse pair. Detection is best-effort and never fails
+// the install: a failing rev-parse leaves both dirs empty.
 //
 // When cfg.HomeDir overrides the real home (tests), HOME and USERPROFILE are
 // temporarily pointed at homeDir so review's globalStatePath (which uses
 // os.UserHomeDir) writes under the temp home for test isolation.
 func ensureRDDEnabled(homeDir string) {
 	var worktreeGitDir, commonGitDir string
-	if out, err := exec.Command("git", "rev-parse", "--git-dir").Output(); err == nil {
-		worktreeGitDir = strings.TrimSpace(string(out))
-	}
-	if out, err := exec.Command("git", "rev-parse", "--git-common-dir").Output(); err == nil {
-		commonGitDir = strings.TrimSpace(string(out))
+	if gitDir, commonDir, err := git.ResolveGitDirs(context.Background(), ""); err == nil {
+		worktreeGitDir = gitDir
+		commonGitDir = commonDir
 	}
 
 	// Temporarily override HOME/USERPROFILE when HomeDir is a test temp dir

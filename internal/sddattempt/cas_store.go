@@ -50,6 +50,7 @@ package sddattempt
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -62,6 +63,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/review"
 )
 
@@ -280,11 +282,10 @@ func resolveStore(changeName, repoRoot string) (Store, error) {
 // directory. Any git failure returns an error; callers classify the
 // not-a-git-repository failure class with isNotGitRepoError.
 func resolveCloneStore(changeName, repoRoot, legacyPath string) (Store, error) {
-	args := []string{"rev-parse", "--git-common-dir"}
-	if repoRoot != "" {
-		args = append([]string{"-C", repoRoot}, args...)
-	}
-	out, err := exec.Command("git", args...).Output()
+	// git.Run keeps stdout and git's raw stderr apart, so the wrapped error
+	// still carries the *exec.ExitError with unmodified stderr that
+	// isNotGitRepoError classifies by wording.
+	out, err := git.Run(context.Background(), repoRoot, "rev-parse", "--git-common-dir")
 	if err != nil {
 		return Store{}, fmt.Errorf("git common-dir discovery failed: %w", err)
 	}

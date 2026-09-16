@@ -373,3 +373,46 @@ func TestDetectProject_EmptyDir(t *testing.T) {
 		t.Error("DetectProjectLegacy empty should return non-empty")
 	}
 }
+
+// --- git owner routing (TM-2) ---
+
+// TestDetectGitHelpers_EmptyOnNonRepo pins the empty-string-on-error contract
+// of both detection helpers across the single-owner migration.
+func TestDetectGitHelpers_EmptyOnNonRepo(t *testing.T) {
+	dir := t.TempDir()
+	if root := detectGitRootDir(dir); root != "" {
+		t.Errorf("detectGitRootDir outside a repo = %q; want empty", root)
+	}
+	if name := detectFromGitRemote(dir); name != "" {
+		t.Errorf("detectFromGitRemote outside a repo = %q; want empty", name)
+	}
+}
+
+// TestDetectGitHelpers_ExplicitDirBeatsCallerCwd pins the repository selection
+// contract (TM-2): the dir argument selects the repository, never the caller's
+// working directory.
+func TestDetectGitHelpers_ExplicitDirBeatsCallerCwd(t *testing.T) {
+	repo := t.TempDir()
+	initGit(t, repo)
+	add := exec.Command("git", "-C", repo, "remote", "add", "origin", "https://github.com/example/explicit-repo.git")
+	if out, err := add.CombinedOutput(); err != nil {
+		t.Fatalf("git remote add: %v\n%s", err, out)
+	}
+
+	t.Chdir(t.TempDir()) // foreign cwd: the caller is not inside repo
+
+	want, err := filepath.EvalSymlinks(repo)
+	if err != nil {
+		t.Fatalf("EvalSymlinks(%q): %v", repo, err)
+	}
+	got, err := filepath.EvalSymlinks(detectGitRootDir(repo))
+	if err != nil {
+		t.Fatalf("detectGitRootDir(%q) did not resolve the explicit repository: %v", repo, err)
+	}
+	if got != want {
+		t.Errorf("detectGitRootDir = %q; want %q", got, want)
+	}
+	if name := detectFromGitRemote(repo); name != "explicit-repo" {
+		t.Errorf("detectFromGitRemote = %q; want explicit-repo", name)
+	}
+}

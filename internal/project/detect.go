@@ -8,10 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/biggs-100/biggz-ai/internal/git"
 )
 
 // Errors.
@@ -350,16 +351,16 @@ func invalidConfigResult(path string, err error) ProjectInfo {
 	}
 }
 
-// detectGitRootDir returns the git repository root for dir, or "" if not in a repo.
+// detectGitRootDir returns the canonical absolute git repository root for dir,
+// or "" if not in a repo. The repository is selected by dir through the single
+// owner, never by the caller's working directory (TM-2).
 func detectGitRootDir(dir string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := newProjectCommandContext(ctx, "git", "-C", dir, "rev-parse", "--show-toplevel")
-	out, err := cmd.Output()
+	root, err := git.TopLevel(ctx, dir)
 	if err != nil {
 		return ""
 	}
-	root := strings.TrimSpace(string(out))
 	return root
 }
 
@@ -403,18 +404,13 @@ func scanChildren(dir string) (repos []string, timedOut bool) {
 	return repos, false
 }
 
-// newProjectCommandContext creates a git command with context.
-// Uses exec.CommandContext; on Windows the caller may hide window via SysProcAttr.
-func newProjectCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
-	return exec.CommandContext(ctx, name, args...)
-}
-
 // detectFromGitRemote attempts to determine the project name from the git remote origin URL.
+// The repository is selected by dir through the single owner, never by the
+// caller's working directory (TM-2).
 func detectFromGitRemote(dir string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	cmd := newProjectCommandContext(ctx, "git", "-C", dir, "remote", "get-url", "origin")
-	out, err := cmd.Output()
+	out, err := git.Run(ctx, dir, "remote", "get-url", "origin")
 	if err != nil {
 		return ""
 	}

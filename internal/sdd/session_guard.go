@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/biggs-100/biggz-ai/internal/bigmem"
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/project"
 )
 
@@ -348,13 +349,11 @@ func parseSavedID(out string) string {
 	return ""
 }
 
-// GitLogFallback runs git log --oneline -15 anchored to workspaceRoot.
+// GitLogFallback runs git log --oneline -15 anchored to workspaceRoot through
+// the single owner: workspaceRoot is the command's working directory, never the
+// caller's.
 func GitLogFallback(ctx context.Context, workspaceRoot string) (string, error) {
-	cmd := execCommand(ctx, "git", "log", "--oneline", "-15")
-	if workspaceRoot != "" {
-		cmd.Dir = workspaceRoot
-	}
-	out, err := cmd.CombinedOutput()
+	out, err := git.Run(ctx, workspaceRoot, "log", "--oneline", "-15")
 	return string(out), err
 }
 
