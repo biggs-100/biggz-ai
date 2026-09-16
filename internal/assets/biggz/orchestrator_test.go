@@ -1,6 +1,7 @@
 package biggz_test
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -379,6 +380,101 @@ func TestOrchestratorRecallDisciplineInvariant(t *testing.T) {
 		}
 		if !strings.Contains(wf, "never FTS") {
 			t.Errorf("workflow must ban FTS retrieval for 'where were we?'")
+		}
+	})
+}
+
+// readArchitectureDoc reads the repo-level architecture doc relative to this
+// package dir (internal/assets/biggz -> repo root).
+func readArchitectureDoc(t *testing.T) string {
+	t.Helper()
+	const path = "../../../docs/architecture.md"
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("Read(%s) error = %v", path, err)
+	}
+	return string(data)
+}
+
+// askContextSection isolates the `## Visible Context Before Every Question
+// (MANDATORY)` block so the four pinned phrases cannot drift elsewhere in the
+// workflow asset.
+func askContextSection(t *testing.T, md string) string {
+	t.Helper()
+	const header = "## Visible Context Before Every Question (MANDATORY)"
+	start := strings.Index(md, header)
+	if start == -1 {
+		t.Fatalf("biggz-orchestrator-workflow.md missing section %q", header)
+	}
+	rest := md[start+len(header):]
+	if end := strings.Index(rest, "\n## "); end != -1 {
+		rest = rest[:end]
+	}
+	return rest
+}
+
+// TestOrchestratorAskContextItemsInvariant pins issue #14's four decision-context
+// items verbatim inside the Visible Context section, plus the live invocation
+// path that enforces them at ask time.
+func TestOrchestratorAskContextItemsInvariant(t *testing.T) {
+	section := askContextSection(t, readWorkflow(t))
+
+	t.Run("four pinned context items verbatim", func(t *testing.T) {
+		for _, phrase := range []string{
+			"evidence found and how it was verified",
+			"problem, scope, effort, risk, what it unlocks, and deferral cost",
+			"recommendation with its reason",
+			"no-go condition — research more instead of asking early",
+		} {
+			if !strings.Contains(section, phrase) {
+				t.Errorf("## Visible Context Before Every Question (MANDATORY) missing pinned phrase %q", phrase)
+			}
+		}
+	})
+
+	t.Run("cites the deployed enforcement path", func(t *testing.T) {
+		for _, needle := range []string{"ask-user-choice.ts", "biggz-ask-guard.js", "biggz sdd-ask-check"} {
+			if !strings.Contains(section, needle) {
+				t.Errorf("## Visible Context Before Every Question (MANDATORY) missing live-path citation %q", needle)
+			}
+		}
+	})
+}
+
+// TestArchitectureEnforcementClaimsMatchLivePath keeps docs/architecture.md
+// honest: enforcement claims MUST name the deployed ask tool -> check command
+// path, and every mention of the non-deployed biggz-synthesis-gate.js MUST carry
+// its deployment status instead of asserting enforcement.
+func TestArchitectureEnforcementClaimsMatchLivePath(t *testing.T) {
+	doc := readArchitectureDoc(t)
+
+	t.Run("names the deployed invocation path", func(t *testing.T) {
+		for _, needle := range []string{"ask-user-choice.ts", "biggz-ask-guard.js", "biggz sdd-ask-check"} {
+			if !strings.Contains(doc, needle) {
+				t.Errorf("docs/architecture.md missing deployed-path component %q", needle)
+			}
+		}
+	})
+
+	t.Run("non-deployed synthesis gate never claims enforcement", func(t *testing.T) {
+		honesty := []string{
+			"not deployed", "no longer deployed", "never deployed",
+			"source-only", "retired", "excluded from",
+		}
+		for _, sentence := range strings.Split(doc, ". ") {
+			if !strings.Contains(sentence, "biggz-synthesis-gate.js") {
+				continue
+			}
+			honest := false
+			for _, marker := range honesty {
+				if strings.Contains(sentence, marker) {
+					honest = true
+					break
+				}
+			}
+			if !honest {
+				t.Errorf("biggz-synthesis-gate.js claim lacks deployment-status marker (not deployed/source-only/retired/excluded from): %.160q", sentence)
+			}
 		}
 	})
 }

@@ -152,6 +152,8 @@ Never emit a blocking question the human must decide blind. The questionnaire mo
 - When options need richer comparison (mockups, snippets, diffs, configs), attach `preview` per option (side-by-side layout, single-select only); it is persisted verbatim by `FormatFallback`.
 - Shortcuts (2–4 options, ≤60-char labels, ≤16-char headers) still apply; synthesis markdown stays FIRST and adjacent before any checkpoint ask.
 - Self-check: Before invoking the question tool, re-read ONLY the question text + options and confirm a reader who never saw this chat could decide correctly. If not, rewrite — do not call.
+- Issue #14 context bar — every ask MUST carry, inside the envelope: (1) the **evidence found and how it was verified**; (2) per option, the **problem, scope, effort, risk, what it unlocks, and deferral cost**; (3) a **recommendation with its reason**, stated plainly enough to disagree with; (4) a **no-go condition — research more instead of asking early** when that context cannot be produced yet.
+- Enforced at ask time by the deployed path `ask-user-choice.ts` → `biggz-ask-guard.js` → `biggz sdd-ask-check` (argv array, no shell, 1000 ms bound, stdin JSON). A decided block means the question is NOT presented; a check that cannot decide presents with a visible warning that enforcement was skipped. `biggz-synthesis-gate.js` is NOT deployed and enforces nothing.
 
 ## Automatic Mode Gatekeeper (MANDATORY)
 
