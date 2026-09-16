@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/codegraph"
+	"github.com/biggs-100/biggz-ai/internal/git"
 )
 
 // codegraphRun handles `biggz codegraph` subcommands.
@@ -150,11 +152,7 @@ func pathIsWithin(parent, child string) bool {
 }
 
 func codegraphGitTopLevel(path string) (string, error) {
-	output, err := exec.Command("git", "-C", path, "rev-parse", "--show-toplevel").Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
+	return git.TopLevel(context.Background(), path)
 }
 
 func printCodegraphHelp() {

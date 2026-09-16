@@ -2,11 +2,12 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/sdd"
 )
 
@@ -143,8 +144,8 @@ func sddNewRun() int {
 
 func detectProjectRoot() string {
 	projectRoot, _ := os.Getwd()
-	if gitRoot, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
-		projectRoot = strings.TrimSpace(string(gitRoot))
+	if gitRoot, err := git.TopLevel(context.Background(), ""); err == nil {
+		projectRoot = gitRoot
 	}
 	return projectRoot
 }

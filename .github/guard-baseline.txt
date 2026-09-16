@@ -1,8 +1,3 @@
-go-git-spawn	cmd/biggz/cli_bigmem.go	970
-go-git-spawn	cmd/biggz/cli_bigmem.go	1236
-go-git-spawn	cmd/biggz/cli_codegraph.go	153
-go-git-spawn	cmd/biggz/export.go	98
-go-git-spawn	cmd/biggz/sdd_new.go	146
 go-git-spawn	internal/doctor/git.go	71
 go-git-spawn	internal/install/install.go	372
 go-git-spawn	internal/install/install.go	375

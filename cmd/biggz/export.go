@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/biggs-100/biggz-ai/internal/git"
 )
 
 func exportRun() int {
@@ -95,7 +97,7 @@ func exportChangelog(since, format string) int {
 		args = append(args, fmt.Sprintf("--since=%s", since))
 	}
 
-	output, err := exec.Command("git", args...).Output()
+	output, err := git.Run(context.Background(), "", args...)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: git log: %v\n", err)
 		return 1
