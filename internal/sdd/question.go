@@ -1,8 +1,10 @@
 package sdd
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -73,12 +75,20 @@ func ValidateQuestionEnvelope(q QuestionEnvelope) error {
 		return fmt.Errorf("isError:true questions exceed limit %d: got %d", maxQuestions, len(q.Questions))
 	}
 	if len(q.Questions) == 0 && len(q.Options) > 0 {
-		return validateTopLevelOptions(q.Options)
-	}
-	for i, qu := range q.Questions {
-		if err := validateSingleQuestion(i, qu); err != nil {
+		if err := validateTopLevelOptions(q.Options); err != nil {
 			return err
 		}
+	} else {
+		for i, qu := range q.Questions {
+			if err := validateSingleQuestion(i, qu); err != nil {
+				return err
+			}
+		}
+	}
+	// Substance is scoped to checkpoint asks: non-checkpoint questions keep the
+	// old behavior (spec: "non-checkpoint asks MUST remain unaffected").
+	if IsCheckpointEnvelope(q) {
+		return ValidateCheckpointSubstance(q)
 	}
 	return nil
 }
@@ -114,6 +124,69 @@ func validateSingleQuestion(index int, qu Question) error {
 		}
 	}
 	return nil
+}
+
+// Checkpoint option substance: a description must clear a length floor AND
+// match at least two distinct decision-context classes. Each conjunct kills a
+// different vacuous ask — long filler without signals, or a single buzzword
+// without scope/effort/risk/unlock/deferral coverage. Bilingual (EN/ES),
+// case-insensitive, word-boundary tokens.
+const (
+	minCheckpointOptionRunes    = 24
+	minCheckpointContextClasses = 2
+)
+
+// ErrThinCheckpointOption marks a checkpoint option whose description carries
+// no decision context; callers map it to the checkpoint_option_thin block.
+var ErrThinCheckpointOption = errors.New("checkpoint_option_thin")
+
+var checkpointContextClasses = []struct {
+	name   string
+	tokens *regexp.Regexp
+}{
+	{"scope", regexp.MustCompile(`(?i)\b(?:files?|paths?|commits?|archivos?|rutas?|repos?)\b`)},
+	{"effort", regexp.MustCompile(`(?i)\b(?:mins?|minutes?|hours?|minutos?|horas?|tests?|pruebas?)\b`)},
+	{"risk", regexp.MustCompile(`(?i)\b(?:risks?|revert\w*|rollbacks?|riesgos?|revirte)\b`)},
+	{"unlock", regexp.MustCompile(`(?i)\b(?:unlocks?|unlocking|unblocks?|unblocking|ships?|shipping|desbloquea\w*|desbloquear)\b`)},
+	{"deferral", regexp.MustCompile(`(?i)\b(?:defer\w*|later|blocked by|aplaza\w*|aplaz\w*)\b`)},
+}
+
+// CheckpointOptionSubstance reports whether a checkpoint option description
+// carries decision context, and which classes matched.
+func CheckpointOptionSubstance(description string) (bool, string) {
+	if len([]rune(strings.TrimSpace(description))) < minCheckpointOptionRunes {
+		return false, ""
+	}
+	var matched []string
+	for _, c := range checkpointContextClasses {
+		if c.tokens.MatchString(description) {
+			matched = append(matched, c.name)
+		}
+	}
+	return len(matched) >= minCheckpointContextClasses, strings.Join(matched, "+")
+}
+
+// ValidateCheckpointSubstance rejects, fail-closed, every checkpoint option
+// whose description carries no decision context. Errors wrap
+// ErrThinCheckpointOption and name the offending option and question.
+func ValidateCheckpointSubstance(q QuestionEnvelope) error {
+	for i, qu := range q.Questions {
+		for _, o := range qu.Options {
+			if ok, _ := CheckpointOptionSubstance(o.Description); !ok {
+				return thinCheckpointOptionError(o, fmt.Sprintf("question %d", i+1))
+			}
+		}
+	}
+	for _, o := range q.Options {
+		if ok, _ := CheckpointOptionSubstance(o.Description); !ok {
+			return thinCheckpointOptionError(o, "top-level options")
+		}
+	}
+	return nil
+}
+
+func thinCheckpointOptionError(o QuestionOption, where string) error {
+	return fmt.Errorf("%w: option %q (%s) carries no decision context (needs ≥24 chars and ≥2 of scope/effort/risk/unlock/deferral signals); add scope, effort, risk, unlocks, deferral cost — or do more research before asking", ErrThinCheckpointOption, o.Label, where)
 }
 
 func validateOptionLabel(label string) error {
