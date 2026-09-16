@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 import { type Static, Type } from "typebox";
+import { checkCheckpointAsk } from "./biggz-ask-guard.js";
 
 const CHOICE_TOOL_NAME = "ask_user_choice";
 const ASK_USER_CHOICE_BLOCKED_EVENT = "gentle-pi:ask-user-choice:blocked";
@@ -70,6 +71,24 @@ export default function askUserChoice(pi: ExtensionAPI): void {
 		async execute(_toolCallId, params: ChoiceParams, _signal, _onUpdate, ctx) {
 			if (ctx.mode !== "tui") {
 				throw new Error("ask_user_choice is unavailable outside the interactive TUI");
+			}
+
+			// Live enforcement path (fix-checkpoint-ask-context): the check owns
+			// the whole rule (synthesis precondition + envelope limits + option
+			// substance) in Go; this asset only decides present/refuse/degrade.
+			const verdict = await checkCheckpointAsk(params);
+			if (verdict?.block) {
+				return {
+					content: [{ type: "text", text: verdict.reason }],
+					isError: true,
+				};
+			}
+			if (verdict?.degraded) {
+				try {
+					ctx.ui.notify(verdict.notice, "warning");
+				} catch {
+					console.warn(verdict.notice);
+				}
 			}
 
 			const items: SelectItem[] = params.options.map((option) => ({
