@@ -1,0 +1,6 @@
+name: fix-sdd-sync-empty-spec
+created: 2026-09-16T16:51:02Z
+phase: explore
+description: "The native openspec sync write path (internal/sdd/sync_helpers.go:180 syncApplyDeltas) calls ApplyDeltas(mainContent, info.deltas) and then writes the result unconditionally. A NEW domain whose delta file is full-spec shaped (# X Specification + ## Purpose + ## Requirements, with no ## ADDED Requirements section) parses to zero deltas, so the living spec is created empty (or skipped) instead of carrying the requirement text: a silent false-green in the SDD pipeline. During fix-false-green-guards the sync phase hit exactly this and had to work around it with a manual verbatim copy, and no test covers the path. Define the intended contract for a new-domain delta whose file is not delta-shaped (verbatim create, loud error, or parser support) and make the native path honour it, with a regression test."
+status: active
+type: bug
