@@ -1,0 +1,100 @@
+# DAG state for SDD change
+# NOTE: this change never had a state.yaml before archive (filesystem + BigMem checked). Created at
+# the archive phase from the launch-prompt final-state facts and fresh artifact reads, in the house
+# style of openspec/changes/archive/2026-09-16-fix-false-green-guards/state.yaml. _meta.yaml is left
+# untouched as audit-trail history (it still reads phase: explore; this file is the state authority).
+phases:
+  explore: done
+  propose: done
+  spec: done
+  design: done
+  tasks: done
+  apply: done
+  verify: done
+  sync: done
+  archive: done
+spec_counts:
+  requirements: 1
+  scenarios: 8
+  given_when_then: 8/8/8
+  note: >-
+    Single domain (sdd), single MODIFIED requirement: Sync Execution Contract, 2 preserved + 6 new
+    scenarios. Applied through the canonical sdd.Sync() path (result=applied) into
+    openspec/specs/sdd/spec.md: +44/-0 lines; 30 requirements before and after (name-set diff
+    verified empty at archive via sorted name lists); scenarios 73 -> 79 (+6), Sync Execution
+    Contract 2 -> 8. No pending_question ever existed for this change; it stays absent.
+delivery:
+  pr1: "PR #102 fix/sdd-sync-empty-write-guard -> merge a89f3493 (397 changed lines: writer guard + resolver unit table)"
+  pr2: "PR #103 fix/sdd-sync-integration-proof -> merge e2adc96c (+303 lines: sync_integration_test.go T1-T5)"
+  master_head: e2adc96c
+  issue: "#101 closed by the merge (verified at archive: gh issue view 101 --repo biggs-100/biggz-ai -> CLOSED)"
+deviations:
+  d8-stricter-block: >-
+    A full-spec delta against an EXISTING living spec whose bytes differ returns blocked, stricter
+    than scenario 4's literal "MUST NOT be replaced". Declared in design D8 + Open Questions,
+    resolved at task 4.6, flagged in both PR bodies; no scenario is broken (replacement stays
+    impossible, the stricter branch just names the conflict).
+  isfullspecshaped-delta-exclusion: >-
+    isFullSpecShaped = requirementHeadingRe && !deltaSectionRe - a necessary deviation from the
+    design's one-line description: delta files also carry "### Requirement:" headings, so without
+    excluding the delta section the verbatim-copy rule would have copied raw deltas into the
+    canonicals. Documented in the sync_helpers.go doc comment and tasks 2.1.
+  delivery-split: >-
+    The implementation measured 644 changed lines (> the 400-line review budget; forecast ~375). The
+    maintainer chose the stacked split over size:exception: PR #102 = 397, PR #103 = +303, each
+    under budget. Recorded as a precedent.
+discovered_defects:
+  - id: stacked-prs-run-pr-check-only
+    severity: medium-high
+    where: ".github/workflows/ci.yml (pull_request: branches: [master, main]) + stacked child PRs"
+    detail: >-
+      A PR whose base is another branch (a stacked child) triggers only pr-check.yml (3 hygiene
+      checks) and never the main CI workflow (Test matrix, Complexity, E2E, guards), because ci.yml
+      filters on base branch master|main. The child PR LOOKS validated (green checks present) while
+      the test/complexity/E2E matrix never ran - a false-green surface of exactly the class this repo
+      has been closing. Workaround used for PR #103: merge/retarget to master and push (or
+      close+reopen) to fire the synchronize/reopened event that starts the suite.
+    status: recorded; candidate for a bounded CI fix (e.g. run ci.yml on all pull_request bases, or a check that asserts the matrix ran).
+    evidence: >-
+      PR #103 ran only PR Validation (3 checks) while its base was fix/sdd-sync-empty-write-guard;
+      after retargeting to master + re-trigger, 18/18 checks green. Verify-report External State had
+      already flagged "main CI entries not yet reported".
+  - id: gh-pr-create-graphql-quirk
+    severity: low
+    where: gh pr create (GitHub CLI) in this worktree
+    detail: >-
+      gh pr create returned "No commits between master and <branch>" while the refs were correct
+      (ls-remote and the compare API agreed the branch was 1 ahead). Both PRs (#102/#103) were
+      created through gh api repos/.../pulls --method POST instead. Related worktree quirk observed
+      at archive: bare gh repo view resolved to a DIFFERENT repository
+      (Gentleman-Programming/gentle-shell) even though origin = biggs-100/biggz-ai; pin --repo
+      biggs-100/biggz-ai. Candidate for the branch-pr skill's known-issues note.
+    status: recorded; docs/skill-fix candidate.
+    evidence: >-
+      gh pr create output "No commits between master and fix/sdd-sync-empty-write-guard"; gh api
+      pulls POST created both PRs; unpinned gh issue view 101 returned an issue from
+      Gentleman-Programming/gentle-shell while --repo biggs-100/biggz-ai returned this change's #101.
+  - id: sdd-explore-readonly-artifact-gap
+    severity: low-medium
+    where: sdd-explore agent tool surface (read/grep/find/ls + ask_user_question)
+    detail: >-
+      sdd-explore agents run read-only (no bash, no write, no BigMem), so the phase cannot persist
+      its own artifact; the orchestrator had to write
+      openspec/changes/fix-sdd-sync-empty-spec/exploration.md and save the BigMem observation on its
+      behalf. Pipeline friction (extra orchestrator work, artifact-drift risk), not data loss.
+    status: recorded; pipeline-friction candidate for its own bounded change.
+    evidence: >-
+      Explore-phase handoff (launch-prompt final-state facts); exploration.md present in the change
+      dir, authored by the orchestrator.
+  - id: requirement-line-anchor-drift
+    severity: low
+    where: openspec/changes/fix-sdd-sync-empty-spec artifacts (apply-progress/verify citations)
+    detail: >-
+      The "### Requirement: Sync Execution Contract" line anchors cited in earlier artifacts
+      (:110/:132 first, then :108/:130, now :130) drift as the file changes; the delta verified
+      verbatim at :130. The stable anchor is the requirement NAME, not the line number; future
+      artifacts should cite the name plus a grep, not a line number.
+    status: recorded; documentation-hygiene guidance for future phases.
+    evidence: >-
+      verify-report.md (candidate d516cf66) cites :130 verbatim; apply/verify artifacts cite
+      :110/:132 and :108/:130 across snapshots.
