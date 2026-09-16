@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -9,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/doctor"
+	"github.com/biggs-100/biggz-ai/internal/git"
 	"github.com/biggs-100/biggz-ai/internal/review"
 	"github.com/biggs-100/biggz-ai/internal/sdd"
 )
@@ -107,10 +110,10 @@ func prCreate() int {
 		return 1
 	}
 
-	// Detect project root
+	// Detect project root (absolute, symlink-resolved via the single owner — TM-2).
 	projectRoot, _ := os.Getwd()
-	if gitRoot, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
-		projectRoot = strings.TrimSpace(string(gitRoot))
+	if top, err := git.TopLevel(context.Background(), ""); err == nil {
+		projectRoot = top
 	}
 
 	// Derive branch type from change name
@@ -181,45 +184,39 @@ func prCreate() int {
 	}
 
 	// Check for uncommitted changes
-	status, _ := exec.Command("git", "status", "--porcelain").Output()
+	status, _ := git.Run(context.Background(), "", "status", "--porcelain")
 	if strings.TrimSpace(string(status)) == "" {
 		fmt.Println("No uncommitted changes. Nothing to PR.")
 		return 0
 	}
 
 	// Create and switch to branch
-	if err := runCmd("git", "checkout", "-b", branchName); err != nil {
+	if err := gitCreateBranch(branchName); err != nil {
 		fmt.Fprintf(os.Stderr, "error: create branch: %v\n", err)
 		return 1
 	}
 
 	// Stage all changes
-	if err := runCmd("git", "add", "-A"); err != nil {
+	if err := gitStageAll(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: stage: %v\n", err)
 		return 1
 	}
 
 	// Commit with conventional message
 	commitMsg := fmt.Sprintf("%s: %s", branchType, strings.ToLower(changeName))
-	if err := runCmd("git", "commit", "-m", commitMsg); err != nil {
+	if err := gitCommit(commitMsg); err != nil {
 		fmt.Fprintf(os.Stderr, "error: commit: %v\n", err)
 		return 1
 	}
 
 	// Push
-	if err := runCmd("git", "push", "-u", "origin", branchName); err != nil {
+	if err := gitPushUpstream(branchName); err != nil {
 		fmt.Fprintf(os.Stderr, "error: push: %v\n", err)
 		return 1
 	}
 
-	// Create PR via gh
-	prArgs := []string{"pr", "create", "--title", title, "--body", body}
-	if labels != "" {
-		for _, l := range strings.Split(labels, ",") {
-			prArgs = append(prArgs, "--label", strings.TrimSpace(l))
-		}
-	}
-	prURL, err := exec.Command("gh", prArgs...).Output()
+	// Create PR via gh — the documented non-git boundary stays untouched (TM-5).
+	prURL, err := exec.Command("gh", ghPRCreateArgs(title, body, labels)...).Output()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: create PR: %v\n", err)
 		return 1
@@ -271,13 +268,13 @@ func detectBranchType(name string) string {
 }
 
 func getChangedFiles(projectRoot string) []string {
-	out, _ := exec.Command("git", "diff", "--name-only", "--cached").Output()
+	out, _ := git.Run(context.Background(), "", "diff", "--name-only", "--cached")
 	staged := strings.Split(strings.TrimSpace(string(out)), "\n")
 
-	out, _ = exec.Command("git", "diff", "--name-only").Output()
+	out, _ = git.Run(context.Background(), "", "diff", "--name-only")
 	unstaged := strings.Split(strings.TrimSpace(string(out)), "\n")
 
-	out, _ = exec.Command("git", "ls-files", "--others", "--exclude-standard").Output()
+	out, _ = git.Run(context.Background(), "", "ls-files", "--others", "--exclude-standard")
 	untracked := strings.Split(strings.TrimSpace(string(out)), "\n")
 
 	var all []string
@@ -326,10 +323,8 @@ func buildPRBodyWithEvidence(changeName string, files []string, opts prEvidenceO
 	cwd := opts.Cwd
 	if cwd == "" {
 		cwd, _ = os.Getwd()
-		if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
-			if t := strings.TrimSpace(string(out)); t != "" {
-				cwd = t
-			}
+		if top, err := git.TopLevel(context.Background(), ""); err == nil {
+			cwd = top
 		}
 	}
 	evidence := buildEvidenceBlock(cwd, opts.ChangeFilter)
@@ -477,11 +472,7 @@ func currentVersion(cwd string) string {
 	if repo == "" {
 		repo, _ = os.Getwd()
 	}
-	cmd := exec.Command("git", "rev-parse", "--short", "HEAD")
-	if repo != "" {
-		cmd.Dir = repo
-	}
-	if out, err := cmd.Output(); err == nil {
+	if out, err := git.Run(context.Background(), repo, "rev-parse", "--short", "HEAD"); err == nil {
 		if v := strings.TrimSpace(string(out)); v != "" {
 			return v
 		}
@@ -489,9 +480,40 @@ func currentVersion(cwd string) string {
 	return "dev"
 }
 
-func runCmd(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+// runGitCommand executes one git command through the single owner (internal/git).
+// dir is empty, so repository selection stays the process working directory
+// exactly as the previous raw spawns did. stdout is echoed verbatim and, on a
+// non-zero exit, git's raw stderr is written back before the error returns
+// (TM-4). The *exec.ExitError is returned unchanged.
+func runGitCommand(args ...string) error {
+	out, err := git.Run(context.Background(), "", args...)
+	if len(out) > 0 {
+		_, _ = os.Stdout.Write(out)
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
+		_, _ = os.Stderr.Write(exitErr.Stderr)
+	}
+	return err
+}
+
+// The pr create write ops. Their argv is fixed and pinned by the TM-3/TM-4
+// tests: checkout -b <branch>, add -A, commit -m <msg>, and
+// push -u origin <branch> with no refspec rewriting (TM-4).
+func gitCreateBranch(branch string) error { return runGitCommand("checkout", "-b", branch) }
+func gitStageAll() error                  { return runGitCommand("add", "-A") }
+func gitCommit(msg string) error          { return runGitCommand("commit", "-m", msg) }
+func gitPushUpstream(branch string) error { return runGitCommand("push", "-u", "origin", branch) }
+
+// ghPRCreateArgs builds the exact argv for `gh pr create`. gh is the documented
+// non-git boundary (TM-5): it keeps exec.Command and is never routed through
+// internal/git; this function exists so its argv is golden-testable.
+func ghPRCreateArgs(title, body, labels string) []string {
+	args := []string{"pr", "create", "--title", title, "--body", body}
+	if labels != "" {
+		for _, l := range strings.Split(labels, ",") {
+			args = append(args, "--label", strings.TrimSpace(l))
+		}
+	}
+	return args
 }
