@@ -1,0 +1,124 @@
+# DAG state for SDD change
+# NOTE: this change never had a state.yaml before archive (filesystem checked pre-move: absent).
+# Created at the archive phase from the launch-prompt final-state facts and fresh artifact reads,
+# in the house style of openspec/changes/archive/2026-09-16-fix-sdd-sync-empty-spec/state.yaml.
+# _meta.yaml is left untouched as audit-trail history (it still reads phase: tasks; this file is
+# the state authority).
+phases:
+  explore: done
+  propose: done
+  spec: done
+  design: done
+  tasks: done
+  apply: done
+  verify: done
+  sync: done
+  archive: done
+spec_counts:
+  requirements: 3
+  scenarios: 29
+  given_when_then: 29/29/29
+  note: >-
+    Three domains, three MODIFIED requirements: sdd (Synthesis Gate block 9 -> 15 scenarios),
+    orchestrator (5 -> 7), pi-integration (3 -> 7). Applied through the canonical sdd.Sync() path
+    (result=applied): openspec/specs/sdd/spec.md 79 -> 85 scenarios, orchestrator 117 -> 119,
+    pi-integration 43 -> 47; requirement-name sets unchanged (30/34/16); block byte-parity exact;
+    rebuild-from-HEAD diff empty; total diff +81/-2 across the three tracked files. No
+    pending_question ever existed for this change; it stays absent.
+delivery:
+  pr1: "PR #108 fix(sdd): reject checkpoint options that carry no decision context -> merge fdddf9ee (+155/-4; slice 1a: substance predicate + ErrThinCheckpointOption in internal/sdd/question.go)"
+  pr2: "PR #109 feat(cli): add biggz sdd-ask-check -> merge 6cd09745 (+357; slice 1b: internal/sdd/ask_check.go + the CLI in cmd/biggz)"
+  pr3: "PR #110 feat(pi): gate the deployed ask tool on biggz sdd-ask-check -> merge 0dd35db4 (+394/-6; slice 2a: internal/assets/pi/biggz-ask-guard.js + .mjs suite, ask-user-choice.ts wiring, deploy list 12 -> 13 JS)"
+  pr4: "PR #111 docs(sdd): make the checkpoint-ask contract and its live path the truth -> merge dc9c3d61 (+104; slice 2b: docs truth pass)"
+  master_head: dc9c3d61
+  issue: "#14 CLOSED (verified at archive: gh issue view 14 --repo biggs-100/biggz-ai -> CLOSED, labels bug + status:approved)"
+  ci: "every PR ran the full 18-check matrix green, stacked bases included (thanks to the earlier ci.yml fix)"
+deviations:
+  superseded-premise: >-
+    The first proposal assumed the rule would enforce itself once added to ValidateQuestionEnvelope and
+    mirrored in biggz-synthesis-gate.js. Refuted with evidence: ValidateQuestionEnvelope has no
+    production call site, the JS gate is excluded from piExtensionsDeployList and self-healed out of
+    installs, and every synthesis_gate.go entry point is test-only. Superseded premise preserved
+    verbatim under "## Superseded premise" in proposal.md and summarized in archive-report.md.
+  design-word-budget: >-
+    Design measured 1,779 words excluding fenced code blocks (2,191 raw) vs the 800-word budget; the
+    mandated coverage (7 decisions, verbatim predicate + fixtures, exit taxonomy, TS seam, file table,
+    slice table, threat matrix, rollback) cannot compress under 800 without deleting required sections.
+    Coverage kept; prose compressed. Precedent: budget_deviations.
+  slice-cap-2a: >-
+    Slice 2a landed at exactly the 400-line cap; the docs pass was deferred to slice 2b (PR #111, +104
+    changed lines) so every slice stayed <= the 400-line review budget.
+  design-fixture-rune-shift: >-
+    The design's literal fixture "Edit 2 files; low risk!" measures 23 runes, not 24; the shipped
+    fixture is "Edit 12 files; low risk!" and the test asserts the rune-length property (runeLen == 24),
+    not the characters. The 23-rune sibling remains the negative boundary. Meets the spec's >=24 floor.
+  assumptions-a1-a6: >-
+    Design-flagged assumptions carried into archive: A1 stdin payload shape ({question, markdown}), A2
+    isError:true validity for a refused ask, A3 ctx.ui.notify availability, A4 no-op factory export,
+    A5 BIGGZ_ASK_CHECK=0 escape hatch, A6 the bash-fallback BigMem save. Verify could not locate a
+    labeled A1-A6 list in the artifacts (only tasks 3.4 cites "(A4)") and recorded a traceability
+    SUGGESTION (see source-scan-order-assertion-textual entry note).
+discovered_defects:
+  - id: ask-check-plain-question-allows
+    severity: medium
+    where: "cmd/biggz runSddAskCheck / internal/sdd/ask_check.go (payload parsing)"
+    detail: >-
+      A payload whose question field is NOT JSON (e.g. a plain string) makes biggz sdd-ask-check exit
+      0 (allow) instead of 4 (indeterminate). Observed on master by the orchestrator: with a valid
+      synthesis and {"question":"Test?","markdown":"<synthesis>"} the command exits 0, so a caller that
+      forgets to encode the ask params inside the question string silently bypasses the envelope
+      limits, the ownership rule and the substance rule (the synthesis precondition still applies, so
+      it is not a total bypass). The correct shape (question = the ask params JSON, as
+      biggz-ask-guard.js sends it) behaves as designed (verified: no synthesis -> 1; valid synthesis +
+      a thin option -> 3 naming the option). Candidate fix: exit 4 for a question that does not parse
+      as JSON, plus a documented example of the payload shape.
+    status: recorded; candidate for a bounded follow-up fix (exit-code + docs).
+    evidence: >-
+      Orchestrator observation on master: {"question":"Test?","markdown":"<synthesis>"} -> exit 0;
+      correct-shape probes -> exit 1 (no synthesis) and exit 3 (thin option named). Verify-report
+      exercises only the correct shape, so this path slipped both RED/GREEN and verify.
+  - id: gh-default-repo-hijack
+    severity: medium
+    where: "gh CLI resolution in this clone (upstream remote + no default repository)"
+    detail: >-
+      This clone has an upstream remote pointing at Gentleman-Programming/gentle-pi (since renamed to
+      gentle-shell) and no gh default repository set, so bare gh commands resolved to THAT repository
+      instead of origin. CORRECTION: this is the real root cause behind the defect recorded as
+      gh-pr-create-graphql-quirk in openspec/changes/archive/2026-09-16-fix-sdd-sync-empty-spec/
+      state.yaml - the "No commits between master and <branch>" error was gh looking at a repo where
+      the branch did not exist, not a graphql quirk nor a phantom PR problem. Mitigated locally with
+      gh repo set-default biggs-100/biggz-ai; every gh call in this change pinned --repo
+      biggs-100/biggz-ai explicitly. The earlier archive must NOT be edited; this entry supersedes its
+      root-cause hypothesis.
+    status: recorded; annotate the other archive's entry in a future maintenance pass (do NOT edit archived state.yaml in place).
+    evidence: >-
+      upstream remote = Gentleman-Programming/gentle-pi (renamed gentle-shell); bare gh issue view 101
+      returned an issue from that repository while --repo biggs-100/biggz-ai returned this repo's #101;
+      gh repo set-default biggs-100/biggz-ai fixed bare resolution.
+  - id: tmp-path-divergence-write-tool-vs-bash
+    severity: low
+    where: "host write tool vs Git Bash path resolution for /tmp"
+    detail: >-
+      The host's write tool resolves /tmp to C:\tmp while Git Bash uses
+      C:\Users\USER\AppData\Local\Temp, so a file written with one path is invisible to a command run
+      with the other. Two sub-agents hit it this session; in the verify run it silently validated a
+      STALE report until the divergence was found. Mitigation: keep scratch files inside the repo tree
+      or pass explicit Windows paths.
+    status: recorded; operational guidance for future phases.
+    evidence: >-
+      verify-run incident (stale report validated until the divergence was found) + two sub-agent hits
+      this session; verified path mapping C:\tmp vs C:\Users\USER\AppData\Local\Temp.
+  - id: source-scan-order-assertion-textual
+    severity: low
+    where: "internal/assets/pi/biggz-ask-guard.test.mjs (call-before-UI assertion)"
+    detail: >-
+      SUGGESTION from verify: the assertion proving the deployed asset invokes the check before
+      rendering is a textual source scan (indexOf('checkCheckpointAsk(') < indexOf('ctx.ui.custom')),
+      which a comment could satisfy; a parse-based assertion would harden it. Corroborated meanwhile by
+      the import regex, the behavioural guard suite (argv array, no shell, 1000 ms, stdin JSON), and
+      source inspection (call at ask-user-choice.ts:79, UI at :102) - residual brittleness only.
+      Related traceability nit: design references "A4" with no labeled A1-A6 list in the artifacts.
+    status: recorded; candidate for a bounded test-hardening follow-up.
+    evidence: >-
+      verify-report.md Issues Found / SUGGESTION (1) and (2); source inspection of ask-user-choice.ts
+      confirms the real call site precedes ctx.ui.custom.
