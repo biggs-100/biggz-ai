@@ -80,6 +80,26 @@ func TestCheckCheckpointAsk(t *testing.T) {
 			req:      AskCheckRequest{Question: askCheckNonCheckpoint, Markdown: askCheckValidSynthesis},
 			wantCode: AskCheckExitAllow,
 		},
+		{
+			name:     "non-JSON question with synthesis is indeterminate",
+			req:      AskCheckRequest{Question: "Test?", Markdown: askCheckValidSynthesis},
+			wantCode: AskCheckExitIndeterminate,
+			wantMsg:  []string{"indeterminate:", "cannot parse the question payload as JSON"},
+			notMsg:   []string{"blocked("},
+		},
+		{
+			name:     "JSON envelope without questions or options is indeterminate",
+			req:      AskCheckRequest{Question: `{"foo":1}`, Markdown: askCheckValidSynthesis},
+			wantCode: AskCheckExitIndeterminate,
+			wantMsg:  []string{"indeterminate:", "nothing to validate"},
+			notMsg:   []string{"blocked("},
+		},
+		{
+			name:     "synthesis still precedes malformed-question detection",
+			req:      AskCheckRequest{Question: "proceed?", Markdown: noSynthesis},
+			wantCode: AskCheckExitSynthesisRequired,
+			wantMsg:  []string{"blocked(synthesis_required)", pinnedSynthesis},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -103,8 +123,11 @@ func TestCheckCheckpointAsk(t *testing.T) {
 			if tt.wantCode == AskCheckExitAllow && res.Message != "" {
 				t.Errorf("allow must be silent, got message %q", res.Message)
 			}
-			if tt.wantCode != AskCheckExitAllow && !strings.HasPrefix(res.Message, "blocked(") {
+			if tt.wantCode >= AskCheckExitSynthesisRequired && tt.wantCode <= AskCheckExitThinOption && !strings.HasPrefix(res.Message, "blocked(") {
 				t.Errorf("message %q must start with a blocked( token", res.Message)
+			}
+			if tt.wantCode == AskCheckExitIndeterminate && strings.Contains(res.Message, "blocked(") {
+				t.Errorf("indeterminate message %q must never contain a blocked( token", res.Message)
 			}
 		})
 	}

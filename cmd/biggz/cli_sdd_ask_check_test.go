@@ -87,6 +87,18 @@ func TestSddAskCheckExitTable(t *testing.T) {
 			wantCode: 4,
 			wantErr:  []string{"error: cannot parse stdin payload", "Usage: biggz sdd-ask-check"},
 		},
+		{
+			name:     "non-JSON question with valid synthesis is indeterminate on stderr",
+			stdin:    askCheckPayload("Test?", cliAskValidSynthesis),
+			wantCode: 4,
+			wantErr:  []string{"indeterminate:", "cannot parse the question payload as JSON"},
+		},
+		{
+			name:     "JSON question without questions or options is indeterminate",
+			stdin:    askCheckPayload(`{"foo":1}`, cliAskValidSynthesis),
+			wantCode: 4,
+			wantErr:  []string{"indeterminate:", "nothing to validate"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -112,6 +124,9 @@ func TestSddAskCheckExitTable(t *testing.T) {
 			}
 			if code == 4 && strings.Contains(stdout+stderr, "blocked(") {
 				t.Errorf("indeterminate output must never print a blocked( token: stdout=%q stderr=%q", stdout, stderr)
+			}
+			if code == 4 && strings.TrimSpace(stdout) != "" {
+				t.Errorf("indeterminate must write only to stderr, got stdout %q", stdout)
 			}
 		})
 	}
