@@ -8,13 +8,15 @@ import (
 
 // Exit codes of `biggz sdd-ask-check` (design D2/D5). 0 allows; 1-3 are
 // decided blocks and are the only codes whose message carries a blocked(
-// token; 4 (indeterminate) is CLI-level: usage/input errors must never print
-// a blocked( token, so a caller can degrade-open with a visible notice.
+// token; 4 (indeterminate) is CLI-level: usage/input errors — including a
+// question payload that is not a recognisable ask envelope — must never
+// print a blocked( token, so a caller can degrade-open with a visible notice.
 const (
 	AskCheckExitAllow             = 0
 	AskCheckExitSynthesisRequired = 1
 	AskCheckExitEnvelopeInvalid   = 2
 	AskCheckExitThinOption        = 3
+	AskCheckExitIndeterminate     = 4
 )
 
 // AskCheckRequest is the stdin payload of `biggz sdd-ask-check`: the raw ask
@@ -45,8 +47,16 @@ func CheckCheckpointAsk(req AskCheckRequest) AskCheckResult {
 	}
 	var env QuestionEnvelope
 	if err := json.Unmarshal([]byte(req.Question), &env); err != nil {
-		// Legacy raw non-envelope checkpoint strings carry no options to validate.
-		return AskCheckResult{Code: AskCheckExitAllow}
+		return AskCheckResult{
+			Code:    AskCheckExitIndeterminate,
+			Message: `indeterminate: cannot parse the question payload as JSON; expected {"question":"<ask params/envelope JSON>","markdown":"<current-turn markdown>"}`,
+		}
+	}
+	if len(env.Questions) == 0 && len(env.Options) == 0 {
+		return AskCheckResult{
+			Code:    AskCheckExitIndeterminate,
+			Message: "indeterminate: the question payload carries neither questions nor options; nothing to validate",
+		}
 	}
 	if err := ValidateQuestionEnvelope(env); err != nil {
 		return askEnvelopeFailure(err)

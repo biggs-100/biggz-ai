@@ -1688,7 +1688,9 @@ func sddAskCheckRun() int {
 // runSddAskCheck is the testable core of sddAskCheckRun. It reads one JSON
 // payload from stdin and maps the ordered pipeline to process exit codes:
 // 0 allow, 1 blocked(synthesis_required), 2 blocked(envelope_invalid),
-// 3 blocked(checkpoint_option_thin), 4 indeterminate (usage/input error).
+// 3 blocked(checkpoint_option_thin), 4 indeterminate (usage/input error or
+// an unrecognisable question payload). Decided-block and allow messages go to
+// stdout; indeterminate messages go to stderr so a caller can degrade-open.
 func runSddAskCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	usage := func() {
 		fmt.Fprintln(stderr, "Usage: biggz sdd-ask-check < payload.json")
@@ -1700,7 +1702,7 @@ func runSddAskCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) in
 		fmt.Fprintln(stderr, "  1 — synthesis required (block)")
 		fmt.Fprintln(stderr, "  2 — envelope invalid: structure/limits/ownership (block)")
 		fmt.Fprintln(stderr, "  3 — checkpoint option carries no decision context (block)")
-		fmt.Fprintln(stderr, "  4 — indeterminate (usage/input error; never a pass)")
+		fmt.Fprintln(stderr, "  4 — indeterminate: usage/input error or unrecognisable question payload (never a pass)")
 	}
 	for _, arg := range args {
 		if arg == "--help" || arg == "-h" {
@@ -1723,6 +1725,10 @@ func runSddAskCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) in
 		return 4
 	}
 	res := sdd.CheckCheckpointAsk(req)
+	if res.Code == sdd.AskCheckExitIndeterminate {
+		fmt.Fprintf(stderr, "error: %s\n", res.Message)
+		return res.Code
+	}
 	if res.Message != "" {
 		fmt.Fprintln(stdout, res.Message)
 	}
