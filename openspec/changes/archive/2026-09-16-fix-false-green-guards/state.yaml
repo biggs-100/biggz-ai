@@ -178,15 +178,38 @@ discovered_defects:
     status: recorded as a suggestion.
   - id: sdd-sync-discards-full-spec-shaped-new-domain
     severity: high
-    where: internal/sdd/openspec-deltas.go ApplyDeltas (native sdd-sync write path)
+    where: internal/sdd/sync_helpers.go syncResolveDeltaWrite/syncResolveFullSpecWrite (the sync write DECISION), not internal/sdd/openspec-deltas.go ApplyDeltas
     detail: >-
-      F1 (raised during sync): the native sdd-sync write path discards requirements for a
-      full-spec-shaped NEW domain - ApplyDeltas("", []) returns "" on a file with no
-      "## ADDED Requirements" section, so it would have created empty main specs for
-      ci-guard-integrity and ci-guard-baseline. Worked around by a verbatim copy of the delta
-      files into openspec/specs/{ci-guard-integrity,ci-guard-baseline}/spec.md. Recorded as a
-      sync write-path correctness candidate for its own bounded change.
-    status: recorded; candidate for its own bounded change.
+      FIXED 2026-09-16, after this archive was written, by the change fix-sdd-sync-empty-spec
+      (PRs #102/#103; commits dae27aab "guard the sync writer against contentless writes" and
+      c673889d "split the sync write decision into named steps"). This entry was accurate when
+      written and is now historical. It also misattributed the layer: returning "" for an empty
+      main with no deltas is CORRECT for a pure function like ApplyDeltas, and the missing guard
+      belonged to the write decision in the caller. Current behaviour: a single full-spec source
+      for a NEW domain is copied verbatim (syncWriteFullSpecTarget), a delta source with content
+      but no requirement blocks fails closed naming the file and the remedy, and a delta run that
+      produces no content fails closed instead of writing an empty spec — the empty living specs
+      this entry predicted can no longer be produced.
+      Original text, kept for the record: F1 (raised during sync): the native sdd-sync write path
+      discards requirements for a full-spec-shaped NEW domain - ApplyDeltas("", []) returns "" on
+      a file with no "## ADDED Requirements" section, so it would have created empty main specs
+      for ci-guard-integrity and ci-guard-baseline. Worked around by a verbatim copy of the delta
+      files into openspec/specs/{ci-guard-integrity,ci-guard-baseline}/spec.md. Recorded as a sync
+      write-path correctness candidate for its own bounded change.
+    correction: >-
+      Void as a work item: no bounded follow-up change is needed. Id kept so the cross-reference
+      from archive-report.md item 12 and from the sync workaround note still resolves.
+    status: corrected — already fixed by fix-sdd-sync-empty-spec (PRs #102/#103) the same day; not a candidate.
+    evidence: >-
+      Live on master 879dd15d: go test ./internal/sdd -run
+      'TestSyncMixedFullSpecVerbatim|TestSyncFullSpecOnlyNotApplicable|TestSyncContentWithoutBlocksBlocked|TestSyncGateBypassNoEmptyWrite'
+      -count=1 -> ok (4/4 PASS); pins live in internal/sdd/sync_integration_test.go (T1/T2/T3/T5,
+      where T5 asserts the writer "must never create a 0-byte living spec"); dae27aab and c673889d
+      are ancestors of master via a89f3493 (PR #102) and e2adc96c (PR #103). Both hand-copied living
+      specs exist and are non-empty (ci-guard-integrity 2365 bytes, ci-guard-baseline 3151 bytes).
+      Residual asymmetry, deliberately pinned and NOT this defect: a change whose only spec file is
+      full-spec shaped is classified not-applicable by the change-level gate (sync_helpers.go:54,
+      "no delta specs for change") and writes nothing, so the author still copies by hand.
   - id: sdd-spec-header-stale
     severity: low
     where: openspec/specs/sdd/spec.md:1

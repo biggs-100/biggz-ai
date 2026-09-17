@@ -79,6 +79,12 @@ section), and the native `sdd-sync` write path would have emitted **empty** main
 (`ApplyDeltas("", []) → ""`). They were applied by verbatim copy instead — content preserved, counts
 as shown.
 
+**F1 correction (2026-09-17).** This workaround was necessary only on the day of the archive. The
+write path was fixed the same day by the change `fix-sdd-sync-empty-spec` (PRs #102/#103), which
+split the write decision into named steps and made a single full-spec source for a NEW domain copy
+verbatim. The workaround text above is kept as the historical record of what the run did; the defect
+entry no longer asks for follow-up work.
+
 ## Delivery — per-PR summary (#86–#99)
 
 All merged to `master`; per-merge net stats from the merge commits:
@@ -200,6 +206,16 @@ New findings raised during verify/sync/archive (appended to `state.yaml`):
 12. F1 `sdd-sync-discards-full-spec-shaped-new-domain` — native sync write path returns `""` for a
     full-spec-shaped file with no `## ADDED Requirements` section; would have created empty main specs.
     Worked around by verbatim copy; sync write-path fix candidate for its own change.
+
+    **Correction (2026-09-17).** Already fixed: the change `fix-sdd-sync-empty-spec` landed the guard
+    the same day (PRs #102/#103 — `dae27aab`, `c673889d`), in `internal/sdd/sync_helpers.go` rather
+    than in `ApplyDeltas`, because returning `""` for an empty main with no deltas is correct for a
+    pure function. No follow-up change is needed; a full-spec new domain is now copied verbatim and a
+    delta producing no content fails closed. Verified live on master `879dd15d` with the four pins in
+    `internal/sdd/sync_integration_test.go` (T1/T2/T3/T5) passing. Original text, kept for the record:
+    native sync write path returns `""` for a full-spec-shaped file with no `## ADDED Requirements`
+    section; would have created empty main specs. Worked around by verbatim copy; sync write-path fix
+    candidate for its own change.
 13. F2 `sdd-spec-header-stale` — `openspec/specs/sdd/spec.md:1` still reads `# Delta for sdd`
     (pre-existing at `0ffedac1`, not introduced by this change).
 14. F3 `sdd-continue-renderer-mismaps-phase` — the human-readable `biggz sdd-continue` printed
