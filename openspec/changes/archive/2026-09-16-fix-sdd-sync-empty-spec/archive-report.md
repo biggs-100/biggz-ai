@@ -165,10 +165,20 @@ New findings raised during this change's run (appended to `state.yaml` `discover
    `synchronize`/`reopened` event. Candidate for a bounded CI fix.
 2. `gh-pr-create-graphql-quirk` (**low**) — `gh pr create` returned `No commits between master and
    <branch>` while `ls-remote` and the compare API agreed the branch was 1 ahead; both PRs were
-   created via `gh api repos/.../pulls --method POST`. Related worktree quirk: bare `gh repo view`
-   resolved to `Gentleman-Programming/gentle-shell` even though `origin` is `biggs-100/biggz-ai` —
-   always pin `--repo` (this report's issue #101 verification did). Candidate for the `branch-pr`
-   skill's known-issues note.
+   created via `gh api repos/.../pulls --method POST`.
+
+   **Correction (2026-09-17, issue #115).** The name and framing of this entry are wrong: it is not
+   a GraphQL quirk. This clone carries an `upstream` remote (`Gentleman-Programming/gentle-pi`, since
+   renamed to `gentle-shell`) and no `gh` default repository set, so BARE `gh` resolves to THAT
+   repository instead of `origin` (`biggs-100/biggz-ai`); `gh pr create` looked for the branch where
+   it does not exist. The paragraph's own "related worktree quirk" below was the actual cause all
+   along. Mitigated locally with `gh repo set-default biggs-100/biggz-ai`; still pin `--repo` (this
+   report's issue #101 verification did, which is why that part worked). The canonical record is
+   `gh-default-repo-hijack` in `openspec/changes/archive/2026-09-16-fix-checkpoint-ask-context/`.
+
+   Original text, kept for the record: bare `gh repo view` resolved to
+   `Gentleman-Programming/gentle-shell` even though `origin` is `biggs-100/biggz-ai` — always pin
+   `--repo`. Candidate for the `branch-pr` skill's known-issues note.
 3. `sdd-explore-readonly-artifact-gap` (**low-medium**) — `sdd-explore` agents run read-only
    (read/grep/find/ls + ask_user_question; no bash, no write, no BigMem), so the phase cannot persist
    its own artifact; the orchestrator wrote `exploration.md` and saved the BigMem observation on its
