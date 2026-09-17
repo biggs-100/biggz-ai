@@ -61,19 +61,30 @@ discovered_defects:
       already flagged "main CI entries not yet reported".
   - id: gh-pr-create-graphql-quirk
     severity: low
-    where: gh pr create (GitHub CLI) in this worktree
+    where: gh CLI default-repository resolution in this worktree (not the GraphQL API)
     detail: >-
-      gh pr create returned "No commits between master and <branch>" while the refs were correct
-      (ls-remote and the compare API agreed the branch was 1 ahead). Both PRs (#102/#103) were
-      created through gh api repos/.../pulls --method POST instead. Related worktree quirk observed
-      at archive: bare gh repo view resolved to a DIFFERENT repository
-      (Gentleman-Programming/gentle-shell) even though origin = biggs-100/biggz-ai; pin --repo
-      biggs-100/biggz-ai. Candidate for the branch-pr skill's known-issues note.
-    status: recorded; docs/skill-fix candidate.
+      MISDIAGNOSED AT THE TIME as a GraphQL quirk; corrected 2026-09-17 (issue #115). This clone
+      carries an `upstream` remote (Gentleman-Programming/gentle-pi, since renamed to
+      gentle-shell) and no `gh` default repository set, so BARE `gh` resolves to that repository
+      instead of `origin` (biggs-100/biggz-ai). `gh pr create` therefore looked for the branch in
+      a repository where it does not exist and reported "No commits between master and <branch>"
+      while ls-remote and the compare API — both run against the right repo — agreed the branch
+      was 1 ahead. Both PRs (#102/#103) were then created through
+      gh api repos/.../pulls --method POST. The same resolution is why an unpinned
+      gh issue view 101 returned an unrelated issue. Mitigated locally with
+      `gh repo set-default biggs-100/biggz-ai`; practitioners should still pin --repo
+      biggs-100/biggz-ai.
+    correction: >-
+      Superseded framing. The canonical record is `gh-default-repo-hijack` (medium) in
+      openspec/changes/archive/2026-09-16-fix-checkpoint-ask-context/state.yaml, which names this
+      entry as the superseded hypothesis. Id kept so cross-references resolve.
+    status: corrected — root cause is the default-repo resolution, not the GraphQL path; local mitigation applied.
     evidence: >-
-      gh pr create output "No commits between master and fix/sdd-sync-empty-write-guard"; gh api
-      pulls POST created both PRs; unpinned gh issue view 101 returned an issue from
-      Gentleman-Programming/gentle-shell while --repo biggs-100/biggz-ai returned this change's #101.
+      gh repo set-default --view -> "No default remote repository has been set."; gh repo view ->
+      Gentleman-Programming/gentle-shell (upstream renamed from gentle-pi) while origin is
+      biggs-100/biggz-ai; after gh repo set-default biggs-100/biggz-ai, gh repo view ->
+      biggs-100/biggz-ai. Original symptom: gh pr create "No commits between master and
+      fix/sdd-sync-empty-write-guard", worked around with gh api pulls POST.
   - id: sdd-explore-readonly-artifact-gap
     severity: low-medium
     where: sdd-explore agent tool surface (read/grep/find/ls + ask_user_question)
