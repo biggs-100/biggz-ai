@@ -116,6 +116,21 @@ const run = (env, extra = {}) =>
     ...extra,
   });
 
+// Scripted in-process child: full runtime path (listeners, JSONL reader, watchdog)
+// without a real process, so tool-event timing is deterministic.
+const scriptedChild = (pid = 987656) => {
+  const child = new EventEmitter();
+  child.pid = pid;
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { writable: true, write: () => true };
+  return child;
+};
+const emitLine = (child, event) => child.stdout.emit('data', Buffer.from(`${JSON.stringify(event)}\n`));
+const killStub = () => {
+  throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+};
+
 describe('strict JSONL framing', () => {
   it('parses partial lines, several records per chunk, and CRLF (CR stripped)', () => {
     const lines = [];
@@ -270,6 +285,106 @@ describe('RPC child runner (fake child over JSONL)', () => {
     assert.equal(result.state, 'stalled');
     assert.equal(result.reason, 'total');
     assert.ok(result.events.some((e) => e.type === 'tick'), 'chatty child was producing output');
+  });
+
+  // #135: a silent tool call (e.g. a >4 min bash command) is work, not a stall.
+  // pi 0.85.1 emits tool_execution_start/end with toolCallId + toolName; while a
+  // tool is in flight the idle bound is suspended, the total bound still governs.
+  it('suspends the idle bound while a tool is in flight and re-arms after tool_execution_end', async (t) => {
+    const child = scriptedChild();
+    const task = run({}, { idleMs: 60, spawnImpl: () => child, killGraceMs: 0, execImpl: () => {}, killImpl: killStub });
+    t.after(() => task.cancel());
+    emitLine(child, { type: 'tool_execution_start', toolCallId: 'call_1', toolName: 'bash', args: { command: 'sleep 600' } });
+    await sleep(180); // > 2× idleMs of silence with a tool in flight
+    assert.equal(task.state, 'running', 'an announced in-flight tool must suspend the idle bound');
+    assert.equal(task.snapshot().reason, null);
+    emitLine(child, { type: 'tool_execution_end', toolCallId: 'call_1', toolName: 'bash', result: { content: [] }, isError: false });
+    const result = await Promise.race([task.promise, sleep(3000).then(() => null)]);
+    assert.ok(result, 'silence after the last tool end must stall');
+    assert.equal(result.state, 'stalled');
+    assert.equal(result.reason, 'idle');
+    assert.ok(await waitFor(() => !isAlive(result.pid)), 'stalled child must be terminated');
+  });
+
+  it('still stalls a silent child with no announced tool (control)', async (t) => {
+    const child = scriptedChild(987657);
+    const task = run({}, { idleMs: 60, spawnImpl: () => child, killGraceMs: 0, execImpl: () => {}, killImpl: killStub });
+    t.after(() => task.cancel());
+    const result = await Promise.race([task.promise, sleep(3000).then(() => null)]);
+    assert.ok(result, 'a silent child with no tool event must stall as before');
+    assert.equal(result.state, 'stalled');
+    assert.equal(result.reason, 'idle');
+  });
+
+  it('keeps the idle bound suspended until the last of several in-flight tools ends', async (t) => {
+    const child = scriptedChild(987658);
+    const task = run({}, { idleMs: 60, spawnImpl: () => child, killGraceMs: 0, execImpl: () => {}, killImpl: killStub });
+    t.after(() => task.cancel());
+    emitLine(child, { type: 'tool_execution_start', toolCallId: 'call_a', toolName: 'bash' });
+    emitLine(child, { type: 'tool_execution_start', toolCallId: 'call_b', toolName: 'read' });
+    await sleep(180);
+    assert.equal(task.state, 'running');
+    emitLine(child, { type: 'tool_execution_end', toolCallId: 'call_a', toolName: 'bash', isError: false });
+    await sleep(180);
+    assert.equal(task.state, 'running', 'one tool still in flight must keep the idle bound suspended');
+    emitLine(child, { type: 'tool_execution_end', toolCallId: 'call_b', toolName: 'read', isError: false });
+    const result = await Promise.race([task.promise, sleep(3000).then(() => null)]);
+    assert.equal(result?.state, 'stalled');
+    assert.equal(result?.reason, 'idle');
+  });
+
+  it('keeps the total bound in effect while the idle bound is tool-suspended', async (t) => {
+    const child = scriptedChild(987659);
+    const task = run({}, { idleMs: 5000, totalMs: 120, spawnImpl: () => child, killGraceMs: 0, execImpl: () => {}, killImpl: killStub });
+    t.after(() => task.cancel());
+    emitLine(child, { type: 'tool_execution_start', toolCallId: 'long', toolName: 'bash' });
+    const result = await Promise.race([task.promise, sleep(3000).then(() => null)]);
+    assert.ok(result, 'the total bound must settle a tool-suspended task');
+    assert.equal(result.state, 'stalled');
+    assert.equal(result.reason, 'total');
+  });
+
+  it('degrades safely on malformed tool events (missing keys fall back, never throw)', async (t) => {
+    const warns = [];
+    const child = scriptedChild(987660);
+    const task = run(
+      {},
+      { idleMs: 60, spawnImpl: () => child, killGraceMs: 0, execImpl: () => {}, killImpl: killStub, logger: { warn: (m) => warns.push(m), error() {} } },
+    );
+    t.after(() => task.cancel());
+    emitLine(child, { type: 'tool_execution_start' }); // no toolCallId/toolName
+    emitLine(child, { type: 'tool_execution_start', toolName: 'bash' }); // name-only fallback
+    await sleep(180);
+    assert.equal(task.state, 'running', 'malformed starts must still suspend the idle bound');
+    emitLine(child, { type: 'tool_execution_end' }); // clears the unnamed fallback key only
+    await sleep(180);
+    assert.equal(task.state, 'running', 'the name-keyed tool is still in flight');
+    emitLine(child, { type: 'tool_execution_end', toolName: 'bash' });
+    const result = await Promise.race([task.promise, sleep(3000).then(() => null)]);
+    assert.equal(result?.state, 'stalled');
+    assert.equal(result?.reason, 'idle');
+    assert.deepEqual(warns, [], 'malformed tool events must not surface a handler error');
+  });
+
+  // F1: an oversized `tool_execution_end` line is dropped by the 1 MiB cap; its
+  // key must not stay in flight forever turning a 4 min idle bound into 30 min.
+  it('re-arms the idle bound when a dropped line may have been tool_execution_end', async (t) => {
+    const warns = [];
+    const child = scriptedChild(987661);
+    const task = run(
+      {},
+      { idleMs: 60, totalMs: 1200, spawnImpl: () => child, killGraceMs: 0, execImpl: () => {}, killImpl: killStub, logger: { warn: (m) => warns.push(m), error() {} } },
+    );
+    t.after(() => task.cancel());
+    emitLine(child, { type: 'tool_execution_start', toolCallId: 'call_1', toolName: 'bash' });
+    const oversized = `${JSON.stringify({ type: 'tool_execution_end', toolCallId: 'call_1', toolName: 'bash', result: { content: [{ type: 'text', text: 'x'.repeat(JSONL_MAX_LINE_BYTES + 64) }] }, isError: false })}\n`;
+    child.stdout.emit('data', Buffer.from(oversized));
+    const result = await Promise.race([task.promise, sleep(3000).then(() => null)]);
+    assert.ok(result, 'a dropped end line must not suspend the idle bound forever');
+    assert.equal(result.state, 'stalled');
+    assert.equal(result.reason, 'idle', 'the plain idle bound must re-arm after a framing drop');
+    assert.ok(warns.some((w) => /oversized JSONL line skipped/.test(w)), 'the drop must be logged');
+    assert.ok(await waitFor(() => !isAlive(result.pid)), 'stalled child must be terminated');
   });
 
   // Regression for #132: settle() → clearTimers() used to race a late stdout
