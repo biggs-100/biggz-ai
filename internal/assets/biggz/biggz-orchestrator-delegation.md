@@ -140,7 +140,7 @@ Exceptions:
 
 ### Pi Runtime Overlays & Background Subagent Policy
 
-{{BIGGZ_BACKGROUND_POLICY}} — rules: background-subagents block in delegation contract.
+This policy is resolved live: the `subagent` tool being available is `Background subagent policy: on (capability: ready)`; when the tool is missing, the policy is off.
 
 When Background subagent policy: on (capability: ready), use `subagent` `mode: "background"` ONLY for independent read-only exploration/audit where parent can continue non-overlapping work. At most 2 concurrent background tasks. Completion notifications only: do not poll/sleep/status-check — wait on runs with `subagent_wait` when the result is needed. Use foreground `mode: "task"` when result needed before next action, and always for user decisions, SDD apply/writers, dependent verify, archive, dependent phases, and any delegated work whose output determines next action. Do not duplicate launches or overlap files/topics. Never run parallel writers in one worktree. Policy off OR the `subagent` tool unavailable → do not delegate: run the work inline (bounded reads/writes) or stop and explain the blocker.
 

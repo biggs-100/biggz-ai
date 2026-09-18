@@ -95,7 +95,7 @@ The plugintest.FakeAgent MUST support a TempDir for filesystem-based tests. SetT
 
 ### Requirement: REQ-INST-001 — Pi Web Search Extension Deployment
 
-The system MUST provide `DeployPiWebSearch(ctx, homeDir)` that writes `internal/assets/pi/biggz-web-search.js` to `~/.pi/agent/extensions/biggz-web-search.js` via `filemerge.WriteFileAtomic`. It MUST create parent directories, MUST be idempotent, MUST integrate with `Run()` and `Result.PiWebSearch`, and MUST support TempDir routing for tests. Subagent deployment MUST be served by `PiExtensionsStep.deploySubAgents` (the live path on the `Run()` pipeline); the dead `DeployPiSubAgents`, `DeployPiWaitPretty`, and `DeployPiPrettyWrapper` helpers MUST be removed, with no remaining install-flow or test references.
+The system MUST provide `DeployPiWebSearch(ctx, homeDir)` that writes `internal/assets/pi/biggz-web-search.js` to `~/.pi/agent/extensions/biggz-web-search.js` via `filemerge.WriteFileAtomic` and returns the resulting `filemerge.WriteResult`. It MUST create parent directories, MUST be idempotent, and MUST support TempDir routing for tests. On the `Run()` pipeline, web-search deployment MUST be served by the `PiExtensionsStep` deploy list; subagent deployment MUST be served by `PiExtensionsStep.deploySubAgents`; the dead `DeployPiSubAgents`, `DeployPiWaitPretty`, and `DeployPiPrettyWrapper` helpers MUST be removed, with no remaining install-flow or test references.
 (Previously: `Run()` was stated to call `DeployPiSubAgents` alongside the standalone deploy helpers; the dead-helper removal was unaccounted.)
 
 #### Scenario: Atomic deploy creates extension
@@ -103,7 +103,7 @@ The system MUST provide `DeployPiWebSearch(ctx, homeDir)` that writes `internal/
 - GIVEN Pi is installed and `homeDir` resolves to `~/.pi/agent`
 - WHEN `DeployPiWebSearch(ctx, homeDir)` is called
 - THEN `extensions/biggz-web-search.js` MUST exist with embedded bytes written atomically via temp+rename
-- AND `Result.PiWebSearch` MUST indicate deployed
+- AND the returned `filemerge.WriteResult` MUST report the written file
 
 #### Scenario: Idempotent second deploy
 
