@@ -13,10 +13,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/agents"
 	"github.com/biggs-100/biggz-ai/internal/filemerge"
+	"github.com/biggs-100/biggz-ai/internal/sdd"
 	"github.com/biggs-100/biggz-ai/model"
 	"github.com/biggs-100/biggz-ai/plugin"
 )
@@ -25,6 +27,12 @@ const (
 	piAppendSystemFile = "APPEND_SYSTEM.md"
 	piMCPConfigFile    = "mcp.json"
 	piSettingsFile     = "settings.json"
+	// piSubagentsJ0k3rPinned is the maintained-fork spec, exact-pinned (never
+	// floating) until the own subagent-runtime cutover retires it.
+	piSubagentsJ0k3rPinned = "npm:pi-subagents-j0k3r@1.6.1"
+	// piPrettyPackage renders j0k3r FleetView output; preserved across the
+	// cutover because the runtime keeps the pretty layer.
+	piPrettyPackage = "npm:@heyhuynhgiabuu/pi-pretty"
 )
 
 var legacyPiSubagentPackageIdentities = map[string]struct{}{
@@ -104,6 +112,12 @@ func (a *Adapter) Detect(_ context.Context, homeDir string) (bool, string, strin
 // ~/.pi/agent/node_modules/gentle-pi/subagents/* → ~/.pi/agent/agents/).
 // This gives pi `sdd-apply`, `sdd-research`, `sdd-spec`, etc. as native
 // agents visible via `/agents` and the model assignment modal.
+//
+// Cutover (S3): once the own biggz subagent-runtime marker is deployed
+// (`internal/sdd.SubagentRuntimeMarkerPath`), the runtime owns delegation and
+// the j0k3r fork is dropped from this list — installing it would dual-register
+// subagent tools. Until the marker is deployed the exact pin stays, so a
+// revert + reinstall restores `npm:pi-subagents-j0k3r@1.6.1`.
 // Mouse parity for the questionnaire (SGR 1000/1006 click-to-focus / double-click
 // to confirm, multi-select toggle) is provided by the pi extension
 // `~/.pi/agent/extensions/biggz-question-mouse.js` which is deployed via
@@ -124,8 +138,9 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	//   --prefix=biggz` and exposes `biggz_mem_*` as native Pi tools with
 	//   `/mcp` health. Pinned `^2` (v2.32.1 shape), idempotent via `pi
 	//   install`, offline-tolerant (MCP JSON remains harmless).
-	// - npm:pi-subagents-j0k3r must use `pi install` (not `npm install -g`) — pi
-	//   loader only scans ~/.pi/agent/npm.
+	// - npm:pi-subagents-j0k3r@1.6.1 (exact pin, never floating) must use
+	//   `pi install` (not `npm install -g`) — pi loader only scans
+	//   ~/.pi/agent/npm.
 	// - npm:@juicesharp/rpiv-ask-user-question provides the `ask_user_question`
 	//   TUI (single/multi-select + "Type something." + "Chat about this") that
 	//   is pi's parity for opencode's `question` (grouped interaction,
@@ -140,14 +155,35 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	// - Mouse parity for that TUI (biggz-question-mouse.js) is NOT installed
 	//   via `pi install`; it is copied to `~/.pi/agent/extensions/` via
 	//   DeployPiQuestionMouse (filemerge) during `biggz install --agent pi`.
-	return [][]string{
+	cmds := [][]string{
 		{"pi", "install", "npm:pi-mcp-adapter@^2"},
-		{"pi", "install", "npm:pi-subagents-j0k3r"},
+		{"pi", "install", piSubagentsJ0k3rPinned},
 		{"pi", "install", "npm:@juicesharp/rpiv-ask-user-question"},
 		{"pi", "install", "npm:rpiv-todo"},
 		{"pi", "install", "npm:pi-web-access"},
 		{"pi", "install", "npm:pi-btw"},
-	}, nil
+	}
+	// Cutover: with the own subagent-runtime marker deployed, the runtime owns
+	// delegation; the fork must not be (re)installed or pi would load two
+	// dispatchers registering duplicate subagent tools.
+	if subagentRuntimeDeployed("") {
+		cmds = slices.DeleteFunc(cmds, func(cmd []string) bool {
+			return strings.Contains(strings.Join(cmd, " "), sdd.SubagentRuntimeJ0k3rMarker)
+		})
+	}
+	return cmds, nil
+}
+
+// subagentRuntimeDeployed reports whether the own subagent-runtime marker
+// (owned by internal/sdd) is deployed — the S3 cutover signal. homeDir is the
+// user home used when PI_CODING_AGENT_DIR is unset; pass "" to resolve it via
+// os.UserHomeDir.
+func subagentRuntimeDeployed(homeDir string) bool {
+	if homeDir == "" {
+		homeDir, _ = os.UserHomeDir()
+	}
+	info, err := os.Stat(sdd.SubagentRuntimeMarkerPath(homeDir))
+	return err == nil && !info.IsDir()
 }
 
 func (a *Adapter) Capabilities() []string {
@@ -256,7 +292,7 @@ func (a *Adapter) ProvisionBigMemMCP(homeDir string) (bool, []string, error) {
 		}
 	}
 
-	changedSettings, err := a.mergePiSettingsBigMem(settingsPath, mcpBinary)
+	changedSettings, err := a.mergePiSettingsBigMem(settingsPath, mcpBinary, homeDir)
 	if err != nil {
 		return false, nil, err
 	}
@@ -311,16 +347,20 @@ func (a *Adapter) BiggzMCPPath() string {
 	return "biggz-mcp"
 }
 
-func (a *Adapter) mergePiSettingsBigMem(path, mcpBinary string) (filemerge.WriteResult, error) {
+func (a *Adapter) mergePiSettingsBigMem(path, mcpBinary, homeDir string) (filemerge.WriteResult, error) {
 	obj, err := readPiJSONObject(path)
 	if err != nil {
 		return filemerge.WriteResult{}, err
 	}
-	// Ensure packages always contains the subagent dispatcher (j0k3r fork)
-	// and its pretty renderer, deduplicated, while still filtering legacy
-	// vendor prefixes and the predecessor npm:pi-subagents entry. This is
-	// idempotent: repeated installs keep exactly one copy.
-	desiredPiPackages := []string{"npm:pi-subagents-j0k3r", "npm:@heyhuynhgiabuu/pi-pretty"}
+	// Cutover-aware desired packages: the j0k3r fork stays exact-pinned only
+	// until the own subagent-runtime marker is deployed. From then on the
+	// runtime owns delegation, so the fork must be absent from settings
+	// packages (loading both dispatchers registers duplicate subagent tools).
+	cutover := subagentRuntimeDeployed(homeDir)
+	desiredPiPackages := []string{piPrettyPackage}
+	if !cutover {
+		desiredPiPackages = append([]string{piSubagentsJ0k3rPinned}, desiredPiPackages...)
+	}
 	var filtered []any
 	if pkgs, ok := obj["packages"]; ok {
 		filtered = filterPiPackages(pkgs)
@@ -330,7 +370,16 @@ func (a *Adapter) mergePiSettingsBigMem(path, mcpBinary string) (filemerge.Write
 	if filtered == nil {
 		filtered = []any{}
 	}
-	// Dedupe by base package identity (strip @version suffix for comparison).
+	// Cutover reconcile: purge every j0k3r spec shape (floating or pinned) so
+	// reinstall converges an existing install to runtime-only delegation.
+	if cutover {
+		filtered = dropPiPackagesMatching(filtered, sdd.SubagentRuntimeJ0k3rMarker)
+	}
+	// Exact-pin reconcile: drop stale differently-speced copies of a pinned
+	// package (e.g. floating npm:pi-subagents-j0k3r from older installs) so
+	// the pin replaces them instead of coexisting with a float.
+	filtered = dropSupersededPiPins(filtered, desiredPiPackages)
+	// Dedupe by exact spec.
 	for _, want := range desiredPiPackages {
 		if containsPiPackage(filtered, want) {
 			continue
@@ -614,15 +663,62 @@ func containsPiPackage(existing []any, want string) bool {
 	return false
 }
 
+// dropSupersededPiPins removes existing entries that share a package base
+// with an exact-pinned desired spec but carry a different spec (floating or
+// older version), so the pin replaces them instead of coexisting with them.
+// Legacy vendor identities are already dropped by filterPiPackages before
+// this runs, so piPackageIdentity returns the entry's own spec here.
+func dropSupersededPiPins(existing []any, desired []string) []any {
+	pins := make(map[string]string, len(desired))
+	for _, want := range desired {
+		if base := piPackageBase(want); base != want {
+			pins[base] = want
+		}
+	}
+	if len(pins) == 0 {
+		return existing
+	}
+	kept := make([]any, 0, len(existing))
+	for _, pkg := range existing {
+		spec := piPackageIdentity(pkg)
+		if pin, ok := pins[piPackageBase(spec)]; ok && spec != pin {
+			continue
+		}
+		kept = append(kept, pkg)
+	}
+	return kept
+}
+
+// dropPiPackagesMatching removes package entries whose spec carries the given
+// fragment, mirroring the runtime's `hasJ0k3rPackage` containment check. Used
+// at cutover to purge every retired-dispatcher spec shape (floating or pinned).
+func dropPiPackagesMatching(existing []any, fragment string) []any {
+	kept := make([]any, 0, len(existing))
+	for _, pkg := range existing {
+		if strings.Contains(piPackageIdentity(pkg), fragment) {
+			continue
+		}
+		kept = append(kept, pkg)
+	}
+	return kept
+}
+
+// piPackageBase strips a trailing @version from a package spec so entries can
+// be compared by base identity; the leading @ of a scoped package is kept.
+func piPackageBase(spec string) string {
+	if i := strings.LastIndex(spec, "@"); i > 0 && spec[i-1] != ':' {
+		return spec[:i]
+	}
+	return spec
+}
+
 // Background subagent policy — 4-source fail-closed port of gentle-pi's
 // resolveBackgroundSubagentsPolicy. Resolution order: project > global >
 // env > default off. Malformed file fails closed to off without fallback.
 
 const (
-	backgroundPolicyOn         = "on"
-	backgroundPolicyOff        = "off"
-	backgroundCapabilityReady  = "ready"
-	backgroundCapabilityAbsent = "absent"
+	backgroundPolicyOn  = "on"
+	backgroundPolicyOff = "off"
 )
 
 const (
@@ -630,9 +726,13 @@ const (
 	BackgroundSubagentsFile   = "background-subagents.json"
 )
 
-type BackgroundSubagentsPolicy string
-type BackgroundSubagentsSource string
-type BackgroundSubagentsCapability = string
+// Thin delegates to the internal/sdd owner: the exported names stay for pi
+// callers and tests, but type identity lives once in sdd.
+type (
+	BackgroundSubagentsPolicy     = sdd.BackgroundSubagentsPolicy
+	BackgroundSubagentsSource     = sdd.BackgroundSubagentsSource
+	BackgroundSubagentsCapability = string
+)
 
 const (
 	BackgroundSourceProject     BackgroundSubagentsSource = "project_file"
@@ -641,26 +741,11 @@ const (
 	BackgroundSourceDefault     BackgroundSubagentsSource = "default"
 )
 
-type BackgroundSubagentsResolution struct {
-	Policy            BackgroundSubagentsPolicy `json:"policy"`
-	Source            BackgroundSubagentsSource `json:"source"`
-	Malformed         bool                      `json:"malformed"`
-	ProjectFile       string                    `json:"projectFile"`
-	GlobalFile        string                    `json:"globalFile"`
-	ProjectFileExists bool                      `json:"projectFileExists"`
-	GlobalFileExists  bool                      `json:"globalFileExists"`
-	EnvValue          *string                   `json:"envValue"`
-}
-
-type LoadBackgroundSubagentsOptions struct {
-	GentleAiConfigHome string
-	Env                map[string]string
-}
-
-type BackgroundSubagentsReport struct {
-	Message string `json:"message"`
-	Type    string `json:"type"` // info | warning
-}
+type (
+	BackgroundSubagentsResolution  = sdd.BackgroundSubagentsResolution
+	LoadBackgroundSubagentsOptions = sdd.LoadBackgroundSubagentsOptions
+	BackgroundSubagentsReport      = sdd.BackgroundSubagentsReport
+)
 
 func parseBackgroundSubagentsPolicyFile(raw string) (BackgroundSubagentsPolicy, bool) {
 	var parsed map[string]any
@@ -783,8 +868,6 @@ func loadBackgroundSubagentsPolicy(cwd string) string {
 	return resolveBackgroundSubagentsPolicy(cwd, LoadBackgroundSubagentsOptions{}).Policy.String()
 }
 
-func (p BackgroundSubagentsPolicy) String() string { return string(p) }
-
 func lookupBackgroundEnv(env map[string]string) (string, bool) {
 	if env != nil {
 		if v, ok := env["BIGGZ_BACKGROUND_SUBAGENTS"]; ok {
@@ -804,81 +887,23 @@ func lookupBackgroundEnv(env map[string]string) (string, bool) {
 	return "", false
 }
 
-func describeBackgroundSubagentsSource(r BackgroundSubagentsResolution) string {
-	switch r.Source {
-	case BackgroundSourceProject:
-		return fmt.Sprintf("project file %s", r.ProjectFile)
-	case BackgroundSourceGlobal:
-		return fmt.Sprintf("global file %s", r.GlobalFile)
-	case BackgroundSourceEnvironment:
-		return "BIGGZ_BACKGROUND_SUBAGENTS"
-	default:
-		return "built-in default"
-	}
-}
-
+// renderBackgroundSubagentsReport delegates to the internal/sdd owner so the
+// `disabled/unmanaged` notice and the report typing render identically from
+// both entry points (never a second copy to drift).
 func renderBackgroundSubagentsReport(r BackgroundSubagentsResolution, capability string, wrote *BackgroundSubagentsPolicy) BackgroundSubagentsReport {
-	lines := []string{fmt.Sprintf("background subagents: %s (decided by %s; capability: %s)", r.Policy, describeBackgroundSubagentsSource(r), capability)}
-	if wrote != nil {
-		lines = append(lines, fmt.Sprintf("Wrote %s to the global file %s.", *wrote, r.GlobalFile))
-	}
-	if r.Malformed {
-		path := r.GlobalFile
-		if r.Source == BackgroundSourceProject {
-			path = r.ProjectFile
-		}
-		lines = append(lines, fmt.Sprintf("%s is present but malformed, so the policy fails closed to off and no lower-priority source is consulted.", path))
-	}
-	outranks := wrote != nil && r.Source == BackgroundSourceProject
-	if outranks {
-		lines = append(lines, fmt.Sprintf("That global write does not take effect here: the project file %s outranks it. Edit or remove that project file to let the global setting decide.", r.ProjectFile))
-	} else if wrote == nil && r.Source == BackgroundSourceProject && r.GlobalFileExists {
-		lines = append(lines, fmt.Sprintf("The global file %s exists but is outranked by that project file.", r.GlobalFile))
-	}
-	if r.EnvValue != nil && r.Source != BackgroundSourceEnvironment {
-		ev := *r.EnvValue
-		if ev == backgroundPolicyOn || ev == backgroundPolicyOff {
-			lines = append(lines, fmt.Sprintf("BIGGZ_BACKGROUND_SUBAGENTS=%s is set, but both files outrank it and it outranks the built-in default; it decides only when neither file exists.", ev))
-		} else {
-			lines = append(lines, fmt.Sprintf("BIGGZ_BACKGROUND_SUBAGENTS=\"%s\" is not a recognized value (\"on\" or \"off\"), so it is ignored.", ev))
-		}
-	}
-	lines = append(lines, "Resolution order (first hit wins): project file, global file, BIGGZ_BACKGROUND_SUBAGENTS, built-in default off.")
-	tp := "info"
-	if r.Malformed || outranks {
-		tp = "warning"
-	}
-	return BackgroundSubagentsReport{Message: strings.Join(lines, "\n"), Type: tp}
+	return sdd.RenderBackgroundSubagentsReport(r, capability, wrote)
 }
 
 func RenderBackgroundSubagentsReport(r BackgroundSubagentsResolution, capability string, wrote *BackgroundSubagentsPolicy) BackgroundSubagentsReport {
 	return renderBackgroundSubagentsReport(r, capability, wrote)
 }
 
+// resolveBackgroundSubagentsCapability delegates to the marker owner in
+// internal/sdd: `ready` only when the deployed subagent-runtime marker is
+// present AND j0k3r is absent from settings packages. Third-party
+// `pi-subagents*` package presence alone must not yield `ready`.
 func resolveBackgroundSubagentsCapability(homeDir string) string {
-	candidates := []string{
-		filepath.Join(homeDir, ".pi", "agent", "npm", "node_modules", "pi-subagents"),
-		filepath.Join(homeDir, ".pi", "agent", "npm", "node_modules", "pi-subagents-j0k3r"),
-		filepath.Join(homeDir, ".pi", "agent", "node_modules", "pi-subagents"),
-		filepath.Join(homeDir, ".pi", "agent", "node_modules", "pi-subagents-j0k3r"),
-	}
-	if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
-		candidates = append(candidates,
-			filepath.Join(v, "npm", "node_modules", "pi-subagents"),
-			filepath.Join(v, "npm", "node_modules", "pi-subagents-j0k3r"),
-			filepath.Join(v, "node_modules", "pi-subagents"),
-			filepath.Join(v, "node_modules", "pi-subagents-j0k3r"),
-		)
-	}
-	for _, root := range candidates {
-		if _, err := os.Stat(filepath.Join(root, "package.json")); err == nil {
-			return backgroundCapabilityReady
-		}
-		if _, err := ResolvePackageBin(root); err == nil {
-			return backgroundCapabilityReady
-		}
-	}
-	return backgroundCapabilityAbsent
+	return sdd.ResolveBackgroundSubagentsCapability(homeDir)
 }
 
 func renderBackgroundSubagentsStatusLine(homeDir string) string {
