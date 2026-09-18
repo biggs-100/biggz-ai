@@ -301,20 +301,6 @@ The system MUST render synthesis tables (proposal/spec/design/tasks/verify) with
 - WHEN rendered
 - THEN right columns MUST have identical `visibleWidth`, left truncated only
 
-### Requirement: POLISH-ORCH-02 — Wait Headline Data Contract
-
-The system MUST provide wait headline data for `subagent_wait`: when 2-4 runs waiting, headline MUST be 1 line `Wait {elapsed}s · {N} runs ({summaries}) — open Fleet for detail` (e.g., `Wait 23s · 2 runs (sdd-apply running, sdd-verify queued) — open Fleet for detail`) plus optional 1 dim hint line; it MUST NOT dump full `formatAsyncRunList`.
-
-#### Scenario: Headline single line with summaries
-- GIVEN 2 runs: `sdd-apply running`, `sdd-verify queued`, elapsed 23s
-- WHEN headline generated
-- THEN output MUST be `Wait 23s · 2 runs (sdd-apply running, sdd-verify queued) — open Fleet for detail`
-
-#### Scenario: Limits to ≤2 lines
-- GIVEN 4 runs waiting
-- WHEN headline rendered
-- THEN output MUST be ≤2 lines, first solid, second optional dim, never full list dump
-
 ### Requirement: REQ-RR3 — Session Recall Gate Hardening
 
 Session Boot Recall MUST start with `biggz_mem_context(5)` and MUST answer after at most ONE additional recency call (`biggz recall`/`Search("",…)`, empty query, `ORDER BY updated_at DESC`); total recall reads MUST NOT exceed two calls before the recap is emitted, and recall SHOULD stay within the 1–2 call / ~5k-token KPI. "Where were we?" MUST NEVER trigger chained FTS/keyword searches (`search --query "session"`, token chains) to reconstruct session state; FTS `rank` MUST NOT be used for latest. Fallback when BigMem is empty: `git log --oneline -15` + `sdd-status --json`, fallback noted. `internal/assets/biggz/biggz-orchestrator-workflow.md` MUST document this Recall discipline (`mem_context` + ≤1 recency call → answer; never FTS chains).
@@ -809,3 +795,19 @@ The fast lane MUST run inside the existing `sdd-ff` meta-command (`internal/asse
 - GIVEN `sdd-route` evaluates a lane-sized change
 - WHEN routing runs
 - THEN no verdict MUST be persisted or read to select the lane
+
+### Requirement: Delegation Tool Naming Contract
+
+`internal/assets/biggz/biggz-orchestrator-delegation.md` MUST cite the registered runtime names — `subagent` (foreground `mode:"task"`, background `mode:"background"`) and `subagent_wait` — and MUST NOT cite unregistered names (`subagent_run`, a native `task` fallback) or retired third-party affordances (`FleetView`, `formatAsyncRunList`). When the runtime is unavailable, the doc MUST carry documented fallback text.
+
+#### Scenario: Delegation doc cites real tools
+
+- GIVEN `biggz-orchestrator-delegation.md` read
+- WHEN delegation calls are inspected
+- THEN `subagent` and `subagent_wait` MUST be cited and `subagent_run`/native `task` fallback MUST NOT appear
+
+#### Scenario: Retired affordances absent
+
+- GIVEN the same file
+- WHEN searched for `FleetView`/`Fleet`
+- THEN no reference MUST remain

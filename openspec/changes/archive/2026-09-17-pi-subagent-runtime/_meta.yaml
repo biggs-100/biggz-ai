@@ -1,0 +1,5 @@
+name: pi-subagent-runtime
+created: 2026-09-17T16:32:45Z
+phase: explore
+description: "Build biggz-ai's own pi subagent runtime (gentle-shell-style) to replace the third-party pi-subagents-j0k3r dependency; render via host width primitives to eliminate the pi TUI overflow crash class"
+status: active
