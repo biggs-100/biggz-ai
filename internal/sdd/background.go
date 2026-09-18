@@ -242,6 +242,20 @@ func RenderBackgroundSubagentsReport(r BackgroundSubagentsResolution, capability
 	if disabled {
 		lines = append(lines, fmt.Sprintf("Background subagents are disabled/unmanaged (policy: %s, capability: %s): background launches stay inert until the runtime is deployed (biggz install --agent pi) and the policy is turned on.", r.Policy, capability))
 	}
+	outranks := wrote != nil && r.Source == BackgroundSourceProject
+	lines = appendBackgroundSourceNotes(lines, r, wrote, outranks)
+	tp := "info"
+	if r.Malformed || outranks || disabled {
+		tp = "warning"
+	}
+	return BackgroundSubagentsReport{Message: strings.Join(lines, "\n"), Type: tp}
+}
+
+// appendBackgroundSourceNotes appends the wrote/malformed/outrank/env source
+// notes and the resolution-order line. Extracted from
+// RenderBackgroundSubagentsReport to keep its cyclomatic complexity within the
+// repo gate (gocyclo -over 15).
+func appendBackgroundSourceNotes(lines []string, r BackgroundSubagentsResolution, wrote *BackgroundSubagentsPolicy, outranks bool) []string {
 	if wrote != nil {
 		lines = append(lines, fmt.Sprintf("Wrote %s to the global file %s.", *wrote, r.GlobalFile))
 	}
@@ -252,7 +266,6 @@ func RenderBackgroundSubagentsReport(r BackgroundSubagentsResolution, capability
 		}
 		lines = append(lines, fmt.Sprintf("%s is present but malformed, so the policy fails closed to off and no lower-priority source is consulted.", path))
 	}
-	outranks := wrote != nil && r.Source == BackgroundSourceProject
 	if outranks {
 		lines = append(lines, fmt.Sprintf("That global write does not take effect here: the project file %s outranks it. Edit or remove that project file to let the global setting decide.", r.ProjectFile))
 	} else if wrote == nil && r.Source == BackgroundSourceProject && r.GlobalFileExists {
@@ -266,12 +279,7 @@ func RenderBackgroundSubagentsReport(r BackgroundSubagentsResolution, capability
 			lines = append(lines, fmt.Sprintf("BIGGZ_BACKGROUND_SUBAGENTS=\"%s\" is not a recognized value (\"on\" or \"off\"), so it is ignored.", ev))
 		}
 	}
-	lines = append(lines, "Resolution order (first hit wins): project file, global file, BIGGZ_BACKGROUND_SUBAGENTS, built-in default off.")
-	tp := "info"
-	if r.Malformed || outranks || disabled {
-		tp = "warning"
-	}
-	return BackgroundSubagentsReport{Message: strings.Join(lines, "\n"), Type: tp}
+	return append(lines, "Resolution order (first hit wins): project file, global file, BIGGZ_BACKGROUND_SUBAGENTS, built-in default off.")
 }
 
 // SubagentRuntimeTargetName is the deployed file name of the biggz subagent
