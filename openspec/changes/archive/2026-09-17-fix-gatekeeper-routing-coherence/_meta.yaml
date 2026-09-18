@@ -1,0 +1,5 @@
+name: fix-gatekeeper-routing-coherence
+created: 2026-09-17T14:45:00Z
+phase: propose
+description: "Medium defect: gatekeeper checkRouting validates next_recommended against the hardcoded linear table nextPhaseValid (gatekeeper.go:92) instead of the real dependency-resolved next phase (resolveNextRecommended, status.go:1211). A phase result that correctly declares the successor the dependency graph asks for fails with routing_coherence, so the gate's verdict depends on phrasing, not state."
+status: active

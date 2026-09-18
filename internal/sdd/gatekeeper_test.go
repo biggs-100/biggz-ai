@@ -1,6 +1,7 @@
 package sdd
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 	"strings"
@@ -124,16 +125,17 @@ func TestGatekeeper_InvalidRouting(t *testing.T) {
 		t.Error("expected gatekeeper to fail with invalid routing")
 	}
 
-	// Check routing_coherence failed
-	found := false
-	for _, d := range gk.Details {
-		if d.Name == "routing_coherence" && !d.Passed {
-			found = true
-			break
-		}
+	// Check routing_coherence failed against the dependency authority, which
+	// resolves spec from the proposal record, never against the retired table.
+	routing := findCheck(gk, "routing_coherence")
+	if routing == nil {
+		t.Fatal("expected a routing_coherence detail")
 	}
-	if !found {
-		t.Error("expected routing_coherence check to fail")
+	if routing.Passed || routing.Skipped {
+		t.Errorf("expected a failing routing_coherence, got %+v", routing)
+	}
+	if !strings.Contains(routing.Reason, "spec") {
+		t.Errorf("routing_coherence reason %q must name the expected successor %q", routing.Reason, "spec")
 	}
 }
 
@@ -179,9 +181,12 @@ func TestGatekeeper_ApplyCanLoop(t *testing.T) {
 	openspecRoot := filepath.Join(tmpDir, "openspec")
 	changeDir := filepath.Join(openspecRoot, "changes", "test-change")
 	os.MkdirAll(changeDir, 0755)
-	// Create prerequisite artifacts for apply phase
+	// Create prerequisite artifacts for apply phase. The delta spec must sit at
+	// the canonical specs/<domain>/spec.md location so the dependency authority
+	// derives apply; tasks below all-done let apply loop.
 	os.WriteFile(filepath.Join(changeDir, "proposal.md"), []byte("# Proposal\n\n## Intent\n\nTest\n"), 0644)
-	os.WriteFile(filepath.Join(changeDir, "spec.md"), []byte("# Spec\n\n## Requirements\n\nTest\n"), 0644)
+	os.MkdirAll(filepath.Join(changeDir, "specs", "sdd"), 0755)
+	os.WriteFile(filepath.Join(changeDir, "specs", "sdd", "spec.md"), []byte("# Spec\n\n## Requirements\n\nTest\n"), 0644)
 	os.WriteFile(filepath.Join(changeDir, "design.md"), []byte("# Design\n\n## Architecture\n\nTest\n"), 0644)
 	os.WriteFile(filepath.Join(changeDir, "tasks.md"), []byte("# Tasks\n\n- [x] Task 1\n- [ ] Task 2\n"), 0644)
 	os.WriteFile(filepath.Join(changeDir, "apply-progress.md"), []byte("# Apply Progress\n\n## Completed\n\nTask 1 done\n"), 0644)
@@ -192,7 +197,7 @@ func TestGatekeeper_ApplyCanLoop(t *testing.T) {
 		Artifacts: []ArtifactRef{
 			{Path: "apply-progress.md", Type: "apply-progress"},
 		},
-		NextRecommended: "apply (1/2 tasks)", // apply can loop
+		NextRecommended: "apply (1/2 tasks)", // apply can loop while tasks remain
 	}
 
 	gk := Gatekeeper(openspecRoot, "test-change", "apply", ArtifactStoreOpenSpec, result)
@@ -211,9 +216,12 @@ func TestGatekeeper_VerifyCanRemediate(t *testing.T) {
 	openspecRoot := filepath.Join(tmpDir, "openspec")
 	changeDir := filepath.Join(openspecRoot, "changes", "test-change")
 	os.MkdirAll(changeDir, 0755)
-	// Create prerequisite artifacts for verify phase
+	// Create prerequisite artifacts for verify phase. The delta spec must sit
+	// at the canonical specs/<domain>/spec.md location so the dependency
+	// authority reaches the remediation branch instead of re-planning.
 	os.WriteFile(filepath.Join(changeDir, "proposal.md"), []byte("# Proposal\n\n## Intent\n\nTest\n"), 0644)
-	os.WriteFile(filepath.Join(changeDir, "spec.md"), []byte("# Spec\n\n## Requirements\n\nTest\n"), 0644)
+	os.MkdirAll(filepath.Join(changeDir, "specs", "sdd"), 0755)
+	os.WriteFile(filepath.Join(changeDir, "specs", "sdd", "spec.md"), []byte("# Spec\n\n## Requirements\n\nTest\n"), 0644)
 	os.WriteFile(filepath.Join(changeDir, "design.md"), []byte("# Design\n\n## Architecture\n\nTest\n"), 0644)
 	os.WriteFile(filepath.Join(changeDir, "tasks.md"), []byte("# Tasks\n\n- [x] Task 1\n"), 0644)
 	os.WriteFile(filepath.Join(changeDir, "apply-progress.md"), []byte("# Apply Progress\n\nDone\n"), 0644)
@@ -225,7 +233,7 @@ func TestGatekeeper_VerifyCanRemediate(t *testing.T) {
 		Artifacts: []ArtifactRef{
 			{Path: "verify-report.md", Type: "verify-report"},
 		},
-		NextRecommended: "apply", // verify can remediate back to apply
+		NextRecommended: "remediate", // verify can remediate back through a bounded correction
 	}
 
 	gk := Gatekeeper(openspecRoot, "test-change", "verify", ArtifactStoreOpenSpec, result)
@@ -297,7 +305,8 @@ func TestGatekeeperSummary_Fail(t *testing.T) {
 // decides pass/fail under the active store, declared paths resolve from the
 // workspace root or the change dir but are never proof of existence, a
 // missing canonical artifact names the absolute path it looked for, store
-// "" skips with an explicit reason, and an unknown store fails closed.
+// "" skips the artifact check with an explicit reason while routing fails
+// closed, and an unknown store fails closed.
 func TestGatekeeper_StoreAwareArtifactResolution(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -372,12 +381,12 @@ func TestGatekeeper_StoreAwareArtifactResolution(t *testing.T) {
 			wantReasonPaths:  []string{"proposal.md"},
 		},
 		{
-			name:             "none store reports skip with a reason, never a pass",
+			name:             "none store reports skip with a reason and routing fails closed",
 			store:            "",
 			phase:            "propose",
 			next:             "spec",
 			declared:         []ArtifactRef{{Path: "sdd/test-change/proposal", Type: "proposal"}},
-			wantPass:         true,
+			wantPass:         false,
 			wantArtifactSkip: true,
 			wantReasonText:   []string{"artifact store is none"},
 		},
@@ -444,6 +453,236 @@ func TestGatekeeper_StoreAwareArtifactResolution(t *testing.T) {
 			}
 			if h := findCheck(gk, "no_hallucination"); h == nil || !h.Passed {
 				t.Errorf("declarations must resolve or be recognized as non-paths, got %+v", h)
+			}
+		})
+	}
+}
+
+// TestGatekeeper_RoutingCoherence pins the routing contract against the
+// dependency authority (design test matrix, spec scenarios S1-S6): the
+// declared successor must equal the authority-resolved successor, terminal
+// done/empty passes, labels normalize, phases outside the routing contract
+// skip with a reason, and underivable state fails closed naming the cause.
+func TestGatekeeper_RoutingCoherence(t *testing.T) {
+	bigMemRoot := t.TempDir()
+	SetBigMemStoreRootForTest(bigMemRoot)
+	defer SetBigMemStoreRootForTest("")
+	seedBigMemChange(t, bigMemRoot, "test-change", map[string]string{
+		"proposal": "# Proposal\n\n## Intent\n\nBigMem proposal fixture\n",
+	})
+
+	writeProposal := func(t *testing.T, changeDir string) {
+		t.Helper()
+		writeGatekeeperFixture(t, changeDir, "proposal.md")
+	}
+	writePlanning := func(t *testing.T, changeDir string) {
+		t.Helper()
+		writeProposal(t, changeDir)
+		writeGatekeeperFixture(t, filepath.Join(changeDir, "specs", "sdd"), "spec.md")
+		writeGatekeeperFixture(t, changeDir, "design.md")
+	}
+	writeApply := func(t *testing.T, changeDir string) {
+		t.Helper()
+		writePlanning(t, changeDir)
+		if err := os.WriteFile(filepath.Join(changeDir, "tasks.md"), []byte("# Tasks\n\n- [x] Task 1\n- [ ] Task 2\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		writeGatekeeperFixture(t, changeDir, "apply-progress.md")
+	}
+	withoutRecord := func(t *testing.T, changeDir string) {
+		t.Helper()
+		if err := os.RemoveAll(changeDir); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tests := []struct {
+		name            string
+		change          string
+		phase           string
+		store           ArtifactStore
+		next            string
+		setup           func(t *testing.T, changeDir string)
+		wantPass        bool
+		wantRoutingPass bool
+		wantRoutingSkip bool
+		wantReasonText  []string
+	}{
+		{
+			name:            "dependency-correct successor accepted (S1)",
+			phase:           "spec",
+			store:           ArtifactStoreOpenSpec,
+			next:            "tasks",
+			setup:           writePlanning,
+			wantPass:        true,
+			wantRoutingPass: true,
+		},
+		{
+			name:           "retired static table rejected (S2)",
+			phase:          "spec",
+			store:          ArtifactStoreOpenSpec,
+			next:           "design",
+			setup:          writePlanning,
+			wantPass:       false,
+			wantReasonText: []string{`expected "tasks"`},
+		},
+		{
+			name:           "genuinely incoherent successor rejected (S3)",
+			phase:          "propose",
+			store:          ArtifactStoreOpenSpec,
+			next:           "archive",
+			setup:          writeProposal,
+			wantPass:       false,
+			wantReasonText: []string{`expected "spec"`},
+		},
+		{
+			name:            "done stays terminal (S4)",
+			phase:           "spec",
+			store:           ArtifactStoreOpenSpec,
+			next:            "done",
+			setup:           writePlanning,
+			wantPass:        true,
+			wantRoutingPass: true,
+		},
+		{
+			name:  "empty stays terminal for routing (S4)",
+			phase: "spec",
+			store: ArtifactStoreOpenSpec,
+			next:  "",
+			setup: writePlanning,
+			// The contract check rejects the empty next_recommended while
+			// routing itself passes terminal.
+			wantPass:        false,
+			wantRoutingPass: true,
+		},
+		{
+			name:           "underivable: no record names store and absolute change dir (S5)",
+			phase:          "spec",
+			store:          ArtifactStoreOpenSpec,
+			next:           "design",
+			setup:          withoutRecord,
+			wantPass:       false,
+			wantReasonText: []string{`no record under store "openspec": {changeDir}`},
+		},
+		{
+			name:           "underivable: store none fails closed (S5)",
+			phase:          "propose",
+			store:          "",
+			next:           "spec",
+			setup:          writeProposal,
+			wantPass:       false,
+			wantReasonText: []string{`cannot resolve the dependency successor for change "test-change"`, "artifact store is none"},
+		},
+		{
+			name:  "underivable: instance-marker read error wraps (S5)",
+			phase: "propose",
+			store: ArtifactStoreOpenSpec,
+			next:  "spec",
+			setup: func(t *testing.T, changeDir string) {
+				t.Helper()
+				writeProposal(t, changeDir)
+				if err := os.MkdirAll(filepath.Join(changeDir, ".biggz-instance"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantPass:       false,
+			wantReasonText: []string{"read change-instance marker"},
+		},
+		{
+			name:           "underivable: unknown store fails closed (D4)",
+			phase:          "propose",
+			store:          ArtifactStore("carrier-pigeon"),
+			next:           "spec",
+			setup:          writeProposal,
+			wantPass:       false,
+			wantReasonText: []string{`unknown artifact store "carrier-pigeon"`},
+		},
+		{
+			name:           "underivable: hybrid without record or BigMem topics (D4)",
+			change:         "empty-hybrid",
+			phase:          "propose",
+			store:          ArtifactStoreHybrid,
+			next:           "spec",
+			setup:          withoutRecord,
+			wantPass:       false,
+			wantReasonText: []string{`no record under store "hybrid": {changeDir}`, "no BigMem topics under sdd/empty-hybrid/"},
+		},
+		{
+			name:            "normalized progress label matches (S6)",
+			phase:           "apply",
+			store:           ArtifactStoreOpenSpec,
+			next:            "apply (3/5 tasks)",
+			setup:           writeApply,
+			wantPass:        true,
+			wantRoutingPass: true,
+		},
+		{
+			name:  "zero-artifact record stays derivable (D4)",
+			phase: "explore",
+			store: ArtifactStoreOpenSpec,
+			next:  "propose",
+			setup: func(t *testing.T, changeDir string) {
+				t.Helper()
+				writeGatekeeperFixture(t, changeDir, "state.yaml")
+			},
+			wantPass:        true,
+			wantRoutingPass: true,
+		},
+		{
+			name:            "phase outside the routing contract skips with a reason (D3)",
+			phase:           "sync",
+			store:           ArtifactStoreOpenSpec,
+			next:            "apply",
+			wantPass:        true,
+			wantRoutingPass: true,
+			wantRoutingSkip: true,
+			wantReasonText:  []string{`phase "sync" is outside the routing contract; no dependency successor is defined`},
+		},
+		{
+			name:            "hybrid resolves from BigMem when no record exists (D2)",
+			phase:           "explore",
+			store:           ArtifactStoreHybrid,
+			next:            "spec",
+			setup:           withoutRecord,
+			wantPass:        true,
+			wantRoutingPass: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			change := cmp.Or(tt.change, "test-change")
+			openspecRoot := filepath.Join(t.TempDir(), "openspec")
+			changeDir := filepath.Join(openspecRoot, "changes", change)
+			if err := os.MkdirAll(changeDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			if tt.setup != nil {
+				tt.setup(t, changeDir)
+			}
+			result := &PhaseResult{
+				Status:           "success",
+				ExecutiveSummary: "phase done",
+				Artifacts:        []ArtifactRef{{Path: "sdd/" + change + "/state", Type: "state"}},
+				NextRecommended:  tt.next,
+			}
+			gk := Gatekeeper(openspecRoot, change, tt.phase, tt.store, result)
+
+			routing := findCheck(gk, "routing_coherence")
+			if routing == nil {
+				t.Fatal("expected a routing_coherence detail")
+			}
+			if routing.Passed != tt.wantRoutingPass || routing.Skipped != tt.wantRoutingSkip {
+				t.Errorf("routing_coherence passed=%v skipped=%v, want passed=%v skipped=%v (reason: %q)",
+					routing.Passed, routing.Skipped, tt.wantRoutingPass, tt.wantRoutingSkip, routing.Reason)
+			}
+			for _, text := range tt.wantReasonText {
+				text = strings.ReplaceAll(text, "{changeDir}", changeDir)
+				if !strings.Contains(routing.Reason, text) {
+					t.Errorf("routing_coherence reason %q must contain %q", routing.Reason, text)
+				}
+			}
+			if gk.Passed != tt.wantPass {
+				t.Errorf("gatekeeper passed=%v, want %v; details: %+v", gk.Passed, tt.wantPass, gk.Details)
 			}
 		})
 	}

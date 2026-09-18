@@ -9,15 +9,19 @@
 //   - Artifact existence: the completed phase's canonical artifact exists under the active store
 //   - No hallucination: declared paths resolve (repo-relative or change-relative)
 //   - No drift from inputs: output is consistent with phase's required inputs
-//   - Routing coherence: next_recommended follows the dependency graph
+//   - Routing coherence: next_recommended matches the successor the dependency
+//     authority resolves for the change
 package sdd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -88,18 +92,6 @@ var phaseArtifactPatterns = map[string][]string{
 	"archive": {`archive-report\.md$`},
 }
 
-// nextPhaseValid maps valid next_recommended values per phase.
-var nextPhaseValid = map[string][]string{
-	"explore": {"propose", "spec"}, // explore can lead to propose or directly to spec
-	"propose": {"spec", "design"},
-	"spec":    {"design"},
-	"design":  {"tasks"},
-	"tasks":   {"apply"},
-	"apply":   {"apply", "verify", "tasks"},   // apply can loop or move to verify
-	"verify":  {"verify", "archive", "apply"}, // verify can loop or remediate
-	"archive": {},
-}
-
 // Gatekeeper validates a completed phase's result before launching the next phase.
 // It reads the actual artifacts from disk and validates against the phase contract.
 //
@@ -132,8 +124,8 @@ func Gatekeeper(openspecRoot, changeName, completedPhase string, store ArtifactS
 	// 4. No drift from inputs
 	gr.checkNoDrift(openspecRoot, changeName, completedPhase, result)
 
-	// 5. Routing coherence
-	gr.checkRouting(completedPhase, result)
+	// 5. Routing coherence (against the dependency authority, not a static table)
+	gr.checkRouting(openspecRoot, changeName, completedPhase, store, result)
 
 	// 6. Complexity gate (verify phase only)
 	gr.checkComplexityGate(openspecRoot, completedPhase)
@@ -400,8 +392,14 @@ func dirHasArtifactPattern(changeDir string, patterns []string) bool {
 	return false
 }
 
-// checkRouting validates that next_recommended is a valid transition.
-func (gr *GatekeeperResult) checkRouting(completedPhase string, result *PhaseResult) {
+// checkRouting validates that next_recommended matches the successor the
+// dependency authority resolves for the change (design D2, D5): the declared
+// label is normalized, terminal done/empty passes before resolution, and any
+// other label must equal the resolved successor or the check fails naming the
+// expected phase. Phases outside the routing contract skip with an explicit
+// reason (D3); underivable dependency state fails closed naming the cause
+// (D4) — it is never reported as skipped.
+func (gr *GatekeeperResult) checkRouting(openspecRoot, changeName, completedPhase string, store ArtifactStore, result *PhaseResult) {
 	check := GatekeeperCheck{Name: "routing_coherence", Passed: true}
 
 	if result == nil {
@@ -410,39 +408,106 @@ func (gr *GatekeeperResult) checkRouting(completedPhase string, result *PhaseRes
 		return
 	}
 
-	validNext, ok := nextPhaseValid[completedPhase]
-	if !ok {
+	if !isRoutingContractPhase(completedPhase) {
 		check.Skipped = true
+		check.Reason = fmt.Sprintf("phase %q is outside the routing contract; no dependency successor is defined", completedPhase)
 		gr.Details = append(gr.Details, check)
 		return
 	}
 
-	// Normalize: "apply (3/5 tasks)" -> "apply"
-	nextClean := result.NextRecommended
-	if idx := strings.Index(nextClean, " ("); idx > 0 {
-		nextClean = nextClean[:idx]
+	declared := normalizeRoutingLabel(result.NextRecommended)
+	if declared == "" || declared == "done" {
+		gr.Details = append(gr.Details, check)
+		return
 	}
 
-	found := false
-	for _, valid := range validNext {
-		if nextClean == valid {
-			found = true
-			break
-		}
-	}
-
-	// Also allow "done" as terminal
-	if nextClean == "done" || nextClean == "" {
-		found = true
-	}
-
-	if !found {
+	successor, err := resolveRoutingSuccessor(openspecRoot, changeName, store)
+	if err != nil {
 		check.Passed = false
-		check.Reason = fmt.Sprintf("next_recommended %q is not a valid transition from %q; valid: %v",
-			result.NextRecommended, completedPhase, validNext)
+		check.Reason = fmt.Sprintf("cannot resolve the dependency successor for change %q: %v", changeName, err)
+		gr.Details = append(gr.Details, check)
+		return
+	}
+	if declared != successor {
+		check.Passed = false
+		check.Reason = fmt.Sprintf("next_recommended %q is not the dependency successor of %q: expected %q",
+			result.NextRecommended, completedPhase, successor)
 	}
 
 	gr.Details = append(gr.Details, check)
+}
+
+// resolveRoutingSuccessor returns the successor the dependency authority
+// resolves for the change under the active store (design D2). OpenSpec and
+// hybrid changes with a filesystem record derive through
+// readChangeWithForcedStore + the forced-store derivation (the same authority
+// sdd-status uses); a hybrid change without a filesystem record derives from
+// its BigMem topics. An absent store and an unknown store fail closed, and a
+// missing record names its absolute change directory (design D4).
+func resolveRoutingSuccessor(openspecRoot, changeName string, store ArtifactStore) (string, error) {
+	changeDir := filepath.Join(openspecRoot, "changes", changeName)
+	workspaceRoot := filepath.Dir(openspecRoot)
+
+	switch store {
+	case "":
+		return "", errors.New("artifact store is none: no artifact store is active for this run")
+	case ArtifactStoreOpenSpec, ArtifactStoreHybrid:
+		if _, err := os.Stat(changeDir); err == nil {
+			cs, err := readChangeWithForcedStore(changeDir, changeName, false, workspaceRoot, false, store)
+			if err != nil {
+				return "", err
+			}
+			return cs.NextRecommended, nil
+		}
+		if store == ArtifactStoreOpenSpec {
+			return "", fmt.Errorf("no record under store %q: %s", string(store), changeDir)
+		}
+		successor, found, err := bigMemRoutingSuccessor(workspaceRoot, changeName)
+		if err != nil {
+			return "", err
+		}
+		if !found {
+			return "", fmt.Errorf("no record under store %q: %s; no BigMem topics under sdd/%s/", string(store), changeDir, changeName)
+		}
+		return successor, nil
+	default:
+		return "", fmt.Errorf("unknown artifact store %q", string(store))
+	}
+}
+
+// bigMemRoutingSuccessor resolves the dependency successor for a hybrid
+// change without a filesystem record (design D2). Changes derive through
+// deriveBigMemChangeStatus, the same authority the engram/hybrid status path
+// uses. found reports whether any BigMem topic exists for the change.
+func bigMemRoutingSuccessor(workspaceRoot, changeName string) (successor string, found bool, err error) {
+	active, archived, err := collectBigMemChangesWithArchiveCtx(context.Background(), workspaceRoot, false)
+	if err != nil {
+		return "", false, err
+	}
+	for _, cs := range slices.Concat(active, archived) {
+		if cs.Name == changeName {
+			return cs.NextRecommended, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+// normalizeRoutingLabel trims a declared successor and strips its progress
+// suffix, so "apply (3/5 tasks)" normalizes to "apply" (design D5).
+func normalizeRoutingLabel(declared string) string {
+	label := strings.TrimSpace(declared)
+	if before, _, found := strings.Cut(label, " ("); found {
+		label = before
+	}
+	return label
+}
+
+// isRoutingContractPhase reports whether a completed phase has a dependency
+// successor defined by the routing contract. validPhases enumerates exactly
+// those SDD phases; research, sync and any other phase outside it have no
+// successor to resolve and skip with an explicit reason (design D3).
+func isRoutingContractPhase(phase string) bool {
+	return slices.Contains(validPhases, phase)
 }
 
 // checkComplexityGate runs the diff-aware complexity gate for the verify
