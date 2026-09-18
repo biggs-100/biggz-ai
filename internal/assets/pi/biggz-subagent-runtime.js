@@ -212,12 +212,23 @@ export function buildChildArgs(agent) {
 
 export const buildChildEnv = (baseEnv = process.env) => ({ ...baseEnv, PI_SUBAGENT_CHILD: "1" });
 
+// Inside pi, `process.argv[1]` is the package entry being executed — the same
+// `dist/bundle/cli.js` that `pi.cmd`/`pi` launch (`"bin": {"pi": "dist/bundle/cli.js"}`),
+// so re-executing it via `process.execPath` skips the Windows .cmd shim entirely.
+// Detection is conservative: only that exact installed-package shape counts, so
+// anything doubtful keeps the portable fallback. `BIGGZ_PI_BIN` still wins.
+const PI_CLI_ENTRY_RE = /\/node_modules\/@earendil-works\/pi-coding-agent\/dist\/bundle\/cli\.c?js$/;
+
 export function resolvePiLaunch(options = {}) {
 	const env = options.env ?? process.env;
+	const platform = options.platform ?? process.platform;
 	const override = typeof env?.BIGGZ_PI_BIN === "string" ? env.BIGGZ_PI_BIN.trim() : "";
 	if (override) return { command: override, prefix: [], shell: false };
+	const execPath = options.execPath ?? process.execPath;
+	const argv1 = String(options.argv1 ?? process.argv?.[1] ?? "");
+	if (execPath && PI_CLI_ENTRY_RE.test(argv1.replace(/\\/g, "/"))) return { command: execPath, prefix: [argv1], shell: false };
 	// Windows npm shims are .cmd files; safe because argv tokens are sanitized above.
-	return (options.platform ?? process.platform) === "win32" ? { command: "pi.cmd", prefix: [], shell: true } : { command: "pi", prefix: [], shell: false };
+	return platform === "win32" ? { command: "pi.cmd", prefix: [], shell: true } : { command: "pi", prefix: [], shell: false };
 }
 
 // ── tree kill: abort RPC → SIGTERM group → SIGKILL (Windows taskkill /T [/F]) ──
@@ -278,7 +289,7 @@ export function createTask(options = {}) {
 	const now = options.now ?? Date.now;
 	const agent = options.agent ?? null;
 	const env = options.env ?? process.env;
-	const launch = options.launch ?? resolvePiLaunch({ env });
+	const launch = options.launch ?? resolvePiLaunch({ env, platform });
 	const spawnImpl = options.spawnImpl ?? nodeSpawn;
 	const args = options.args ?? buildChildArgs(agent);
 	const idleMs = options.idleMs ?? DEFAULT_IDLE_TIMEOUT_MS;
@@ -362,6 +373,7 @@ export function createTask(options = {}) {
 			return;
 		}
 		finalTextTimer = setTimeout(finishSettled, deadline);
+		finalTextTimer?.unref?.();
 	};
 	// Dialog relay: a child `extension_ui_request` (select/confirm/input/editor) is
 	// presented by the parent and answered on the child's stdin; fire-and-forget
@@ -456,6 +468,10 @@ export function createTask(options = {}) {
 			try {
 				child.stdout?.on?.("data", onStdout);
 				child.stderr?.on?.("data", onStderr);
+				// Decode at the stream boundary so a multibyte char split across chunks
+				// stays intact; the JSONL reader keeps its Buffer branch for direct pushes.
+				child.stdout?.setEncoding?.("utf8");
+				child.stderr?.setEncoding?.("utf8");
 				child.on?.("error", (err) => {
 					if (!settled && state.value !== "stalled" && state.value !== "cancelled") settle("failed", "spawn", err);
 				});
@@ -716,6 +732,18 @@ export function formatTaskResult(task, snapshot = task?.snapshot?.() ?? task) {
 	return `subagent ${snapshot?.id ?? "?"} · ${state} · ${seconds}s${detail}`;
 }
 
+/** Bounded result tail: trimmed `finalText` else `stderrTail`, blank lines collapsed; event types when no text. */
+export function boundedResultTail(snapshot, maxLines = 20) {
+	const limit = Math.max(1, Math.floor(Number(maxLines) || 20));
+	const source = String(snapshot?.finalText ?? "").trim() || String(snapshot?.stderrTail ?? "");
+	const tail = source
+		.split("\n")
+		.map((line) => line.trimEnd())
+		.filter(Boolean)
+		.slice(-limit);
+	return tail.length ? tail : (snapshot?.events ?? []).slice(-limit).map((event) => `· ${bounded(event?.type ?? "event", 60)}`);
+}
+
 const textResult = (text, details) => ({ content: [{ type: "text", text }], details });
 const toolError = (text) => ({ content: [{ type: "text", text }], isError: true });
 const paramsOf = (properties, required = []) => ({ type: "object", properties, required });
@@ -822,7 +850,9 @@ export function createSubagentToolset(options = {}) {
 			const task = spawnTask(found.agent, params.task, { ctx });
 			registry.add(task);
 			const result = await task.promise;
-			return textResult(formatTaskResult(task, result), { taskId: result?.id ?? task.id, state: result?.state ?? task.state });
+			// The caller gets the settlement line plus the child's bounded final text.
+			const tail = boundedResultTail(result ?? task.snapshot());
+			return textResult([formatTaskResult(task, result), ...tail].join("\n"), { taskId: result?.id ?? task.id, state: result?.state ?? task.state });
 		},
 	};
 	const wait = {
@@ -867,14 +897,8 @@ export function createSubagentToolset(options = {}) {
 			if (!task) return toolError(unknownTaskError(params.task_id));
 			const maxLines = Math.max(1, Math.min(200, Math.floor(Number(params.max_lines) || 20)));
 			const snapshot = task.snapshot();
-			const source = String(snapshot.finalText ?? "").trim() || String(snapshot.stderrTail ?? "");
-			const tail = source
-				.split("\n")
-				.map((line) => line.trimEnd())
-				.filter(Boolean)
-				.slice(-maxLines);
-			const events = tail.length ? tail : snapshot.events.slice(-maxLines).map((event) => `· ${bounded(event?.type ?? "event", 60)}`);
-			return textResult([formatTaskResult(task, snapshot), ...events].slice(0, Math.max(1, maxLines)).join("\n"), { taskId: task.id, state: snapshot.state });
+			const tail = boundedResultTail(snapshot, maxLines);
+			return textResult([formatTaskResult(task, snapshot), ...tail].slice(0, Math.max(1, maxLines)).join("\n"), { taskId: task.id, state: snapshot.state });
 		},
 	};
 	const cancel = {
@@ -973,6 +997,7 @@ export default function biggzSubagentRuntime(pi) {
 			createWidgetPublisher,
 			renderWaitHeadline,
 			presentUiRequest,
+			boundedResultTail,
 		};
 	} catch {}
 	const gate = subagentRegistrationGate(pi, { env: process.env });

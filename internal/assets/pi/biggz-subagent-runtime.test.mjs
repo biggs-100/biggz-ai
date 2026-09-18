@@ -14,6 +14,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -34,6 +35,7 @@ const {
   nestedSpawnRefusal,
   buildChildArgs,
   buildChildEnv,
+  resolvePiLaunch,
   createTask,
   killTree,
   subagentRegistrationGate,
@@ -190,6 +192,51 @@ describe('agent discovery + spawn authorization', () => {
   });
 });
 
+// A6: inside pi, re-exec the running package entry (`dist/bundle/cli.js`) through
+// `process.execPath` instead of the Windows `pi.cmd` shim; outside pi keep the
+// portable fallback; `BIGGZ_PI_BIN` always wins.
+describe('resolvePiLaunch (A6 runtime parity)', () => {
+  const PI_ENTRY = 'C:\\npm\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\bundle\\cli.js';
+  const TEST_ARGV1 = path.join(os.tmpdir(), 'biggz-subagent-runtime.test.mjs');
+
+  it('lets BIGGZ_PI_BIN win on every platform', () => {
+    for (const platform of ['win32', 'linux']) {
+      assert.deepEqual(
+        resolvePiLaunch({ env: { BIGGZ_PI_BIN: ' /opt/custom-pi ' }, platform, execPath: 'node', argv1: PI_ENTRY }),
+        { command: '/opt/custom-pi', prefix: [], shell: false },
+      );
+    }
+  });
+
+  it('spawns node + the pi cli entry directly when the runtime runs inside pi', () => {
+    assert.deepEqual(
+      resolvePiLaunch({ env: {}, platform: 'win32', execPath: 'C:\\node\\node.exe', argv1: PI_ENTRY }),
+      { command: 'C:\\node\\node.exe', prefix: [PI_ENTRY], shell: false },
+    );
+    const posixEntry = '/usr/lib/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js';
+    assert.deepEqual(
+      resolvePiLaunch({ env: {}, platform: 'linux', execPath: '/usr/bin/node', argv1: posixEntry }),
+      { command: '/usr/bin/node', prefix: [posixEntry], shell: false },
+    );
+  });
+
+  it('falls back to the portable launcher outside pi (win32 pi.cmd+shell, posix pi)', () => {
+    assert.deepEqual(
+      resolvePiLaunch({ env: {}, platform: 'win32', execPath: 'node', argv1: TEST_ARGV1 }),
+      { command: 'pi.cmd', prefix: [], shell: true },
+    );
+    assert.deepEqual(
+      resolvePiLaunch({ env: {}, platform: 'linux', execPath: 'node', argv1: TEST_ARGV1 }),
+      { command: 'pi', prefix: [], shell: false },
+    );
+    // A bare cli.js outside the pi package must not switch modes (conservative detection).
+    assert.deepEqual(
+      resolvePiLaunch({ env: {}, platform: 'win32', execPath: 'node', argv1: 'C:\\somewhere\\cli.js' }),
+      { command: 'pi.cmd', prefix: [], shell: true },
+    );
+  });
+});
+
 describe('RPC child runner (fake child over JSONL)', () => {
   it('completes on agent_settled; child env PI_SUBAGENT_CHILD=1 is set on spawn only', async (t) => {
     const task = run({ FAKE_SETTLED: '1' });
@@ -275,6 +322,43 @@ describe('RPC child runner (fake child over JSONL)', () => {
     } finally {
       globalThis.setTimeout = realSetTimeout;
     }
+  });
+
+  // A3: a multibyte char split across two stdout/stderr chunks must decode intact
+  // (stream setEncoding), not corrupt to U+FFFD through per-chunk Buffer.toString.
+  it('decodes multibyte chars split across stdout/stderr writes (no U+FFFD)', async (t) => {
+    const child = new EventEmitter();
+    child.pid = 987655;
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.stdin = { writable: true, write: () => true };
+    const task = run(
+      {},
+      {
+        spawnImpl: () => child,
+        finalTextMs: 0, // agent_settled ⇒ sync settle
+        killGraceMs: 0,
+        execImpl: () => {},
+        killImpl: () => {
+          throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+        },
+      },
+    );
+    t.after(() => task.cancel());
+    const line = Buffer.from(`${JSON.stringify({ type: 'note', text: '✅ done' })}\n`, 'utf8');
+    const cut = line.indexOf(0xe2) + 1; // split inside ✅ (E2 9C 85)
+    assert.ok(cut > 0 && cut < line.length, 'fixture must split inside the ✅ bytes');
+    child.stdout.write(line.subarray(0, cut));
+    child.stdout.write(line.subarray(cut));
+    child.stderr.write(Buffer.from([0xe2]));
+    child.stderr.write(Buffer.from([0x9c, 0x85]));
+    const note = await waitFor(() => task.snapshot().events.find((event) => event.type === 'note'));
+    assert.equal(note?.text, '✅ done', 'split multibyte stdout must decode intact');
+    assert.ok(!JSON.stringify(note).includes('\uFFFD'), 'no replacement char may survive decoding');
+    child.stdout.write('{"type":"agent_settled"}\n');
+    const result = await task.promise;
+    assert.equal(result.state, 'completed');
+    assert.equal(result.stderrTail, '✅', 'split multibyte stderr must decode intact');
   });
 
   it('cancel kills the child + grandchild tree and marks the task cancelled', async (t) => {
@@ -474,7 +558,8 @@ describe('subagent tool surface (task mode, fake child)', () => {
 
     const run = await byName('subagent').execute('call-1', { agent: 'probe', task: 'do the thing' });
     assert.equal(run.isError, undefined);
-    assert.match(run.content[0].text, /^subagent sub-[\w-]+ · completed · /);
+    // A1: foreground task mode returns the settlement line AND the child’s bounded final text.
+    assert.match(run.content[0].text, /^subagent sub-[\w-]+ · completed · [\d.]+s · settled\nfinal answer$/);
     assert.equal(run.details.state, 'completed');
     assert.ok(registry.get(run.details.taskId), 'result is reachable from the in-memory ring only');
 
