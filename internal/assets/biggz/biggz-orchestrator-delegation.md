@@ -34,7 +34,7 @@ Core principle: **does this inflate the parent context without need?** If yes, u
 | Bash for state (`git`, `gh`) | ✅ | — |
 | Tests, builds, installs, or native review actions | allowed as bounded action | ✅ fresh per-action worker without changing route |
 
-Use pi's FleetView subagent when Background: on (ready), else native task for pi; use OpenCode's native `explore`/`general` agents for opencode; reserve `sdd-*` agents for selected SDD route. Keep one writer and short synthesized handoff. Delegation is mandatory at mapping, write, preparation, and broad-research boundaries, but remains direct route and must not synthesize SDD artifacts.
+Use pi's `subagent` tool when Background: on (capability: ready) — wait on background runs with `subagent_wait`; if the tool is unavailable, run the work inline instead of delegating to a missing runtime; use OpenCode's native `explore`/`general` agents for opencode; reserve `sdd-*` agents for selected SDD route. Keep one writer and short synthesized handoff. Delegation is mandatory at mapping, write, preparation, and broad-research boundaries, but remains direct route and must not synthesize SDD artifacts.
 
 #### SDD Agent Authority (MANDATORY)
 
@@ -42,9 +42,9 @@ SDD phases (propose/spec/design/tasks/apply/verify/archive, plus explore/researc
 
 ### Delegation Runtime Preference (pi)
 
-When Mandatory Delegation Trigger fires, delegate via best available subagent runtime:
-- Prefer `subagent` tool (from `pi-subagents`, FleetView) when `Background subagent policy: on (capability: ready)` — call as `subagent({ agent: "<sdd-*>", task: "<task description>", context: "fresh", mode: "task" })` for foreground SDD phases (sdd-* primary; `general`/`explore` only fallback). Use `context: "fork"` only when human explicitly approved it; otherwise always `fresh`. Use `mode: "background"` only for independent read-only scans that don't need inline synthesis.
-- Else fall back to Pi's native `task` tool.
+When Mandatory Delegation Trigger fires, delegate via the biggz subagent runtime:
+- Use the `subagent` tool (biggz subagent runtime, deployed as `~/.pi/agent/extensions/biggz-subagent-runtime.js`) when `Background subagent policy: on (capability: ready)` — call as `subagent({ agent: "<sdd-*>", task: "<task description>", context: "fresh", mode: "task" })` for foreground SDD phases (sdd-* primary; `general`/`explore` only fallback). `context` supports only `fresh`: `fork` is not available and returns a bounded unsupported error. Use `mode: "background"` only for independent read-only scans that don't need inline synthesis, and collect results with `subagent_wait`.
+- When the runtime is unavailable (`subagent` tool missing, or `Background subagent policy: off` / `capability: absent`): do not delegate — perform the work inline (bounded reads/writes) or stop and explain the blocker; never substitute an unregistered delegation tool.
 - Reserve `sdd-*` agents for SDD; do not synthesize SDD artifacts inline.
 
 #### Mandatory Delegation Triggers
@@ -142,7 +142,7 @@ Exceptions:
 
 {{BIGGZ_BACKGROUND_POLICY}} — rules: background-subagents block in delegation contract.
 
-When Background subagent policy: on (capability: ready), use `subagent` FleetView `mode: "background"` ONLY for independent read-only exploration/audit where parent can continue non-overlapping work. At most 2 concurrent background tasks. Completion notifications only: do not poll/sleep/status-check. Use foreground `mode: "task"` when result needed before next action, and always for user decisions, SDD apply/writers, dependent verify, archive, dependent phases, and any delegated work whose output determines next action. Do not duplicate launches or overlap files/topics. Never run parallel writers in one worktree. Policy off OR `subagent_run` unavailable → run every delegation foreground (`mode: "task"` or native `Agent` fallback).
+When Background subagent policy: on (capability: ready), use `subagent` `mode: "background"` ONLY for independent read-only exploration/audit where parent can continue non-overlapping work. At most 2 concurrent background tasks. Completion notifications only: do not poll/sleep/status-check — wait on runs with `subagent_wait` when the result is needed. Use foreground `mode: "task"` when result needed before next action, and always for user decisions, SDD apply/writers, dependent verify, archive, dependent phases, and any delegated work whose output determines next action. Do not duplicate launches or overlap files/topics. Never run parallel writers in one worktree. Policy off OR the `subagent` tool unavailable → do not delegate: run the work inline (bounded reads/writes) or stop and explain the blocker.
 
 ### Work Routing Ladder — detailed
 

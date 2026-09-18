@@ -17,7 +17,7 @@ const DEPLOY_LIST = [
   { asset: 'pi/biggz-session-guard.js', target: 'biggz-session-guard.js' },
   { asset: 'pi/biggz-ask-guard.js', target: 'biggz-ask-guard.js' },
   { asset: 'pi/biggz-last-model.js', target: 'biggz-last-model.js' },
-  { asset: 'pi/biggz-wait-pretty.js', target: 'biggz-wait-pretty.js' },
+  { asset: 'pi/biggz-subagent-runtime.js', target: 'biggz-subagent-runtime.js' },
   { asset: 'pi/biggz-footer.js', target: 'biggz-footer.js' },
   { asset: 'pi/biggz-tool-pills.js', target: 'biggz-tool-pills.js' },
   { asset: 'pi/biggz-web-search.js', target: 'biggz-web-search.js' },

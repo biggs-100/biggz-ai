@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/biggs-100/biggz-ai/internal/assets"
-	"github.com/biggs-100/biggz-ai/internal/filemerge"
 )
 
 func generateOverlay(fsys fs.FS, homeDir string) ([]byte, error) {
@@ -79,9 +78,6 @@ func piExtensionsDir(homeDir string) string {
 		return filepath.Join(v, "extensions")
 	}
 	return filepath.Join(homeDir, ".pi", "agent", "extensions")
-}
-func mergeJSONCWrapper(existing, overlay []byte) ([]byte, error) {
-	return filemerge.MergeJSONC(existing, overlay)
 }
 func parseFrontmatter(data string) (string, string, string, error) {
 	section := data

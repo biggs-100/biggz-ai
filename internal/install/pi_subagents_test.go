@@ -1,6 +1,7 @@
 package install_test
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -8,11 +9,34 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/biggs-100/biggz-ai/internal/agents"
 	"github.com/biggs-100/biggz-ai/internal/assets"
-	"github.com/biggs-100/biggz-ai/internal/install"
+	"github.com/biggs-100/biggz-ai/internal/install/steps"
+	"github.com/biggs-100/biggz-ai/internal/pipeline"
+	"github.com/biggs-100/biggz-ai/plugintest"
 )
 
-func TestDeployPiSubAgents(t *testing.T) {
+// runPiExtensionsStep drives the live pi deploy path (PiExtensionsStep.Apply,
+// the path `biggz install --agent pi` runs) against a mock skills FS. The old
+// standalone install.DeployPiSubAgents helper was deleted in the S3 cutover;
+// these tests now cover PiExtensionsStep.deploySubAgents through its real
+// entry point.
+func runPiExtensionsStep(t *testing.T, home string, mockFS fs.FS, dryRun bool) *steps.PiExtensionsStep {
+	t.Helper()
+	agent := &plugintest.FakeAgent{Installed: true, AgentID: agents.AgentPi}
+	agent.SetTempDir(home)
+	p := steps.NewPiExtensionsStep(home, agent, dryRun)
+	p.FS = mockFS
+	if err := p.Prepare(context.Background()); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if err := p.Apply(context.Background(), make(pipeline.ProgressChan, 32)); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	return p
+}
+
+func TestPiExtensionsStep_DeploysSubAgents(t *testing.T) {
 	home := t.TempDir()
 
 	// Minimal mock FS with 2 fake sdd skills and one non-sdd skill that should be ignored.
@@ -31,13 +55,7 @@ func TestDeployPiSubAgents(t *testing.T) {
 		},
 	}
 
-	n, err := install.DeployPiSubAgents(home, mockFS)
-	if err != nil {
-		t.Fatalf("DeployPiSubAgents: %v", err)
-	}
-	if n != 5 {
-		t.Fatalf("expected 5 pi agents deployed (general, explore + sdd-apply, sdd-research, sdd-explore), got %d", n)
-	}
+	runPiExtensionsStep(t, home, mockFS, false)
 
 	// Verify sdd-apply.md exists with frontmatter
 	applyPath := filepath.Join(home, ".pi", "agent", "agents", "sdd-apply.md")
@@ -144,16 +162,13 @@ func TestDeployPiSubAgents(t *testing.T) {
 			t.Errorf("pi agent should contain <!-- biggz:bigmem-protocol --> block, got %q", p[:800])
 		}
 	}
-	// Fallback agents (general/explore) must also have BigMem protocol so
-	// generic queries like "en que nos quedamos" check memory.
+	// Fallback agents (general/explore) are deployed to the agents dir. Their
+	// BigMem protocol block is only injected on the embedded-FS (production)
+	// path — covered by TestPiExtensionsStep_FallbackAgentsCarryBigMemProtocol.
 	for _, name := range []string{"general", "explore"} {
 		p := filepath.Join(home, ".pi", "agent", "agents", name+".md")
-		data, err := os.ReadFile(p)
-		if err != nil {
+		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("%s.md not created: %v", name, err)
-		}
-		if !strings.Contains(string(data), "biggz:bigmem-protocol") {
-			t.Errorf("%s.md should contain <!-- biggz:bigmem-protocol --> block, got %q", name, string(data)[:800])
 		}
 	}
 
@@ -172,6 +187,25 @@ func TestDeployPiSubAgents(t *testing.T) {
 	branchPath := filepath.Join(home, ".pi", "agent", "agents", "branch-pr.md")
 	if _, err := os.Stat(branchPath); err == nil {
 		t.Errorf("branch-pr.md should not be deployed to pi agents dir")
+	}
+}
+
+// TestPiExtensionsStep_FallbackAgentsCarryBigMemProtocol covers the embedded
+// (production) FS path: general/explore fallback agents must carry the BigMem
+// protocol block so generic queries like "en que nos quedamos" check memory
+// without relying on APPEND_SYSTEM.md inheritance.
+func TestPiExtensionsStep_FallbackAgentsCarryBigMemProtocol(t *testing.T) {
+	home := t.TempDir()
+	runPiExtensionsStep(t, home, assets.FS, false)
+	for _, name := range []string{"general", "explore"} {
+		p := filepath.Join(home, ".pi", "agent", "agents", name+".md")
+		data, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatalf("%s.md not created: %v", name, err)
+		}
+		if !strings.Contains(string(data), "biggz:bigmem-protocol") {
+			t.Errorf("%s.md should contain <!-- biggz:bigmem-protocol --> block", name)
+		}
 	}
 }
 
@@ -219,7 +253,7 @@ func TestWebSearchJS_CapsAndGuards(t *testing.T) {
 	}
 }
 
-func TestDeployPiSubAgents_DryRun(t *testing.T) {
+func TestPiExtensionsStep_DeploysSubAgents_DryRun(t *testing.T) {
 	home := t.TempDir()
 	mockFS := fstest.MapFS{
 		"skills/sdd-apply/SKILL.md": &fstest.MapFile{
@@ -230,13 +264,8 @@ func TestDeployPiSubAgents_DryRun(t *testing.T) {
 		},
 	}
 
-	n, err := install.DeployPiSubAgents(home, mockFS, true)
-	if err != nil {
-		t.Fatalf("dry-run: %v", err)
-	}
-	if n != 4 {
-		t.Fatalf("dry-run expected 4 (general, explore + 2 sdd), got %d", n)
-	}
+	runPiExtensionsStep(t, home, mockFS, true)
+
 	// No files should exist
 	agentsDir := filepath.Join(home, ".pi", "agent", "agents")
 	if _, err := os.Stat(agentsDir); err == nil {
@@ -247,7 +276,7 @@ func TestDeployPiSubAgents_DryRun(t *testing.T) {
 	}
 }
 
-func TestDeployPiSubAgents_PIEnvOverride(t *testing.T) {
+func TestPiExtensionsStep_DeploysSubAgents_PIEnvOverride(t *testing.T) {
 	tmpHome := t.TempDir()
 	override := t.TempDir()
 	t.Setenv("PI_CODING_AGENT_DIR", override)
@@ -258,13 +287,8 @@ func TestDeployPiSubAgents_PIEnvOverride(t *testing.T) {
 		},
 	}
 
-	n, err := install.DeployPiSubAgents(tmpHome, mockFS)
-	if err != nil {
-		t.Fatalf("env override: %v", err)
-	}
-	if n != 3 {
-		t.Fatalf("expected 3 (general, explore + 1 sdd), got %d", n)
-	}
+	runPiExtensionsStep(t, tmpHome, mockFS, false)
+
 	// Should be under override/agents, not tmpHome/.pi
 	overridePath := filepath.Join(override, "agents", "sdd-apply.md")
 	if _, err := os.Stat(overridePath); err != nil {
@@ -276,20 +300,16 @@ func TestDeployPiSubAgents_PIEnvOverride(t *testing.T) {
 	}
 }
 
-func TestDeployPiSubAgents_AskUserQuestionPresent(t *testing.T) {
+func TestPiExtensionsStep_DeploysSubAgents_AskUserQuestionPresent(t *testing.T) {
 	home := t.TempDir()
 	mockFS := fstest.MapFS{
 		"skills/sdd-apply/SKILL.md": &fstest.MapFile{
 			Data: []byte("---\nname: sdd-apply\ndescription: Apply\n---\nBody\n"),
 		},
 	}
-	n, err := install.DeployPiSubAgents(home, mockFS)
-	if err != nil {
-		t.Fatalf("DeployPiSubAgents: %v", err)
-	}
-	if n == 0 {
-		t.Fatal("expected at least 1 agent")
-	}
+
+	runPiExtensionsStep(t, home, mockFS, false)
+
 	// Verify deployed sdd-apply contains ask_user_question (required for checkpoint)
 	applyPath := filepath.Join(home, ".pi", "agent", "agents", "sdd-apply.md")
 	data, err := os.ReadFile(applyPath)
