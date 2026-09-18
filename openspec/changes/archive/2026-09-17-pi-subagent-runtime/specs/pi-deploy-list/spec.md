@@ -1,12 +1,6 @@
-# Pi Deploy List Specification
+# Delta for pi-deploy-list
 
-## Purpose
-
-The new guard module MUST ship with pi: `internal/install/steps/pi_extensions.go`
-MUST list it for deploy so the static ESM imports resolve in the deployed
-`~/.pi/agent/extensions/` directory.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Guard Registered for Deploy
 
