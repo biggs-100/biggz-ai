@@ -301,6 +301,13 @@ func (o *OverlayStep) deployPersona(ctx context.Context, fsys fs.FS) error {
 		if orchData, err := fs.ReadFile(fsys, "biggz/biggz-orchestrator.md"); err == nil {
 			updated = injectByMarker(updated, string(orchData), "biggz:orchestrator")
 		}
+		// Self-heal: pre-footprint-slim installs left the full orchestrator
+		// prompt at ~/.biggz/biggz-orchestrator.md; nothing reads it now that
+		// the thin orchestrator above lands in APPEND_SYSTEM.md. os.Remove
+		// error ignored (absent file is a silent no-op).
+		if !o.DryRun {
+			_ = os.Remove(filepath.Join(o.HomeDir, ".biggz", "biggz-orchestrator.md"))
+		}
 		if webData, err := fs.ReadFile(fsys, "biggz/web-tools.md"); err == nil {
 			updated = injectByMarker(updated, string(webData), "biggz:web-tools")
 		}

@@ -198,7 +198,7 @@ The system MUST provision `mcpServers.bigmem` with `command=BiggzMCPPath()`, `ar
 
 ### Requirement: Slim APPEND_SYSTEM Generation
 
-The system MUST generate `APPEND_SYSTEM.md` with a single REMINDER block, all `<!-- biggz:* -->` markers, and gate template intact, with zero semantic change (prose/example trim only). `{{BIGGZ_BACKGROUND_POLICY}}` lives in `biggz-orchestrator-delegation.md` (on-demand delegation contract, read at delegation time), NOT inlined into `APPEND_SYSTEM.md` which carries zero literal `{{...}}` tokens by design.
+The system MUST generate `APPEND_SYSTEM.md` with a single REMINDER block, all `<!-- biggz:* -->` markers, and gate template intact, with zero semantic change (prose/example trim only). The background subagent policy is stated as rules in `biggz-orchestrator-delegation.md` (on-demand delegation contract, read at delegation time) and resolved live from `subagent` tool availability; no template token carries it, and `APPEND_SYSTEM.md` carries zero literal `{{...}}` tokens by design.
 
 #### Scenario: Single REMINDER with markers intact
 - GIVEN asset trim applied

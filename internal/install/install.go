@@ -52,8 +52,6 @@ type Result struct {
 	PromptsDeployed  int    // number of prompt files written (or would be written in dry-run)
 	MCPDeployed      bool   // whether the MCP server binary and config were deployed
 	PiAgentsDeployed int    // number of pi-native SDD agent files written (or would be written in dry-run)
-	PiWebSearch      bool   // whether the pi web-search extension was deployed
-	PiQuestionMouse  bool   // whether the pi question-mouse extension was deployed
 	DryRun           bool   // whether this was a dry-run (no files written)
 }
 
@@ -801,14 +799,6 @@ func DeployPersona(adapter plugin.AgentAdapter, homeDir string, dryRun bool) err
 	if adapter.ID() == agents.AgentPi {
 		if orchData, err := fs.ReadFile(assets.FS, "biggz/biggz-orchestrator.md"); err == nil {
 			orchContent := string(orchData)
-			// Replace background policy token with live capability probe at install time.
-			// This mirrors gentle-pi's renderOrchestratorPrompt which injects
-			// Background subagent policy: on|off (capability: ready|absent).
-			// If pi-subagents-j0k3r or pi-subagents is not yet installed, render off/absent with hint.
-			if strings.Contains(orchContent, "{{BIGGZ_BACKGROUND_POLICY}}") {
-				bgLine := piadapter.RenderBackgroundSubagentsStatusLine(homeDir)
-				orchContent = strings.ReplaceAll(orchContent, "{{BIGGZ_BACKGROUND_POLICY}}", bgLine)
-			}
 			updated = InjectByMarker(updated, orchContent, "biggz:orchestrator")
 		}
 		// Document web tools explicitly so the model never self-refuses browsing

@@ -181,6 +181,40 @@ func TestOverlayStep_Idempotent(t *testing.T) {
 	}
 }
 
+func TestOverlayStep_RemovesLegacyOrchestratorCopy(t *testing.T) {
+	tmp := t.TempDir()
+	systemPrompt := true
+	agent := &plugintest.FakeAgent{AgentID: "pi", AgentSystemPrompt: &systemPrompt}
+	agent.SetTempDir(tmp)
+	legacy := filepath.Join(tmp, ".biggz", "biggz-orchestrator.md")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(legacy, []byte("{{BIGGZ_BACKGROUND_POLICY}}\n"), 0o644); err != nil {
+		t.Fatalf("write legacy: %v", err)
+	}
+	dry := NewOverlayStep(tmp, agent, true)
+	if err := dry.Prepare(context.Background()); err != nil {
+		t.Fatalf("Prepare dry-run: %v", err)
+	}
+	if err := dry.Apply(context.Background(), make(pipeline.ProgressChan, 32)); err != nil {
+		t.Fatalf("Apply dry-run: %v", err)
+	}
+	if _, err := os.Stat(legacy); err != nil {
+		t.Fatalf("dry-run must not remove legacy copy: %v", err)
+	}
+	o := NewOverlayStep(tmp, agent, false)
+	if err := o.Prepare(context.Background()); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if err := o.Apply(context.Background(), make(pipeline.ProgressChan, 32)); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy orchestrator copy should be removed, stat err = %v", err)
+	}
+}
+
 func TestPiExtensionsStep_SkipNonPi(t *testing.T) {
 	tmp := t.TempDir()
 	agent := &plugintest.FakeAgent{}
