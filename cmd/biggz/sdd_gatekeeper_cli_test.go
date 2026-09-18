@@ -96,7 +96,8 @@ func TestSddGatekeeperCLI_MissingResult(t *testing.T) {
 
 // TestSddGatekeeperCLI_StoreFromPreflight pins the CLI wiring: the active
 // store comes from ResolvePreflightPrefs(cwd), so a "none" preflight makes
-// the artifact check report a skip with a reason instead of a silent pass.
+// the artifact check report a skip with a reason (never a silent pass) and
+// routing_coherence fail closed naming the missing store.
 func TestSddGatekeeperCLI_StoreFromPreflight(t *testing.T) {
 	tmpDir := t.TempDir()
 	changeDir := filepath.Join(tmpDir, "openspec", "changes", "test-change")
@@ -121,11 +122,14 @@ func TestSddGatekeeperCLI_StoreFromPreflight(t *testing.T) {
 	stderr := &bytes.Buffer{}
 	resultJSON := `{"status":"success","executive_summary":"Done","artifacts":[{"path":"sdd/test-change/proposal"}],"next_recommended":"spec"}`
 	code := runSddGatekeeper([]string{"test-change", "explore", "--result", resultJSON}, stdout, stderr)
-	if code != 0 {
-		t.Fatalf("expected exit code 0 with the artifact check skipped, got %d: %s", code, stdout.String())
+	if code != 1 {
+		t.Fatalf("expected exit code 1 with routing unresolved under store none, got %d: %s", code, stdout.String())
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "artifact_existence") || !strings.Contains(out, `"skipped": true`) || !strings.Contains(out, "artifact store is none") {
+	if !strings.Contains(out, "routing_coherence") || !strings.Contains(out, "artifact store is none") {
+		t.Errorf("expected routing_coherence to fail naming the missing store, got: %s", out)
+	}
+	if !strings.Contains(out, "artifact_existence") || !strings.Contains(out, `"skipped": true`) {
 		t.Errorf("expected a skipped artifact check naming its reason, got: %s", out)
 	}
 }
