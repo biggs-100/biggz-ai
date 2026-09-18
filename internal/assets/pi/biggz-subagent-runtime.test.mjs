@@ -13,6 +13,7 @@
 // `BIGGZ_BACKGROUND_SUBAGENTS` override, and the exact `subagent_wait` headline.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -222,6 +223,58 @@ describe('RPC child runner (fake child over JSONL)', () => {
     assert.equal(result.state, 'stalled');
     assert.equal(result.reason, 'total');
     assert.ok(result.events.some((e) => e.type === 'tick'), 'chatty child was producing output');
+  });
+
+  // Regression for #132: settle() → clearTimers() used to race a late stdout
+  // chunk, whose handler re-armed a fresh REFERENCED 240 s idle timer and kept
+  // `pi -p` alive ~4 min after the tool result. Observable contract: after
+  // settle, late chunks arm nothing, mutate nothing, and no watchdog holds a ref.
+  it('keeps a late stdout/stderr chunk after settle inert (no re-armed referenced idle timer)', async () => {
+    const IDLE_MS = 240000;
+    const child = new EventEmitter();
+    child.pid = 987654;
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = { writable: true, write: () => true };
+    const armed = [];
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = (fn, ms, ...rest) => {
+      const timer = realSetTimeout(fn, ms, ...rest);
+      if (ms === IDLE_MS) armed.push(timer);
+      return timer;
+    };
+    let task;
+    try {
+      task = run(
+        {},
+        {
+          spawnImpl: () => child,
+          idleMs: IDLE_MS,
+          finalTextMs: 0, // agent_settled ⇒ sync settle, no timer round-trip
+          killGraceMs: 0,
+          execImpl: () => {},
+          killImpl: () => {
+            throw Object.assign(new Error('gone'), { code: 'ESRCH' });
+          },
+        },
+      );
+      child.stdout.emit('data', Buffer.from('{"type":"tick"}\n'));
+      assert.equal(armed.length, 2, 'spawn arms the idle watchdog; a running chunk re-arms it');
+      child.stdout.emit('data', Buffer.from('{"type":"agent_settled"}\n'));
+      assert.equal((await task.promise).state, 'completed');
+      const armsAfterSettle = armed.length;
+      const before = task.snapshot();
+      child.stdout.emit('data', Buffer.from('{"type":"message_update"}\n'));
+      child.stderr.emit('data', Buffer.from('late stderr noise'));
+      const after = task.snapshot();
+      assert.equal(armed.length, armsAfterSettle, 'a late stdout chunk must not arm another idle watchdog');
+      assert.equal(after.events.length, before.events.length, 'late chunks must not be processed after settle');
+      assert.equal(after.stderrTail, before.stderrTail, 'stderr tail must stay frozen at settle');
+      assert.ok(armed.length > 0, 'the spy must have observed the idle watchdog arms');
+      assert.ok(armed.every((timer) => timer.hasRef?.() === false), 'idle watchdogs must be unref’d');
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
   });
 
   it('cancel kills the child + grandchild tree and marks the task cancelled', async (t) => {

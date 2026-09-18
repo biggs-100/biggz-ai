@@ -314,6 +314,7 @@ export function createTask(options = {}) {
 		if (settled) return;
 		settled = true;
 		clearTimers();
+		detachChildListeners();
 		state.value = kind;
 		state.reason = reason ?? null;
 		if (error !== undefined) state.error = error ? bounded(error?.message ?? error, 300) : null;
@@ -339,8 +340,10 @@ export function createTask(options = {}) {
 		});
 	};
 	const armIdle = () => {
+		if (settled) return; // a chunk racing settle() must not resurrect the watchdog
 		if (idleTimer) clearTimeout(idleTimer);
 		idleTimer = setTimeout(() => stalled("idle"), idleMs);
+		idleTimer?.unref?.();
 	};
 	// agent_settled → get_last_assistant_text → completed; bounded so a silent
 	// child can never hold the run open (deadline 0 skips the round-trip).
@@ -412,11 +415,28 @@ export function createTask(options = {}) {
 		},
 	});
 
+	// Named so settle() can detach them: a chunk racing the settle must not
+	// re-arm the idle watchdog, grow events/stderrTail, or queue more work.
+	function onStdout(chunk) {
+		armIdle();
+		reader.push(chunk);
+	}
+	function onStderr(chunk) {
+		stderrTail = `${stderrTail}${String(chunk)}`.slice(-4096);
+	}
+	function detachChildListeners() {
+		try {
+			child?.stdout?.off?.("data", onStdout);
+			child?.stderr?.off?.("data", onStderr);
+		} catch {}
+	}
+
 	function start() {
 		if (started || settled) return false;
 		started = true;
 		state.value = "spawning";
 		totalTimer = setTimeout(() => stalled("total"), totalMs);
+		totalTimer?.unref?.();
 		armIdle();
 		try {
 			child = spawnImpl(launch.command, [...(launch.prefix ?? []), ...args], {
@@ -434,13 +454,8 @@ export function createTask(options = {}) {
 		if (child) {
 			state.value = "running";
 			try {
-				child.stdout?.on?.("data", (chunk) => {
-					armIdle();
-					reader.push(chunk);
-				});
-				child.stderr?.on?.("data", (chunk) => {
-					stderrTail = `${stderrTail}${String(chunk)}`.slice(-4096);
-				});
+				child.stdout?.on?.("data", onStdout);
+				child.stderr?.on?.("data", onStderr);
 				child.on?.("error", (err) => {
 					if (!settled && state.value !== "stalled" && state.value !== "cancelled") settle("failed", "spawn", err);
 				});
