@@ -5,7 +5,7 @@
  * (`~/.pi/agent/agents/*.md`), one `pi --mode rpc --no-session` child per task,
  * strict JSONL (LF-only split, CR stripped, 1 MiB line cap — `readline` also
  * splits U+2028/U+2029, legal inside JSON strings, so it is NOT RPC-protocol
- * compliant), stall watchdog (idle 4 min / total 30 min) and tree kill
+ * compliant), stall watchdog (idle 4 min while no tool is in flight / total 30 min) and tree kill
  * (abort RPC → SIGTERM group → SIGKILL; Windows `taskkill /PID /T [/F]`).
  * S1b: registration gate (dual-registration vs j0k3r), `subagent*` tool surface
  * over a bounded in-memory ring (no disk, no BigMem), a one-line completion card
@@ -62,6 +62,9 @@ export function createJsonlReader(options = {}) {
 		stats.skipped += 1;
 		try {
 			logger?.warn?.(`biggz-subagent-runtime: ${reason}: ${bounded(detail, 120)}`);
+		} catch {}
+		try {
+			options.onDrop?.(reason, detail);
 		} catch {}
 	};
 	function push(chunk) {
@@ -298,6 +301,7 @@ export function createTask(options = {}) {
 	const id = options.id ?? `sub-${startedAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 	const events = [];
 	const state = { value: options.autoStart === false ? "queued" : "spawning", reason: null, exitCode: null, error: null };
+	const inFlightTools = new Set(); // announced tool starts awaiting their end (pi 0.85.1 tool_execution_*)
 	let child = null;
 	let idleTimer = null;
 	let totalTimer = null;
@@ -350,9 +354,21 @@ export function createTask(options = {}) {
 			if (state.value === "stalled") settle("stalled", reason);
 		});
 	};
+	// pi 0.85.1 `tool_execution_start` / `tool_execution_end` carry
+	// `toolCallId` + `toolName` (dist/core/agent-session.js:528-555); correlate on
+	// the id and fall back to the tool name (then a constant) so a malformed
+	// event degrades conservatively instead of throwing.
+	const toolKeyOf = (data) => {
+		const callId = typeof data?.toolCallId === "string" ? data.toolCallId.trim() : "";
+		if (callId) return callId;
+		const toolName = typeof data?.toolName === "string" ? data.toolName.trim() : "";
+		return toolName || "__unnamed_tool__";
+	};
 	const armIdle = () => {
 		if (settled) return; // a chunk racing settle() must not resurrect the watchdog
 		if (idleTimer) clearTimeout(idleTimer);
+		idleTimer = null;
+		if (inFlightTools.size > 0) return; // an announced in-flight tool owns the budget; the total bound still governs
 		idleTimer = setTimeout(() => stalled("idle"), idleMs);
 		idleTimer?.unref?.();
 	};
@@ -422,8 +438,28 @@ export function createTask(options = {}) {
 				void relayUiRequest(data);
 				return;
 			}
-			// Progress-only events: agent_start, message_update, tool_execution_start/end,
+			if (type === "tool_execution_start") {
+				inFlightTools.add(toolKeyOf(data));
+				armIdle(); // suspend the idle bound while the announced tool runs
+				return;
+			}
+			if (type === "tool_execution_end") {
+				inFlightTools.delete(toolKeyOf(data));
+				armIdle(); // last in-flight tool done ⇒ the idle bound re-arms
+				return;
+			}
+			// Progress-only events: agent_start, message_update, tool_execution_update,
 			// auto_retry_end, extension_error. Every other event type is ignored.
+		},
+		// A dropped/malformed line may have been a `tool_execution_end`; when
+		// framing integrity is lost, the conservative fallback is the plain idle
+		// bound re-arming. Trade-off: an oversized *unrelated* line can re-arm
+		// idle while a silent tool runs — strictly rarer than the stuck-key case.
+		onDrop() {
+			if (inFlightTools.size) {
+				inFlightTools.clear();
+				armIdle();
+			}
 		},
 	});
 

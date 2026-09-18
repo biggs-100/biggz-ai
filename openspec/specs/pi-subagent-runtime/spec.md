@@ -62,11 +62,17 @@ Child `ask_user_question` MUST relay to the parent session and the user's answer
 
 ### Requirement: Stall Watchdog, Kill, and Cancel Semantics
 
-The runtime MUST terminate a child exceeding its configured idle (no output) or total in-flight bound, escalating `SIGTERM`→`SIGKILL`. Cancel MUST kill the entire child process tree (Windows included) and mark the task cancelled — never crash the session.
+The runtime MUST terminate a child exceeding its configured total in-flight bound or, when no tool execution is announced in flight, its idle (no output) bound, escalating `SIGTERM`→`SIGKILL`. The runtime MUST track `tool_execution_start`/`tool_execution_end` and MUST suspend the idle bound while at least one announced tool is in flight; the total bound MUST keep governing. When the last in-flight tool ends, the idle bound MUST re-arm. If a child line is dropped for exceeding the framing cap, the runtime MUST conservatively re-arm the idle bound. Cancel MUST kill the entire child process tree (Windows included) and mark the task cancelled — never crash the session.
+
+#### Scenario: Idle stall suspended while a tool is in flight
+
+- GIVEN a child that announced an in-flight tool with `tool_execution_start`
+- WHEN the child stays silent beyond the idle bound
+- THEN the idle watchdog MUST NOT fire and the child MUST stay running
 
 #### Scenario: Idle stall killed
 
-- GIVEN a child silent beyond the idle bound
+- GIVEN a child silent beyond the idle bound with no tool in flight or after the last `tool_execution_end`
 - WHEN the watchdog fires
 - THEN the child MUST be terminated and the task MUST report a stall failure
 
