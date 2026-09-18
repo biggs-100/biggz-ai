@@ -171,7 +171,6 @@ const WIDTH_MATH_ALLOWLIST = new Map([
 	["pi-tui-resolver.mjs", "specifier resolver paired with the oracle (no width math of its own)"],
 	["biggz-footer.js", "pre-existing S4 baseline: prefers Bun.stringWidth, codepoint fallback documented; untouched by this change"],
 	["biggz-question-mouse.js", "pre-existing S4 baseline: documented ASCII-art fallback; untouched by this change"],
-	["biggz-pi-pretty.js", "pre-existing S4 baseline: retired asset (no deployer since the S3 cutover), deletion follow-up recorded"],
 ]);
 
 const detectNaiveWidthMath = (source) => {
