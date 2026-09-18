@@ -227,9 +227,21 @@ func LoadBackgroundSubagentsPolicy(cwd string) string {
 	return ResolveBackgroundSubagentsPolicy(cwd, LoadBackgroundSubagentsOptions{}).Policy.String()
 }
 
+// backgroundSubagentsDisabled reports the `disabled|unmanaged` state: policy
+// `off` (disabled) or capability not `ready` (unmanaged, no deployed runtime
+// dispatcher). Either state MUST render the disabled/unmanaged notice and type
+// the report as a warning.
+func backgroundSubagentsDisabled(policy BackgroundSubagentsPolicy, capability string) bool {
+	return policy == BackgroundPolicyOff || capability != BackgroundCapabilityReady
+}
+
 // RenderBackgroundSubagentsReport renders the human status.
 func RenderBackgroundSubagentsReport(r BackgroundSubagentsResolution, capability string, wrote *BackgroundSubagentsPolicy) BackgroundSubagentsReport {
 	lines := []string{fmt.Sprintf("background subagents: %s (decided by %s; capability: %s)", r.Policy, describeBackgroundSubagentsSource(r), capability)}
+	disabled := backgroundSubagentsDisabled(r.Policy, capability)
+	if disabled {
+		lines = append(lines, fmt.Sprintf("Background subagents are disabled/unmanaged (policy: %s, capability: %s): background launches stay inert until the runtime is deployed (biggz install --agent pi) and the policy is turned on.", r.Policy, capability))
+	}
 	if wrote != nil {
 		lines = append(lines, fmt.Sprintf("Wrote %s to the global file %s.", *wrote, r.GlobalFile))
 	}
@@ -256,36 +268,82 @@ func RenderBackgroundSubagentsReport(r BackgroundSubagentsResolution, capability
 	}
 	lines = append(lines, "Resolution order (first hit wins): project file, global file, BIGGZ_BACKGROUND_SUBAGENTS, built-in default off.")
 	tp := "info"
-	if r.Malformed || outranks {
+	if r.Malformed || outranks || disabled {
 		tp = "warning"
 	}
 	return BackgroundSubagentsReport{Message: strings.Join(lines, "\n"), Type: tp}
 }
 
-// ResolveBackgroundSubagentsCapability probes for subagent_run.
-func ResolveBackgroundSubagentsCapability(homeDir string) string {
-	// probe via pi-subagents package presence as fallback; prefer subagent_run tool if available
-	candidates := []string{
-		filepath.Join(homeDir, ".pi", "agent", "npm", "node_modules", "pi-subagents"),
-		filepath.Join(homeDir, ".pi", "agent", "node_modules", "pi-subagents"),
-		filepath.Join(homeDir, ".biggz", "subagents"),
-	}
+// SubagentRuntimeTargetName is the deployed file name of the biggz subagent
+// runtime pi extension — the delegation owner after the j0k3r cutover.
+const SubagentRuntimeTargetName = "biggz-subagent-runtime.js"
+
+// SubagentRuntimeJ0k3rMarker is the settings.json `packages` fragment that
+// identifies the retired third-party dispatcher (dual registration risk).
+const SubagentRuntimeJ0k3rMarker = "pi-subagents-j0k3r"
+
+// SubagentRuntimeMarkerPath returns the deployed subagent-runtime marker path
+// (~/.pi/agent/extensions/biggz-subagent-runtime.js), honoring
+// PI_CODING_AGENT_DIR like every other pi asset resolver.
+func SubagentRuntimeMarkerPath(homeDir string) string {
 	if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
-		candidates = append(candidates,
-			filepath.Join(v, "npm", "node_modules", "pi-subagents"),
-			filepath.Join(v, "node_modules", "pi-subagents"),
-		)
+		return filepath.Join(v, "extensions", SubagentRuntimeTargetName)
 	}
-	// Also check BIGGZ home subagents
-	if v := strings.TrimSpace(os.Getenv("BIGGZ_CONFIG_HOME")); v != "" {
-		candidates = append(candidates, filepath.Join(v, "subagents"))
+	return filepath.Join(homeDir, ".pi", "agent", "extensions", SubagentRuntimeTargetName)
+}
+
+// subagentRuntimeSettingsPath returns pi's settings.json, honoring
+// PI_CODING_AGENT_DIR (mirrors the runtime's resolveSettingsPath).
+func subagentRuntimeSettingsPath(homeDir string) string {
+	if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
+		return filepath.Join(v, "settings.json")
 	}
-	for _, root := range candidates {
-		if _, err := os.Stat(filepath.Join(root, "package.json")); err == nil {
-			return BackgroundCapabilityReady
+	return filepath.Join(homeDir, ".pi", "agent", "settings.json")
+}
+
+// subagentRuntimeMarkerDeployed reports whether the runtime marker is a file.
+func subagentRuntimeMarkerDeployed(homeDir string) bool {
+	info, err := os.Stat(SubagentRuntimeMarkerPath(homeDir))
+	return err == nil && !info.IsDir()
+}
+
+// subagentRuntimeSettingsProvesJ0k3rAbsent mirrors the runtime registration
+// gate: a missing settings.json proves nothing is installed; unreadable or
+// corrupt settings cannot prove absence (fail closed).
+func subagentRuntimeSettingsProvesJ0k3rAbsent(homeDir string) bool {
+	raw, err := os.ReadFile(subagentRuntimeSettingsPath(homeDir))
+	if err != nil {
+		return os.IsNotExist(err)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return false
+	}
+	packages, _ := parsed["packages"].([]any)
+	for _, entry := range packages {
+		if spec, ok := entry.(string); ok && strings.Contains(spec, SubagentRuntimeJ0k3rMarker) {
+			return false
 		}
 	}
+	return true
+}
+
+// SubagentRuntimeCapability reports `ready` only when the deployed
+// subagent-runtime marker is present AND j0k3r is absent from settings
+// `packages` (else `ready` would lie — both dispatchers register duplicate
+// subagent tools); it reports `absent` otherwise. Third-party
+// `pi-subagents*` package presence alone MUST NOT yield `ready`.
+func SubagentRuntimeCapability(homeDir string) string {
+	if subagentRuntimeMarkerDeployed(homeDir) && subagentRuntimeSettingsProvesJ0k3rAbsent(homeDir) {
+		return BackgroundCapabilityReady
+	}
 	return BackgroundCapabilityAbsent
+}
+
+// ResolveBackgroundSubagentsCapability probes the deployed subagent-runtime
+// marker (marker ∧ j0k3r absent from settings packages).
+func ResolveBackgroundSubagentsCapability(homeDir string) string {
+	return SubagentRuntimeCapability(homeDir)
 }
 
 // RenderBackgroundSubagentsStatusLine convenience.

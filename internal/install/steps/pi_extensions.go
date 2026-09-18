@@ -68,6 +68,10 @@ func (p *PiExtensionsStep) Prepare(ctx context.Context) error {
 // biggz-memory-chrome.js is DEPLOYED: it is the pretty layer that collapses
 // native /mcp memory results to one line (no gate — always active unless
 // BIGGZ_PRETTY=0).
+// biggz-subagent-runtime.js is DEPLOYED: it owns pi delegation after the
+// j0k3r cutover (agent discovery, one RPC child per task, background delivery,
+// widget, `subagent*` tools). biggz-wait-pretty.js is retired with the fork —
+// the runtime's `subagent_wait` carries the headline.
 func piExtensionsDeployList() []struct{ asset, target string } {
 	list := []struct{ asset, target string }{
 		{"pi/biggz-thinking-wrap.js", "biggz-thinking-wrap.js"},
@@ -77,7 +81,7 @@ func piExtensionsDeployList() []struct{ asset, target string } {
 		{"pi/biggz-session-guard.js", "biggz-session-guard.js"},
 		{"pi/biggz-ask-guard.js", "biggz-ask-guard.js"},
 		{"pi/biggz-last-model.js", "biggz-last-model.js"},
-		{"pi/biggz-wait-pretty.js", "biggz-wait-pretty.js"},
+		{"pi/biggz-subagent-runtime.js", "biggz-subagent-runtime.js"},
 		{"pi/biggz-footer.js", "biggz-footer.js"},
 		{"pi/biggz-tool-pills.js", "biggz-tool-pills.js"},
 		{"pi/biggz-web-search.js", "biggz-web-search.js"},
@@ -228,11 +232,6 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 			return err
 		}
 	}
-	// Deploy pi subagent config.
-	// Note: pi-subagents-j0k3r is preferred over pi-subagents for better FleetView support.
-	if err := p.deploySubAgentConfig(ctx, fsys); err != nil {
-		return err
-	}
 	if ch != nil {
 		select {
 		case ch <- pipeline.ProgressEvent{Step: p.Name(), Percent: 100, Message: "pi done"}:
@@ -251,11 +250,12 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 		for _, stale := range []string{"gentle-ai.ts", "quiet-tools.ts", "sdd-init.ts", "startup-banner.ts"} {
 			_ = os.Remove(filepath.Join(extDir, stale))
 		}
-		// Self-heal retired wrapper: stale biggz-synthesis-gate.js copies keep
-		// enforcing the duplicate gate. Absent files are a silent no-op
-		// (os.Remove error ignored). biggz-memory-chrome.js is NOT stale —
-		// it is deployed (see piExtensionsDeployList).
-		for _, stale := range []string{"biggz-synthesis-gate.js"} {
+		// Self-heal retired wrappers: stale biggz-synthesis-gate.js copies keep
+		// enforcing the duplicate gate; stale biggz-wait-pretty.js copies keep
+		// wrapping j0k3r-only hooks that no longer exist. Absent files are a
+		// silent no-op (os.Remove error ignored). biggz-memory-chrome.js is NOT
+		// stale — it is deployed (see piExtensionsDeployList).
+		for _, stale := range []string{"biggz-synthesis-gate.js", "biggz-wait-pretty.js"} {
 			_ = os.Remove(filepath.Join(extDir, stale))
 		}
 		_ = os.RemoveAll(filepath.Join(extDir, "_disabled_broken_backup"))
@@ -415,49 +415,6 @@ func (p *PiExtensionsStep) deployThemes(ctx context.Context, fsys fs.FS) error {
 		}
 		return p.tracker.write(target, data, 0644)
 	})
-}
-func (p *PiExtensionsStep) deploySubAgentConfig(ctx context.Context, fsys fs.FS) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-	}
-	var assetData []byte
-	var err error
-	if fsys != nil {
-		assetData, err = fs.ReadFile(fsys, "pi/subagent-config.json")
-	}
-	if err != nil || len(assetData) == 0 {
-		assetData, err = fs.ReadFile(assets.FS, "pi/subagent-config.json")
-		if err != nil {
-			return nil
-		}
-	}
-	if p.DryRun {
-		return nil
-	}
-	configDir := filepath.Join(piExtensionsDir(p.HomeDir), "subagent")
-	target := filepath.Join(configDir, "config.json")
-	var existing []byte
-	if _, err := os.Stat(target); err == nil {
-		existing, _ = os.ReadFile(target)
-	}
-	var merged []byte
-	if len(existing) > 0 {
-		merged, err = mergeJSONCWrapper(existing, assetData)
-		if err != nil {
-			merged, _ = mergeJSONCWrapper([]byte("{}"), assetData)
-		}
-	} else {
-		merged, _ = mergeJSONCWrapper([]byte("{}"), assetData)
-	}
-	if len(merged) > 0 && merged[len(merged)-1] != '\n' {
-		merged = append(merged, '\n')
-	}
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return err
-	}
-	return p.tracker.write(target, merged, 0644)
 }
 func (p *PiExtensionsStep) Rollback(ctx context.Context) error {
 	_ = ctx

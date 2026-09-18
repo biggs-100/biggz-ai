@@ -1,12 +1,18 @@
 package steps
 
 import (
+	"context"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
 
+	"github.com/biggs-100/biggz-ai/internal/agents"
 	"github.com/biggs-100/biggz-ai/internal/assets"
+	"github.com/biggs-100/biggz-ai/internal/pipeline"
+	"github.com/biggs-100/biggz-ai/plugintest"
 )
 
 // TestPiExtensionsGuard_FactoryExport ensures every JS pi extension asset
@@ -25,7 +31,7 @@ func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
 		{"pi/biggz-session-guard.js", "biggz-session-guard.js"},
 		{"pi/biggz-ask-guard.js", "biggz-ask-guard.js"},
 		{"pi/biggz-last-model.js", "biggz-last-model.js"},
-		{"pi/biggz-wait-pretty.js", "biggz-wait-pretty.js"},
+		{"pi/biggz-subagent-runtime.js", "biggz-subagent-runtime.js"},
 		{"pi/biggz-footer.js", "biggz-footer.js"},
 		{"pi/biggz-tool-pills.js", "biggz-tool-pills.js"},
 		{"pi/biggz-web-search.js", "biggz-web-search.js"},
@@ -59,6 +65,45 @@ func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
 	// where pi_extensions.go was updated but this test wasn't (or vice versa).
 	if helperCount := countJS(piExtensionsDeployList()); helperCount != jsCount {
 		t.Errorf("helper drift: piExtensionsDeployList() has %d JS, test list has %d — keep them in sync", helperCount, jsCount)
+	}
+}
+
+// TestPiExtensionsStep_RemovesRetiredWaitPretty ensures the stale self-heal
+// removes retired biggz-wait-pretty.js copies (retired with the j0k3r cutover,
+// replaced by the deployed subagent runtime) alongside biggz-synthesis-gate.js,
+// and that a second Apply with no stale files is a silent no-op.
+func TestPiExtensionsStep_RemovesRetiredWaitPretty(t *testing.T) {
+	tmp := t.TempDir()
+	agent := &plugintest.FakeAgent{Installed: true, AgentID: agents.AgentPi}
+	agent.SetTempDir(tmp)
+	extDir := piExtensionsDir(tmp)
+	if err := os.MkdirAll(extDir, 0o755); err != nil {
+		t.Fatalf("mkdir extDir: %v", err)
+	}
+	stale := []string{"biggz-wait-pretty.js", "biggz-synthesis-gate.js"}
+	for _, name := range stale {
+		if err := os.WriteFile(filepath.Join(extDir, name), []byte("stale"), 0o644); err != nil {
+			t.Fatalf("seed stale %s: %v", name, err)
+		}
+	}
+	p := NewPiExtensionsStep(tmp, agent, false)
+	if err := p.Prepare(context.Background()); err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	if err := p.Apply(context.Background(), make(pipeline.ProgressChan, 32)); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	for _, name := range stale {
+		if _, err := os.Stat(filepath.Join(extDir, name)); !os.IsNotExist(err) {
+			t.Errorf("retired extension %s still present after Apply (err=%v)", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(extDir, "biggz-subagent-runtime.js")); err != nil {
+		t.Errorf("subagent runtime must be deployed in place of the retired wait shim: %v", err)
+	}
+	// Missing stale files are silent no-ops (os.Remove error ignored).
+	if err := p.Apply(context.Background(), make(pipeline.ProgressChan, 32)); err != nil {
+		t.Errorf("second Apply with no stale files must succeed silently, got %v", err)
 	}
 }
 
