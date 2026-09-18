@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/biggs-100/biggz-ai/internal/sdd"
 )
 
 func writePolicyFile(t *testing.T, path, policy string) {
@@ -102,6 +104,24 @@ func TestRenderBackgroundSubagentsReport_Malformed(t *testing.T) {
 	}
 }
 
+// Twin parity: the pi renderer is a thin delegate to the sdd owner, so the
+// disabled/unmanaged notice and the warning type match the owner exactly.
+func TestRenderBackgroundSubagentsReport_DisabledUnmanagedTwin(t *testing.T) {
+	r := BackgroundSubagentsResolution{Policy: "off", Source: BackgroundSourceDefault}
+	report := RenderBackgroundSubagentsReport(r, "absent", nil)
+	for _, token := range []string{"policy: off", "capability: absent", "disabled/unmanaged"} {
+		if !strings.Contains(report.Message, token) {
+			t.Fatalf("twin report missing %q:\n%s", token, report.Message)
+		}
+	}
+	if report.Type != "warning" {
+		t.Fatalf("twin report type = %q, want warning", report.Type)
+	}
+	if owner := sdd.RenderBackgroundSubagentsReport(r, "absent", nil); report != owner {
+		t.Fatalf("twin drifted from the sdd owner:\ntwin:  %#v\nowner: %#v", report, owner)
+	}
+}
+
 func TestGentleAiConfigHome_EnvOverride(t *testing.T) {
 	t.Setenv("GENTLE_PI_CONFIG_HOME", "/tmp/custom")
 	if got := GentleAiConfigHome(); got != "/tmp/custom" {
@@ -112,6 +132,7 @@ func TestGentleAiConfigHome_EnvOverride(t *testing.T) {
 // --- PR1 pi-mcp-adapter migration tests ---
 
 func TestInstallCommand_ContainsAdapterBeforeSubagents(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir()) // no runtime marker: pre-cutover list
 	a := NewAdapter()
 	cmds, err := a.InstallCommand(nil)
 	if err != nil {
