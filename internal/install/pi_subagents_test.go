@@ -300,7 +300,7 @@ func TestPiExtensionsStep_DeploysSubAgents_PIEnvOverride(t *testing.T) {
 	}
 }
 
-func TestPiExtensionsStep_DeploysSubAgents_AskUserQuestionPresent(t *testing.T) {
+func TestPiExtensionsStep_DeploysSubAgents_WithoutAskUserQuestion(t *testing.T) {
 	home := t.TempDir()
 	mockFS := fstest.MapFS{
 		"skills/sdd-apply/SKILL.md": &fstest.MapFile{
@@ -310,13 +310,15 @@ func TestPiExtensionsStep_DeploysSubAgents_AskUserQuestionPresent(t *testing.T) 
 
 	runPiExtensionsStep(t, home, mockFS, false)
 
-	// Verify deployed sdd-apply contains ask_user_question (required for checkpoint)
+	// Children must NOT ship an ask tool: asking the human is the orchestrator's job. A child
+	// that needs a decision returns status blocked with the reason (a child dialog used to
+	// steal the parent's Enter and answer in the human's name).
 	applyPath := filepath.Join(home, ".pi", "agent", "agents", "sdd-apply.md")
 	data, err := os.ReadFile(applyPath)
 	if err != nil {
 		t.Fatalf("read sdd-apply.md: %v", err)
 	}
-	if !strings.Contains(string(data), "ask_user_question") {
-		t.Errorf("sdd-apply.md should contain ask_user_question, got %q", string(data[:500]))
+	if strings.Contains(string(data), "ask_user_question") {
+		t.Errorf("sdd-apply.md must not contain ask_user_question, got %q", string(data[:500]))
 	}
 }

@@ -51,6 +51,8 @@ const {
   createWidgetPublisher,
   renderWaitHeadline,
   presentUiRequest,
+  DEFAULT_DIALOG_TIMEOUT_MS,
+  resolveDialogTimeout,
 } = rt;
 
 const SRC = fs.readFileSync(new URL('./biggz-subagent-runtime.js', import.meta.url), 'utf8');
@@ -898,6 +900,186 @@ describe('S2 dialog relay + steering', () => {
     assert.deepEqual(await presentUiRequest({ ui: { confirm: async () => false } }, { method: 'confirm', title: 'ok?' }), { confirmed: false });
     assert.deepEqual(await presentUiRequest({ ui: { input: async () => undefined } }, { method: 'input', title: 't' }), { cancelled: true });
     assert.deepEqual(await presentUiRequest(undefined, { method: 'select', title: 't', options: [] }), { cancelled: true }, 'no UI ⇒ cancelled');
+  });
+
+  it('names the asking subagent in the relayed question', async () => {
+    const seen = [];
+    const answer = await presentUiRequest(
+      { ui: { select: async (title, options) => { seen.push([title, options]); return 'Allow'; } } },
+      { method: 'select', title: 'Pick one', options: ['Allow'] },
+      { timeout: 1000, agentLabel: 'sdd-propose' },
+    );
+    assert.deepEqual(seen, [['sdd-propose: Pick one', ['Allow']]], 'the human must see who is asking');
+    assert.deepEqual(answer, { value: 'Allow' });
+  });
+
+  it('answers `cancelled` at the dialog bound when the parent never answers, and the run continues', async (t) => {
+    // The deployed failure: a child asks (sdd-* agents ship `ask_user_question`),
+    // the parent relays it, nobody answers — the child blocks until the 30-min
+    // total watchdog and the user sees a silent hang. The relay must bound it.
+    const warns = [];
+    let resolvePresentation;
+    const task = run(
+      { FAKE_UI_REQUEST: '1' },
+      {
+        dialogMs: 150,
+        logger: { warn: (m) => warns.push(m), error() {} },
+        onUiRequest: () => new Promise((resolve) => { resolvePresentation = resolve; }), // never answered by a human
+      },
+    );
+    t.after(() => task.cancel());
+    const result = await task.promise;
+    assert.equal(result.state, 'completed', 'the run must continue instead of blocking on the unanswered dialog');
+    assert.equal(result.dialogRelayed, 1);
+    assert.equal(result.dialogMissed, 1, 'the missed question must be recorded on the snapshot');
+    assert.equal(result.pendingUi, 0);
+    assert.equal(result.pendingDialog, null);
+    const answers = result.events.filter((e) => e.type === 'fake_command' && e.command.type === 'extension_ui_response');
+    assert.deepEqual(answers.map((e) => e.command), [{ type: 'extension_ui_response', id: 'q1', cancelled: true }], 'the child must receive `cancelled` so it can degrade and continue');
+    assert.equal(result.events.find((e) => e.type === 'dialog_answer')?.cancelled, true);
+    assert.ok(warns.some((m) => m.includes('unanswered')), `the miss must be logged; got ${JSON.stringify(warns)}`);
+    // A late human answer after the bound must not answer the child twice.
+    resolvePresentation?.({ value: 'Allow' });
+    await sleep(60);
+    const after = task.snapshot().events.filter((e) => e.type === 'fake_command' && e.command.type === 'extension_ui_response');
+    assert.equal(after.length, 1, 'exactly one answer per relayed question');
+  });
+
+  it('keeps the idle bound honest: an unanswered dialog cannot hold the run open', async (t) => {
+    const child = scriptedChild();
+    const writes = [];
+    child.stdin = { writable: true, write: (line) => { writes.push(String(line)); return true; } };
+    const task = run(
+      {},
+      {
+        dialogMs: 120,
+        idleMs: 100000, // the total bound would be the only escape without the dialog bound
+        totalMs: 100000,
+        spawnImpl: () => child,
+        killGraceMs: 0,
+        execImpl: () => {},
+        killImpl: () => {},
+        onUiRequest: () => new Promise(() => {}),
+      },
+    );
+    t.after(() => task.cancel());
+    emitLine(child, { type: 'extension_ui_request', id: 'q1', method: 'select', title: 'Pick one', options: ['A', 'B'] });
+    await waitFor(() => task.snapshot().pendingUi === 1, 2000);
+    assert.equal(task.snapshot().pendingDialog?.title, 'Pick one');
+    await sleep(220);
+    assert.ok(writes.some((line) => line.includes('"extension_ui_response"') && line.includes('"cancelled":true')), `the child must be unblocked at the bound; got ${JSON.stringify(writes)}`);
+    assert.equal(task.snapshot().pendingUi, 0, 'a missed dialog must not stay pending');
+    assert.equal(task.snapshot().pendingDialog, null);
+  });
+
+  it('passes the dialog budget to the parent UI and announces the question', async () => {
+    const seen = [];
+    const notifies = [];
+    const answer = await presentUiRequest(
+      {
+        ui: {
+          notify: (message, type) => notifies.push([message, type]),
+          select: async (title, options, opts) => {
+            seen.push([title, options, opts]);
+            return 'Allow';
+          },
+        },
+      },
+      { method: 'select', title: 'Pick one', options: ['Allow', 'Block'] },
+      { timeout: 5000 },
+    );
+    assert.deepEqual(answer, { value: 'Allow' });
+    assert.deepEqual(seen, [['Pick one', ['Allow', 'Block'], { timeout: 5000 }]], 'the TUI must own the countdown for the same budget the runtime enforces');
+    assert.deepEqual(notifies, [['Subagent question: Pick one', 'info']]);
+    const noBudget = [];
+    await presentUiRequest({ ui: { select: async (...args) => { noBudget.push(args[2]); return 'A'; } } }, { method: 'select', title: 't', options: ['A'] });
+    assert.deepEqual(noBudget, [undefined], 'no configured budget ⇒ no artificial dialog option');
+  });
+
+  it('resolves the dialog budget from BIGGZ_SUBAGENT_DIALOG_MS', () => {
+    assert.equal(resolveDialogTimeout({}), DEFAULT_DIALOG_TIMEOUT_MS);
+    assert.equal(resolveDialogTimeout({ BIGGZ_SUBAGENT_DIALOG_MS: '45000' }), 45000);
+    assert.equal(resolveDialogTimeout({ BIGGZ_SUBAGENT_DIALOG_MS: '0' }), 0);
+    assert.equal(resolveDialogTimeout({ BIGGZ_SUBAGENT_DIALOG_MS: 'nonsense' }), DEFAULT_DIALOG_TIMEOUT_MS);
+    assert.equal(resolveDialogTimeout({ BIGGZ_SUBAGENT_DIALOG_MS: '-5' }), DEFAULT_DIALOG_TIMEOUT_MS);
+  });
+
+  it('surfaces the unanswered question in the subagent tool result', async () => {
+    const toolset = toolsetFor({
+      dialogMs: 120,
+      presentUiRequest: () => new Promise(() => {}),
+      // The fake child asks at start and only settles once it is answered.
+      env: { ...process.env, PI_CODING_AGENT_DIR: probeDir(), FAKE_UI_REQUEST: '1' },
+    });
+    const tool = toolset.byName('subagent');
+    const result = await tool.execute('call1', { agent: 'probe', task: 'do it', mode: 'task' }, undefined, undefined, fakeCtx());
+    assert.equal(result.isError, undefined);
+    const text = result.content[0].text;
+    assert.match(text, /1 child question not answered within 1s/, `the caller must see why the child degraded; got ${text}`);
+    assert.equal(result.details.dialogsMissed, 1);
+  });
+
+  it('dismisses a background child question instead of asking a human who is not waiting', async (t) => {
+    // gentle-shell parity: nobody waits on a background child, so its question is answered
+    // `cancelled` at once and the parent UI is never touched (it used to steal the human's
+    // Enter and answer option 0 in their name).
+    const env = { ...process.env, PI_CODING_AGENT_DIR: probeDir(), FAKE_SETTLED: '1', FAKE_UI_REQUEST: '1' };
+    delete env.BIGGZ_BACKGROUND_SUBAGENTS;
+    const presented = [];
+    const warns = [];
+    const { registry, byName } = toolsetFor({
+      env,
+      logger: { warn: (m) => warns.push(m), error() {} },
+      presentUiRequest: async (request) => { presented.push(request); return { value: 'Allow' }; },
+    });
+    const launched = await byName('subagent').execute('b1', { agent: 'probe', task: 'do the thing', mode: 'background' });
+    const id = launched.details.taskId;
+    t.after(() => registry.get(id)?.cancel());
+    assert.ok(await waitFor(() => registry.get(id)?.state === 'completed'), 'the child must continue and settle on its own');
+    assert.deepEqual(presented, [], 'a background question must never reach the parent UI');
+    const snap = registry.get(id).snapshot();
+    assert.equal(snap.dialogsDismissed, 1, 'the dismissal must be recorded on the snapshot');
+    assert.equal(snap.dialogRelayed, 0);
+    assert.equal(snap.dialogMissed, 0);
+    assert.deepEqual(
+      snap.events.filter((e) => e.type === 'fake_command' && e.command.type === 'extension_ui_response').map((e) => e.command),
+      [{ type: 'extension_ui_response', id: 'q1', cancelled: true }],
+      'the child must receive `cancelled` immediately',
+    );
+    assert.ok(warns.some((m) => m.includes('dismissed without asking')), `the dismissal must be logged; got ${JSON.stringify(warns)}`);
+  });
+
+  it('carries the asking agent id on a foreground relay', async () => {
+    const env = { ...process.env, PI_CODING_AGENT_DIR: probeDir(), FAKE_SETTLED: '1', FAKE_UI_REQUEST: '1' };
+    delete env.BIGGZ_BACKGROUND_SUBAGENTS;
+    const labels = [];
+    const { byName } = toolsetFor({
+      env,
+      presentUiRequest: async (_ctx, _request, dialogOpts) => { labels.push(dialogOpts?.agentLabel); return { value: 'Allow' }; },
+    });
+    const result = await byName('subagent').execute('f1', { agent: 'probe', task: 'do the thing' });
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(labels, ['probe'], 'a foreground relay must identify the asking subagent');
+    assert.equal(result.details.dialogsMissed, 0);
+    assert.equal(result.details.dialogsDismissed, 0);
+  });
+
+  it('Esc aborts a running foreground delegation instead of waiting forever', async () => {
+    // pi passes an AbortSignal to tool.execute and documents it as the way Esc cancels work.
+    // The runtime ignored it, so a slow child kept running while the TUI showed `Working…`
+    // forever and the only exit was killing pi.
+    const env = { ...process.env, PI_CODING_AGENT_DIR: probeDir(), FAKE_TICK_MS: '30' };
+    delete env.BIGGZ_BACKGROUND_SUBAGENTS;
+    const { registry, byName } = toolsetFor({ env });
+    const controller = new AbortController();
+    const pending = byName('subagent').execute('a1', { agent: 'probe', task: 'do the thing' }, controller.signal);
+    assert.ok(await waitFor(() => registry.active().length === 1), 'the child must be running before the abort');
+    controller.abort();
+    const result = await pending; // a hang here IS the bug: the tool must settle
+    assert.equal(result.details.state, 'cancelled');
+    assert.match(result.content[0].text, /cancelled/, 'the caller must see the cancellation');
+    assert.match(result.content[0].text, /cancelled by user \(Esc\)/);
+    assert.equal(registry.active().length, 0, 'the child tree must be gone');
   });
 
   it('steers a running child mid-run', async (t) => {

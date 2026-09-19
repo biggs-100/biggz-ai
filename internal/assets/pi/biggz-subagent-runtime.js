@@ -33,6 +33,11 @@ export const JSONL_MAX_LINE_BYTES = 1024 * 1024;
 export const DEFAULT_IDLE_TIMEOUT_MS = 4 * 60 * 1000;
 export const DEFAULT_TOTAL_TIMEOUT_MS = 30 * 60 * 1000;
 export const DEFAULT_FINAL_TEXT_MS = 1500;
+// A child question is relayed to the user, but never at the cost of the run. An
+// unanswered dialog (no UI, unattended session, a modal the user never sees) is
+// answered `cancelled` at this bound so the child degrades and continues instead
+// of blocking the delegation until the total watchdog.
+export const DEFAULT_DIALOG_TIMEOUT_MS = 2 * 60 * 1000;
 export const DEFAULT_BACKGROUND_CAP = 2;
 export const DEFAULT_WAIT_TIMEOUT_MS = 120 * 1000;
 export const WIDGET_KEY = "biggz-subagents";
@@ -44,6 +49,12 @@ export const KILL_POLL_MS = 50;
 export const READ_ONLY_TOOLS = Object.freeze(["read"]);
 const DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 const SAFE_TOKEN_RE = /^[A-Za-z0-9_.*\-/:]+$/;
+// 0 answers an unanswered question immediately (headless/unattended runs).
+export function resolveDialogTimeout(env = process.env) {
+	const raw = String(env?.BIGGZ_SUBAGENT_DIALOG_MS ?? "").trim();
+	const parsed = Number.parseInt(raw, 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_DIALOG_TIMEOUT_MS;
+}
 const bounded = (value, limit = 200) => {
 	const text = String(value ?? "");
 	return text.length > limit ? `${text.slice(0, limit)}…` : text;
@@ -297,6 +308,11 @@ export function createTask(options = {}) {
 	const args = options.args ?? buildChildArgs(agent);
 	const idleMs = options.idleMs ?? DEFAULT_IDLE_TIMEOUT_MS;
 	const totalMs = options.totalMs ?? DEFAULT_TOTAL_TIMEOUT_MS;
+	const dialogMs = options.dialogMs ?? DEFAULT_DIALOG_TIMEOUT_MS;
+	// `relay` (foreground) presents a child question on the parent UI; `dismiss` (background)
+	// answers it `cancelled` at once, because nobody is waiting on a background child and a
+	// question nobody answers is exactly what used to hang the run (gentle-shell parity).
+	const dialogPolicy = options.dialogPolicy === "dismiss" ? "dismiss" : "relay";
 	const startedAt = now();
 	const id = options.id ?? `sub-${startedAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 	const events = [];
@@ -306,8 +322,13 @@ export function createTask(options = {}) {
 	let idleTimer = null;
 	let totalTimer = null;
 	let finalTextTimer = null;
+	let dialogTimer = null;
 	let finalText = null;
 	let pendingUi = 0;
+	let dialogRelayed = 0;
+	let dialogMissed = 0;
+	let dialogsDismissed = 0;
+	let pendingDialog = null;
 	let started = false;
 	let settled = false;
 	let stderrTail = "";
@@ -315,15 +336,17 @@ export function createTask(options = {}) {
 	const promise = new Promise((resolve) => {
 		resolveTask = resolve;
 	});
-	const snapshot = () => ({ id, state: state.value, reason: state.reason, exitCode: state.exitCode, error: state.error, events, stderrTail, finalText, pendingUi, elapsedMs: now() - startedAt, pid: child?.pid ?? null });
+	const snapshot = () => ({ id, state: state.value, reason: state.reason, exitCode: state.exitCode, error: state.error, events, stderrTail, finalText, pendingUi, dialogMs, dialogRelayed, dialogMissed, dialogsDismissed, pendingDialog, elapsedMs: now() - startedAt, pid: child?.pid ?? null });
 
 	function clearTimers() {
 		if (idleTimer) clearTimeout(idleTimer);
 		if (totalTimer) clearTimeout(totalTimer);
 		if (finalTextTimer) clearTimeout(finalTextTimer);
+		if (dialogTimer) clearTimeout(dialogTimer);
 		idleTimer = null;
 		totalTimer = null;
 		finalTextTimer = null;
+		dialogTimer = null;
 	}
 	function settle(kind, reason, error) {
 		if (settled) return;
@@ -393,15 +416,54 @@ export function createTask(options = {}) {
 	};
 	// Dialog relay: a child `extension_ui_request` (select/confirm/input/editor) is
 	// presented by the parent and answered on the child's stdin; fire-and-forget
-	// methods and every other event type are ignored.
+	// methods and every other event type are ignored. Every relayed question is
+	// BOUNDED by `dialogMs` so a parent that never answers cannot leave the child
+	// blocked: at the bound the child receives `cancelled` and the run continues.
 	async function relayUiRequest(request) {
 		if (settled || !DIALOG_METHODS.has(request?.method)) return;
+		if (dialogPolicy === "dismiss") {
+			dialogsDismissed += 1;
+			try {
+				logger?.warn?.(`biggz-subagent-runtime: child question dismissed without asking (background ${agent?.id ?? "subagent"}): ${bounded(request?.title ?? "", 80) || "untitled"}`);
+			} catch {}
+			writeCommand({ type: "extension_ui_response", id: request?.id, cancelled: true });
+			return;
+		}
 		pendingUi += 1;
 		if (idleTimer) clearTimeout(idleTimer); // a dialog awaiting the user is not idle
 		idleTimer = null;
+		dialogRelayed += 1;
+		const dialog = { id: request?.id, method: String(request?.method), title: bounded(request?.title ?? "", 120), deadlineAt: now() + dialogMs };
+		pendingDialog = dialog;
+		let replied = false;
+		let closed = false;
+		const reply = (payload) => {
+			if (replied) return;
+			replied = true;
+			writeCommand({ type: "extension_ui_response", id: request?.id, ...payload });
+		};
+		const close = () => {
+			if (closed) return;
+			closed = true;
+			if (dialogTimer) clearTimeout(dialogTimer);
+			dialogTimer = null;
+			if (pendingDialog === dialog) pendingDialog = null;
+			pendingUi = Math.max(0, pendingUi - 1);
+			if (!settled) armIdle();
+		};
+		dialogTimer = setTimeout(() => {
+			if (settled || closed) return;
+			dialogMissed += 1;
+			try {
+				logger?.warn?.(`biggz-subagent-runtime: child question unanswered after ${dialogMs}ms (${dialog.title || "untitled"}); answering cancelled so the run continues`);
+			} catch {}
+			reply({ cancelled: true });
+			close();
+		}, dialogMs);
+		dialogTimer?.unref?.();
 		let response = null;
 		try {
-			response = await options.onUiRequest?.(request);
+			response = await options.onUiRequest?.(request, { timeout: dialogMs });
 		} catch (err) {
 			try {
 				logger?.warn?.(`biggz-subagent-runtime: UI relay failed: ${bounded(err?.message ?? err, 120)}`);
@@ -412,9 +474,8 @@ export function createTask(options = {}) {
 			: request.method === "confirm"
 				? { confirmed: response.confirmed === true }
 				: { value: response.value ?? null };
-		writeCommand({ type: "extension_ui_response", id: request?.id, ...answer });
-		pendingUi = Math.max(0, pendingUi - 1);
-		if (!settled) armIdle();
+		reply(answer);
+		close();
 	}
 	const reader = createJsonlReader({
 		logger,
@@ -504,6 +565,13 @@ export function createTask(options = {}) {
 			try {
 				child.stdout?.on?.("data", onStdout);
 				child.stderr?.on?.("data", onStderr);
+				// A killed child's stdin is a dead pipe: without a listener the EPIPE surfaces as an
+				// uncaughtException inside the parent (pi's TUI) and the delegation never reports.
+				child.stdin?.on?.("error", (err) => {
+					try {
+						logger?.debug?.(`biggz-subagent-runtime: child stdin closed (${bounded(err?.message ?? err, 80)})`);
+					} catch {}
+				});
 				// Decode at the stream boundary so a multibyte char split across chunks
 				// stays intact; the JSONL reader keeps its Buffer branch for direct pushes.
 				child.stdout?.setEncoding?.("utf8");
@@ -741,20 +809,33 @@ export function renderWaitHeadline(runs, elapsedMs, options = {}) {
 }
 
 /** Present a child dialog on the parent UI (`ctx.ui`) and normalize the answer for the child. */
-export async function presentUiRequest(ctx, request) {
+export async function presentUiRequest(ctx, request, dialogOpts = {}) {
 	const ui = ctx?.ui;
-	const title = bounded(request?.title ?? "Subagent question", 120);
+	const base = bounded(request?.title ?? "Subagent question", 120);
+	// Name the asker: a subagent question must be identifiable on sight, so the human knows
+	// who is waiting on the answer before touching the keyboard.
+	const label = bounded(String(dialogOpts?.agentLabel ?? ""), 40);
+	const title = label ? `${label}: ${base}` : base;
+	// The parent dialog carries the same budget the runtime enforces, so the TUI
+	// shows a countdown and auto-dismisses instead of waiting on the user forever.
+	const timeout = Math.max(0, Math.floor(Number(dialogOpts?.timeout) || 0));
+	const opts = timeout > 0 ? { timeout } : undefined;
+	try {
+		// A child question the user never notices is the difference between a
+		// degraded answer and a hung delegation; announce it before presenting.
+		ui?.notify?.(`Subagent question: ${title}`, "info");
+	} catch {}
 	try {
 		if (request?.method === "select") {
-			const value = await ui?.select?.(title, (request?.options ?? []).map((option) => String(option)));
+			const value = await ui?.select?.(title, (request?.options ?? []).map((option) => String(option)), opts);
 			return value == null ? { cancelled: true } : { value };
 		}
 		if (request?.method === "confirm") {
-			const confirmed = await ui?.confirm?.(title, bounded(request?.message ?? "", 200));
+			const confirmed = await ui?.confirm?.(title, bounded(request?.message ?? "", 200), opts);
 			return confirmed == null ? { cancelled: true } : { confirmed: confirmed === true };
 		}
 		if (request?.method === "input" || request?.method === "editor") {
-			const value = await ui?.[request.method]?.(title, bounded(request?.placeholder ?? request?.prefill ?? "", 200));
+			const value = await ui?.[request.method]?.(title, bounded(request?.placeholder ?? request?.prefill ?? "", 200), opts);
 			return value == null ? { cancelled: true } : { value };
 		}
 	} catch {}
@@ -767,7 +848,8 @@ export function formatTaskResult(task, snapshot = task?.snapshot?.() ?? task) {
 	const state = String(snapshot?.state ?? "unknown");
 	const seconds = ((Number(snapshot?.elapsedMs) || 0) / 1000).toFixed(1);
 	const detail = snapshot?.reason ? ` · ${bounded(snapshot.reason, 80)}` : "";
-	return `subagent ${snapshot?.id ?? "?"} · ${state} · ${seconds}s${detail}`;
+	const waiting = snapshot?.pendingDialog ? ` · awaiting answer: ${bounded(snapshot.pendingDialog.title || "question", 60)}` : "";
+	return `subagent ${snapshot?.id ?? "?"} · ${state} · ${seconds}s${detail}${waiting}`;
 }
 
 /** Bounded result tail: trimmed `finalText` else `stderrTail`, blank lines collapsed; event types when no text. */
@@ -807,8 +889,9 @@ export function createSubagentToolset(options = {}) {
 	const presentUi = options.presentUiRequest ?? presentUiRequest;
 	const managed = []; // background tasks in launch order (FIFO queue)
 	const discover = () => options.discoverAgents?.({ env }) ?? discoverAgents({ env });
-	const spawnTask = (agent, task, extra = {}) =>
-		createTask({
+	const spawnTask = (agent, task, extra = {}) => {
+		const agentLabel = bounded(String(agent?.id ?? agent?.name ?? "subagent"), 40);
+		return createTask({
 			agent,
 			task,
 			env,
@@ -819,9 +902,11 @@ export function createSubagentToolset(options = {}) {
 			idleMs: options.idleMs,
 			totalMs: options.totalMs,
 			finalTextMs: options.finalTextMs,
-			onUiRequest: (request) => presentUi(extra.ctx, request),
+			dialogMs: options.dialogMs ?? resolveDialogTimeout(env),
+			onUiRequest: (request, dialogOpts) => presentUi(extra.ctx, request, { ...dialogOpts, agentLabel }),
 			...extra,
 		});
+	};
 	const completionRecord = (task, snapshot) => ({
 		id: task.id,
 		agent: task.agent?.id ?? "subagent",
@@ -838,7 +923,7 @@ export function createSubagentToolset(options = {}) {
 		}
 	};
 	const launchBackground = (agent, taskText, ctx) => {
-		const task = spawnTask(agent, taskText, { autoStart: false, ctx });
+		const task = spawnTask(agent, taskText, { autoStart: false, ctx, dialogPolicy: "dismiss" });
 		registry.add(task);
 		managed.push(task);
 		void task.promise.then((snapshot) => {
@@ -872,7 +957,7 @@ export function createSubagentToolset(options = {}) {
 			},
 			["agent", "task"],
 		),
-		async execute(_callId, params = {}, _signal, _onUpdate, ctx) {
+		async execute(_callId, params = {}, signal, _onUpdate, ctx) {
 			const nested = nestedSpawnRefusal(env);
 			if (nested) return toolError(nested.error);
 			const context = String(params.context ?? "fresh");
@@ -887,10 +972,36 @@ export function createSubagentToolset(options = {}) {
 			}
 			const task = spawnTask(found.agent, params.task, { ctx });
 			registry.add(task);
-			const result = await task.promise;
+			// A foreground delegation must show progress in the TUI: a slow child used to look
+			// like a frozen screen with nothing to cancel.
+			widget?.attach?.(ctx);
+			widget?.watch?.(activeRuns);
+			widget?.publish?.(activeRuns());
+			// Esc must end a delegation. pi aborts the turn through this signal; ignoring it left
+			// the child running while the UI waited forever, so killing pi was the only exit.
+			let aborted = false;
+			const onAbort = () => {
+				aborted = true;
+				void task.cancel("cancelled");
+			};
+			if (signal?.aborted) onAbort();
+			else signal?.addEventListener?.("abort", onAbort, { once: true });
+			let result;
+			try {
+				result = await task.promise;
+			} finally {
+				signal?.removeEventListener?.("abort", onAbort);
+				widget?.publish?.(activeRuns());
+			}
 			// The caller gets the settlement line plus the child's bounded final text.
 			const tail = boundedResultTail(result ?? task.snapshot());
-			return textResult([formatTaskResult(task, result), ...tail].join("\n"), { taskId: result?.id ?? task.id, state: result?.state ?? task.state });
+			const missed = Math.max(0, Number(result?.dialogMissed) || 0);
+			const dismissed = Math.max(0, Number(result?.dialogsDismissed) || 0);
+			const notice = [];
+			if (aborted) notice.push("· cancelled by user (Esc) — the child tree was killed");
+			if (missed) notice.push(`· ${missed} child question${missed === 1 ? "" : "s"} not answered within ${Math.max(1, Math.round((Number(result?.dialogMs) || DEFAULT_DIALOG_TIMEOUT_MS) / 1000))}s — the child was told to continue without it`);
+			if (dismissed) notice.push(`· ${dismissed} child question${dismissed === 1 ? "" : "s"} dismissed without asking — the child was told to continue without it`);
+			return textResult([formatTaskResult(task, result), ...tail, ...notice].join("\n"), { taskId: result?.id ?? task.id, state: result?.state ?? task.state, dialogsMissed: missed, dialogsDismissed: dismissed });
 		},
 	};
 	const wait = {
@@ -1032,6 +1143,7 @@ export default function biggzSubagentRuntime(pi) {
 			JSONL_MAX_LINE_BYTES,
 			DEFAULT_IDLE_TIMEOUT_MS,
 			DEFAULT_TOTAL_TIMEOUT_MS,
+			DEFAULT_DIALOG_TIMEOUT_MS,
 			DEFAULT_BACKGROUND_CAP,
 			WIDGET_KEY,
 			createJsonlReader,
@@ -1054,6 +1166,7 @@ export default function biggzSubagentRuntime(pi) {
 			renderCompletion,
 			createCompletionRenderer,
 			resolveBackgroundCap,
+			resolveDialogTimeout,
 			widgetRowsFor,
 			createWidgetPublisher,
 			renderWaitHeadline,

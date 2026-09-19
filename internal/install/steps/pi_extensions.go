@@ -346,9 +346,13 @@ func (p *PiExtensionsStep) deploySubAgents(ctx context.Context, fsys fs.FS) (int
 		if err := os.MkdirAll(agentsDir, 0755); err != nil {
 			return err
 		}
-		tools := []string{"read", "edit", "bash", "write", "ask_user_question"}
+		// Children must not ship an ask tool: asking the human is the orchestrator's job, which
+		// owns the checkpoint surface and the synthesis gate. A child dialog is answered by the
+		// runtime (background) or relayed as a named subagent question (foreground), and a child
+		// that needs a decision returns status blocked with its reason.
+		tools := []string{"read", "edit", "bash", "write"}
 		if name == "sdd-explore" || name == "sdd-research" {
-			tools = []string{"read", "grep", "find", "ls", "ask_user_question"}
+			tools = []string{"read", "grep", "find", "ls"}
 		}
 		if name == "sdd-research" {
 			tools = append(tools, "web_search", "web_fetch")
