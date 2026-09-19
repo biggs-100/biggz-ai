@@ -39,6 +39,7 @@ const {
   createTask,
   killTree,
   subagentRegistrationGate,
+  LEGACY_TOOL_RE,
   createTaskRegistry,
   createSubagentToolset,
   completionLine,
@@ -587,7 +588,24 @@ const withAgentEnv = (dir, fn) => {
 };
 
 describe('registration gate (dual-registration vs j0k3r)', () => {
-  it('refuses when getAllTools() lists subagent_run / subagent_list_* (zero registrations)', () => {
+  it('classifies only the exact j0k3r names as legacy', () => {
+    for (const legacy of ['subagent_run', 'subagent_list_running']) assert.equal(LEGACY_TOOL_RE.test(legacy), true, `${legacy} must stay legacy`);
+    for (const own of ['subagent', 'subagent_status', 'subagent_list_tasks', 'subagent_send_message']) {
+      assert.equal(LEGACY_TOOL_RE.test(own), false, `${own} must not classify as legacy`);
+    }
+  });
+
+  it('registers when the scan returns only the runtime’s own 8-name surface', () => {
+    const dir = fakeAgentDir(['npm:@heyhuynhgiabuu/pi-pretty']);
+    const own = ['subagent', 'subagent_wait', 'subagent_status', 'subagent_result', 'subagent_cancel', 'subagent_agents', 'subagent_list_tasks', 'subagent_send_message'];
+    const pi = fakePi({ tools: own.map((name) => ({ name })) });
+    const gate = subagentRegistrationGate(pi, { env: { PI_CODING_AGENT_DIR: dir }, logger: LOG });
+    assert.equal(gate.register, true, 'the runtime’s own list tool must not cause registration refusal');
+    withAgentEnv(dir, () => runtime(pi));
+    assert.deepEqual(pi.registered.map((d) => d.name), own);
+  });
+
+  it('refuses genuine j0k3r names (subagent_run + subagent_list_running) with zero registrations', () => {
     const dir = fakeAgentDir(['npm:@heyhuynhgiabuu/pi-pretty']);
     const pi = fakePi({ tools: [{ name: 'read' }, { name: 'subagent_run' }, { name: 'subagent_list_running' }] });
     const warns = [];
@@ -622,14 +640,14 @@ describe('registration gate (dual-registration vs j0k3r)', () => {
     assert.equal(pi.registered.length, 0, 'unprovable state must not register');
   });
 
-  it('registers the six tools + completion renderer when j0k3r is absent (load-time getAllTools throw tolerated)', () => {
+  it('registers the eight tools + completion renderer when j0k3r is absent (load-time getAllTools throw tolerated)', () => {
     const dir = fakeAgentDir(['npm:@heyhuynhgiabuu/pi-pretty']);
     // 0.85.1 throws this exact message while extensions load — falling through, not failing closed.
     const pi = fakePi({ getAllTools: () => { throw new Error('Extension runtime not initialized. Action methods cannot be called during extension loading.'); } });
     const gate = subagentRegistrationGate(pi, { env: { PI_CODING_AGENT_DIR: dir }, logger: LOG });
     assert.equal(gate.register, true);
     withAgentEnv(dir, () => runtime(pi));
-    assert.deepEqual(pi.registered.map((d) => d.name), ['subagent', 'subagent_wait', 'subagent_status', 'subagent_result', 'subagent_cancel', 'subagent_agents']);
+    assert.deepEqual(pi.registered.map((d) => d.name), ['subagent', 'subagent_wait', 'subagent_status', 'subagent_result', 'subagent_cancel', 'subagent_agents', 'subagent_list_tasks', 'subagent_send_message']);
     assert.equal(pi.renderers.length, 1);
     assert.equal(pi.renderers[0][0], COMPLETION_MESSAGE_TYPE);
     assert.equal(typeof pi.renderers[0][1], 'function');
@@ -656,6 +674,43 @@ describe('bounded in-memory task ring', () => {
   });
 });
 
+describe('subagent_list_tasks (session ring only, newest first)', () => {
+  const record = (id, state) => ({ id, state, snapshot: () => ({ id, state, elapsedMs: 0 }) });
+  const listToolFor = (registry) => createSubagentToolset({ registry }).tools.find((tool) => tool.name === 'subagent_list_tasks');
+
+  it('lists settled and running records newest first', async () => {
+    const registry = createTaskRegistry({ limit: 50 });
+    registry.add(record('t1', 'completed'));
+    registry.add(record('t2', 'completed'));
+    registry.add(record('t3', 'running'));
+    const result = await listToolFor(registry).execute('c1', {});
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(result.content[0].text.split('\n'), [
+      'subagent t3 · running · 0.0s',
+      'subagent t2 · completed · 0.0s',
+      'subagent t1 · completed · 0.0s',
+    ]);
+    assert.equal(result.details.count, 3);
+  });
+
+  it('returns a bounded empty state for an empty ring, not an error', async () => {
+    const result = await listToolFor(createTaskRegistry()).execute('c2', {});
+    assert.equal(result.isError, undefined);
+    assert.equal(result.content[0].text, 'no subagent tasks this session');
+    assert.equal(result.details.count, 0);
+  });
+
+  it('caps rows at the ring limit over bounded live-work overflow (ring-only read)', async () => {
+    const registry = createTaskRegistry({ limit: 2 });
+    for (const id of ['t1', 't2', 't3']) registry.add(record(id, 'running'));
+    assert.equal(registry.all().length, 3, 'live work may exceed the ring bound (nothing evictable)');
+    const result = await listToolFor(registry).execute('c3', {});
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(result.content[0].text.split('\n').map((row) => row.split(' · ')[0]), ['subagent t3', 'subagent t2']);
+    assert.equal(result.details.count, 2);
+  });
+});
+
 describe('subagent tool surface (task mode, fake child)', () => {
   it('runs one fake RPC child per task and bounds context/mode/unknown-agent errors', async () => {
     const dir = fakeAgentDir([], { probe: '---\nname: probe\ntools: read\n---\nagent body\n' });
@@ -669,7 +724,7 @@ describe('subagent tool surface (task mode, fake child)', () => {
       logger: LOG,
     });
     const byName = (name) => tools.find((tool) => tool.name === name);
-    assert.deepEqual(tools.map((t) => t.name), ['subagent', 'subagent_wait', 'subagent_status', 'subagent_result', 'subagent_cancel', 'subagent_agents']);
+    assert.deepEqual(tools.map((t) => t.name), ['subagent', 'subagent_wait', 'subagent_status', 'subagent_result', 'subagent_cancel', 'subagent_agents', 'subagent_list_tasks', 'subagent_send_message']);
 
     const run = await byName('subagent').execute('call-1', { agent: 'probe', task: 'do the thing' });
     assert.equal(run.isError, undefined);
@@ -854,6 +909,52 @@ describe('S2 dialog relay + steering', () => {
       await waitFor(() => task.snapshot().events.some((e) => e.type === 'fake_command' && e.command.type === 'steer' && e.command.message === 'change of plan')),
       'the steering message must reach the child',
     );
+  });
+
+  it('subagent_send_message steers a running background child through the tool', async () => {
+    const env = { ...process.env, PI_CODING_AGENT_DIR: probeDir(), FAKE_TICK_MS: '30', FAKE_SETTLED: '1' };
+    delete env.BIGGZ_BACKGROUND_SUBAGENTS;
+    const { registry, byName } = toolsetFor({ cap: 1, env });
+    const launched = await byName('subagent').execute('c1', { agent: 'probe', task: 'a', mode: 'background' });
+    const id = launched.details.taskId;
+    const steered = await byName('subagent_send_message').execute('c2', { task_id: id, message: 'change of plan' });
+    assert.equal(steered.isError, undefined);
+    assert.match(steered.content[0].text, new RegExp(`^steered ${id} · running$`));
+    assert.ok(
+      await waitFor(() => registry.get(id).snapshot().events.some((e) => e.type === 'fake_command' && e.command.type === 'steer' && e.command.message === 'change of plan')),
+      'the steer command must reach the fake child',
+    );
+    assert.ok(await waitFor(() => registry.get(id)?.state === 'completed'), 'the child settles on its own; no kill needed');
+  });
+
+  it('subagent_send_message bounds unknown/expired ids without throwing', async () => {
+    const { byName } = toolsetFor({});
+    const result = await byName('subagent_send_message').execute('c3', { task_id: 'sub-gone', message: 'hi' });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /^unknown or expired task "sub-gone"$/);
+  });
+
+  it('subagent_send_message refuses a queued task with the bounded state error', async () => {
+    const { registry, byName } = toolsetFor({ cap: 1 }); // default env: FAKE_SETTLED=1
+    const first = await byName('subagent').execute('c4', { agent: 'probe', task: 'a', mode: 'background' });
+    const second = await byName('subagent').execute('c5', { agent: 'probe', task: 'b', mode: 'background' });
+    assert.equal(first.details.state, 'running');
+    assert.equal(second.details.state, 'queued');
+    assert.equal(registry.get(second.details.taskId).pid, null, 'queued runs have no live child');
+    const queued = await byName('subagent_send_message').execute('c6', { task_id: second.details.taskId, message: 'x' });
+    assert.equal(queued.isError, true);
+    assert.match(queued.content[0].text, new RegExp(`^task "${second.details.taskId}" is not running \\(queued\\); steer not delivered$`));
+    assert.ok(await waitFor(() => registry.get(second.details.taskId)?.state === 'completed'), 'both runs settle on their own; no kill needed');
+  });
+
+  it('subagent_send_message refuses a settled task with the bounded state error', async () => {
+    const { registry, byName } = toolsetFor({ cap: 1 }); // default env: FAKE_SETTLED=1
+    const launched = await byName('subagent').execute('c7', { agent: 'probe', task: 'a', mode: 'background' });
+    const id = launched.details.taskId;
+    assert.ok(await waitFor(() => registry.get(id)?.state === 'completed'));
+    const settled = await byName('subagent_send_message').execute('c8', { task_id: id, message: 'too late' });
+    assert.equal(settled.isError, true);
+    assert.match(settled.content[0].text, new RegExp(`^task "${id}" is not running \\(completed\\); steer not delivered$`));
   });
 });
 
