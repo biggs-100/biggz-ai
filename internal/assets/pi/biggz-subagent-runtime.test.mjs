@@ -51,6 +51,15 @@ const {
   createWidgetPublisher,
   renderWaitHeadline,
   presentUiRequest,
+  activityLabel,
+  formatTaskResult,
+  formatTokens,
+  formatCost,
+  WIDGET_FINISHED_TTL_MS,
+  runRow,
+  registryRuns,
+  createAgentsView,
+  AGENTS_COMMAND,
   DEFAULT_DIALOG_TIMEOUT_MS,
   resolveDialogTimeout,
 } = rt;
@@ -86,6 +95,8 @@ out({ type: 'fake_ready', child: process.pid, grandchild: grandchild && grandchi
 if (process.env.FAKE_TICK_MS) setInterval(() => out({ type: 'tick' }), Number(process.env.FAKE_TICK_MS));
 if (process.env.FAKE_SETTLED === '1') setTimeout(() => out({ type: 'agent_settled' }), 60);
 if (process.env.FAKE_UI_REQUEST === '1') out({ type: 'extension_ui_request', id: 'q1', method: 'select', title: 'Pick one', options: ['Allow', 'Block'] });
+if (process.env.FAKE_TOOL_EVENT === '1') out({ type: 'tool_execution_start', toolCallId: 't1', toolName: 'read', args: { path: 'internal/install/steps/pi_extensions.go' } });
+if (process.env.FAKE_USAGE === '1') out({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }], model: 'fake-model', usage: { totalTokens: 1234, cost: { total: 0.0042 } } } });
 process.stdin.on('data', (chunk) => {
   for (const raw of String(chunk).split('\\n')) {
     if (!raw) continue;
@@ -568,6 +579,7 @@ const fakeAgentDir = (packages, agents = {}) => {
 const fakePi = (options = {}) => ({
   registered: [],
   renderers: [],
+  commands: [],
   getAllTools: options.getAllTools ?? (() => options.tools ?? []),
   ...(options.getToolDefinition ? { getToolDefinition: options.getToolDefinition } : {}),
   registerTool(definition) {
@@ -575,6 +587,9 @@ const fakePi = (options = {}) => ({
   },
   registerMessageRenderer(type, renderer) {
     this.renderers.push([type, renderer]);
+  },
+  registerCommand(name, definition) {
+    this.commands.push([name, definition]);
   },
 });
 
@@ -654,6 +669,79 @@ describe('registration gate (dual-registration vs j0k3r)', () => {
     assert.equal(pi.renderers[0][0], COMPLETION_MESSAGE_TYPE);
     assert.equal(typeof pi.renderers[0][1], 'function');
     assert.ok(!/\.getTool\(/.test(SRC), 'pi.getTool is absent in 0.85.1 and must never be called');
+  });
+});
+
+describe('S2 agents panel (/biggz-agents)', () => {
+  const theme = { fg: (_role, text) => String(text), bold: (text) => String(text) };
+  const runs = [
+    { id: 'a', agent: 'sdd-apply', state: 'running', elapsedMs: 4200, lastStep: 'read x.go', tokens: 12345, cost: 0.0042 },
+    { id: 'b', agent: 'sdd-verify', state: 'completed', elapsedMs: 9000, settledAt: Date.now(), summary: 'verify spec' },
+  ];
+
+  it('renders one row per run and closes on q/escape', () => {
+    const closed = [];
+    const view = createAgentsView({ theme, runs, close: (value) => closed.push(value) });
+    const lines = view.render(80);
+    assert.match(lines[0], /Subagent runs/);
+    assert.deepEqual(
+      lines.slice(2, 4),
+      ['→ ◐ sdd-apply · read x.go · 4s · 12.3k tok · $0.0042', '  ✅ sdd-verify · verify spec · 9s'],
+      'one row per run, the selected one marked, spend included',
+    );
+    assert.match(lines.at(-1), /↑↓ move · s stop · q close/);
+    view.handleInput('q');
+    view.handleInput('escape');
+    assert.deepEqual(closed, [null, null]);
+  });
+
+  it('moves the selection and stops the selected run', () => {
+    const stopped = [];
+    const view = createAgentsView({ theme, runs, stop: (run) => { stopped.push(run.id); return true; } });
+    view.handleInput('j');
+    view.handleInput('s');
+    assert.deepEqual(stopped, ['b'], 'after ↓ the second row is the selected one');
+    assert.match(view.render(80).at(-1), /stopping sdd-verify/);
+    const refused = createAgentsView({ theme, runs, stop: () => false });
+    refused.handleInput('s');
+    assert.match(refused.render(80).at(-1), /nothing to stop/);
+    const empty = createAgentsView({ theme, runs: [] });
+    assert.match(empty.render(80)[2], /no subagent runs in this session/);
+  });
+
+  it('lists live work first and keeps only fresh completions', () => {
+    const now = 1_000_000;
+    const fake = (id, state, settledAt) => ({
+      id,
+      agent: id,
+      state,
+      task: `task ${id}`,
+      snapshot: () => ({ elapsedMs: 1000, settledAt, lastStep: '', tokens: 0, cost: 0 }),
+    });
+    const registry = {
+      all: () => [fake('old', 'completed', now - WIDGET_FINISHED_TTL_MS - 1), fake('run', 'running', 0), fake('fresh', 'completed', now - 500)],
+    };
+    assert.deepEqual(registryRuns(registry, now).map((run) => run.id), ['run', 'fresh'], 'active first, then the fresh completion, never the stale one');
+    assert.equal(runRow({ agent: 'x', state: 'running', elapsedMs: 1000 }, 0), '◐ x · running · 1s');
+  });
+
+  it('registers the command and opens the overlay with the session runs', async () => {
+    const dir = fakeAgentDir(['npm:@heyhuynhgiabuu/pi-pretty']);
+    const pi = fakePi({ getAllTools: () => [] });
+    withAgentEnv(dir, () => runtime(pi));
+    assert.equal(pi.commands.length, 1);
+    assert.equal(pi.commands[0][0], AGENTS_COMMAND);
+    const custom = [];
+    const ctx = { mode: 'tui', ui: { custom: async (factory, opts) => { custom.push([factory, opts]); return null; }, notify() {} } };
+    await pi.commands[0][1].handler([], ctx);
+    assert.equal(custom.length, 1, 'the handler must open one overlay');
+    assert.equal(custom[0][1].overlay, true);
+    const view = custom[0][0]({ requestRender() {} }, theme, {}, () => {});
+    assert.equal(typeof view.render, 'function');
+    assert.equal(typeof view.handleInput, 'function');
+    const notified = [];
+    await pi.commands[0][1].handler([], { mode: 'rpc', ui: { notify: (m) => notified.push(m) } });
+    assert.deepEqual(notified, ['the subagents panel needs TUI mode']);
   });
 });
 
@@ -1157,13 +1245,19 @@ describe('S2 background mode, widget, cap and wait headline', () => {
     assert.match(first.content[0].text, /^background sub-\S+ · running · cap 2$/);
     assert.equal(deliveries.length, 0, 'ids must return before any completion (no polling, no awaiting)');
     assert.deepEqual(second.details.state, 'running');
-    assert.deepEqual(ctx.ui.calls.at(-1)[1], ['◐ probe · running · 0s', '◐ probe · running · 0s'], 'widget rows for the active runs');
+    const rows = ctx.ui.calls.at(-1)[1];
+    assert.deepEqual(rows.map((row) => row.replace(/ · \d+s$/, '')), ['◐ probe · a', '◐ probe · b'], 'widget rows name each active run by its task summary');
     assert.equal(ctx.ui.calls.at(-1)[0], 'biggz-subagents');
     assert.deepEqual(ctx.ui.calls.at(-1)[2], { placement: 'belowEditor' }, 'placement must ride the options object');
     await waitFor(() => deliveries.length === 2);
     assert.deepEqual(deliveries.map((run) => run.state), ['completed', 'completed']);
     assert.equal(deliveries[0].summary, 'final answer');
-    assert.equal(ctx.ui.calls.at(-1)[1], undefined, 'widget is hidden when idle');
+    const rowsAfter = ctx.ui.calls.at(-1)[1];
+    assert.deepEqual(
+      rowsAfter.map((row) => row.replace(/ · \d+s.*$/, '')),
+      ['✅ probe · a', '✅ probe · b'],
+      'completions stay visible for a minute before fading (gentle-shell parity)',
+    );
     assert.ok(ctx.ui.notifies.length >= 2, 'each completion is also a notification');
   });
 
@@ -1219,6 +1313,67 @@ describe('S2 background mode, widget, cap and wait headline', () => {
     const narrow = widgetRowsFor([{ agent: 'x'.repeat(120), state: 'running', elapsedMs: 1000 }], { env: {}, width: 20 });
     assert.equal(narrow.length, 1);
     assert.ok(tui.visibleWidth(narrow[0]) <= 20, 'rows are truncateToWidth’d');
+  });
+
+  it('derives a bounded activity label from the child’s own events', () => {
+    assert.equal(activityLabel({ type: 'tool_execution_start', toolName: 'grep', args: { pattern: 'dialogPolicy' } }), 'grep dialogPolicy');
+    assert.equal(activityLabel({ type: 'tool_execution_start', toolName: 'bash', args: { command: 'go test ./...\nmore' } }), 'bash go test ./...');
+    assert.equal(activityLabel({ type: 'tool_execution_start', toolName: 'read' }), 'read');
+    assert.equal(activityLabel({ type: 'message_start', message: { role: 'assistant' } }), 'thinking');
+    assert.equal(activityLabel({ type: 'message_update' }), '', 'chatty events must not flicker the label');
+    assert.equal(activityLabel({ type: 'tool_execution_end', toolName: 'read' }), '');
+    assert.equal(activityLabel(null), '');
+  });
+
+  it('shows what a running child is doing in the widget row and the status line', async (t) => {
+    // "How is it working?" must be answerable while it runs: the glyph carries the state,
+    // so the row carries the live activity (or the task summary before the first tool).
+    const task = run({ FAKE_TICK_MS: '40', FAKE_TOOL_EVENT: '1' });
+    t.after(() => task.cancel());
+    assert.ok(
+      await waitFor(() => task.snapshot().lastStep === 'read internal/install/steps/pi_extensions.go'),
+      `the announced tool must become the live step; got ${JSON.stringify(task.snapshot().lastStep)}`,
+    );
+    const snapshot = task.snapshot();
+    assert.match(formatTaskResult(task, snapshot), /· read internal\/install\/steps\/pi_extensions\.go$/);
+    assert.deepEqual(
+      widgetRowsFor([{ agent: 'sdd-explore', state: 'running', elapsedMs: 4200, lastStep: snapshot.lastStep }], { env: {}, width: 200 }),
+      ['◐ sdd-explore · read internal/install/steps/pi_extensions.go · 4s'],
+    );
+    assert.deepEqual(
+      widgetRowsFor([{ agent: 'sdd-explore', state: 'running', elapsedMs: 1000, summary: 'Read pi_extensions.go' }], { env: {}, width: 200 }),
+      ['◐ sdd-explore · Read pi_extensions.go · 1s'],
+      'before the first tool the task summary is the honest label',
+    );
+  });
+
+  it('formats spend compactly and keeps a finished run visible for a minute', () => {
+    assert.equal(formatTokens(940), '940');
+    assert.equal(formatTokens(12345), '12.3k');
+    assert.equal(formatTokens(1234567), '1.2M');
+    assert.equal(formatCost(0), '', 'nothing spent ⇒ no metric');
+    assert.equal(formatCost(0.0042), '$0.0042');
+    assert.equal(formatCost(0.42), '$0.42');
+    assert.deepEqual(
+      widgetRowsFor([{ agent: 'a', state: 'running', elapsedMs: 3000, lastStep: 'grep x', tokens: 12345, cost: 0.0042 }], { env: {}, width: 200 }),
+      ['◐ a · grep x · 3s · 12.3k tok · $0.0042'],
+    );
+    const settled = { agent: 'sdd-apply', state: 'completed', elapsedMs: 12000, settledAt: 1000, summary: 'read x' };
+    assert.deepEqual(widgetRowsFor([settled], { env: {}, now: 2000, width: 200 }), ['✅ sdd-apply · read x · 12s'], 'a fresh completion stays visible');
+    assert.deepEqual(widgetRowsFor([settled], { env: {}, now: 1000 + WIDGET_FINISHED_TTL_MS + 1 }), [], 'and fades after the TTL');
+  });
+
+  it('accumulates the child’s spend and freezes the reported time at settle', async () => {
+    const task = run({ FAKE_SETTLED: '1', FAKE_USAGE: '1' });
+    const result = await task.promise;
+    assert.equal(result.state, 'completed');
+    assert.equal(result.tokens, 1234, 'assistant usage must accumulate on the snapshot');
+    assert.ok(Math.abs(result.cost - 0.0042) < 1e-9);
+    assert.equal(result.model, 'fake-model');
+    assert.match(formatTaskResult(task), /· 1\.2k tok · \$0\.0042$/);
+    const frozen = result.elapsedMs;
+    await sleep(250);
+    assert.equal(task.snapshot().elapsedMs, frozen, 'a finished run must not report a growing time');
   });
 
   it('renders the exact wait headline ≤2 lines and never a run-list dump', () => {

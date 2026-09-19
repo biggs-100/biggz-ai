@@ -39,6 +39,9 @@ export const DEFAULT_FINAL_TEXT_MS = 1500;
 // of blocking the delegation until the total watchdog.
 export const DEFAULT_DIALOG_TIMEOUT_MS = 2 * 60 * 1000;
 export const DEFAULT_BACKGROUND_CAP = 2;
+// How long a finished run stays visible in the widget so its ✓/✗ is seen before it fades.
+export const WIDGET_FINISHED_TTL_MS = 60 * 1000;
+export const WIDGET_FINISHED_MAX = 3;
 export const DEFAULT_WAIT_TIMEOUT_MS = 120 * 1000;
 export const WIDGET_KEY = "biggz-subagents";
 export const WIDGET_PLACEMENT = "belowEditor";
@@ -329,6 +332,9 @@ export function createTask(options = {}) {
 	let dialogMissed = 0;
 	let dialogsDismissed = 0;
 	let pendingDialog = null;
+	let lastStep = "";
+	let settledAt = 0;
+	const usageTotals = { tokens: 0, cost: 0, model: "" };
 	let started = false;
 	let settled = false;
 	let stderrTail = "";
@@ -336,7 +342,7 @@ export function createTask(options = {}) {
 	const promise = new Promise((resolve) => {
 		resolveTask = resolve;
 	});
-	const snapshot = () => ({ id, state: state.value, reason: state.reason, exitCode: state.exitCode, error: state.error, events, stderrTail, finalText, pendingUi, dialogMs, dialogRelayed, dialogMissed, dialogsDismissed, pendingDialog, elapsedMs: now() - startedAt, pid: child?.pid ?? null });
+	const snapshot = () => ({ id, state: state.value, reason: state.reason, exitCode: state.exitCode, error: state.error, events, stderrTail, finalText, pendingUi, dialogMs, dialogRelayed, dialogMissed, dialogsDismissed, lastStep, pendingDialog, tokens: usageTotals.tokens, cost: usageTotals.cost, model: usageTotals.model, settledAt, elapsedMs: (settledAt || now()) - startedAt, pid: child?.pid ?? null });
 
 	function clearTimers() {
 		if (idleTimer) clearTimeout(idleTimer);
@@ -356,6 +362,7 @@ export function createTask(options = {}) {
 		state.value = kind;
 		state.reason = reason ?? null;
 		if (error !== undefined) state.error = error ? bounded(error?.message ?? error, 300) : null;
+		settledAt = now(); // freezes elapsedMs: a finished run must not report a growing time
 		resolveTask(snapshot());
 	}
 	function writeCommand(command) {
@@ -483,6 +490,8 @@ export function createTask(options = {}) {
 			if (settled) return;
 			events.push(data);
 			if (events.length > 500) events.shift();
+			const step = activityLabel(data);
+			if (step) lastStep = step;
 			const type = data?.type;
 			if (type === "response") {
 				if (data?.command === "get_last_assistant_text") {
@@ -507,6 +516,19 @@ export function createTask(options = {}) {
 			if (type === "tool_execution_end") {
 				inFlightTools.delete(toolKeyOf(data));
 				armIdle(); // last in-flight tool done ⇒ the idle bound re-arms
+				return;
+			}
+			if (type === "message_end") {
+				// Cumulative spend for the row: each assistant message reports its own usage once.
+				const message = data?.message;
+				if (message?.role === "assistant") {
+					const usage = message.usage ?? null;
+					const tokens = Number(usage?.totalTokens) || (Number(usage?.input) || 0) + (Number(usage?.output) || 0);
+					if (tokens > 0) usageTotals.tokens += tokens;
+					const cost = Number(usage?.cost?.total);
+					if (cost > 0) usageTotals.cost += cost;
+					if (typeof message.model === "string" && message.model) usageTotals.model = message.model;
+				}
 				return;
 			}
 			// Progress-only events: agent_start, message_update, tool_execution_update,
@@ -595,6 +617,7 @@ export function createTask(options = {}) {
 	return {
 		id,
 		agent,
+		task: options.task ?? "",
 		promise,
 		snapshot,
 		start,
@@ -741,17 +764,61 @@ export function resolveBackgroundCap(env = process.env) {
 	return Math.max(1, parsed); // clamp ≥1
 }
 
-/** Widget rows: `◐ <agent> · <state> · <elapsed>s`, max 2 + `… +N`, hidden when idle/child/pretty-off. */
+/** `12345` → `12.3k`, `1234567` → `1.2M`: keeps a widget row short. */
+export function formatTokens(value) {
+	const total = Math.max(0, Math.round(Number(value) || 0));
+	if (total < 1000) return String(total);
+	if (total < 1000000) return `${(total / 1000).toFixed(1)}k`;
+	return `${(total / 1000000).toFixed(1)}M`;
+}
+
+/** Sub-cent costs keep four decimals, anything else two; empty when nothing was spent. */
+export function formatCost(value) {
+	const total = Number(value) || 0;
+	if (total <= 0) return "";
+	return total < 0.01 ? `$${total.toFixed(4)}` : `$${total.toFixed(2)}`;
+}
+
+/**
+ * One-line "what is this child doing" label derived from its own RPC events: the tool it
+ * announced (plus the target it was given) while a tool runs, `thinking` while it answers.
+ * Empty for chatty or irrelevant events so the label never flickers mid-stream.
+ */
+export function activityLabel(event) {
+	if (!event || typeof event !== "object") return "";
+	if (event.type === "tool_execution_start") {
+		const tool = bounded(String(event.toolName ?? ""), 20);
+		const args = event.args && typeof event.args === "object" ? event.args : {};
+		const target = String(args.path ?? args.pattern ?? args.command ?? args.query ?? args.url ?? "").trim().split("\n")[0];
+		return bounded(target ? `${tool} ${target}` : tool || "tool", 60);
+	}
+	if (event.type === "message_start" && event.message?.role === "assistant") return "thinking";
+	return "";
+}
+
+/** One widget/panel row for a run: glyph, agent, live activity, elapsed, spend. */
+export function runRow(run, width = 0) {
+	const seconds = Math.max(0, Math.round((Number(run?.elapsedMs) || 0) / 1000));
+	// What the child is DOING beats which state it is in: the glyph already carries the state.
+	const detail = bounded(String(run?.lastStep || run?.summary || run?.state || "running"), 60);
+	const tokens = Number(run?.tokens) || 0;
+	const cost = Number(run?.cost) || 0;
+	const metrics = `${tokens ? ` · ${formatTokens(tokens)} tok` : ""}${cost ? ` · ${formatCost(cost)}` : ""}`;
+	const row = `${COMPLETION_GLYPHS[run?.state] ?? "◐"} ${bounded(run?.agent ?? "subagent", 40)} · ${detail} · ${seconds}s${metrics}`;
+	return width > 0 ? truncateToWidth(row, width, "…", false) : row;
+}
+
+/** Widget rows: `<glyph> <agent> · <live activity|task summary|state> · <elapsed>s · <tokens · cost>`, folded with `… +N`; finished runs stay for `WIDGET_FINISHED_TTL_MS`. */
 export function widgetRowsFor(runs, options = {}) {
 	const env = options.env ?? process.env;
 	if (env?.PI_SUBAGENT_CHILD === "1" || String(env?.BIGGZ_PRETTY ?? "").trim() === "0") return [];
-	const active = (runs ?? []).filter((run) => isActiveTaskState(run?.state));
+	const nowMs = Number(options.now) || Date.now();
+	const ttl = Number.isFinite(Number(options.finishedTtlMs)) ? Number(options.finishedTtlMs) : WIDGET_FINISHED_TTL_MS;
+	// Running runs plus the ones that just finished, so a completion is seen before it fades.
+	const visible = (runs ?? []).filter((run) => isActiveTaskState(run?.state) || (Number(run?.settledAt) || 0) > nowMs - ttl);
 	const max = Math.max(1, Math.floor(Number(options.maxRows) || WIDGET_MAX_ROWS));
-	const rows = active.slice(0, max).map((run) => {
-		const seconds = Math.max(0, Math.round((Number(run?.elapsedMs) || 0) / 1000));
-		return `${COMPLETION_GLYPHS[run?.state] ?? "◐"} ${bounded(run?.agent ?? "subagent", 40)} · ${bounded(run?.state ?? "running", 16)} · ${seconds}s`;
-	});
-	if (active.length > max) rows.push(`… +${active.length - max}`);
+	const rows = visible.slice(0, max).map((run) => runRow(run, 0));
+	if (visible.length > max) rows.push(`… +${visible.length - max}`);
 	const width = Math.floor(Number(options.width) || 0);
 	return width > 0 ? rows.map((row) => truncateToWidth(row, width, "…", false)) : rows;
 }
@@ -763,7 +830,7 @@ export function createWidgetPublisher(options = {}) {
 	let ctx = null;
 	let timer = null;
 	const publish = (runs) => {
-		const rows = widgetRowsFor(runs ?? [], { env: options.env ?? process.env, width: widthOf(), maxRows: options.maxRows });
+		const rows = widgetRowsFor(runs ?? [], { env: options.env ?? process.env, width: widthOf(), maxRows: options.maxRows, now: Date.now() });
 		try {
 			ctx?.ui?.setWidget?.(key, rows.length ? rows : undefined, { placement });
 		} catch {}
@@ -792,6 +859,96 @@ export function createWidgetPublisher(options = {}) {
 			if (timer) clearInterval(timer);
 			timer = null;
 		},
+	};
+}
+
+/** Runs for the widget and the panel: live work first, then the last few completions. */
+export function registryRuns(registry, nowMs = Date.now()) {
+	const runs = (registry?.all?.() ?? []).map((task) => {
+		const snapshot = typeof task?.snapshot === "function" ? task.snapshot() : {};
+		return {
+			id: task?.id ?? "?",
+			agent: task?.agent?.id ?? "subagent",
+			state: task?.state ?? "unknown",
+			elapsedMs: snapshot.elapsedMs ?? 0,
+			settledAt: snapshot.settledAt ?? 0,
+			lastStep: snapshot.lastStep ?? "",
+			summary: bounded(String(task?.task ?? "").split("\n")[0] ?? "", 60),
+			tokens: snapshot.tokens ?? 0,
+			cost: snapshot.cost ?? 0,
+		};
+	});
+	const active = runs.filter((run) => isActiveTaskState(run.state));
+	// Keep the last few completions visible for a moment, so a ✓/✗ is seen before it fades.
+	const finished = runs.filter((run) => !isActiveTaskState(run.state) && (Number(run.settledAt) || 0) > nowMs - WIDGET_FINISHED_TTL_MS).slice(-WIDGET_FINISHED_MAX);
+	return [...active, ...finished];
+}
+
+export const AGENTS_COMMAND = "biggz-agents";
+
+/**
+ * Body of the `/biggz-agents` panel: one row per run (live activity + spend), `s` stops the
+ * selected run, `q`/Esc closes. Deliberately tiny and total: a panel bug must never be able
+ * to freeze the TUI it is drawn in.
+ */
+export function createAgentsView(options = {}) {
+	const theme = options.theme ?? { fg: (_role, text) => String(text), bold: (text) => String(text) };
+	const runsFor = typeof options.runs === "function" ? options.runs : () => options.runs ?? [];
+	const stop = typeof options.stop === "function" ? options.stop : () => false;
+	const close = typeof options.close === "function" ? options.close : () => {};
+	const repaint = typeof options.requestRender === "function" ? options.requestRender : () => {};
+	let selected = 0;
+	let status = "";
+	const rows = () => {
+		try {
+			return runsFor() ?? [];
+		} catch {
+			return [];
+		}
+	};
+	return {
+		render(width) {
+			try {
+				const runs = rows();
+				if (selected > runs.length - 1) selected = Math.max(0, runs.length - 1);
+				const inner = Math.max(12, Math.floor(Number(width) || 0) - 3);
+				const lines = [theme.fg("accent", theme.bold("Subagent runs")), ""];
+				if (!runs.length) lines.push(theme.fg("dim", "no subagent runs in this session"));
+				for (const [index, run] of runs.entries()) {
+					const marker = index === selected ? theme.fg("accent", "→ ") : "  ";
+					lines.push(`${marker}${runRow(run, inner)}`);
+				}
+				lines.push("");
+				lines.push(theme.fg("dim", "↑↓ move · s stop · q close"));
+				if (status) lines.push(theme.fg("warning", status));
+				return lines;
+			} catch (err) {
+				return [theme.fg("dim", `subagents panel error: ${bounded(err?.message ?? err, 80)}`)];
+			}
+		},
+		handleInput(keyData) {
+			const key = String(keyData ?? "");
+			if (key === "q" || key === "escape" || key === "\u0003") {
+				close(null);
+				return;
+			}
+			if (key === "j" || key === "down" || key === "\u001b[B") {
+				selected = Math.min(Math.max(0, rows().length - 1), selected + 1);
+				repaint();
+				return;
+			}
+			if (key === "k" || key === "up" || key === "\u001b[A") {
+				selected = Math.max(0, selected - 1);
+				repaint();
+				return;
+			}
+			if (key === "s") {
+				const run = rows()[selected];
+				status = run && stop(run) ? `stopping ${run.agent}…` : "nothing to stop";
+				repaint();
+			}
+		},
+		invalidate() {},
 	};
 }
 
@@ -849,7 +1006,13 @@ export function formatTaskResult(task, snapshot = task?.snapshot?.() ?? task) {
 	const seconds = ((Number(snapshot?.elapsedMs) || 0) / 1000).toFixed(1);
 	const detail = snapshot?.reason ? ` · ${bounded(snapshot.reason, 80)}` : "";
 	const waiting = snapshot?.pendingDialog ? ` · awaiting answer: ${bounded(snapshot.pendingDialog.title || "question", 60)}` : "";
-	return `subagent ${snapshot?.id ?? "?"} · ${state} · ${seconds}s${detail}${waiting}`;
+	// Live activity while it runs, so a status call answers "what is it doing?" and not just
+	// "is it alive?" — the glyph/state already carries the latter.
+	const step = !waiting && isActiveTaskState(state) && snapshot?.lastStep ? ` · ${bounded(snapshot.lastStep, 60)}` : "";
+	const tokens = Number(snapshot?.tokens) || 0;
+	const cost = Number(snapshot?.cost) || 0;
+	const spend = `${tokens ? ` · ${formatTokens(tokens)} tok` : ""}${cost ? ` · ${formatCost(cost)}` : ""}`;
+	return `subagent ${snapshot?.id ?? "?"} · ${state} · ${seconds}s${detail}${waiting}${step}${spend}`;
 }
 
 /** Bounded result tail: trimmed `finalText` else `stderrTail`, blank lines collapsed; event types when no text. */
@@ -914,7 +1077,7 @@ export function createSubagentToolset(options = {}) {
 		elapsedMs: snapshot?.elapsedMs ?? 0,
 		summary: bounded(String(snapshot?.finalText ?? "").split("\n")[0] ?? "", 80),
 	});
-	const activeRuns = () => registry.active().map((task) => ({ agent: task.agent?.id ?? "subagent", state: task.state, elapsedMs: task.snapshot().elapsedMs }));
+	const activeRuns = () => registryRuns(registry, now());
 	const pump = () => {
 		let running = managed.filter((task) => task.state === "spawning" || task.state === "running").length;
 		for (const task of managed) {
@@ -1168,6 +1331,10 @@ export default function biggzSubagentRuntime(pi) {
 			resolveBackgroundCap,
 			resolveDialogTimeout,
 			widgetRowsFor,
+			runRow,
+			registryRuns,
+			createAgentsView,
+			AGENTS_COMMAND,
 			createWidgetPublisher,
 			renderWaitHeadline,
 			presentUiRequest,
@@ -1185,9 +1352,54 @@ export default function biggzSubagentRuntime(pi) {
 			} catch {}
 			widget.notify(line, run.state === "completed" ? "info" : "warning");
 		};
-		const { tools } = createSubagentToolset({ env: process.env, widget, deliverCompletion });
+		const { tools, registry } = createSubagentToolset({ env: process.env, widget, deliverCompletion });
 		for (const definition of tools) if (typeof pi.registerTool === "function") pi.registerTool(definition);
 		if (typeof pi.registerMessageRenderer === "function") pi.registerMessageRenderer(COMPLETION_MESSAGE_TYPE, createCompletionRenderer());
+		if (typeof pi.registerCommand === "function") {
+			// `/biggz-agents`: the live panel — what each run is doing, its spend, and `s` to stop it.
+			pi.registerCommand(AGENTS_COMMAND, {
+				description: "Show this session's subagent runs (live activity, spend) and stop one",
+				handler: async (_args, ctx) => {
+					const ui = ctx?.ui;
+					if (typeof ui?.custom !== "function" || ctx?.mode !== "tui") {
+						try {
+							ui?.notify?.("the subagents panel needs TUI mode", "warning");
+						} catch {}
+						return;
+					}
+					await ui.custom(
+						(tui, theme, _keybindings, done) => {
+							const tick = setInterval(() => {
+								try {
+									tui?.requestRender?.();
+								} catch {}
+							}, WIDGET_INTERVAL_MS);
+							tick?.unref?.();
+							return createAgentsView({
+								theme,
+								runs: () => registryRuns(registry),
+								stop: (run) => {
+									const task = registry.get(run?.id);
+									if (!task || !isActiveTaskState(task.state)) return false;
+									void task.cancel("stopped from the agents panel");
+									return true;
+								},
+								close: (value) => {
+									clearInterval(tick);
+									done(value);
+								},
+								requestRender: () => {
+									try {
+										tui?.requestRender?.();
+									} catch {}
+								},
+							});
+						},
+						{ overlay: true, overlayOptions: { anchor: "top-right", width: "60%", margin: 1 } },
+					);
+				},
+			});
+		}
 	} catch (err) {
 		try {
 			console.warn?.(`biggz-subagent-runtime: registration failed: ${bounded(err?.message ?? err, 120)}`);
