@@ -1,0 +1,6 @@
+name: fix-child-dialog-hang
+created: 2026-09-19T01:40:00Z
+phase: spec
+description: "A delegated child that asks a question (`ask_user_question`, present in every sdd-* agent) emits an RPC dialog that the runtime relays to the parent UI. When nobody answers — no UI, an unattended session, or a modal the user never sees — the child blocks forever, the relay stops the idle watchdog (a dialog awaiting the user is not idle by design) and only the 30-minute total bound can end the run. The user sees a silent hang with no tool result and concludes subagents are unusable (reproduced: child alive at t+24s, tool never returned). Fix: bound every relayed question by a configurable dialog budget, answer the child `cancelled` at the bound so it degrades and continues, keep the idle bound honest, and surface the unanswered question in the tool result."
+status: active
+type: bug
