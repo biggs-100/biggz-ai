@@ -1,0 +1,8 @@
+change: fix-child-dialog-hang
+artifact_store: openspec
+preflight:
+  pace: interactive
+  artifacts: openspec
+  prs: auto-chain
+  review_budget_lines: 400
+decided_at: "2026-09-19T19:52:00Z"
