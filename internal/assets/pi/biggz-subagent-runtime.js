@@ -554,7 +554,9 @@ export function createTask(options = {}) {
 
 // ── registration gate: dual-registration vs j0k3r (tool scan → settings packages) ──
 
-export const LEGACY_TOOL_RE = /^subagent_run$|^subagent_list_/;
+// Exact j0k3r-era names only: the runtime's own `subagent_list_tasks` must
+// never classify as legacy (delta spec `Runtime's own list tool is not legacy`).
+export const LEGACY_TOOL_RE = /^subagent_run$|^subagent_list_running$/;
 export const J0K3R_PACKAGE_MARKER = "pi-subagents-j0k3r";
 
 export function resolveSettingsPath(env = process.env) {
@@ -959,7 +961,30 @@ export function createSubagentToolset(options = {}) {
 			return textResult(rows.join("\n"), { count: rows.length });
 		},
 	};
-	return { registry, tools: [subagent, wait, status, resultTool, cancel, agentsTool] };
+	const listTasks = {
+		name: "subagent_list_tasks",
+		description: "List this session's subagent task records, newest first (settled included, bounded to the ring limit)",
+		parameters: paramsOf({}),
+		async execute() {
+			const rows = registry.all().slice(-registry.limit).reverse().map((task) => formatTaskResult(task));
+			return textResult(rows.length ? rows.join("\n") : "no subagent tasks this session", { count: rows.length });
+		},
+	};
+	const sendMessage = {
+		name: "subagent_send_message",
+		description: "Send a steering message to a running subagent task (task_id, message)",
+		parameters: paramsOf({ task_id: { type: "string" }, message: { type: "string" } }, ["task_id", "message"]),
+		async execute(_callId, params = {}) {
+			const task = registry.get(params.task_id);
+			if (!task) return toolError(unknownTaskError(params.task_id));
+			const state = String(task.state);
+			if ((state !== "running" && state !== "spawning") || task.steer(params.message) !== true) {
+				return toolError(`task "${bounded(params.task_id, 60)}" is not running (${bounded(String(task.state), 20)}); steer not delivered`);
+			}
+			return textResult(`steered ${task.id} · ${task.state}`, { taskId: task.id, state: task.state });
+		},
+	};
+	return { registry, tools: [subagent, wait, status, resultTool, cancel, agentsTool, listTasks, sendMessage] };
 }
 
 // ── completion card: one pi-tui-truncated line + its message renderer ──

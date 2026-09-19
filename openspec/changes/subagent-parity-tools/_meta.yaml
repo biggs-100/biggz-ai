@@ -1,0 +1,5 @@
+name: subagent-parity-tools
+created: 2026-09-18T23:31:20Z
+phase: propose
+description: "Add subagent_list_tasks and subagent_send_message (steer) to the biggz pi subagent runtime tool surface; tool-surface parity with gentle-shell (issue #138)"
+status: active
