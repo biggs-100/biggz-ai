@@ -1,0 +1,16 @@
+pending_question:
+  schema: biggz-ai.pending-question/v1
+  change: subagent-parity-tools
+  created_at: "2026-09-19T01:00:00Z"
+  envelope:
+    questions:
+      - question: "#140 mergeado (6e382e7a) y #138 CLOSED; master al día con el change completo (código + artifacts). Siguiente según el flujo: sdd-archive — sincroniza el delta a la living spec (`openspec/specs/pi-subagent-runtime/spec.md`) y mueve el change a `openspec/changes/archive/2026-09-19-subagent-parity-tools/`, con archive-report; se entregará como PR docs (precedente del repo). Después: deploy al pi real (rebuild + install; refresh de biggz-mcp.exe pendiente hasta cerrar opencode)."
+        header: "Archive"
+        options:
+          - label: "proceed"
+            description: "Lanzar sdd-archive (sync delta→living spec + mover a archive + archive-report); luego PR docs y deploy."
+          - label: "adjust"
+            description: "Cambiar algo antes del archive (p. ej. orden con el deploy)."
+          - label: "stop"
+            description: "Frenar acá; el change queda entregado en master sin archivar."
+  synthesis_md: "## Sub-agent Result: delivery · PR #140 mergeado — #138 cerrado, master sincronizado; siguiente: sdd-archive (sync + move) y deploy al pi real."
