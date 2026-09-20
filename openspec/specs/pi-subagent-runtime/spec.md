@@ -245,7 +245,7 @@ The runtime MUST register `subagent_send_message` with parameters `task_id` and 
 
 ### Requirement: Live Run Visibility
 
-The runtime MUST derive a bounded activity label from the child's own RPC events — the announced tool plus its target, or `thinking` while it writes — and expose it as `lastStep` on the task snapshot, so the widget row and `subagent_status`/`subagent_list_tasks` answer what a run is doing rather than only that it is alive. The runtime MUST accumulate the child's reported tokens and cost from its assistant messages and expose them (`tokens`, `cost`, `model`) on the snapshot; rows MAY end with that spend. `elapsedMs` MUST be frozen when the task settles. A finished run MUST remain visible in the widget for `WIDGET_FINISHED_TTL_MS` (60s, at most `WIDGET_FINISHED_MAX` = 3) so its completion glyph is seen before it fades. The runtime MUST register a `/biggz-agents` command that opens an overlay listing every run with its activity and spend, where up/down move the selection, `s` cancels the selected run and q/Escape closes; the panel's render MUST be total, so a failure degrades to one line instead of freezing the TUI.
+The runtime MUST derive a bounded activity label from the child's own RPC events — the announced tool plus its target, or `thinking` while it writes — and expose it as `lastStep` on the task snapshot, so the widget row and `subagent_status`/`subagent_list_tasks` answer what a run is doing rather than only that it is alive. The runtime MUST accumulate the child's reported tokens and cost from its assistant messages and expose them (`tokens`, `cost`, `model`) on the snapshot; rows MAY end with that spend. `elapsedMs` MUST be frozen when the task settles. A finished run MUST remain visible in the widget for `WIDGET_FINISHED_TTL_MS` (60s, at most `WIDGET_FINISHED_MAX` = 3) so its completion glyph is seen before it fades. The runtime MUST register a `/biggz-agents` command that opens an overlay listing every run with its activity and spend, where up/down move the selection, `s` cancels the selected run, `o` reads the selected run's transcript and q/Escape closes; the panel MUST also be reachable through a configurable shortcut, and its transcript view MUST be able to refresh to the tail. Widget rows MUST carry `model · effort` when known and MUST shed them (spend first, then the model) before truncation, so the activity and the elapsed time survive a narrow terminal; the row budget MUST be the minimum of 3, the maximum of 8, or a quarter of the terminal height. The panel's render MUST be total, so a failure degrades to one line instead of freezing the TUI.
 
 #### Scenario: Live activity reaches every surface
 
@@ -269,7 +269,13 @@ The runtime MUST derive a bounded activity label from the child's own RPC events
 
 - GIVEN active runs and the `/biggz-agents` command
 - WHEN the panel is open
-- THEN it MUST list each run with activity and spend, `s` MUST cancel the selected run, and q/Escape MUST close it
+- THEN it MUST list each run with activity and spend, `s` MUST cancel the selected run, `o` MUST read its transcript, and q/Escape MUST close it
+
+#### Scenario: Rows fit the terminal they are drawn in
+
+- GIVEN a run whose model, effort, spend and elapsed time are all known
+- WHEN a row is rendered in a narrow terminal
+- THEN the spend and then the model MUST be dropped before truncation, and the row budget MUST stay between 3 and 8 rows or a quarter of the terminal
 
 #### Scenario: A broken panel cannot freeze the TUI
 
