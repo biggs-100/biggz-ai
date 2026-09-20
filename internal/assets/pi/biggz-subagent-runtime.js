@@ -27,7 +27,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 export const JSONL_MAX_LINE_BYTES = 1024 * 1024;
 export const DEFAULT_IDLE_TIMEOUT_MS = 4 * 60 * 1000;
@@ -53,10 +53,14 @@ export const DEFAULT_QUERY_BUDGET = 5;
 // How long a finished run stays visible in the widget so its ✓/✗ is seen before it fades.
 export const WIDGET_FINISHED_TTL_MS = 60 * 1000;
 export const WIDGET_FINISHED_MAX = 3;
+// Row budget for the card above the editor: never fewer than 3, never more than 8, and never
+// more than a quarter of the terminal (gentle-shell's numbers).
+export const WIDGET_MIN_ROWS = 3;
+export const WIDGET_MAX_ROWS = 8;
+export const WIDGET_ROWS_RATIO = 0.25;
 export const DEFAULT_WAIT_TIMEOUT_MS = 120 * 1000;
 export const WIDGET_KEY = "biggz-subagents";
 export const WIDGET_PLACEMENT = "belowEditor";
-export const WIDGET_MAX_ROWS = 2;
 export const WIDGET_INTERVAL_MS = 1000;
 export const KILL_GRACE_MS = 5000;
 export const KILL_POLL_MS = 50;
@@ -956,16 +960,34 @@ export function activityLabel(event) {
 	return "";
 }
 
-/** One widget/panel row for a run: glyph, agent, live activity, elapsed, spend. */
+/** One widget/panel row for a run, degrading gracefully when the width runs out. */
 export function runRow(run, width = 0) {
 	const seconds = Math.max(0, Math.round((Number(run?.elapsedMs) || 0) / 1000));
 	// What the child is DOING beats which state it is in: the glyph already carries the state.
 	const detail = bounded(String(run?.lastStep || run?.summary || run?.state || "running"), 60);
+	const model = [String(run?.model ?? "").trim(), String(run?.thinking ?? "").trim()].filter(Boolean).join(" · ");
 	const tokens = Number(run?.tokens) || 0;
 	const cost = Number(run?.cost) || 0;
-	const metrics = `${tokens ? ` · ${formatTokens(tokens)} tok` : ""}${cost ? ` · ${formatCost(cost)}` : ""}`;
-	const row = `${COMPLETION_GLYPHS[run?.state] ?? "◐"} ${bounded(run?.agent ?? "subagent", 40)} · ${detail} · ${seconds}s${metrics}`;
+	const spend = [tokens ? `${formatTokens(tokens)} tok` : "", cost ? formatCost(cost) : ""].filter(Boolean).join(" · ");
+	const head = `${COMPLETION_GLYPHS[run?.state] ?? "◐"} ${bounded(run?.agent ?? "subagent", 40)} · ${detail}`;
+	// Drop from the least important end first (spend, then model) so the activity and the
+	// elapsed time — the two things you read at a glance — survive a narrow terminal.
+	const variants = [[model, spend, `${seconds}s`], [spend, `${seconds}s`], [`${seconds}s`]];
+	let row = "";
+	for (const parts of variants) {
+		row = [head, ...parts.filter(Boolean)].join(" · ");
+		if (width <= 0 || visibleWidth(row) <= width) break;
+	}
 	return width > 0 ? truncateToWidth(row, width, "…", false) : row;
+}
+
+/** Row budget: min 3, max 8, else a quarter of the terminal; falls back to the minimum. */
+export function widgetRowBudget(terminalRows, options = {}) {
+	const min = Math.max(1, Math.floor(Number(options.min) || WIDGET_MIN_ROWS));
+	const max = Math.max(min, Math.floor(Number(options.max) || WIDGET_MAX_ROWS));
+	const rows = Math.floor(Number(terminalRows) || 0);
+	if (rows <= 0) return min;
+	return Math.max(min, Math.min(max, Math.floor(rows * WIDGET_ROWS_RATIO)));
 }
 
 /** Widget rows: `<glyph> <agent> · <live activity|task summary|state> · <elapsed>s · <tokens · cost>`, folded with `… +N`; finished runs stay for `WIDGET_FINISHED_TTL_MS`. */
@@ -976,10 +998,11 @@ export function widgetRowsFor(runs, options = {}) {
 	const ttl = Number.isFinite(Number(options.finishedTtlMs)) ? Number(options.finishedTtlMs) : WIDGET_FINISHED_TTL_MS;
 	// Running runs plus the ones that just finished, so a completion is seen before it fades.
 	const visible = (runs ?? []).filter((run) => isActiveTaskState(run?.state) || (Number(run?.settledAt) || 0) > nowMs - ttl);
-	const max = Math.max(1, Math.floor(Number(options.maxRows) || WIDGET_MAX_ROWS));
-	const rows = visible.slice(0, max).map((run) => runRow(run, 0));
-	if (visible.length > max) rows.push(`… +${visible.length - max}`);
+	const max = Math.max(1, Math.floor(Number(options.maxRows) || widgetRowBudget(options.terminalRows)));
 	const width = Math.floor(Number(options.width) || 0);
+	// Each row sheds what it can before the final truncation: the width is the real budget.
+	const rows = visible.slice(0, max).map((run) => runRow(run, width));
+	if (visible.length > max) rows.push(`… +${visible.length - max}`);
 	return width > 0 ? rows.map((row) => truncateToWidth(row, width, "…", false)) : rows;
 }
 
@@ -990,7 +1013,13 @@ export function createWidgetPublisher(options = {}) {
 	let ctx = null;
 	let timer = null;
 	const publish = (runs) => {
-		const rows = widgetRowsFor(runs ?? [], { env: options.env ?? process.env, width: widthOf(), maxRows: options.maxRows, now: Date.now() });
+		const rows = widgetRowsFor(runs ?? [], {
+			env: options.env ?? process.env,
+			width: widthOf(),
+			maxRows: options.maxRows,
+			terminalRows: typeof options.terminalRows === "function" ? options.terminalRows() : options.terminalRows,
+			now: Date.now(),
+		});
 		try {
 			ctx?.ui?.setWidget?.(key, rows.length ? rows : undefined, { placement });
 		} catch {}
@@ -1033,6 +1062,8 @@ export function registryRuns(registry, nowMs = Date.now()) {
 			elapsedMs: snapshot.elapsedMs ?? 0,
 			settledAt: snapshot.settledAt ?? 0,
 			lastStep: snapshot.lastStep ?? "",
+			model: snapshot.model ?? "",
+			thinking: snapshot.thinking ?? "",
 			summary: bounded(String(task?.task ?? "").split("\n")[0] ?? "", 60),
 			tokens: snapshot.tokens ?? 0,
 			cost: snapshot.cost ?? 0,
@@ -1103,6 +1134,56 @@ export function transcriptEntries(file, options = {}) {
 }
 
 export const AGENTS_COMMAND = "biggz-agents";
+// `alt+a` mirrors gentle-shell; `BIGGZ_AGENTS_KEY` overrides it, and off/none/disabled turns it off.
+export const AGENTS_SHORTCUT = "alt+a";
+
+/** Open the runs panel as a pi overlay: `/biggz-agents` and the shortcut share exactly this. */
+export async function openSubagentPanel(ctx, options = {}) {
+	const ui = ctx?.ui;
+	if (typeof ui?.custom !== "function" || ctx?.mode !== "tui") {
+		try {
+			ui?.notify?.("the subagents panel needs TUI mode", "warning");
+		} catch {}
+		return null;
+	}
+	const registry = options.registry;
+	return ui.custom(
+		(tui, theme, _keybindings, done) => {
+			const tick = setInterval(() => {
+				try {
+					tui?.requestRender?.();
+				} catch {}
+			}, WIDGET_INTERVAL_MS);
+			tick?.unref?.();
+			return createAgentsView({
+				theme,
+				runs: () => registryRuns(registry),
+				stop: (run) => {
+					const task = registry?.get?.(run?.id);
+					if (!task || !isActiveTaskState(task.state)) return false;
+					void task.cancel("stopped from the agents panel");
+					return true;
+				},
+				transcript: (run) => {
+					const task = registry?.get?.(run?.id);
+					const file = task?.snapshot?.()?.transcriptPath ?? "";
+					if (!file) return null;
+					return { path: file, lines: transcriptEntries(file) };
+				},
+				close: (value) => {
+					clearInterval(tick);
+					done(value);
+				},
+				requestRender: () => {
+					try {
+						tui?.requestRender?.();
+					} catch {}
+				},
+			});
+		},
+		{ overlay: true, overlayOptions: { anchor: "top-right", width: "60%", margin: 1 } },
+	);
+}
 
 /**
  * Body of the `/biggz-agents` panel: one row per run (live activity + spend), `s` stops the
@@ -1119,7 +1200,7 @@ export function createAgentsView(options = {}) {
 	let selected = 0;
 	let status = "";
 	// `list` is the run table; `transcript` reads one child's own session file inside the panel.
-	const view = { mode: "list", agent: "", path: "", lines: [], scroll: 0, missing: "" };
+	const view = { mode: "list", agent: "", path: "", lines: [], scroll: 0, missing: "", run: null };
 	const TRANSCRIPT_PAGE = 14;
 	const rows = () => {
 		try {
@@ -1141,7 +1222,7 @@ export function createAgentsView(options = {}) {
 					if (!page.length && !view.missing) lines.push(theme.fg("dim", "(transcript is empty so far)"));
 					for (const line of page) lines.push(truncateToWidth(line, inner, "…", false));
 					lines.push("");
-					lines.push(theme.fg("dim", `↑↓ scroll · q back (${start + page.length}/${view.lines.length})`));
+					lines.push(theme.fg("dim", `↑↓ scroll · f follow · q back (${start + page.length}/${view.lines.length})`));
 					return lines;
 				}
 				const runs = rows();
@@ -1175,6 +1256,23 @@ export function createAgentsView(options = {}) {
 				}
 				if (key === "k" || key === "up" || key === "\u001b[A") {
 					view.scroll = Math.max(0, view.scroll - 1);
+					repaint();
+					return;
+				}
+				if (key === "f") {
+					// Refresh the transcript and jump to its end (the file keeps growing while the child runs).
+					let fresh = null;
+					try {
+						fresh = readTranscript(view.run ?? { id: view.id, agent: view.agent });
+					} catch {
+						fresh = null;
+					}
+					if (Array.isArray(fresh?.lines)) {
+						view.lines = fresh.lines;
+						view.path = String(fresh.path ?? view.path);
+						view.missing = "";
+					}
+					view.scroll = Math.max(0, view.lines.length - TRANSCRIPT_PAGE);
 					repaint();
 					return;
 				}
@@ -1213,6 +1311,7 @@ export function createAgentsView(options = {}) {
 					opened = null;
 				}
 				view.mode = "transcript";
+				view.run = run;
 				view.agent = String(run.agent ?? "subagent");
 				view.path = String(opened?.path ?? opened?.transcriptPath ?? "");
 				view.lines = Array.isArray(opened?.lines) ? opened.lines : [];
@@ -1716,9 +1815,12 @@ export default function biggzSubagentRuntime(pi) {
 			resolveDialogTimeout,
 			widgetRowsFor,
 			runRow,
+			widgetRowBudget,
 			registryRuns,
 			createAgentsView,
+			openSubagentPanel,
 			AGENTS_COMMAND,
+			AGENTS_SHORTCUT,
 			resolveSubagentSessionsDir,
 			pruneSubagentSessions,
 			transcriptEntries,
@@ -1742,7 +1844,11 @@ export default function biggzSubagentRuntime(pi) {
 	const gate = subagentRegistrationGate(pi, { env: process.env });
 	if (!gate.register) return; // the gate already logged the reason
 	try {
-		const widget = createWidgetPublisher({ env: process.env, width: () => defaultCompletionWidth() });
+		const widget = createWidgetPublisher({
+			env: process.env,
+			width: () => defaultCompletionWidth(),
+			terminalRows: () => Number(process.stdout?.rows) || 0,
+		});
 		const deliverCompletion = (run) => {
 			const line = completionLine(run);
 			try {
@@ -1768,56 +1874,23 @@ export default function biggzSubagentRuntime(pi) {
 		const { tools, registry } = createSubagentToolset({ env: process.env, widget, deliverCompletion, onQuery });
 		for (const definition of tools) if (typeof pi.registerTool === "function") pi.registerTool(definition);
 		if (typeof pi.registerMessageRenderer === "function") pi.registerMessageRenderer(COMPLETION_MESSAGE_TYPE, createCompletionRenderer());
+		const openAgentsPanel = (ctx) => openSubagentPanel(ctx, { registry });
 		if (typeof pi.registerCommand === "function") {
 			// `/biggz-agents`: the live panel — what each run is doing, its spend, and `s` to stop it.
 			pi.registerCommand(AGENTS_COMMAND, {
 				description: "Show this session's subagent runs (live activity, spend) and stop one",
-				handler: async (_args, ctx) => {
-					const ui = ctx?.ui;
-					if (typeof ui?.custom !== "function" || ctx?.mode !== "tui") {
-						try {
-							ui?.notify?.("the subagents panel needs TUI mode", "warning");
-						} catch {}
-						return;
-					}
-					await ui.custom(
-						(tui, theme, _keybindings, done) => {
-							const tick = setInterval(() => {
-								try {
-									tui?.requestRender?.();
-								} catch {}
-							}, WIDGET_INTERVAL_MS);
-							tick?.unref?.();
-							return createAgentsView({
-								theme,
-								runs: () => registryRuns(registry),
-								stop: (run) => {
-									const task = registry.get(run?.id);
-									if (!task || !isActiveTaskState(task.state)) return false;
-									void task.cancel("stopped from the agents panel");
-									return true;
-								},
-								transcript: (run) => {
-									const task = registry.get(run?.id);
-									const file = task?.snapshot()?.transcriptPath ?? "";
-									if (!file) return null;
-									return { path: file, lines: transcriptEntries(file) };
-								},
-								close: (value) => {
-									clearInterval(tick);
-									done(value);
-								},
-								requestRender: () => {
-									try {
-										tui?.requestRender?.();
-									} catch {}
-								},
-							});
-						},
-						{ overlay: true, overlayOptions: { anchor: "top-right", width: "60%", margin: 1 } },
-					);
-				},
+				handler: async (_args, ctx) => openAgentsPanel(ctx),
 			});
+		}
+		const shortcut = String(process.env.BIGGZ_AGENTS_KEY ?? AGENTS_SHORTCUT).trim();
+		if (shortcut && !/^(off|none|disabled)$/i.test(shortcut) && typeof pi.registerShortcut === "function") {
+			try {
+				pi.registerShortcut(shortcut, { description: "Show the subagent runs panel", handler: async (ctx) => openAgentsPanel(ctx) });
+			} catch (err) {
+				try {
+					console.warn?.(`biggz-subagent-runtime: shortcut "${bounded(shortcut, 24)}" rejected: ${bounded(err?.message ?? err, 80)}`);
+				} catch {}
+			}
 		}
 	} catch (err) {
 		try {

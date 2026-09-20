@@ -57,6 +57,7 @@ const {
   formatCost,
   WIDGET_FINISHED_TTL_MS,
   runRow,
+  widgetRowBudget,
   registryRuns,
   createAgentsView,
   AGENTS_COMMAND,
@@ -597,6 +598,7 @@ const fakePi = (options = {}) => ({
   registered: [],
   renderers: [],
   commands: [],
+  shortcuts: [],
   getAllTools: options.getAllTools ?? (() => options.tools ?? []),
   ...(options.getToolDefinition ? { getToolDefinition: options.getToolDefinition } : {}),
   registerTool(definition) {
@@ -607,6 +609,9 @@ const fakePi = (options = {}) => ({
   },
   registerCommand(name, definition) {
     this.commands.push([name, definition]);
+  },
+  registerShortcut(name, definition) {
+    this.shortcuts.push([name, definition]);
   },
 });
 
@@ -703,7 +708,7 @@ describe('S2 agents panel (/biggz-agents)', () => {
     assert.match(lines[0], /Subagent runs/);
     assert.deepEqual(
       lines.slice(2, 4),
-      ['→ ◐ sdd-apply · read x.go · 4s · 12.3k tok · $0.0042', '  ✅ sdd-verify · verify spec · 9s'],
+      ['→ ◐ sdd-apply · read x.go · 12.3k tok · $0.0042 · 4s', '  ✅ sdd-verify · verify spec · 9s'],
       'one row per run, the selected one marked, spend included',
     );
     assert.match(lines.at(-1), /↑↓ move · s stop · o transcript · q close/);
@@ -748,6 +753,8 @@ describe('S2 agents panel (/biggz-agents)', () => {
     withAgentEnv(dir, () => runtime(pi));
     assert.equal(pi.commands.length, 1);
     assert.equal(pi.commands[0][0], AGENTS_COMMAND);
+    assert.deepEqual(pi.shortcuts.map(([key]) => key), ['alt+a'], 'the panel also has a shortcut (gentle-shell parity)');
+    assert.equal(pi.shortcuts[0][1].description, 'Show the subagent runs panel');
     const custom = [];
     const ctx = { mode: 'tui', ui: { custom: async (factory, opts) => { custom.push([factory, opts]); return null; }, notify() {} } };
     await pi.commands[0][1].handler([], ctx);
@@ -831,6 +838,11 @@ describe('S3 child transcripts', () => {
     const missing = createAgentsView({ theme, runs, transcript: () => null });
     missing.handleInput('o');
     assert.match(missing.render(80).join('\n'), /no session file/);
+    const growing = { path: '/tmp/child.jsonl', lines: ['first line', 'second line', 'third line'] };
+    const refreshing = createAgentsView({ theme, runs, transcript: () => growing });
+    refreshing.handleInput('o');
+    refreshing.handleInput('f');
+    assert.ok(refreshing.render(80).some((line) => line.includes('third line')), 'f refreshes and follows the transcript tail');
   });
 });
 
@@ -1440,7 +1452,7 @@ describe('S2 background mode, widget, cap and wait headline', () => {
     assert.equal(deliveries.length, 0, 'ids must return before any completion (no polling, no awaiting)');
     assert.deepEqual(second.details.state, 'running');
     const rows = ctx.ui.calls.at(-1)[1];
-    assert.deepEqual(rows.map((row) => row.replace(/ · \d+s$/, '')), ['◐ probe · a', '◐ probe · b'], 'widget rows name each active run by its task summary');
+    assert.deepEqual(rows.map((row) => row.replace(/ · \d+s$/, '')), ['◐ probe · a', '◐ probe · b'], 'widget rows name each active run by its task summary (the model is unknown until get_state answers)');
     assert.equal(ctx.ui.calls.at(-1)[0], 'biggz-subagents');
     assert.deepEqual(ctx.ui.calls.at(-1)[2], { placement: 'belowEditor' }, 'placement must ride the options object');
     await waitFor(() => deliveries.length === 2);
@@ -1449,7 +1461,7 @@ describe('S2 background mode, widget, cap and wait headline', () => {
     const rowsAfter = ctx.ui.calls.at(-1)[1];
     assert.deepEqual(
       rowsAfter.map((row) => row.replace(/ · \d+s.*$/, '')),
-      ['✅ probe · a', '✅ probe · b'],
+      ['✅ probe · a · fake-model · high', '✅ probe · b · fake-model · high'],
       'completions stay visible for a minute before fading (gentle-shell parity)',
     );
     assert.ok(ctx.ui.notifies.length >= 2, 'each completion is also a notification');
@@ -1488,7 +1500,23 @@ describe('S2 background mode, widget, cap and wait headline', () => {
     assert.equal(resolveBackgroundCap({ BIGGZ_BACKGROUND_SUBAGENTS: 'nope' }), 2);
   });
 
-  it('renders max 2 widget rows + `… +N`, truncates via pi-tui, and hides when idle/child/pretty-off', () => {
+  it('sizes the row budget by the terminal and degrades a row before truncating it', () => {
+    assert.equal(widgetRowBudget(0), 3, 'no terminal height ⇒ the minimum');
+    assert.equal(widgetRowBudget(8), 3, 'never below the minimum');
+    assert.equal(widgetRowBudget(24), 6, 'a quarter of the terminal');
+    assert.equal(widgetRowBudget(100), 8, 'clamped at the maximum');
+    const rich = { agent: 'sdd-explore', state: 'running', elapsedMs: 4200, lastStep: 'read x.go', model: 'deepseek-v4.1-flash', thinking: 'max', tokens: 12345, cost: 0.0042 };
+    assert.deepEqual(
+      widgetRowsFor([rich], { env: {}, width: 200 }),
+      ['◐ sdd-explore · read x.go · deepseek-v4.1-flash · max · 12.3k tok · $0.0042 · 4s'],
+      'with room: model, effort, spend and time',
+    );
+    assert.deepEqual(widgetRowsFor([rich], { env: {}, width: 60 }), ['◐ sdd-explore · read x.go · 12.3k tok · $0.0042 · 4s'], 'tight: the model goes first');
+    assert.deepEqual(widgetRowsFor([rich], { env: {}, width: 40 }), ['◐ sdd-explore · read x.go · 4s'], 'tighter: activity and time survive');
+    assert.ok(tui.visibleWidth(widgetRowsFor([rich], { env: {}, width: 24 })[0]) <= 24, 'and the rest is truncated by pi-tui');
+  });
+
+  it('renders the default three rows, folds an explicit budget, and hides when idle/child/pretty-off', () => {
     assert.deepEqual(widgetRowsFor([{ agent: 'sdd-apply', state: 'running', elapsedMs: 3200 }], { env: {}, width: 200 }), ['◐ sdd-apply · running · 3s']);
     assert.deepEqual(
       widgetRowsFor(
@@ -1499,7 +1527,20 @@ describe('S2 background mode, widget, cap and wait headline', () => {
         ],
         { env: {} },
       ),
+      ['◐ a · running · 0s', '◌ b · queued · 1s', '◐ c · running · 2s'],
+      'the default budget is the minimum of three rows',
+    );
+    assert.deepEqual(
+      widgetRowsFor(
+        [
+          { agent: 'a', state: 'running', elapsedMs: 0 },
+          { agent: 'b', state: 'queued', elapsedMs: 1000 },
+          { agent: 'c', state: 'running', elapsedMs: 2000 },
+        ],
+        { env: {}, maxRows: 2 },
+      ),
       ['◐ a · running · 0s', '◌ b · queued · 1s', '… +1'],
+      'an explicit budget still folds the overflow',
     );
     assert.deepEqual(widgetRowsFor([{ agent: 'a', state: 'completed', elapsedMs: 0 }], { env: {} }), [], 'idle ⇒ hidden');
     assert.deepEqual(widgetRowsFor([{ agent: 'a', state: 'running', elapsedMs: 0 }], { env: { PI_SUBAGENT_CHILD: '1' } }), []);
@@ -1550,7 +1591,7 @@ describe('S2 background mode, widget, cap and wait headline', () => {
     assert.equal(formatCost(0.42), '$0.42');
     assert.deepEqual(
       widgetRowsFor([{ agent: 'a', state: 'running', elapsedMs: 3000, lastStep: 'grep x', tokens: 12345, cost: 0.0042 }], { env: {}, width: 200 }),
-      ['◐ a · grep x · 3s · 12.3k tok · $0.0042'],
+      ['◐ a · grep x · 12.3k tok · $0.0042 · 3s'],
     );
     const settled = { agent: 'sdd-apply', state: 'completed', elapsedMs: 12000, settledAt: 1000, summary: 'read x' };
     assert.deepEqual(widgetRowsFor([settled], { env: {}, now: 2000, width: 200 }), ['✅ sdd-apply · read x · 12s'], 'a fresh completion stays visible');
