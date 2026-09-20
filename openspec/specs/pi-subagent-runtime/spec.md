@@ -298,3 +298,31 @@ A child MUST keep a session transcript: the runtime MUST spawn it with `--sessio
 - GIVEN a run with a transcript and the `/biggz-agents` panel open
 - WHEN `o` is pressed
 - THEN the transcript MUST render as bounded one-line entries inside the panel, and a run without a transcript MUST show a notice instead
+
+### Requirement: Child ↔ Parent Question Channel
+
+A delegation child MUST be able to ask its parent — the orchestrator — a question without any dialog: the runtime MUST register a `subagent_parent_message` tool inside the child and MUST include it in the child's tool list, the child MUST post the question as a file under its query directory, the parent MUST sweep that directory while the task lives, and the answer MUST travel back as a file the child polls. The parent MUST register `subagent_reply` (`task_id`, `request_id`, `message`) and MUST record the answer against the pending question. A question MUST be bounded: a per-run budget (`DEFAULT_QUERY_BUDGET` = 5) beyond which the child is told the budget is exhausted, and a per-question wait (`DEFAULT_QUERY_TIMEOUT_MS` = 5 min) after which the child is told to continue with its own judgement. A child question MUST NOT block the run indefinitely and MUST NOT be presented to the human as a dialog; while one is pending the task status MUST say so.
+
+#### Scenario: A child question reaches the orchestrator
+
+- GIVEN a running child that asks its parent a question
+- WHEN the frame arrives
+- THEN the question MUST be recorded as pending for that task and MUST be delivered to the orchestrator as a conversation message
+
+#### Scenario: The answer reaches the child
+
+- GIVEN a pending question with its request id
+- WHEN `subagent_reply` answers it
+- THEN the answer MUST be written where the child is waiting, the child MUST receive it, and the question MUST stop being pending
+
+#### Scenario: Budget and timeout degrade instead of blocking
+
+- GIVEN a child that asks beyond its budget, or one whose question is never answered
+- WHEN the budget is spent or the wait expires
+- THEN the child MUST be told to continue with its own judgement instead of waiting forever
+
+#### Scenario: A chatty child does not become a dialog
+
+- GIVEN any number of child questions
+- WHEN they arrive
+- THEN none of them MUST be presented as a blocking dialog to the human

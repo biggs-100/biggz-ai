@@ -41,6 +41,15 @@ export const DEFAULT_DIALOG_TIMEOUT_MS = 2 * 60 * 1000;
 export const DEFAULT_BACKGROUND_CAP = 2;
 // Child transcripts are a debugging aid, not a record: keep the newest N and prune the rest.
 export const DEFAULT_SUBAGENT_SESSION_KEEP = 50;
+// Child ↔ parent question channel (issue #139 / gentle-shell parity): a child asks the
+// orchestrator, never the human, and the answer comes back without a dialog stealing the TUI.
+export const PARENT_MESSAGE_TOOL = "subagent_parent_message";
+export const PARENT_REPLY_TOOL = "subagent_reply";
+export const QUERY_FRAME_TYPE = "biggz_parent_message";
+export const QUERY_DIR_ENV = "BIGGZ_SUBAGENT_QUERY_DIR";
+export const DEFAULT_QUERY_TIMEOUT_MS = 5 * 60 * 1000;
+export const DEFAULT_QUERY_POLL_MS = 250;
+export const DEFAULT_QUERY_BUDGET = 5;
 // How long a finished run stays visible in the widget so its ✓/✗ is seen before it fades.
 export const WIDGET_FINISHED_TTL_MS = 60 * 1000;
 export const WIDGET_FINISHED_MAX = 3;
@@ -269,13 +278,18 @@ export function buildChildArgs(agent, options = {}) {
 	const sessionDir = options.sessionDir === null || options.ephemeral === true ? "" : (options.sessionDir ?? resolveSubagentSessionsDir(options.env ?? process.env));
 	if (sessionDir) args.push("--session-dir", sessionDir);
 	else args.push("--no-session");
-	args.push("--tools", (tools.length ? tools : READ_ONLY_TOOLS).join(","));
+	args.push("--tools", [...(tools.length ? tools : READ_ONLY_TOOLS), PARENT_MESSAGE_TOOL].join(","));
 	const model = typeof agent?.model === "string" ? agent.model.trim() : "";
 	if (model && SAFE_TOKEN_RE.test(model)) args.push("--model", model);
 	return args;
 }
 
-export const buildChildEnv = (baseEnv = process.env) => ({ ...baseEnv, PI_SUBAGENT_CHILD: "1" });
+export const buildChildEnv = (baseEnv = process.env, options = {}) => {
+	const env = { ...baseEnv, PI_SUBAGENT_CHILD: "1" };
+	// The child needs to know where to post its questions (and look for the answers).
+	if (options.queryDir) env[QUERY_DIR_ENV] = options.queryDir;
+	return env;
+};
 
 // Inside pi, `process.argv[1]` is the package entry being executed — the same
 // `dist/bundle/cli.js` that `pi.cmd`/`pi` launch (`"bin": {"pi": "dist/bundle/cli.js"}`),
@@ -366,6 +380,8 @@ export function createTask(options = {}) {
 	const dialogPolicy = options.dialogPolicy === "dismiss" ? "dismiss" : "relay";
 	// Where this child writes its transcript (null ⇒ ephemeral `--no-session`).
 	const sessionDir = options.ephemeral === true || options.sessionDir === null ? null : (options.sessionDir ?? resolveSubagentSessionsDir(env));
+	const queryDir = sessionDir ? resolveQueryDir(sessionDir) : "";
+	const queryBudget = Number.isFinite(Number(options.queryBudget)) ? Math.max(0, Math.floor(Number(options.queryBudget))) : DEFAULT_QUERY_BUDGET;
 	const startedAt = now();
 	const id = options.id ?? `sub-${startedAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 	const events = [];
@@ -376,6 +392,8 @@ export function createTask(options = {}) {
 	let totalTimer = null;
 	let finalTextTimer = null;
 	let dialogTimer = null;
+	let queryTimer = null;
+	const queryPollMs = Math.max(200, Math.floor(Number(options.queryPollMs) || DEFAULT_QUERY_POLL_MS * 4));
 	let finalText = null;
 	let pendingUi = 0;
 	let dialogRelayed = 0;
@@ -387,6 +405,8 @@ export function createTask(options = {}) {
 	let transcriptPath = "";
 	let thinking = "";
 	const usageTotals = { tokens: 0, cost: 0, model: "" };
+	const pendingQueries = new Map();
+	let queriesAnswered = 0;
 	let started = false;
 	let settled = false;
 	let stderrTail = "";
@@ -394,10 +414,12 @@ export function createTask(options = {}) {
 	const promise = new Promise((resolve) => {
 		resolveTask = resolve;
 	});
-	const snapshot = () => ({ id, state: state.value, reason: state.reason, exitCode: state.exitCode, error: state.error, events, stderrTail, finalText, pendingUi, dialogMs, dialogRelayed, dialogMissed, dialogsDismissed, lastStep, pendingDialog, tokens: usageTotals.tokens, cost: usageTotals.cost, model: usageTotals.model, thinking, transcriptPath, settledAt, elapsedMs: (settledAt || now()) - startedAt, pid: child?.pid ?? null });
+	const snapshot = () => ({ id, state: state.value, reason: state.reason, exitCode: state.exitCode, error: state.error, events, stderrTail, finalText, pendingUi, dialogMs, dialogRelayed, dialogMissed, dialogsDismissed, lastStep, pendingDialog, tokens: usageTotals.tokens, cost: usageTotals.cost, model: usageTotals.model, thinking, transcriptPath, pendingQueries: pendingQueries.size, pendingQuery: pendingQueries.size ? [...pendingQueries.values()][0] : null, queriesAnswered, settledAt, elapsedMs: (settledAt || now()) - startedAt, pid: child?.pid ?? null });
 
 	function clearTimers() {
 		if (idleTimer) clearTimeout(idleTimer);
+		if (queryTimer) clearInterval(queryTimer);
+		queryTimer = null;
 		if (totalTimer) clearTimeout(totalTimer);
 		if (finalTextTimer) clearTimeout(finalTextTimer);
 		if (dialogTimer) clearTimeout(dialogTimer);
@@ -479,6 +501,65 @@ export function createTask(options = {}) {
 	// methods and every other event type are ignored. Every relayed question is
 	// BOUNDED by `dialogMs` so a parent that never answers cannot leave the child
 	// blocked: at the bound the child receives `cancelled` and the run continues.
+	// A child question is answered by the orchestrator, never by a dialog: a bounded registry with
+	// a budget, so a chatty child degrades to its own judgement instead of blocking the run.
+	const answerQuery = async (requestId, message) => {
+		const key = bounded(String(requestId ?? ""), 60);
+		if (!key) return false;
+		const answer = bounded(String(message ?? "").trim(), 4000) || "no answer given";
+		if (queryDir) {
+			try {
+				fs.mkdirSync(queryDir, { recursive: true });
+				fs.writeFileSync(path.join(queryDir, `${key}.reply.json`), JSON.stringify({ id: key, message: answer, at: now() }), "utf8");
+			} catch {}
+		}
+		if (pendingQueries.delete(key)) queriesAnswered += 1;
+		return true;
+	};
+	// The child posts questions as files in its query directory (stdout belongs to pi's RPC
+	// stream), so the parent sweeps that directory while the task lives and records what it finds.
+	const scanQueryFiles = () => {
+		if (!queryDir) return 0;
+		let names = [];
+		try {
+			names = fs.readdirSync(queryDir).filter((name) => name.endsWith(".query.json"));
+		} catch {
+			return 0;
+		}
+		let seen = 0;
+		for (const name of names) {
+			const full = path.join(queryDir, name);
+			let frame = null;
+			try {
+				frame = JSON.parse(fs.readFileSync(full, "utf8"));
+			} catch {
+				frame = null;
+			}
+			try {
+				fs.rmSync(full, { force: true });
+			} catch {}
+			if (frame) {
+				seen += 1;
+				recordQuery(frame);
+			}
+		}
+		return seen;
+	};
+	const recordQuery = (frame) => {
+		const requestId = bounded(String(frame?.requestId ?? frame?.id ?? ""), 60);
+		const message = bounded(String(frame?.message ?? "").trim(), 800);
+		if (!requestId || !message) return;
+		const used = queriesAnswered + pendingQueries.size;
+		if (used >= queryBudget) {
+			void answerQuery(requestId, "question budget for this run is exhausted; continue with your best judgement and state the assumption in your report");
+			return;
+		}
+		pendingQueries.set(requestId, { id: requestId, message, at: now() });
+		try {
+			options.onQuery?.({ id, agent: agent?.id ?? "subagent", requestId, message, budget: queryBudget, used: used + 1 });
+		} catch {}
+	};
+
 	async function relayUiRequest(request) {
 		if (settled || !DIALOG_METHODS.has(request?.method)) return;
 		if (dialogPolicy === "dismiss") {
@@ -569,6 +650,10 @@ export function createTask(options = {}) {
 				void relayUiRequest(data);
 				return;
 			}
+			if (type === QUERY_FRAME_TYPE) {
+				recordQuery(data);
+				return;
+			}
 			if (type === "tool_execution_start") {
 				inFlightTools.add(toolKeyOf(data));
 				armIdle(); // suspend the idle bound while the announced tool runs
@@ -633,7 +718,7 @@ export function createTask(options = {}) {
 		try {
 			child = spawnImpl(launch.command, [...(launch.prefix ?? []), ...args], {
 				cwd: options.cwd,
-				env: buildChildEnv(env),
+				env: buildChildEnv(env, { queryDir }),
 				stdio: ["pipe", "pipe", "pipe"],
 				windowsHide: true,
 				detached: platform !== "win32", // own process group so kill(-pid) works
@@ -673,6 +758,10 @@ export function createTask(options = {}) {
 					} catch {}
 					writeCommand({ id: `${id}-state-1`, type: "get_state" });
 				}
+				if (queryDir) {
+					queryTimer = setInterval(scanQueryFiles, queryPollMs);
+					queryTimer?.unref?.();
+				}
 			} catch (err) {
 				settle("failed", "child_setup", err);
 			}
@@ -697,6 +786,10 @@ export function createTask(options = {}) {
 		steer(message) {
 			return !settled && writeCommand({ type: "steer", message: String(message ?? "") });
 		},
+		pendingQueries: () => [...pendingQueries.values()],
+		scanQueries: () => scanQueryFiles(),
+		answerQuery: (requestId, message) => answerQuery(requestId, message),
+		queryBudget,
 		cancel(reason = "cancelled") {
 			if (!settled && state.value !== "cancelled") {
 				state.value = "cancelled";
@@ -1195,10 +1288,11 @@ export function formatTaskResult(task, snapshot = task?.snapshot?.() ?? task) {
 	// Live activity while it runs, so a status call answers "what is it doing?" and not just
 	// "is it alive?" — the glyph/state already carries the latter.
 	const step = !waiting && isActiveTaskState(state) && snapshot?.lastStep ? ` · ${bounded(snapshot.lastStep, 60)}` : "";
+	const query = waiting || !snapshot?.pendingQuery?.message ? "" : ` · awaiting parent: ${bounded(snapshot.pendingQuery.message, 60)}`;
 	const tokens = Number(snapshot?.tokens) || 0;
 	const cost = Number(snapshot?.cost) || 0;
 	const spend = `${tokens ? ` · ${formatTokens(tokens)} tok` : ""}${cost ? ` · ${formatCost(cost)}` : ""}`;
-	return `subagent ${snapshot?.id ?? "?"} · ${state} · ${seconds}s${detail}${waiting}${step}${spend}`;
+	return `subagent ${snapshot?.id ?? "?"} · ${state} · ${seconds}s${detail}${waiting}${query}${step}${spend}`;
 }
 
 /** Bounded result tail: trimmed `finalText` else `stderrTail`, blank lines collapsed; event types when no text. */
@@ -1216,6 +1310,80 @@ export function boundedResultTail(snapshot, maxLines = 20) {
 const textResult = (text, details) => ({ content: [{ type: "text", text }], details });
 const toolError = (text) => ({ content: [{ type: "text", text }], isError: true });
 const paramsOf = (properties, required = []) => ({ type: "object", properties, required });
+
+/** `.../<session dir>/queries` — where a child posts questions and reads its answers. */
+export const resolveQueryDir = (sessionDir) => (sessionDir ? path.join(sessionDir, "queries") : "");
+
+/**
+ * Child side: ask the run's parent a question and wait for the answer file it writes back.
+ * A file (not stdin/stdout framing) carries the answer, so nothing can hijack pi's RPC stream;
+ * the question itself rides stdout as one extra JSONL line the parent's reader recognises.
+ */
+export function createParentMessageTool(options = {}) {
+	const env = options.env ?? process.env;
+	const dir = String(options.queryDir ?? env[QUERY_DIR_ENV] ?? "").trim();
+	const timeoutMs = Math.max(1000, Math.floor(Number(options.timeoutMs) || DEFAULT_QUERY_TIMEOUT_MS));
+	const pollMs = Math.max(25, Math.floor(Number(options.pollMs) || DEFAULT_QUERY_POLL_MS));
+	const writeFrame = typeof options.writeFrame === "function" ? options.writeFrame : () => {};
+	const sleep = typeof options.sleep === "function" ? options.sleep : (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+	return {
+		name: PARENT_MESSAGE_TOOL,
+		description: "Ask this run's parent (the orchestrator) a question when a decision blocks the task; it can answer with context you cannot see. Use it sparingly — prefer deciding and stating your assumption.",
+		parameters: paramsOf({ message: { type: "string" } }, ["message"]),
+		async execute(_callId, params = {}) {
+			const message = bounded(String(params.message ?? "").trim(), 800);
+			if (!message) return toolError("message is required");
+			if (!dir) return textResult("no parent channel is available for this run; continue with your best judgement and state the assumption in your report");
+			const requestId = `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+			const frame = { type: QUERY_FRAME_TYPE, id: requestId, requestId, message, at: Date.now() };
+			// The parent polls this directory: writing to stdout is NOT an option inside an RPC child —
+			// pi owns that stream and an extension line never reaches the client (verified live).
+			try {
+				fs.mkdirSync(dir, { recursive: true });
+				fs.writeFileSync(path.join(dir, `${requestId}.query.json`), JSON.stringify(frame), "utf8");
+			} catch {}
+			try {
+				writeFrame(frame);
+			} catch {}
+			const replyPath = path.join(dir, `${requestId}.reply.json`);
+			const deadline = Date.now() + timeoutMs;
+			while (Date.now() < deadline) {
+				let raw = "";
+				try {
+					raw = fs.readFileSync(replyPath, "utf8");
+				} catch {
+					raw = "";
+				}
+				if (raw) {
+					try {
+						fs.rmSync(replyPath, { force: true });
+					} catch {}
+					let answer = "";
+					try {
+						answer = String(JSON.parse(raw)?.message ?? "");
+					} catch {
+						answer = raw;
+					}
+					const text = bounded(answer.trim(), 4000);
+					return textResult(text ? `answer from the parent: ${text}` : "the parent replied with an empty answer; continue with your best judgement");
+				}
+				await sleep(pollMs);
+			}
+			return textResult(`no answer from the parent within ${Math.round(timeoutMs / 1000)}s; continue with your best judgement and state the assumption in your report`);
+		},
+	};
+}
+
+/** In a child process: register the question tool only — the delegation surface belongs to the parent. */
+export function registerChildChannel(pi, options = {}) {
+	if (!pi || typeof pi.registerTool !== "function") return false;
+	try {
+		pi.registerTool(createParentMessageTool(options));
+		return true;
+	} catch {
+		return false;
+	}
+}
 const unknownTaskError = (id) => `unknown or expired task "${bounded(id, 60)}"`;
 const withTimeout = (promises, ms) =>
 	new Promise((resolve) => {
@@ -1251,6 +1419,7 @@ export function createSubagentToolset(options = {}) {
 			idleMs: options.idleMs,
 			totalMs: options.totalMs,
 			finalTextMs: options.finalTextMs,
+			onQuery: options.onQuery,
 			dialogMs: options.dialogMs ?? resolveDialogTimeout(env),
 			onUiRequest: (request, dialogOpts) => presentUi(extra.ctx, request, { ...dialogOpts, agentLabel }),
 			...extra,
@@ -1412,6 +1581,26 @@ export function createSubagentToolset(options = {}) {
 			return textResult(targets.map((task) => `cancelled ${task.id} · ${task.state}`).join("\n"), { cancelled: targets.length });
 		},
 	};
+	const reply = {
+		name: PARENT_REPLY_TOOL,
+		description: "Answer a subagent's question (task_id + request_id from the query message); the answer reaches the child",
+		parameters: paramsOf({ task_id: { type: "string" }, request_id: { type: "string" }, message: { type: "string" } }, ["task_id", "request_id", "message"]),
+		async execute(_callId, params = {}) {
+			const task = registry.get(params.task_id);
+			if (!task) return toolError(unknownTaskError(params.task_id));
+			const requestId = String(params.request_id ?? "").trim();
+			const message = String(params.message ?? "").trim();
+			if (!requestId) return toolError("request_id is required");
+			if (!message) return toolError("message is required");
+			if (typeof task.answerQuery !== "function") return toolError(`task ${task.id} has no question channel`);
+			const known = task.pendingQueries().some((query) => query.id === requestId);
+			await task.answerQuery(requestId, message);
+			return textResult(
+				`answered ${task.id} · ${requestId}${known ? "" : " (no pending question with that id — the child may have timed out or answered already)"}`,
+				{ taskId: task.id, requestId, delivered: known },
+			);
+		},
+	};
 	const agentsTool = {
 		name: "subagent_agents",
 		description: "List discovered markdown agents (~/.pi/agent/agents/*.md) with tools and model",
@@ -1446,7 +1635,7 @@ export function createSubagentToolset(options = {}) {
 			return textResult(`steered ${task.id} · ${task.state}`, { taskId: task.id, state: task.state });
 		},
 	};
-	return { registry, tools: [subagent, wait, status, resultTool, cancel, agentsTool, listTasks, sendMessage] };
+	return { registry, tools: [subagent, wait, status, resultTool, cancel, agentsTool, listTasks, sendMessage, reply] };
 }
 
 // ── completion card: one pi-tui-truncated line + its message renderer ──
@@ -1483,12 +1672,19 @@ export function createCompletionRenderer(options = {}) {
 }
 
 export const COMPLETION_MESSAGE_TYPE = "biggz-subagent-completion";
+// A child's question arrives in the parent conversation under its own type (issue #139).
+export const QUERY_MESSAGE_TYPE = "biggz-subagent-query";
 
 // ── pi extension factory (inert: gate + tools + background delivery land here) ──
 
 export default function biggzSubagentRuntime(pi) {
-	if (process.env.PI_SUBAGENT_CHILD === "1") return;
 	if (!pi || typeof pi !== "object") return;
+	// Inside a delegation child the runtime registers ONE thing: the question tool. The delegation
+	// surface (and the human) belongs to the parent, so a child can ask its orchestrator, not a dialog.
+	if (process.env.PI_SUBAGENT_CHILD === "1") {
+		registerChildChannel(pi, { env: process.env });
+		return;
+	}
 	try {
 		pi._biggzSubagentRuntime = {
 			JSONL_MAX_LINE_BYTES,
@@ -1528,6 +1724,15 @@ export default function biggzSubagentRuntime(pi) {
 			transcriptEntries,
 			transcriptEntry,
 			DEFAULT_SUBAGENT_SESSION_KEEP,
+			PARENT_MESSAGE_TOOL,
+			PARENT_REPLY_TOOL,
+			QUERY_FRAME_TYPE,
+			QUERY_DIR_ENV,
+			DEFAULT_QUERY_TIMEOUT_MS,
+			DEFAULT_QUERY_BUDGET,
+			resolveQueryDir,
+			createParentMessageTool,
+			registerChildChannel,
 			createWidgetPublisher,
 			renderWaitHeadline,
 			presentUiRequest,
@@ -1545,7 +1750,22 @@ export default function biggzSubagentRuntime(pi) {
 			} catch {}
 			widget.notify(line, run.state === "completed" ? "info" : "warning");
 		};
-		const { tools, registry } = createSubagentToolset({ env: process.env, widget, deliverCompletion });
+		const onQuery = (query) => {
+			// The child's question becomes a message in the parent conversation: the orchestrator
+			// answers it with `subagent_reply`, and no modal ever steals the keyboard.
+			try {
+				pi.sendMessage?.(
+					{
+						customType: QUERY_MESSAGE_TYPE,
+						content: `Subagent ${query.agent} asks:\nTask ID: ${query.id}\nRequest ID: ${query.requestId}\nQuestion: ${query.message}`,
+						display: true,
+						details: query,
+					},
+					{ deliverAs: "followUp", triggerTurn: true },
+				);
+			} catch {}
+		};
+		const { tools, registry } = createSubagentToolset({ env: process.env, widget, deliverCompletion, onQuery });
 		for (const definition of tools) if (typeof pi.registerTool === "function") pi.registerTool(definition);
 		if (typeof pi.registerMessageRenderer === "function") pi.registerMessageRenderer(COMPLETION_MESSAGE_TYPE, createCompletionRenderer());
 		if (typeof pi.registerCommand === "function") {
