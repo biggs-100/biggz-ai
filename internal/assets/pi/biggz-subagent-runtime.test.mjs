@@ -60,6 +60,10 @@ const {
   registryRuns,
   createAgentsView,
   AGENTS_COMMAND,
+  resolveSubagentSessionsDir,
+  pruneSubagentSessions,
+  transcriptEntries,
+  transcriptEntry,
   DEFAULT_DIALOG_TIMEOUT_MS,
   resolveDialogTimeout,
 } = rt;
@@ -104,6 +108,7 @@ process.stdin.on('data', (chunk) => {
     try { cmd = JSON.parse(raw); } catch {}
     if (!cmd) continue;
     out({ type: 'fake_command', command: cmd });
+    if (cmd.type === 'get_state') out({ type: 'response', command: 'get_state', success: true, data: { sessionFile: process.env.FAKE_SESSION_FILE ?? null, model: { provider: 'fake', id: 'fake-model' }, thinkingLevel: 'high' } });
     if (cmd.type === 'get_last_assistant_text') out({ type: 'response', command: 'get_last_assistant_text', success: true, data: { text: 'final answer' } });
     if (cmd.type === 'extension_ui_response' && cmd.id === 'q1') {
       out({ type: 'dialog_answer', value: cmd.value ?? null, cancelled: cmd.cancelled === true });
@@ -212,8 +217,13 @@ describe('agent discovery + spawn authorization', () => {
     assert.equal(nestedSpawnRefusal({ PI_SUBAGENT_CHILD: '1' })?.ok, false);
     assert.equal(nestedSpawnRefusal({}), null);
     assert.equal(resolveAgent('probe', [AGENT], { PI_SUBAGENT_CHILD: '1' }).ok, false, 'nested spawn refused');
-    assert.deepEqual(buildChildArgs({ tools: [], model: null }), ['--mode', 'rpc', '--no-session', '--tools', 'read']);
-    assert.deepEqual(buildChildArgs({ tools: ['read', 'edit'], model: 'openai/gpt-5' }), ['--mode', 'rpc', '--no-session', '--tools', 'read,edit', '--model', 'openai/gpt-5']);
+    assert.deepEqual(buildChildArgs({ tools: [], model: null }, { sessionDir: '/tmp/child-sessions' }), ['--mode', 'rpc', '--session-dir', '/tmp/child-sessions', '--tools', 'read']);
+    assert.deepEqual(
+      buildChildArgs({ tools: [], model: null }, { env: { PI_CODING_AGENT_DIR: '/tmp/agent' } }),
+      ['--mode', 'rpc', '--session-dir', path.join('/tmp/agent', 'sessions', 'biggz-subagents'), '--tools', 'read'],
+      'children keep a transcript under the agent dir by default',
+    );
+    assert.deepEqual(buildChildArgs({ tools: ['read', 'edit'], model: 'openai/gpt-5' }, { sessionDir: null }), ['--mode', 'rpc', '--no-session', '--tools', 'read,edit', '--model', 'openai/gpt-5']);
     const base = { PATH: '/usr/bin' };
     assert.equal(buildChildEnv(base).PI_SUBAGENT_CHILD, '1');
     assert.equal('PI_SUBAGENT_CHILD' in base, false, 'base env object must not be mutated');
@@ -689,7 +699,7 @@ describe('S2 agents panel (/biggz-agents)', () => {
       ['→ ◐ sdd-apply · read x.go · 4s · 12.3k tok · $0.0042', '  ✅ sdd-verify · verify spec · 9s'],
       'one row per run, the selected one marked, spend included',
     );
-    assert.match(lines.at(-1), /↑↓ move · s stop · q close/);
+    assert.match(lines.at(-1), /↑↓ move · s stop · o transcript · q close/);
     view.handleInput('q');
     view.handleInput('escape');
     assert.deepEqual(closed, [null, null]);
@@ -742,6 +752,78 @@ describe('S2 agents panel (/biggz-agents)', () => {
     const notified = [];
     await pi.commands[0][1].handler([], { mode: 'rpc', ui: { notify: (m) => notified.push(m) } });
     assert.deepEqual(notified, ['the subagents panel needs TUI mode']);
+  });
+});
+
+describe('S3 child transcripts', () => {
+  const theme = { fg: (_role, text) => String(text), bold: (text) => String(text) };
+
+  it('formats a session file into bounded one-line entries', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biggz-transcript-'));
+    const file = path.join(dir, 'session.jsonl');
+    const records = [
+      { type: 'session', timestamp: '2026-09-19T20:31:05.000Z' },
+      { type: 'message', timestamp: '2026-09-19T20:31:06.000Z', message: { role: 'user', content: [{ type: 'text', text: 'read the file' }] } },
+      { type: 'message', timestamp: '2026-09-19T20:31:07.000Z', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'hmm' }, { type: 'toolCall', name: 'read', arguments: { path: 'a.go' } }] } },
+      { type: 'message', timestamp: '2026-09-19T20:31:08.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } },
+    ];
+    fs.writeFileSync(file, records.map((record) => JSON.stringify(record)).join('\n') + '\n');
+    const entries = transcriptEntries(file);
+    assert.equal(entries.length, 4);
+    assert.match(entries[0], /── session start/);
+    assert.match(entries[1], /20:31:06 user\s+read the file/);
+    assert.match(entries[2], /assistant\s+⚙ read a\.go/);
+    assert.match(entries[3], /assistant\s+done/);
+    assert.equal(transcriptEntry(null), '');
+    assert.equal(transcriptEntry({ type: 'model_change' }), '', 'noise records stay out');
+    assert.deepEqual(transcriptEntries(path.join(dir, 'missing.jsonl')), [], 'a missing file degrades to empty');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('resolves the transcript directory and prunes all but the newest', () => {
+    assert.equal(resolveSubagentSessionsDir({ PI_CODING_AGENT_DIR: '/tmp/agent' }), path.join('/tmp/agent', 'sessions', 'biggz-subagents'));
+    assert.equal(resolveSubagentSessionsDir({ BIGGZ_SUBAGENT_SESSION_DIR: '/tmp/elsewhere' }), '/tmp/elsewhere');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biggz-prune-'));
+    for (const [name, ageMs] of [['newest.jsonl', 0], ['mid.jsonl', 60_000], ['oldest.jsonl', 120_000]]) {
+      const file = path.join(dir, name);
+      fs.writeFileSync(file, '{}\n');
+      const when = new Date(Date.now() - ageMs);
+      fs.utimesSync(file, when, when);
+    }
+    fs.writeFileSync(path.join(dir, 'keep.txt'), 'not a transcript');
+    assert.equal(pruneSubagentSessions(dir, 2), 1, 'only the oldest transcript goes');
+    assert.deepEqual(fs.readdirSync(dir).sort(), ['keep.txt', 'mid.jsonl', 'newest.jsonl']);
+    assert.equal(pruneSubagentSessions(dir, 0), 2);
+    assert.equal(pruneSubagentSessions(null), 0);
+    assert.equal(pruneSubagentSessions(path.join(dir, 'gone'), 5), 0, 'a missing dir is not a crash');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('exposes the child transcript path, model and effort from get_state', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biggz-session-'));
+    const file = path.join(dir, 'child.jsonl');
+    const task = run({ FAKE_SETTLED: '1', FAKE_SESSION_FILE: file }, { sessionDir: dir });
+    const result = await task.promise;
+    assert.equal(result.state, 'completed');
+    assert.equal(result.transcriptPath, file, 'the child reports where its transcript lives');
+    assert.equal(result.model, 'fake-model');
+    assert.equal(result.thinking, 'high');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('reads a run transcript inside the panel and returns to the list', () => {
+    const runs = [{ id: 'a', agent: 'sdd-apply', state: 'running', elapsedMs: 1200, lastStep: 'read a.go' }];
+    const view = createAgentsView({ theme, runs, transcript: () => ({ path: '/tmp/child.jsonl', lines: ['first line', 'second line'] }) });
+    view.handleInput('o');
+    const lines = view.render(80);
+    assert.match(lines[0], /Transcript · sdd-apply/);
+    assert.match(lines[1], /\/tmp\/child\.jsonl/);
+    assert.ok(lines.includes('first line') && lines.includes('second line'), 'the transcript body is rendered');
+    view.handleInput('q');
+    assert.match(view.render(80)[0], /Subagent runs/, 'q returns to the run list');
+    const missing = createAgentsView({ theme, runs, transcript: () => null });
+    missing.handleInput('o');
+    assert.match(missing.render(80).join('\n'), /no session file/);
   });
 });
 

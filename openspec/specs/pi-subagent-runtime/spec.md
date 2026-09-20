@@ -276,3 +276,25 @@ The runtime MUST derive a bounded activity label from the child's own RPC events
 - GIVEN the panel's data source throws
 - WHEN the panel renders
 - THEN it MUST degrade to a single error line
+
+### Requirement: Child Transcript and Inspection
+
+A child MUST keep a session transcript: the runtime MUST spawn it with `--session-dir` (default `<agent dir>/sessions/biggz-subagents`, overridable with `BIGGZ_SUBAGENT_SESSION_DIR`) unless the caller asks for an ephemeral run, in which case `--no-session` MUST be used, and MUST create that directory before spawning. The runtime MUST ask the child `get_state` once it is up and MUST record what it answers — `transcriptPath`, `model` and `thinking` — on the task snapshot. The `subagent` tool result MUST print the transcript path when it is known, so a finished run can be inspected outside pi. The runtime MUST prune the transcript directory when a task settles, keeping the newest `DEFAULT_SUBAGENT_SESSION_KEEP` (50) transcripts and leaving files that are not transcripts untouched. The `/biggz-agents` panel MUST be able to read the selected run's transcript in place — bounded one-line entries rendered tail-first — and MUST degrade to a clear notice when a run has no transcript.
+
+#### Scenario: A finished run leaves an inspectable transcript
+
+- GIVEN a delegation that ran
+- WHEN the task settles
+- THEN `transcriptPath` MUST name the child's session file and the tool result MUST print it
+
+#### Scenario: Retention is bounded
+
+- GIVEN more transcripts in the directory than the keep bound
+- WHEN a task settles
+- THEN only the newest `DEFAULT_SUBAGENT_SESSION_KEEP` transcripts MUST remain and non-transcript files MUST be left alone
+
+#### Scenario: The panel reads the transcript in place
+
+- GIVEN a run with a transcript and the `/biggz-agents` panel open
+- WHEN `o` is pressed
+- THEN the transcript MUST render as bounded one-line entries inside the panel, and a run without a transcript MUST show a notice instead
