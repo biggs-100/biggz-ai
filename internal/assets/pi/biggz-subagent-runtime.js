@@ -39,6 +39,8 @@ export const DEFAULT_FINAL_TEXT_MS = 1500;
 // of blocking the delegation until the total watchdog.
 export const DEFAULT_DIALOG_TIMEOUT_MS = 2 * 60 * 1000;
 export const DEFAULT_BACKGROUND_CAP = 2;
+// Child transcripts are a debugging aid, not a record: keep the newest N and prune the rest.
+export const DEFAULT_SUBAGENT_SESSION_KEEP = 50;
 // How long a finished run stays visible in the widget so its ✓/✗ is seen before it fades.
 export const WIDGET_FINISHED_TTL_MS = 60 * 1000;
 export const WIDGET_FINISHED_MAX = 3;
@@ -219,9 +221,55 @@ export function buildDelegatedPrompt(agent, task) {
 	return body ? `${body}\n\n${delegated}` : delegated;
 }
 
-export function buildChildArgs(agent) {
+/**
+ * Where a child writes its session transcript. Defaults under the pi agent dir so every
+ * delegation leaves a readable JSONL of what it did; `BIGGZ_SUBAGENT_SESSION_DIR` overrides it.
+ */
+export function resolveSubagentSessionsDir(env = process.env) {
+	const override = typeof env?.BIGGZ_SUBAGENT_SESSION_DIR === "string" ? env.BIGGZ_SUBAGENT_SESSION_DIR.trim() : "";
+	if (override) return override;
+	const agentDir = typeof env?.PI_CODING_AGENT_DIR === "string" && env.PI_CODING_AGENT_DIR.trim() ? env.PI_CODING_AGENT_DIR.trim() : path.join(os.homedir(), ".pi", "agent");
+	return path.join(agentDir, "sessions", "biggz-subagents");
+}
+
+/** Keep the newest `keep` transcripts (non-jsonl files untouched); best-effort, never throws. */
+export function pruneSubagentSessions(dir, keep = DEFAULT_SUBAGENT_SESSION_KEEP) {
+	if (!dir) return 0;
+	try {
+		const files = fs
+			.readdirSync(dir)
+			.filter((name) => name.endsWith(".jsonl"))
+			.map((name) => {
+				const full = path.join(dir, name);
+				let mtime = 0;
+				try {
+					mtime = fs.statSync(full).mtimeMs;
+				} catch {}
+				return { full, mtime };
+			})
+			.sort((a, b) => b.mtime - a.mtime);
+		let removed = 0;
+		for (const file of files.slice(Math.max(0, Math.floor(Number(keep) || 0)))) {
+			try {
+				fs.rmSync(file.full, { force: true });
+				removed += 1;
+			} catch {}
+		}
+		return removed;
+	} catch {
+		return 0;
+	}
+}
+
+export function buildChildArgs(agent, options = {}) {
 	const tools = (Array.isArray(agent?.tools) ? agent.tools : []).map((token) => String(token).trim()).filter((token) => token && SAFE_TOKEN_RE.test(token));
-	const args = ["--mode", "rpc", "--no-session", "--tools", (tools.length ? tools : READ_ONLY_TOOLS).join(",")];
+	const args = ["--mode", "rpc"];
+	// A child keeps a session transcript unless the caller asks for an ephemeral run: the file is
+	// what makes a finished delegation inspectable (`transcriptPath`) and resumable (`--session`).
+	const sessionDir = options.sessionDir === null || options.ephemeral === true ? "" : (options.sessionDir ?? resolveSubagentSessionsDir(options.env ?? process.env));
+	if (sessionDir) args.push("--session-dir", sessionDir);
+	else args.push("--no-session");
+	args.push("--tools", (tools.length ? tools : READ_ONLY_TOOLS).join(","));
 	const model = typeof agent?.model === "string" ? agent.model.trim() : "";
 	if (model && SAFE_TOKEN_RE.test(model)) args.push("--model", model);
 	return args;
@@ -308,7 +356,7 @@ export function createTask(options = {}) {
 	const env = options.env ?? process.env;
 	const launch = options.launch ?? resolvePiLaunch({ env, platform });
 	const spawnImpl = options.spawnImpl ?? nodeSpawn;
-	const args = options.args ?? buildChildArgs(agent);
+	const args = options.args ?? buildChildArgs(agent, { env, sessionDir: options.sessionDir, ephemeral: options.ephemeral });
 	const idleMs = options.idleMs ?? DEFAULT_IDLE_TIMEOUT_MS;
 	const totalMs = options.totalMs ?? DEFAULT_TOTAL_TIMEOUT_MS;
 	const dialogMs = options.dialogMs ?? DEFAULT_DIALOG_TIMEOUT_MS;
@@ -316,6 +364,8 @@ export function createTask(options = {}) {
 	// answers it `cancelled` at once, because nobody is waiting on a background child and a
 	// question nobody answers is exactly what used to hang the run (gentle-shell parity).
 	const dialogPolicy = options.dialogPolicy === "dismiss" ? "dismiss" : "relay";
+	// Where this child writes its transcript (null ⇒ ephemeral `--no-session`).
+	const sessionDir = options.ephemeral === true || options.sessionDir === null ? null : (options.sessionDir ?? resolveSubagentSessionsDir(env));
 	const startedAt = now();
 	const id = options.id ?? `sub-${startedAt.toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 	const events = [];
@@ -334,6 +384,8 @@ export function createTask(options = {}) {
 	let pendingDialog = null;
 	let lastStep = "";
 	let settledAt = 0;
+	let transcriptPath = "";
+	let thinking = "";
 	const usageTotals = { tokens: 0, cost: 0, model: "" };
 	let started = false;
 	let settled = false;
@@ -342,7 +394,7 @@ export function createTask(options = {}) {
 	const promise = new Promise((resolve) => {
 		resolveTask = resolve;
 	});
-	const snapshot = () => ({ id, state: state.value, reason: state.reason, exitCode: state.exitCode, error: state.error, events, stderrTail, finalText, pendingUi, dialogMs, dialogRelayed, dialogMissed, dialogsDismissed, lastStep, pendingDialog, tokens: usageTotals.tokens, cost: usageTotals.cost, model: usageTotals.model, settledAt, elapsedMs: (settledAt || now()) - startedAt, pid: child?.pid ?? null });
+	const snapshot = () => ({ id, state: state.value, reason: state.reason, exitCode: state.exitCode, error: state.error, events, stderrTail, finalText, pendingUi, dialogMs, dialogRelayed, dialogMissed, dialogsDismissed, lastStep, pendingDialog, tokens: usageTotals.tokens, cost: usageTotals.cost, model: usageTotals.model, thinking, transcriptPath, settledAt, elapsedMs: (settledAt || now()) - startedAt, pid: child?.pid ?? null });
 
 	function clearTimers() {
 		if (idleTimer) clearTimeout(idleTimer);
@@ -363,6 +415,7 @@ export function createTask(options = {}) {
 		state.reason = reason ?? null;
 		if (error !== undefined) state.error = error ? bounded(error?.message ?? error, 300) : null;
 		settledAt = now(); // freezes elapsedMs: a finished run must not report a growing time
+		if (sessionDir) pruneSubagentSessions(sessionDir);
 		resolveTask(snapshot());
 	}
 	function writeCommand(command) {
@@ -498,6 +551,14 @@ export function createTask(options = {}) {
 					finalText = typeof data?.data?.text === "string" ? data.data.text : null;
 					finishSettled();
 				}
+				if (data?.command === "get_state") {
+					// The child reports where it writes its transcript (and its model/effort) once it is up.
+					const info = data?.data ?? {};
+					if (typeof info.sessionFile === "string" && info.sessionFile) transcriptPath = info.sessionFile;
+					if (typeof info.thinkingLevel === "string" && info.thinkingLevel) thinking = info.thinkingLevel;
+					const modelId = typeof info.model?.id === "string" ? info.model.id : "";
+					if (modelId && !usageTotals.model) usageTotals.model = bounded(modelId, 60);
+				}
 				return; // responses to other commands are not part of the subset
 			}
 			if (type === "agent_settled") {
@@ -606,6 +667,12 @@ export function createTask(options = {}) {
 					if (!settled && state.value !== "stalled" && state.value !== "cancelled") settle("failed", `exit:${code ?? "signal"}`);
 				});
 				writeCommand({ id: `${id}-prompt-1`, type: "prompt", message: options.firstMessage ?? buildDelegatedPrompt(agent, options.task) });
+				if (sessionDir) {
+					try {
+						fs.mkdirSync(sessionDir, { recursive: true });
+					} catch {}
+					writeCommand({ id: `${id}-state-1`, type: "get_state" });
+				}
 			} catch (err) {
 				settle("failed", "child_setup", err);
 			}
@@ -884,6 +951,64 @@ export function registryRuns(registry, nowMs = Date.now()) {
 	return [...active, ...finished];
 }
 
+/** One compact line for a child session record (raw JSONL is unreadable); empty when noise. */
+export function transcriptEntry(record) {
+	const message = record?.message ?? null;
+	const stamp = typeof record?.timestamp === "string" ? record.timestamp.slice(11, 19) : "";
+	const when = stamp ? `${stamp} ` : "";
+	if (!message) return record?.type === "session" ? `${when}── session start` : "";
+	const parts = Array.isArray(message.content) ? message.content : [];
+	const text = parts
+		.filter((part) => part?.type === "text")
+		.map((part) => String(part.text ?? "").replace(/\s+/g, " ").trim())
+		.join(" ");
+	const tools = parts
+		.filter((part) => part?.type === "toolCall")
+		.map((part) => `⚙ ${String(part.name ?? "tool")} ${String(part.arguments?.path ?? part.arguments?.command ?? part.arguments?.pattern ?? "").trim()}`.trim());
+	const bits = [...tools];
+	if (text) bits.push(text);
+	if (!bits.length && parts.some((part) => part?.type === "thinking")) bits.push("(thinking)");
+	if (!bits.length) return "";
+	return bounded(`${when}${bounded(String(message.role ?? "?"), 10).padEnd(10)} ${bits.join(" · ")}`, 400);
+}
+
+/** Bounded read of a child transcript into compact lines (tail-first); never throws. */
+export function transcriptEntries(file, options = {}) {
+	const maxBytes = Math.max(4096, Math.floor(Number(options.maxBytes) || 256 * 1024));
+	const maxLines = Math.max(1, Math.floor(Number(options.maxLines) || 400));
+	if (!file) return [];
+	try {
+		const size = fs.statSync(file).size;
+		const start = Math.max(0, size - maxBytes);
+		const length = size - start;
+		if (length <= 0) return [];
+		const fd = fs.openSync(file, "r");
+		let raw = "";
+		try {
+			const buffer = Buffer.alloc(length);
+			fs.readSync(fd, buffer, 0, length, start);
+			raw = buffer.toString("utf8");
+		} finally {
+			fs.closeSync(fd);
+		}
+		if (start > 0) raw = raw.slice(raw.indexOf("\n") + 1); // drop the partial first line
+		const out = [];
+		for (const line of raw.split("\n").filter(Boolean).slice(-maxLines)) {
+			let record = null;
+			try {
+				record = JSON.parse(line);
+			} catch {
+				continue;
+			}
+			const entry = transcriptEntry(record);
+			if (entry) out.push(entry);
+		}
+		return out;
+	} catch {
+		return [];
+	}
+}
+
 export const AGENTS_COMMAND = "biggz-agents";
 
 /**
@@ -895,10 +1020,14 @@ export function createAgentsView(options = {}) {
 	const theme = options.theme ?? { fg: (_role, text) => String(text), bold: (text) => String(text) };
 	const runsFor = typeof options.runs === "function" ? options.runs : () => options.runs ?? [];
 	const stop = typeof options.stop === "function" ? options.stop : () => false;
+	const readTranscript = typeof options.transcript === "function" ? options.transcript : () => null;
 	const close = typeof options.close === "function" ? options.close : () => {};
 	const repaint = typeof options.requestRender === "function" ? options.requestRender : () => {};
 	let selected = 0;
 	let status = "";
+	// `list` is the run table; `transcript` reads one child's own session file inside the panel.
+	const view = { mode: "list", agent: "", path: "", lines: [], scroll: 0, missing: "" };
+	const TRANSCRIPT_PAGE = 14;
 	const rows = () => {
 		try {
 			return runsFor() ?? [];
@@ -909,9 +1038,21 @@ export function createAgentsView(options = {}) {
 	return {
 		render(width) {
 			try {
+				const inner = Math.max(12, Math.floor(Number(width) || 0) - 3);
+				if (view.mode === "transcript") {
+					const header = theme.fg("accent", theme.bold(`Transcript · ${bounded(view.agent, 24)}`));
+					const lines = [header, theme.fg("dim", bounded(view.path || "(no session file yet)", inner)), ""];
+					if (view.missing) lines.push(theme.fg("warning", view.missing));
+					const start = Math.max(0, Math.min(view.scroll, Math.max(0, view.lines.length - TRANSCRIPT_PAGE)));
+					const page = view.lines.slice(start, start + TRANSCRIPT_PAGE);
+					if (!page.length && !view.missing) lines.push(theme.fg("dim", "(transcript is empty so far)"));
+					for (const line of page) lines.push(truncateToWidth(line, inner, "…", false));
+					lines.push("");
+					lines.push(theme.fg("dim", `↑↓ scroll · q back (${start + page.length}/${view.lines.length})`));
+					return lines;
+				}
 				const runs = rows();
 				if (selected > runs.length - 1) selected = Math.max(0, runs.length - 1);
-				const inner = Math.max(12, Math.floor(Number(width) || 0) - 3);
 				const lines = [theme.fg("accent", theme.bold("Subagent runs")), ""];
 				if (!runs.length) lines.push(theme.fg("dim", "no subagent runs in this session"));
 				for (const [index, run] of runs.entries()) {
@@ -919,7 +1060,7 @@ export function createAgentsView(options = {}) {
 					lines.push(`${marker}${runRow(run, inner)}`);
 				}
 				lines.push("");
-				lines.push(theme.fg("dim", "↑↓ move · s stop · q close"));
+				lines.push(theme.fg("dim", "↑↓ move · s stop · o transcript · q close"));
 				if (status) lines.push(theme.fg("warning", status));
 				return lines;
 			} catch (err) {
@@ -928,6 +1069,33 @@ export function createAgentsView(options = {}) {
 		},
 		handleInput(keyData) {
 			const key = String(keyData ?? "");
+			if (view.mode === "transcript") {
+				if (key === "q" || key === "escape" || key === "\u0003") {
+					view.mode = "list";
+					repaint();
+					return;
+				}
+				if (key === "j" || key === "down" || key === "\u001b[B") {
+					view.scroll += 1;
+					repaint();
+					return;
+				}
+				if (key === "k" || key === "up" || key === "\u001b[A") {
+					view.scroll = Math.max(0, view.scroll - 1);
+					repaint();
+					return;
+				}
+				if (key === "pagedown" || key === "\u001b[6~") {
+					view.scroll += TRANSCRIPT_PAGE;
+					repaint();
+					return;
+				}
+				if (key === "pageup" || key === "\u001b[5~") {
+					view.scroll = Math.max(0, view.scroll - TRANSCRIPT_PAGE);
+					repaint();
+				}
+				return;
+			}
 			if (key === "q" || key === "escape" || key === "\u0003") {
 				close(null);
 				return;
@@ -939,6 +1107,24 @@ export function createAgentsView(options = {}) {
 			}
 			if (key === "k" || key === "up" || key === "\u001b[A") {
 				selected = Math.max(0, selected - 1);
+				repaint();
+				return;
+			}
+			if (key === "o") {
+				const run = rows()[selected];
+				if (!run) return;
+				let opened = null;
+				try {
+					opened = readTranscript(run);
+				} catch {
+					opened = null;
+				}
+				view.mode = "transcript";
+				view.agent = String(run.agent ?? "subagent");
+				view.path = String(opened?.path ?? opened?.transcriptPath ?? "");
+				view.lines = Array.isArray(opened?.lines) ? opened.lines : [];
+				view.missing = view.path ? "" : "this run has no session file (ephemeral or still starting)";
+				view.scroll = Math.max(0, view.lines.length - TRANSCRIPT_PAGE); // follow the tail first
 				repaint();
 				return;
 			}
@@ -1164,6 +1350,8 @@ export function createSubagentToolset(options = {}) {
 			if (aborted) notice.push("· cancelled by user (Esc) — the child tree was killed");
 			if (missed) notice.push(`· ${missed} child question${missed === 1 ? "" : "s"} not answered within ${Math.max(1, Math.round((Number(result?.dialogMs) || DEFAULT_DIALOG_TIMEOUT_MS) / 1000))}s — the child was told to continue without it`);
 			if (dismissed) notice.push(`· ${dismissed} child question${dismissed === 1 ? "" : "s"} dismissed without asking — the child was told to continue without it`);
+			// The child's own session file: the only way to read a finished run in full.
+			if (result?.transcriptPath) notice.push(`· transcript: ${result.transcriptPath}`);
 			return textResult([formatTaskResult(task, result), ...tail, ...notice].join("\n"), { taskId: result?.id ?? task.id, state: result?.state ?? task.state, dialogsMissed: missed, dialogsDismissed: dismissed });
 		},
 	};
@@ -1335,6 +1523,11 @@ export default function biggzSubagentRuntime(pi) {
 			registryRuns,
 			createAgentsView,
 			AGENTS_COMMAND,
+			resolveSubagentSessionsDir,
+			pruneSubagentSessions,
+			transcriptEntries,
+			transcriptEntry,
+			DEFAULT_SUBAGENT_SESSION_KEEP,
 			createWidgetPublisher,
 			renderWaitHeadline,
 			presentUiRequest,
@@ -1383,6 +1576,12 @@ export default function biggzSubagentRuntime(pi) {
 									if (!task || !isActiveTaskState(task.state)) return false;
 									void task.cancel("stopped from the agents panel");
 									return true;
+								},
+								transcript: (run) => {
+									const task = registry.get(run?.id);
+									const file = task?.snapshot()?.transcriptPath ?? "";
+									if (!file) return null;
+									return { path: file, lines: transcriptEntries(file) };
 								},
 								close: (value) => {
 									clearInterval(tick);
