@@ -64,6 +64,12 @@ const {
   pruneSubagentSessions,
   transcriptEntries,
   transcriptEntry,
+  PARENT_MESSAGE_TOOL,
+  PARENT_REPLY_TOOL,
+  QUERY_FRAME_TYPE,
+  createParentMessageTool,
+  registerChildChannel,
+  resolveQueryDir,
   DEFAULT_DIALOG_TIMEOUT_MS,
   resolveDialogTimeout,
 } = rt;
@@ -101,6 +107,7 @@ if (process.env.FAKE_SETTLED === '1') setTimeout(() => out({ type: 'agent_settle
 if (process.env.FAKE_UI_REQUEST === '1') out({ type: 'extension_ui_request', id: 'q1', method: 'select', title: 'Pick one', options: ['Allow', 'Block'] });
 if (process.env.FAKE_TOOL_EVENT === '1') out({ type: 'tool_execution_start', toolCallId: 't1', toolName: 'read', args: { path: 'internal/install/steps/pi_extensions.go' } });
 if (process.env.FAKE_USAGE === '1') out({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }], model: 'fake-model', usage: { totalTokens: 1234, cost: { total: 0.0042 } } } });
+if (process.env.FAKE_QUERY === '1') out({ type: 'biggz_parent_message', requestId: 'r1', message: 'which one?' });
 process.stdin.on('data', (chunk) => {
   for (const raw of String(chunk).split('\\n')) {
     if (!raw) continue;
@@ -217,13 +224,13 @@ describe('agent discovery + spawn authorization', () => {
     assert.equal(nestedSpawnRefusal({ PI_SUBAGENT_CHILD: '1' })?.ok, false);
     assert.equal(nestedSpawnRefusal({}), null);
     assert.equal(resolveAgent('probe', [AGENT], { PI_SUBAGENT_CHILD: '1' }).ok, false, 'nested spawn refused');
-    assert.deepEqual(buildChildArgs({ tools: [], model: null }, { sessionDir: '/tmp/child-sessions' }), ['--mode', 'rpc', '--session-dir', '/tmp/child-sessions', '--tools', 'read']);
+    assert.deepEqual(buildChildArgs({ tools: [], model: null }, { sessionDir: '/tmp/child-sessions' }), ['--mode', 'rpc', '--session-dir', '/tmp/child-sessions', '--tools', 'read,subagent_parent_message']);
     assert.deepEqual(
       buildChildArgs({ tools: [], model: null }, { env: { PI_CODING_AGENT_DIR: '/tmp/agent' } }),
-      ['--mode', 'rpc', '--session-dir', path.join('/tmp/agent', 'sessions', 'biggz-subagents'), '--tools', 'read'],
+      ['--mode', 'rpc', '--session-dir', path.join('/tmp/agent', 'sessions', 'biggz-subagents'), '--tools', 'read,subagent_parent_message'],
       'children keep a transcript under the agent dir by default',
     );
-    assert.deepEqual(buildChildArgs({ tools: ['read', 'edit'], model: 'openai/gpt-5' }, { sessionDir: null }), ['--mode', 'rpc', '--no-session', '--tools', 'read,edit', '--model', 'openai/gpt-5']);
+    assert.deepEqual(buildChildArgs({ tools: ['read', 'edit'], model: 'openai/gpt-5' }, { sessionDir: null }), ['--mode', 'rpc', '--no-session', '--tools', 'read,edit,subagent_parent_message', '--model', 'openai/gpt-5']);
     const base = { PATH: '/usr/bin' };
     assert.equal(buildChildEnv(base).PI_SUBAGENT_CHILD, '1');
     assert.equal('PI_SUBAGENT_CHILD' in base, false, 'base env object must not be mutated');
@@ -566,7 +573,7 @@ describe('extension factory (inert)', () => {
       const childPi = fakePi();
       runtime(childPi);
       assert.equal(childPi._biggzSubagentRuntime, undefined, 'child chrome must bypass the runtime factory');
-      assert.equal(childPi.registered.length, 0, 'child chrome must not register tools');
+      assert.deepEqual(childPi.registered.map((definition) => definition.name), [PARENT_MESSAGE_TOOL], 'a child registers exactly the question tool');
     } finally {
       if (saved === undefined) delete process.env.PI_SUBAGENT_CHILD;
       else process.env.PI_SUBAGENT_CHILD = saved;
@@ -622,9 +629,9 @@ describe('registration gate (dual-registration vs j0k3r)', () => {
     }
   });
 
-  it('registers when the scan returns only the runtime’s own 8-name surface', () => {
+  it('registers when the scan returns only the runtime’s own 9-name surface', () => {
     const dir = fakeAgentDir(['npm:@heyhuynhgiabuu/pi-pretty']);
-    const own = ['subagent', 'subagent_wait', 'subagent_status', 'subagent_result', 'subagent_cancel', 'subagent_agents', 'subagent_list_tasks', 'subagent_send_message'];
+    const own = ['subagent', 'subagent_wait', 'subagent_status', 'subagent_result', 'subagent_cancel', 'subagent_agents', 'subagent_list_tasks', 'subagent_send_message', 'subagent_reply'];
     const pi = fakePi({ tools: own.map((name) => ({ name })) });
     const gate = subagentRegistrationGate(pi, { env: { PI_CODING_AGENT_DIR: dir }, logger: LOG });
     assert.equal(gate.register, true, 'the runtime’s own list tool must not cause registration refusal');
@@ -674,7 +681,7 @@ describe('registration gate (dual-registration vs j0k3r)', () => {
     const gate = subagentRegistrationGate(pi, { env: { PI_CODING_AGENT_DIR: dir }, logger: LOG });
     assert.equal(gate.register, true);
     withAgentEnv(dir, () => runtime(pi));
-    assert.deepEqual(pi.registered.map((d) => d.name), ['subagent', 'subagent_wait', 'subagent_status', 'subagent_result', 'subagent_cancel', 'subagent_agents', 'subagent_list_tasks', 'subagent_send_message']);
+    assert.deepEqual(pi.registered.map((d) => d.name), ['subagent', 'subagent_wait', 'subagent_status', 'subagent_result', 'subagent_cancel', 'subagent_agents', 'subagent_list_tasks', 'subagent_send_message', 'subagent_reply']);
     assert.equal(pi.renderers.length, 1);
     assert.equal(pi.renderers[0][0], COMPLETION_MESSAGE_TYPE);
     assert.equal(typeof pi.renderers[0][1], 'function');
@@ -827,6 +834,109 @@ describe('S3 child transcripts', () => {
   });
 });
 
+describe('S4 child ↔ parent question channel', () => {
+  it('registers exactly the question tool inside a child', () => {
+    const pi = fakePi();
+    assert.equal(registerChildChannel(pi, { env: {} }), true);
+    assert.deepEqual(pi.registered.map((definition) => definition.name), [PARENT_MESSAGE_TOOL]);
+    assert.equal(registerChildChannel({}, {}), false, 'a missing pi degrades to false');
+  });
+
+  it('child side: posts the question, waits for the answer file, and degrades instead of blocking', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biggz-query-'));
+    const frames = [];
+    const tool = createParentMessageTool({ queryDir: dir, timeoutMs: 2000, pollMs: 25, writeFrame: (frame) => frames.push(frame) });
+    const pending = tool.execute('c1', { message: 'which one?' });
+    assert.equal(frames.length, 1);
+    assert.equal(frames[0].type, QUERY_FRAME_TYPE);
+    assert.equal(frames[0].message, 'which one?');
+    assert.ok(frames[0].requestId, 'the frame carries a correlation id');
+    const queryFile = path.join(dir, `${frames[0].requestId}.query.json`);
+    assert.match(fs.readFileSync(queryFile, 'utf8'), /which one\?/, 'the question is posted as a file the parent sweeps');
+    fs.writeFileSync(path.join(dir, `${frames[0].requestId}.reply.json`), JSON.stringify({ id: frames[0].requestId, message: 'the blue one' }));
+    const answered = await pending;
+    assert.equal(answered.isError, undefined);
+    assert.match(answered.content[0].text, /answer from the parent: the blue one/);
+    assert.equal(fs.existsSync(path.join(dir, `${frames[0].requestId}.reply.json`)), false, 'the child consumes the answer file');
+
+    const timedOut = await createParentMessageTool({ queryDir: dir, timeoutMs: 1000, pollMs: 25, writeFrame: () => {} }).execute('c2', { message: 'anyone?' });
+    assert.match(timedOut.content[0].text, /no answer from the parent within 1s/);
+    const noChannel = await createParentMessageTool({ queryDir: '', writeFrame: () => {} }).execute('c3', { message: 'x' });
+    assert.match(noChannel.content[0].text, /no parent channel/);
+    assert.equal((await tool.execute('c4', { message: '   ' })).isError, true, 'an empty question is refused');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('parent side: the question reaches the conversation and the answer reaches the child', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biggz-answer-'));
+    const queries = [];
+    const task = run({ FAKE_SETTLED: '1', FAKE_QUERY: '1' }, { sessionDir: dir, onQuery: (query) => queries.push(query) });
+    assert.ok(await waitFor(() => task.snapshot().pendingQueries === 1), 'the question must be registered as pending');
+    const snapshot = task.snapshot();
+    assert.equal(queries.length, 1, 'the orchestrator is told once');
+    assert.equal(queries[0].requestId, 'r1');
+    assert.equal(queries[0].message, 'which one?');
+    assert.equal(queries[0].agent, 'probe');
+    assert.match(formatTaskResult(task, snapshot), /awaiting parent: which one\?/);
+    assert.deepEqual(task.pendingQueries().map((question) => question.id), ['r1']);
+    assert.equal(await task.answerQuery('r1', 'the blue one'), true);
+    assert.match(fs.readFileSync(path.join(resolveQueryDir(dir), 'r1.reply.json'), 'utf8'), /the blue one/);
+    assert.equal(task.snapshot().pendingQueries, 0, 'answering clears the pending question');
+    await task.promise;
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('parent side: the question budget degrades a chatty child without bothering the orchestrator', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biggz-budget-'));
+    const queries = [];
+    const task = run({ FAKE_SETTLED: '1', FAKE_QUERY: '1' }, { sessionDir: dir, queryBudget: 0, onQuery: (query) => queries.push(query) });
+    await task.promise;
+    assert.deepEqual(queries, [], 'no question reaches the orchestrator once the budget is spent');
+    assert.match(fs.readFileSync(path.join(resolveQueryDir(dir), 'r1.reply.json'), 'utf8'), /budget for this run is exhausted/);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('parent side: a question file is swept, recorded and answered', async (t) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'biggz-sweep-'));
+    const queries = [];
+    const task = run({ FAKE_TICK_MS: '60' }, { sessionDir: dir, onQuery: (query) => queries.push(query) });
+    t.after(() => task.cancel());
+    const queryDir = resolveQueryDir(dir);
+    fs.mkdirSync(queryDir, { recursive: true });
+    fs.writeFileSync(path.join(queryDir, 'r9.query.json'), JSON.stringify({ type: QUERY_FRAME_TYPE, requestId: 'r9', message: 'file question' }));
+    assert.equal(task.scanQueries(), 1, 'the sweep picks up one question');
+    assert.equal(task.scanQueries(), 0, 'and consumes the file');
+    assert.equal(queries.length, 1);
+    assert.equal(queries[0].requestId, 'r9');
+    assert.equal(task.snapshot().pendingQueries, 1);
+    await task.answerQuery('r9', 'file answer');
+    assert.match(fs.readFileSync(path.join(queryDir, 'r9.reply.json'), 'utf8'), /file answer/);
+    assert.equal(task.snapshot().pendingQueries, 0);
+    await waitFor(() => fs.readdirSync(queryDir).filter((name) => name.endsWith('.query.json')).length === 0, 2000);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('parent tool: subagent_reply answers and bounds unknown ids', async () => {
+    const env = { ...process.env, PI_CODING_AGENT_DIR: probeDir(), FAKE_SETTLED: '1', FAKE_QUERY: '1' };
+    delete env.BIGGZ_BACKGROUND_SUBAGENTS;
+    const { registry, byName } = toolsetFor({ env });
+    const launched = await byName('subagent').execute('c1', { agent: 'probe', task: 'a', mode: 'background' });
+    const id = launched.details.taskId;
+    const task = registry.get(id);
+    assert.ok(await waitFor(() => task.snapshot().pendingQueries === 1));
+    const requestId = task.pendingQueries()[0].id;
+    const answered = await byName(PARENT_REPLY_TOOL).execute('c2', { task_id: id, request_id: requestId, message: 'the blue one' });
+    assert.equal(answered.isError, undefined);
+    assert.match(answered.content[0].text, /^answered /);
+    assert.equal(answered.details.delivered, true);
+    const stray = await byName(PARENT_REPLY_TOOL).execute('c3', { task_id: id, request_id: 'nope', message: 'x' });
+    assert.match(stray.content[0].text, /no pending question with that id/);
+    assert.equal((await byName(PARENT_REPLY_TOOL).execute('c4', { task_id: 'sub-gone', request_id: 'x', message: 'y' })).isError, true);
+    assert.equal((await byName(PARENT_REPLY_TOOL).execute('c5', { task_id: id, request_id: '', message: 'y' })).isError, true);
+    await task.promise;
+  });
+});
+
 describe('bounded in-memory task ring', () => {
   it('keeps at most `limit` settled records, never evicts live work, and writes nothing', () => {
     const registry = createTaskRegistry({ limit: 3 });
@@ -842,7 +952,9 @@ describe('bounded in-memory task ring', () => {
     assert.deepEqual(live.active().map((t) => t.id), ['run1', 'run2']);
     live.add({ id: 'done2', state: 'completed' });
     assert.deepEqual(live.all().map((t) => t.id), ['run1', 'run2', 'done2'], 'oldest settled record evicted, live kept');
-    assert.ok(!/writeFileSync|appendFileSync|biggz_mem/i.test(SRC), 'ring is in-memory only (no disk, no BigMem)');
+    const ringStart = SRC.indexOf('export function createTaskRegistry');
+    const ringSource = SRC.slice(ringStart, SRC.indexOf('\n}\n', ringStart));
+    assert.ok(!/writeFileSync|appendFileSync|biggz_mem/i.test(ringSource), 'the task ring is in-memory only (no disk, no BigMem)');
   });
 });
 
@@ -896,7 +1008,7 @@ describe('subagent tool surface (task mode, fake child)', () => {
       logger: LOG,
     });
     const byName = (name) => tools.find((tool) => tool.name === name);
-    assert.deepEqual(tools.map((t) => t.name), ['subagent', 'subagent_wait', 'subagent_status', 'subagent_result', 'subagent_cancel', 'subagent_agents', 'subagent_list_tasks', 'subagent_send_message']);
+    assert.deepEqual(tools.map((t) => t.name), ['subagent', 'subagent_wait', 'subagent_status', 'subagent_result', 'subagent_cancel', 'subagent_agents', 'subagent_list_tasks', 'subagent_send_message', 'subagent_reply']);
 
     const run = await byName('subagent').execute('call-1', { agent: 'probe', task: 'do the thing' });
     assert.equal(run.isError, undefined);
