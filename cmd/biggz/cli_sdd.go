@@ -1064,10 +1064,13 @@ func runSddContinue(args []string, stdin io.Reader, stdout, stderr io.Writer) in
 		for _, cs := range routeActive {
 			if cs.Name == change {
 				if cs.Route == "organic" {
-					fmt.Fprintln(stdout, "Route: organic (direct inline or delegated direct)")
+					fmt.Fprintln(stdout, "route: organic")
+					if cs.Subroute != "" {
+						fmt.Fprintf(stdout, "subroute: %s\n", cs.Subroute)
+					}
 					fmt.Fprintln(stdout, "No SDD next — work completed via organic route.")
 				} else if cs.Route == "sdd" {
-					fmt.Fprintln(stdout, "Route: sdd")
+					fmt.Fprintln(stdout, "route: sdd")
 				}
 				break
 			}
