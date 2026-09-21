@@ -1,0 +1,8 @@
+# SDD Change: fix-route-nextrecommended-clause
+name: fix-route-nextrecommended-clause
+description: REQ-OR-003 scenario 1 requires nextRecommended to be empty for organic direct work, but resolveNextRecommended never returns empty for an active change and change-less organic work carries no route/subroute at all. Replace the unsatisfiable conjunct with a falsifiable invariant (a declared subroute MUST NOT influence routing) and prove it with a test, so the spec of record stops asserting something no implementation can satisfy.
+type: bug
+domain: orchestrator
+created_at: 2026-09-21T01:53:46Z
+status: active
+---
