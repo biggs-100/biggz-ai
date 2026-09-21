@@ -217,3 +217,31 @@ The agent owns context-before-question; gate blocks if missing synthesis (120s w
    (or continue/correct) only for real post-delegation checkpoints.
 3. Respect the tool's own envelope limits (header ≤16, label ≤60, 2-4
    options per question, ≤4 questions); the tool itself validates.
+
+## ODD Lane — Organic Direct Development (non-SDD)
+
+ODD is the non-SDD lane for substantial direct/delegated work. It creates zero SDD artifacts (`proposal.md`, `spec.md`, `design.md`, `tasks.md`, phase attempts, synthetic SDD runs) and never modifies `openspec/changes/` or `openspec/specs/`. ODD is entered without any SDD grant; SDD remains opted-in only per REQ-OR-004. No `biggz odd-*` command exists — the orchestrator writes the document by convention.
+
+Run these 7 steps in order. Steps MUST NOT be reordered, and the protocol MUST NOT require an SDD phase attempt.
+
+1. **Authorize** — establish whether the request authorizes a change (implementation vs read-only answer).
+2. **Explore** — read the existing code proportionately to the request.
+3. **Resolve uncertainty** — scoped research; one focused question per real product decision, then wait for the answer; at most one assumption challenge. When a real product decision is unresolved after exploration, ask the question and MUST NOT continue before the answer.
+4. **Classify** — substantial when exploration yields 2+ meaningful implementation steps, or when progress is worth recovering; small understood single-step work stays untracked; read-only work never tracks.
+5. **Track before the first write** — for substantial work, create exactly one document `odd/tasks/<slug>.md` at the repository root (sibling of `openspec/`) BEFORE the first source write, then report the path and task count in one line.
+6. **Implement task by task** — smallest change per task, tick checkboxes as each completes, record observed proof (exact command + result + commit identity).
+7. **Close** — report the verified outcome, failed/pending checks, and the next step. Never name an SDD phase, gate, or artifact.
+
+### ODD document contract
+
+`odd/tasks/<slug>.md` carries required sections `Objective` (outcome), `Tasks` (checkbox list with stable IDs and acceptance criteria), `Evidence` (observed proof per task, including commit identity), and `Next` (outcome, pending checks, next step).
+
+It is the single source of truth for that work: no BigMem/Engram mirror, never archived, never deleted, never rewritten to erase completed progress. It is durable evidence — never reverted, never migrated into `openspec/`.
+
+### Read-only work guard (REQ-ODD-003)
+
+Read-only work — explanation, investigation, review, proposal-only requests — ends with no durable task artifacts. The orchestrator MUST NOT create or update `odd/tasks/*.md`, MUST NOT invent task IDs, and MUST NOT mark progress for work it did not perform. Any pre-existing document stays untouched. Small understood single-step changes also stay untracked, but the close report still states the verified outcome.
+
+### Non-SDD guarantee (REQ-ODD-004)
+
+ODD never registers as an SDD change: no proposal/spec/design/tasks files, no phase attempts, no synthetic SDD runs, no `openspec/` writes. Surfacing in `biggz sdd-status` is read-only observability: ODD documents never enter `active`, `nextRecommended`, or `blockedReasons`.

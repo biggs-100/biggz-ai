@@ -31,6 +31,7 @@ Meta-commands `sdd-new`/`sdd-ff` run inline via the orchestrator (see
 | `issue-creation` | Creating GitHub issues, bug reports, feature requests | [`internal/assets/skills/issue-creation/SKILL.md`](internal/assets/skills/issue-creation/SKILL.md) |
 | `issue-root-resolution` | Backlog root audit, resolving issue clusters by root cause | [`internal/assets/skills/issue-root-resolution/SKILL.md`](internal/assets/skills/issue-root-resolution/SKILL.md) |
 | `judgment-day` | Blind dual review, adversarial review | [`internal/assets/skills/judgment-day/SKILL.md`](internal/assets/skills/judgment-day/SKILL.md) |
+| `odd` | Organic non-SDD work, odd/tasks document contract | [`internal/assets/skills/odd/SKILL.md`](internal/assets/skills/odd/SKILL.md) |
 | `rdd-defect-workflow` | RDD receipts, review authority, delivery gates | [`internal/assets/skills/rdd-defect-workflow/SKILL.md`](internal/assets/skills/rdd-defect-workflow/SKILL.md) |
 | `sdd-apply` | Orchestrator launches apply (delegate only) | [`internal/assets/skills/sdd-apply/SKILL.md`](internal/assets/skills/sdd-apply/SKILL.md) |
 | `sdd-archive` | Orchestrator launches archive (delegate only) | [`internal/assets/skills/sdd-archive/SKILL.md`](internal/assets/skills/sdd-archive/SKILL.md) |
