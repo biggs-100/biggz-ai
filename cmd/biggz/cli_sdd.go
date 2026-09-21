@@ -141,7 +141,13 @@ func sddStatusRun() int {
 			Active         []sdd.ChangeStatus `json:"active"`
 			Archived       []sdd.ChangeStatus `json:"archived"`
 			ReviewDisabled bool               `json:"review_disabled"`
-		}{Active: active, Archived: archived, ReviewDisabled: reviewDisabled}
+			Odd            []sdd.OddDocument  `json:"odd"`
+		}{
+			Active:         active,
+			Archived:       archived,
+			ReviewDisabled: reviewDisabled,
+			Odd:            sdd.ScanOddDocuments(cwd),
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(payload); err != nil {
@@ -151,8 +157,19 @@ func sddStatusRun() int {
 		return 0
 	}
 
-	fmt.Print(sdd.FormatStatus(active, archived, sdd.StatusOptions{ReviewDisabled: reviewDisabled}))
+	fmt.Print(appendOddSection(sdd.FormatStatus(active, archived, sdd.StatusOptions{ReviewDisabled: reviewDisabled}), openspecRoot))
 	return 0
+}
+
+// appendOddSection appends the read-only ODD documents section (omitted when
+// empty) to human-readable status output. ODD documents are observability
+// only: they never influence routing, blockers, or gates.
+func appendOddSection(out, openspecRoot string) string {
+	section := sdd.RenderOddDocuments(sdd.ScanOddDocuments(filepath.Dir(openspecRoot)))
+	if section == "" {
+		return out
+	}
+	return out + "\n" + section
 }
 
 // statusWatchShouldError reports whether --watch and --json conflict.
@@ -166,7 +183,7 @@ func renderStatusOnce(openspecRoot string, opts sdd.StatusOptions) (string, erro
 	if err != nil {
 		return "", err
 	}
-	return sdd.FormatStatus(active, archived, opts), nil
+	return appendOddSection(sdd.FormatStatus(active, archived, opts), openspecRoot), nil
 }
 
 // parseSddStatusArgs parses sdd-status flags for testing flag parsing.
@@ -225,7 +242,7 @@ func sddStatusWatchLoop(openspecRoot string, reviewDisabled, includeInstructions
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		} else {
-			fmt.Print(sdd.FormatStatus(active, archived, formatOpts))
+			fmt.Print(appendOddSection(sdd.FormatStatus(active, archived, formatOpts), openspecRoot))
 		}
 
 		iterations++
