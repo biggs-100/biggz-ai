@@ -675,7 +675,7 @@ The orchestrator MUST expose exactly four public states. These replace current s
 - GIVEN work routed direct-inline, no SDD active
 - WHEN `biggz sdd-status --json` called
 - THEN `route` MUST be `organic` and `subroute` MUST be `direct-inline` when the orchestrator declared it
-- AND `nextRecommended` MUST be empty (no SDD next)
+- AND `nextRecommended` MUST equal the value reported without the declared subroute — declaring a subroute MUST NOT influence routing (no SDD next derived from it)
 
 #### Scenario: Status reports organic route for delegated work
 
