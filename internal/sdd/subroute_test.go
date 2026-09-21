@@ -95,6 +95,41 @@ func TestSubrouteOrganicDeclared(t *testing.T) {
 	}
 }
 
+// TestSubrouteRoutingInert locks the REQ-OR-003 scenario 1 invariant: a
+// declared subroute is metadata only and MUST NOT influence routing.
+// Standard mode — there is no RED step because no production fix exists; the
+// shipped behavior is already correct and this guard pins it. It fails only
+// if routing ever starts reading the declared subroute (for example
+// resolveNextRecommended or deriveRoute branching on cs.Subroute): the two
+// derivations below would then diverge or lose their organic route.
+//
+// The clause this invariant replaces ("nextRecommended MUST be empty" for
+// organic direct work) was unsatisfiable: an active proposal-only change
+// always resolves to a non-empty token (a planning next or the
+// resolve-blockers fallback), and change-less organic work has no active
+// entry exposing route or subroute at all (TestSubrouteChangeLessWorkspace).
+func TestSubrouteRoutingInert(t *testing.T) {
+	isolatedSubrouteHome(t)
+
+	declaredRoot := seedSubrouteChange(t, "routing-inert-declared",
+		"phases:\n  propose: pending\nsubroute: direct-inline\n")
+	undeclaredRoot := seedSubrouteChange(t, "routing-inert-undeclared",
+		"phases:\n  propose: pending\n")
+	declared := deriveSubrouteChange(t, declaredRoot, "routing-inert-declared")
+	undeclared := deriveSubrouteChange(t, undeclaredRoot, "routing-inert-undeclared")
+
+	if declared.Route != "organic" || undeclared.Route != "organic" {
+		t.Fatalf("route = %q (declared) / %q (undeclared), want organic in both", declared.Route, undeclared.Route)
+	}
+	if declared.Subroute != "direct-inline" {
+		t.Fatalf("declared subroute = %q, want direct-inline (routing equality below would be vacuous)", declared.Subroute)
+	}
+	if declared.NextRecommended != undeclared.NextRecommended {
+		t.Fatalf("nextRecommended changed with the declared subroute: %q (declared) != %q (undeclared)",
+			declared.NextRecommended, undeclared.NextRecommended)
+	}
+}
+
 func TestSubrouteUndeclaredOmitted(t *testing.T) {
 	tests := []struct{ name, state string }{
 		{"no state.yaml", ""},
