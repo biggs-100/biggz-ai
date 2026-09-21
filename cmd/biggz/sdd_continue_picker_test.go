@@ -161,6 +161,64 @@ func TestSddContinue_WithArg(t *testing.T) {
 	}
 }
 
+// TestSddContinue_RouteContext asserts sdd-continue reports the organic route
+// and the orchestrator-declared subroute, and never guesses one when the
+// declaration is absent or invalid.
+func TestSddContinue_RouteContext(t *testing.T) {
+	tests := []struct {
+		name         string
+		state        string
+		wantSubroute string
+	}{
+		{"declared direct-inline", "subroute: direct-inline\n", "direct-inline"},
+		{"declared delegated-direct", "subroute: delegated-direct\n", "delegated-direct"},
+		{"undeclared", "phases:\n  propose: pending\n", ""},
+		{"invalid ignored", "subroute: direct\n", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspace := t.TempDir()
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			changeDir := filepath.Join(workspace, "openspec", "changes", "route-change")
+			if err := os.MkdirAll(changeDir, 0o755); err != nil {
+				t.Fatalf("mkdir: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(changeDir, "proposal.md"), []byte("# Proposal\n"), 0o644); err != nil {
+				t.Fatalf("write proposal: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(changeDir, "state.yaml"), []byte(tt.state), 0o644); err != nil {
+				t.Fatalf("write state.yaml: %v", err)
+			}
+
+			old, _ := os.Getwd()
+			if err := os.Chdir(workspace); err != nil {
+				t.Fatalf("chdir: %v", err)
+			}
+			defer os.Chdir(old)
+
+			var stdout, stderr bytes.Buffer
+			if code := runSddContinue([]string{"route-change"}, bytes.NewReader(nil), &stdout, &stderr); code != 0 {
+				t.Fatalf("exit code = %d; stderr = %q", code, stderr.String())
+			}
+			out := stdout.String()
+			if !strings.Contains(out, "route: organic") {
+				t.Errorf("stdout = %q, want 'route: organic'", out)
+			}
+			if tt.wantSubroute == "" {
+				if strings.Contains(out, "subroute:") {
+					t.Errorf("stdout = %q, want no subroute line", out)
+				}
+				return
+			}
+			if !strings.Contains(out, "subroute: "+tt.wantSubroute) {
+				t.Errorf("stdout = %q, want 'subroute: %s'", out, tt.wantSubroute)
+			}
+		})
+	}
+}
+
 func TestSddContinue_PromptPicker_ValidSelection(t *testing.T) {
 	active := []sdd.ChangeStatus{
 		{Name: "alpha", NextRecommended: "spec", TaskProgress: sdd.TaskProgress{Total: 2, Completed: 1}},

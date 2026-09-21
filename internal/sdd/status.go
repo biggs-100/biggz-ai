@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -169,7 +170,7 @@ type StatusOptions struct {
 // remain the file-probe read-compatibility surface. The camelCase fields
 // below are the derived authority (schemaName, artifacts, taskProgress,
 // dependencies, applyState, actionContext, remediationState,
-// nextRecommended, blockedReasons, phaseInstructions).
+// nextRecommended, blockedReasons, route, subroute, phaseInstructions).
 type ChangeStatus struct {
 	SchemaName        string                   `json:"schemaName,omitempty"`
 	SchemaVersion     int                      `json:"schemaVersion,omitempty"`
@@ -189,6 +190,7 @@ type ChangeStatus struct {
 	NextRecommended   string                   `json:"nextRecommended,omitempty"`
 	BlockedReasons    []string                 `json:"blockedReasons,omitempty"`
 	Route             string                   `json:"route,omitempty"`
+	Subroute          string                   `json:"subroute,omitempty"`
 	PhaseInstructions *PhaseInstructions       `json:"phaseInstructions,omitempty"`
 
 	Name        string
@@ -515,6 +517,7 @@ func deriveChangeStatusWithForcedStoreCtx(ctx context.Context, cs *ChangeStatus,
 	cs.NextRecommended = nextRecommended
 	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
 	cs.Route = deriveRoute(cs)
+	cs.Subroute = declaredOrganicSubroute(cs.Route, changeDir)
 	if includeInstructions {
 		instructions := renderPhaseInstructions(*cs)
 		appendReviewObligation(cs, &instructions)
@@ -757,6 +760,7 @@ func deriveChangeStatusCtx(ctx context.Context, cs *ChangeStatus, changeDir, wor
 	cs.NextRecommended = nextRecommended
 	cs.BlockedReasons = blockedReasons.finalize(nextRecommended)
 	cs.Route = deriveRoute(cs)
+	cs.Subroute = declaredOrganicSubroute(cs.Route, changeDir)
 	if includeInstructions {
 		instructions := renderPhaseInstructions(*cs)
 		appendReviewObligation(cs, &instructions)
@@ -1230,6 +1234,35 @@ func deriveRoute(cs *ChangeStatus) string {
 		return "sdd"
 	}
 	return "organic"
+}
+
+// validOrganicSubroutes is the complete declared vocabulary for the optional
+// orchestrator-supplied organic subroute. Anything else is undeclared.
+var validOrganicSubroutes = []string{"direct-inline", "delegated-direct"}
+
+// declaredOrganicSubroute returns the orchestrator-declared subroute for an
+// organic change, read from the optional top-level "subroute" key in
+// {changeDir}/state.yaml. It returns "" for SDD routes, archived changes,
+// absent/unreadable/malformed state, and unknown values: the CLI never
+// infers, defaults, or synthesizes a subroute, and never errors on one.
+func declaredOrganicSubroute(route, changeDir string) string {
+	if route != "organic" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(changeDir, "state.yaml"))
+	if err != nil {
+		return ""
+	}
+	var state struct {
+		Subroute string `yaml:"subroute"`
+	}
+	if err := yaml.Unmarshal(data, &state); err != nil {
+		return ""
+	}
+	if !slices.Contains(validOrganicSubroutes, state.Subroute) {
+		return ""
+	}
+	return state.Subroute
 }
 
 func fileExists(path string) bool {
