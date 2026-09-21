@@ -1,0 +1,46 @@
+# DAG state for SDD change
+phases:
+  propose: pending
+  spec: pending
+  design: pending
+  tasks: pending
+  apply: pending
+  verify: pending
+  archive: pending
+pending_question:
+  schema: biggz-ai.pending-question/v1
+  change: add-odd-lane
+  envelope:
+    questions:
+      - question: "verify esta en PASS WITH WARNINGS y la siguiente fase es sync, bloqueada por ser destructiva (REQ-OR-003 es un MODIFIED de 36 lineas sobre el spec base). Como entregamos?"
+        header: Siguiente paso
+        options:
+          - label: "Continuar: mergear PRs y luego sync+archive (Recomendado)"
+            description: "Mergear 155 -> 156 -> 157 -> 158 en orden y despues un PR de archivo con el sync (allow-destructive) + el move de la carpeta del change. El spec de registro cambia despues del codigo, sin desincronizacion."
+          - label: "Proseguir: sync+archive antes de mergear"
+            description: "Actualizar openspec/specs/** y archivar el change primero; el spec de registro describe comportamiento que aun no esta en master."
+          - label: "Detener: solo mergear PRs ahora"
+            description: "Entregar la cadena de codigo y dejar el change activo; sync+archive quedan para una sesion posterior."
+          - label: "Corregir la redaccion OR-003 y re-verificar"
+            description: "Reescribir la clausula insatisfacible nextRecommended MUST be empty, re-ejecutar verify y despues sync; invalida la evidencia actual y suma una ronda de verify."
+  synthesis_md: |-
+    ## Sub-agent Result: add-odd-lane (verify -> sync gate)
+
+    ### What was done
+    | Topic | Decision |
+    |-------|----------|
+    | Verify | PASS WITH WARNINGS: 6/6 requisitos, 16/16 escenarios, 18/18 tareas |
+    | Entrega | 4 PRs apilados abiertos y MERGEABLE con checks SUCCESS (155->156->157->158) |
+    | Ledger | verify settleado (Complete: true, sin intento activo) |
+    | Change | openspec/changes/add-odd-lane/ sigue sin commitear; se entrega con sync+archive |
+    | Siguiente fase | sync BLOQUEADA: MODIFIED grande en dominio orchestrator sin allow-destructive |
+
+    ### Risks
+    - WARNING-1: la clausula nextRecommended MUST be empty de OR-003-S1 es insatisfacible (heredada del spec base); sync la escribiria tal cual.
+    - WARNING-2: el mapa de verificacion no listaba ODD-001-S2 ni ODD-002-S1 como solo-texto.
+    - sync reescribe REQ-OR-003 (el spec base dice direct-inline/delegated-direct, valores que el CLI nunca emite): correccion real, clasificada destructiva por tamano.
+    - go test ./... completo no se ejecuto: internal/review ~163s contra presupuesto 180s en Windows.
+
+    ### Next Recommended
+    Aprobar o rechazar el sync destructivo y fijar el orden de entrega (mergear la cadena primero, o escribir el spec de registro primero).
+  created_at: "2026-09-20T18:00:00Z"
