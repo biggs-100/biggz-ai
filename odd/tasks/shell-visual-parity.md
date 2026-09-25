@@ -86,7 +86,7 @@ Load-bearing choices already made by the human (2026-09-24):
   Evidence needed: `go test ./internal/install/steps/`, and
   `node --test internal/assets/pi/biggz-shell/*.test.mjs` green.
 
-- [ ] 2.2b Port the visual-customization modules.
+- [x] 2.2b Port the visual-customization modules.
   Acceptance: `agent-home`, `animation-policy`, `visual-customization-policy` and
   `theme-customization` land the same way, with the upstream `GENTLE_PI_*` env names, schema
   ids and `Symbol.for` keys renamed into the `BIGGZ_*` / `biggz-ai.*` namespace and the
@@ -129,6 +129,21 @@ Load-bearing choices already made by the human (2026-09-24):
   registrations (including the `pi-pretty` effect) are gated by the ownership guard rather
   than by load order.
 
+### Phase 4 — defect found while porting 2.2b
+
+- [ ] 2.9 Make the theme source preview tolerate pi's terminal-default colours.
+  Acceptance: `sourcePalettePreview` returns a preview for `dark`, `light` and `titanium`,
+  whose `colors.text` is `""`, instead of throwing "Invalid theme palette color"; a test
+  exercises the empty-string role against the repository's own shipped themes rather than
+  against a fixture that avoids it.
+  Why: `""` is how pi encodes the terminal's default foreground, and three of the seven themes
+  this repository ships use it. The behaviour is upstream's, but in biggz it is reachable with
+  biggz's own theme set, so the customize view would throw as soon as it previews one of them.
+  Evidence: calling the ported `sourcePalettePreview("dark", <absolute path to
+  internal/assets/pi/themes/dark.json>)` throws "Invalid theme palette color", while `Gentle`,
+  `Gentleman-Cute` and `solarized-osaka` return a preview. The ported suite hides this by
+  supplying a literal text colour in its fixture.
+
 ## Evidence
 
 | Task | Command | Result | Commit |
@@ -138,7 +153,7 @@ Load-bearing choices already made by the human (2026-09-24):
 | 1.3 | `find ~/.gentle-shell/agent -maxdepth 2 -printf '%T@ %p\n'` snapshotted before and after `go test ./...`, with `PI_CODING_AGENT_DIR` exported to that live home | `internal/install` and `internal/install/steps` green; the only home difference was `gentle-agents/presence`, the running session's own heartbeat. Seven pre-existing failures fixed. Before the fix the same command rewrote `settings.json`, `mcp.json`, `extensions/` and `agents/` in the live home. | `bff680c1` |
 | 2.1 | `go test ./internal/install/... -count=1`, `go test ./internal/install/steps/ -run TestPiExtensions -v`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs` | PASS. The guard now checks 16 factories instead of 13 and names the change as stricter; `TestPiExtensionsStep_DeploysNestedHelper` proves a flat factory and a nested helper land in the right places; `TestPiExtensionsLayout_Targets` covers helper-at-root, helper index file, nested factory and duplicate target; `TestPiExtensionsLayout_ShellSubdirManifest` covers the `pi` field. Node test 17/17. The brand guard still scans 16 deployed assets. | `8398ddeb` |
 | 2.2a | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent line-by-line diff of every ported module against upstream | PASS. 131 helper assertions and 17 factory assertions pass; both Go packages green. The guard scans 26 deployed assets (16 factories, 10 helpers) and finds no brand token outside a comment. The body diff shows seven modules identical to upstream line for line and the other three differing only in the four declared brand strings, with the header comment the only other change. | `35cdc44f` |
-| 2.2b | | | |
+| 2.2b | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent body diff against upstream and a `~/.biggz` mtime snapshot | PASS. 144 helper assertions and 17 factory assertions pass; both Go packages green. `theme-customization.ts` is identical to upstream line for line and the other three differ only at the declared renames. The brand guard scans 30 deployed assets with no token outside a comment, and `~/.biggz` was unchanged by the suites. | `1cffbe2c` |
 | 2.2 | | | |
 | 2.3 | | | |
 | 2.4 | | | |
@@ -146,6 +161,7 @@ Load-bearing choices already made by the human (2026-09-24):
 | 2.6 | | | |
 | 2.7 | | | |
 | 2.8 | | | |
+| 2.9 | | | |
 
 ## Known risks
 
@@ -185,10 +201,19 @@ Load-bearing choices already made by the human (2026-09-24):
    command to run by hand, and the existing co-located asset suites (221 assertions) have
    the same status. The port's tests are therefore unit evidence, not a CI gate, until
    someone wires them in.
+8. `sourcePalettePreview` cannot preview three of this repository's own themes, because
+   `dark`, `light` and `titanium` set `colors.text` to `""`, pi's encoding for the terminal's
+   default foreground, and the function only accepts a var reference, a 256-colour integer or
+   a `#rrggbb`. Ported faithfully from upstream, so the defect is upstream's, but biggz's own
+   theme set makes it reachable. Task 2.9 fixes it.
+9. The ported `theme-customization` suite cannot exercise the symlink branch on this host:
+   `symlinkSync` returns EPERM without `SeCreateSymbolicLinkPrivilege`, so the test falls back
+   to the source path directly and the `realpathSync` indirection is only covered elsewhere.
 
 ## Next
 
-Verified outcome: tasks 1.1, 1.2 and 1.3 are done and green.
+Verified outcome: phase 1 and phase 2 are done and green — tasks 1.1, 1.2, 1.3, 2.1, 2.2a
+and 2.2b.
 
 1.1 — the three Gentle Shell themes are installed assets, every theme resolves every
 `statusLine*` key any deployed asset reads (repairing the pre-existing `solarized-osaka.json`
@@ -218,22 +243,27 @@ the four brand strings that reach users or the wire. The pi-tui test oracle gain
 suites verify rendering logic against a faithful approximation rather than against pi
 itself; the deployed modules still resolve the real package at runtime.
 
+2.2b — the four visual-customization modules are ported with the config home moved to
+biggz's own (`BIGGZ_CONFIG_HOME` or `~/.biggz`) and both persisted schema ids renamed to
+`biggz-ai.*`. `theme-customization.ts` is byte-identical to upstream and the other three
+differ only at that seam. The suites prove they never touch a real home: `~/.biggz` was
+unchanged across the runs, checked by the author and repeated by me.
+
 Known failures outside this work, identical on `HEAD` before the change (verified by
 stashing): `internal/agents/pi` 4, `internal/git` 1, `internal/project` 6, `cmd/biggz` 2,
 `internal/review` 2. `internal/agents/pi`'s four are the same `PI_CODING_AGENT_DIR`
 hermeticity class of bug and are not yet fixed.
 
-Next step: task 2.2b, the four visual-customization modules (`agent-home`,
-`animation-policy`, `visual-customization-policy`, `theme-customization`), same two commands
-as 2.2a plus the env and path renames this unit owes: `GENTLE_PI_AGENT_HOME`,
-`GENTLE_PI_CONFIG_HOME`, `gentlePiConfigHome()`, `gentle-pi.animations/v1` and
-`gentle-pi.visual-customization/v1`.
+Next step: task 2.3, `shell-bar.ts` and its role palette, which closes phase 2 by giving the
+helpers a renderer. It also unblocks `shell-sidebar-banner` and `shell-sidebar-layout`, both
+deferred here because they import shell-bar types, and it must replace the upstream
+`SHELL_BAR_BRAND = "✿ gentle shell"` display string with biggz's own before it can ship.
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
 path with the design in front of us (risk 5).
 
-Commit status: five work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
-(1.3), `07aa401a` (1.2), `8398ddeb` (2.1), `35cdc44f` (2.2a) — plus the tracking commits.
-Push and pull request remain human decisions. A pre-existing untracked change,
-`openspec/changes/fix-archived-change-identity/`, was left untouched.
+Commit status: six work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
+(1.3), `07aa401a` (1.2), `8398ddeb` (2.1), `35cdc44f` (2.2a), `1cffbe2c` (2.2b) — plus the
+tracking commits. Push and pull request remain human decisions. A pre-existing untracked
+change, `openspec/changes/fix-archived-change-identity/`, was left untouched.
