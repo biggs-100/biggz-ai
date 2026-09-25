@@ -41,6 +41,12 @@ type Config struct {
 	DryRun bool
 }
 
+// DefaultPiTheme is the pi theme installed when none is chosen otherwise. It
+// must match a deployed asset under internal/assets/pi/themes, which
+// TestDefaultPiThemeIsDeployed enforces so settings.json can never point at a
+// theme pi cannot resolve.
+const DefaultPiTheme = "Gentleman-Cute"
+
 // Result describes what happened during an install run.
 type Result struct {
 	AgentDetected    bool   // whether the agent binary was found on PATH
@@ -221,7 +227,7 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		}
 		if adapter.ID() == agents.AgentPi {
 			_ = syncPiLastModel(homeDir)
-			_ = ensurePiTheme(homeDir, "titanium")
+			_ = ensurePiTheme(homeDir, DefaultPiTheme)
 		}
 	}
 	if adapter.ID() == agents.AgentPi && !cfg.DryRun {

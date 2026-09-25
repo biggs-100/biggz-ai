@@ -74,6 +74,20 @@
     "thinkingHigh": "violet",
     "thinkingXhigh": "magenta",
     "thinkingMax": "red",
-    "bashMode": "yellow"
+    "bashMode": "yellow",
+    "statusLineBg": "bgHighlight",
+    "statusLineSep": "border",
+    "statusLineModel": "magenta",
+    "statusLinePath": "blue",
+    "statusLineGitClean": "green",
+    "statusLineGitDirty": "yellow",
+    "statusLineContext": "violet",
+    "statusLineSpend": "cyan",
+    "statusLineStaged": "green",
+    "statusLineDirty": "yellow",
+    "statusLineUntracked": "fgMuted",
+    "statusLineOutput": "base0",
+    "statusLineCost": "magenta",
+    "statusLineSubagents": "violet"
   }
 }
