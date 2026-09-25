@@ -136,9 +136,10 @@ Load-bearing choices already made by the human (2026-09-24):
    `~/.gentle-shell/agent` home. Task 1.3 closes it at the package level. The live home was
    reverted the same day: `settings.json` and `mcp.json` restored to their recorded byte
    sizes (351 and 562), `extensions/` (16 files) and `themes/` (7 files) removed, and
-   `.pre-shell-revert` backups left beside both config files. Fourteen files written into
-   `agents/` were not removed, because the step renders them instead of copying a shipped
-   asset and no byte-for-byte match exists to justify the delete.
+   `.pre-shell-revert` backups left beside both config files. Sixteen files written into
+   `agents/` (`explore.md`, `general.md` and fourteen `sdd-*.md`) were not removed, because
+   the step renders them instead of copying a shipped asset, so no byte-for-byte match
+   exists to justify the delete by the agreed rule.
 
 ## Next
 
@@ -160,8 +161,8 @@ hermeticity class of bug and are not yet fixed.
 Next step: task 1.2, attribution and brand quarantine, then task 2.1 (the hybrid deploy
 shape) which every later unit depends on.
 
-Open items pending human input: whether to also remove the fourteen files this suite wrote
-into the live `~/.gentle-shell/agent/agents/` directory (see risk 5).
+Open items pending human input: whether to also remove the sixteen biggz SDD agent files
+this suite rendered into the live `~/.gentle-shell/agent/agents/` directory (see risk 5).
 
 Commit status: landed as two work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1,
 themes and the `statusLine*` guard) and `bff680c1` (1.3, test hermeticity). Push and pull
