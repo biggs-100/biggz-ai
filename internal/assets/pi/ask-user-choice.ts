@@ -5,7 +5,7 @@ import { type Static, Type } from "typebox";
 import { checkCheckpointAsk } from "./biggz-ask-guard.js";
 
 const CHOICE_TOOL_NAME = "ask_user_choice";
-const ASK_USER_CHOICE_BLOCKED_EVENT = "gentle-pi:ask-user-choice:blocked";
+const ASK_USER_CHOICE_BLOCKED_EVENT = "biggz:ask-user-choice:blocked";
 
 const ChoiceOptionSchema = Type.Object(
 	{

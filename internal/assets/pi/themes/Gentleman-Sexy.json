@@ -1,4 +1,5 @@
 {
+  "$comment": "Ported from gentle-pi 3.7.0 themes/Gentleman-Sexy.json (MIT, Copyright (c) 2025 Mario Zechner). Palette unchanged; the statusLine* block is biggz-ai's.",
   "$schema": "https://raw.githubusercontent.com/earendil-works/pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
   "name": "Gentleman-Sexy",
   "vars": {
