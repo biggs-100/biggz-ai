@@ -10,7 +10,8 @@ banner/changes/todo/usage, shell cards and gauges, and the `Gentle` / `Gentleman
 
 ## Decisions
 
-Load-bearing choices already made by the human (2026-09-24):
+Load-bearing choices already made. D1–D5 by the human (2026-09-24); D6–D8 were taken while
+implementing unit 2.4 and are listed here so they are visible for review.
 
 | # | Decision | Choice |
 |---|---|---|
@@ -19,6 +20,9 @@ Load-bearing choices already made by the human (2026-09-24):
 | D3 | Owner of the single `setFooter` slot | **Retire `biggz-footer.js`** from the deploy list |
 | D4 | Default theme after install | **`Gentleman-Cute`** |
 | D5 | Brand strings | Forced by `TRADEMARKS.md`: rename every `gentle-pi` / `gentle-shell` identifier to `biggz-*` / `BIGGZ_*` |
+| D6 | Fate of the retired `biggz-footer.js` asset | **Keep the file, retire it from the deploy list** (2.4). The file stays as the rollback reference, the way `biggz-synthesis-gate.js` does, which keeps its suite meaningful and its declared boundary in `.github/guard-baseline.txt` valid; the installer deletes any copy already in a home |
+| D7 | Name and shape of the new wiring file | **`internal/assets/pi/biggz-shell.ts`, flat and `factory: true`** (2.4). pi loads direct `extensions/*.ts` files plus subdirectories that carry an `index.ts` entry point, and the 2.1 guards forbid that entry point in `biggz-shell/`, so the factory and its helper directory can coexist |
+| D8 | Gates on the shell footer | **`isPrettyEnabled() && shellEnabled()`** (2.4). The first is the repo-wide kill switch every other deployed pretty asset already honours, so the documented `BIGGZ_PRETTY=0` still turns the footer off; the second is the bar's own `BIGGZ_SHELL` |
 
 ## Tasks
 
@@ -111,14 +115,32 @@ Load-bearing choices already made by the human (2026-09-24):
   `shell-sidebar-banner.ts` came with it, because it needs only shell-bar's type;
   `shell-sidebar-layout.ts` stays in 2.6.
 
-- [ ] 2.4 Single `setFooter` owner.
+- [x] 2.4 Single `setFooter` owner.
   Acceptance: `biggz-footer.js` leaves `piExtensionsDeployList` and joins the stale
   self-heal list; a test asserts exactly one deployed asset registers `setFooter`; the
   footer path no longer uses `statusLine*` keys that the shell bar does not resolve.
+  Shipped as `internal/assets/pi/biggz-shell.ts`, the flat factory that ports
+  `buildShellBarModel` and `createShellBarComponent` from upstream's
+  `extensions/gentle-shell.ts` and installs the bar from `session_start` behind
+  `isPrettyEnabled() && shellEnabled()` (D8). The retired asset stays in the repository as
+  the rollback reference (D6), and `DeployPiFooter` — which had no caller and was the last
+  live path that could redeploy the footer — is gone, together with the doc comment it had
+  left misplaced on `DeployPiToolPills`.
+  `pi_footer_owner_test.go` pins all three clauses, including retirement in both
+  directions, so a target can never be deployed and retired at once. Its scanner matches
+  any non-comment mention of the identifier rather than the literal `.setFooter(` call: a
+  bracket form, a destructured or aliased reference, and a registration whose parenthesis
+  sits on the next line all take the same slot, and a table test pins those shapes.
+  Deferred by design, each named with its owner in the factory header: the sidebar part
+  (2.6), the header widget (2.5), the changes tracker (2.7), the prompt editor (2.8) and the
+  usage fetch (out of scope for this port). The two `TODO(2.4)` comments in `shell-bar.ts`
+  are repointed at 2.5 and 2.8, which own the two items they name.
 
 - [ ] 2.5 Startup banner via `setHeader`.
   Acceptance: the banner renders through a fake `pi` render harness; its config probes
   respect the `PI_CODING_AGENT_DIR`-aware agent dir instead of hardcoding `~/.pi/agent`.
+  It also owns the full-table usage command the header row points at, which 2.4 left
+  unregistered and marked `TODO(2.5)`.
 
 - [ ] 2.6 Sidebar rail.
   Acceptance: the rail activates only when `host.layoutRoot` and the pi-tui layout symbol
@@ -132,7 +154,8 @@ Load-bearing choices already made by the human (2026-09-24):
 - [ ] 2.8 Custom prompt editor and prompt ownership.
   Acceptance: the prompt editor owner is established once, and competing editor/working
   registrations (including the `pi-pretty` effect) are gated by the ownership guard rather
-  than by load order.
+  than by load order. It also binds `PROMPT_FRAME_ROLE`, the editor-frame role
+  `shell-bar.ts` names in its `TODO(2.8)`.
 
 ### Phase 4 — defects found while porting 2.2b and 2.3
 
@@ -177,6 +200,18 @@ Load-bearing choices already made by the human (2026-09-24):
   allowlist instead of being renamed away.
   Evidence: `node --test internal/assets/pi/biggz-shell/review-sidebar-state.test.mjs`.
 
+- [ ] 2.12 Harden the two asset guards that are narrower than their invariants.
+  Acceptance: a deploy-manifest parity check fails when the canonical
+  `piExtensionsDeployList()` and either mirror disagree on an entry's asset, target or
+  factory flag, or when a helper is renamed or dropped; and the `statusLine*` key scanner
+  matches every literal form a deployed asset can write, not only the double-quoted one.
+  Why: found by the independent verification of 2.4. The Go cross-check compares the
+  factory count only and the JS mirror imports no canonical list, so renaming a factory
+  entry or dropping a helper is invisible to both — demonstrated by reproducing each
+  mutation and watching all three checks stay green. The key scanner misses a
+  single-quoted or template-literal key. Same class as risk 11: the guard reads as
+  coverage, and the reading is the hazard.
+
 ## Evidence
 
 | Task | Command | Result | Commit |
@@ -188,7 +223,7 @@ Load-bearing choices already made by the human (2026-09-24):
 | 2.2a | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent line-by-line diff of every ported module against upstream | PASS. 131 helper assertions and 17 factory assertions pass; both Go packages green. The guard scans 26 deployed assets (16 factories, 10 helpers) and finds no brand token outside a comment. The body diff shows seven modules identical to upstream line for line and the other three differing only in the four declared brand strings, with the header comment the only other change. | `35cdc44f` |
 | 2.2b | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent body diff against upstream and a `~/.biggz` mtime snapshot | PASS. 144 helper assertions and 17 factory assertions pass; both Go packages green. `theme-customization.ts` is identical to upstream line for line and the other three differ only at the declared renames. The brand guard scans 30 deployed assets with no token outside a comment, and `~/.biggz` was unchanged by the suites. | `1cffbe2c` |
 | 2.3 | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent body diff of both modules against upstream | PASS. 194 helper assertions, up from 144, and 17 factory assertions; both Go packages green; the guard scans 32 deployed assets. `shell-bar.ts` differs from upstream only in the five declared changes plus the two instructed comment rewrites, and `shell-sidebar-banner.ts` only in the declared brand lines. The role-palette suite reports 791 width assertions across the seven themes. | `562ef0d0` |
-| 2.4 | | | |
+| 2.4 | `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go build ./...`; `go vet ./internal/install/...` | PASS. Still 16 factories and 16 helpers; the brand guard scans 32 deployed assets with its allowlist sub-test green; 223 node assertions pass, including the bar's 791 width assertions; `TestPiFooterOwner_SingleDeployedFooter` fails on the pre-change tree naming `pi/biggz-footer.js` as the owner with 20 `statusLine*` hits, then passes. Independent verification returned PASS WITH FINDINGS — six findings, none blocking: the scanner's registration forms and the retirement seed list were widened inside this unit (with a table test pinning the forms), the deploy-manifest parity gap and the single-quote `statusLine` form are task 2.12, and two findings were wording rather than code. | `da28997d` |
 | 2.5 | | | |
 | 2.6 | | | |
 | 2.7 | | | |
@@ -202,8 +237,11 @@ Load-bearing choices already made by the human (2026-09-24):
 1. `shell-sidebar-layout.ts` binds to private pi-tui internals
    (`Symbol.for("@earendil-works/pi-tui/layout-node")`, `host.layoutRoot`, `tui.terminal`).
    A pi-tui bump can make the rail disappear silently; task 2.6 must fail visibly instead.
-2. The footer is a single slot. Until 2.4 lands, the shell bar and `biggz-footer.js` must
-   never both be deployed.
+2. The footer is a single slot, and pi silently lets the last loaded owner win. Unit 2.4
+   retired `biggz-footer.js` from the deploy list, and `TestPiFooterOwner_SingleDeployedFooter`
+   now fails if a second deployed asset names the slot, if the retired asset regains its entry,
+   or if a retired target is deployed again. That guard, not a convention, is why the two can
+   no longer coexist.
 3. `extensions/gentle-shell.ts` is 1967 lines but only ~120 are the shell wiring. The port
    is selective; vim engines, command palette and subscription-usage HTTP are out of scope
    unless a task asks for them.
@@ -254,12 +292,24 @@ Load-bearing choices already made by the human (2026-09-24):
     banned `gentle-shell` and `gentle-pi`, and therefore passed a `gentle:` command name, a
     `gentle-ai` event name and a `gentleTodo` key through four ported files. When a guard reads
     as coverage but only covers the examples found the day it was written, the reading itself
-    is the hazard.
+    is the hazard. The independent verification of 2.4 found two more instances of the same
+    class in the asset guards — the `statusLine*` scanner only matches the double-quoted form,
+    and the deploy-list mirrors compare counts rather than entries, so a renamed factory or a
+    dropped helper is invisible — and task 2.12 closes both.
+12. 2.4 changed what the one-line footer says, by design (D3). The retired powerline footer
+    painted `branch▕change▕lineage▕lens▕budget`; the shell bar paints location, model, effort,
+    context, cost, usage and extension statuses instead, so the review lineage, lens and budget
+    facts have no successor in that line and move to the sidebar Status card and the RDD card
+    `shell-bar.ts` already renders. The gates changed with it: `BIGGZ_PRETTY=0` still turns the
+    footer off because the factory reads `isPrettyEnabled()`, and `BIGGZ_SHELL=0` is the new
+    shell-specific switch. Re-examine the lineage/lens/budget gap in 2.6 rather than assuming
+    the sidebar covers it.
 
 ## Next
 
-Verified outcome: phase 1 and phase 2 are done and green — tasks 1.1, 1.2, 1.3, 2.1, 2.2a
-and 2.2b.
+Verified outcome: the footer is real — `biggz install` deploys a shell bar that owns pi's
+single footer slot, and the old powerline footer is retired. Tasks 1.1, 1.2, 1.3, 2.1, 2.2a,
+2.2b, 2.3, 2.4 and 2.10 are done and green.
 
 1.1 — the three Gentle Shell themes are installed assets, every theme resolves every
 `statusLine*` key any deployed asset reads (repairing the pre-existing `solarized-osaka.json`
@@ -312,18 +362,25 @@ stashing): `internal/agents/pi` 4, `internal/git` 1, `internal/project` 6, `cmd/
 `internal/review` 2. `internal/agents/pi`'s four are the same `PI_CODING_AGENT_DIR`
 hermeticity class of bug and are not yet fixed.
 
-Next step: task 2.4, the single `setFooter` owner, which is what makes the bar real: it
-retires `biggz-footer.js` from the deploy list and hands the slot to the shell bar, and it is
-the unit two TODO(2.4) comments in `shell-bar.ts` point at, because the header's usage command
-and the prompt frame role have no owner until then. Queued right behind it are the two defect
-fixes 2.9 (theme preview on terminal-default colours) and 2.11 (review sidebar protocol).
+Next step: task 2.5, the startup banner via `setHeader` — the next piece of the same factory,
+which also takes the usage command `shell-bar.ts` marks `TODO(2.5)`. Queued right behind it are
+the two defect fixes 2.9 (theme preview on terminal-default colours) and 2.11 (review sidebar
+protocol), then 2.6 (sidebar rail, which owns the lineage/lens/budget gap risk 12 names), 2.7
+(todo rail), 2.8 (prompt ownership) and 2.12 (the two guards 2.4's verification found narrower
+than their invariants).
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
 path with the design in front of us (risk 5).
 
-Commit status: eight work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
+Commit status: nine work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
 (1.3), `07aa401a` (1.2), `8398ddeb` (2.1), `35cdc44f` (2.2a), `1cffbe2c` (2.2b), `562ef0d0`
-(2.3), `e165d77a` (2.10) — plus the tracking commits. Push and pull request remain human
-decisions. A pre-existing untracked change, `openspec/changes/fix-archived-change-identity/`,
-was left untouched.
+(2.3), `e165d77a` (2.10), `da28997d` (2.4) — plus the tracking commits. Push and pull request
+remain human decisions. A pre-existing untracked change,
+`openspec/changes/fix-archived-change-identity/`, was left untouched.
+
+Review size: 2.4 changed 748 lines, 613 of them new files (the factory, its suite and the new
+Go guard). That is above the 400-line review budget, and it is the exception this repository
+already grants a new self-contained module with its suite. It cannot be split further: pi has
+one footer slot, so between two commits the slot would either be empty or doubled, which is
+exactly what risk 2 forbids.
