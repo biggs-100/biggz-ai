@@ -76,10 +76,31 @@ Load-bearing choices already made by the human (2026-09-24):
 
 ### Phase 3 — the shell itself
 
-- [ ] 2.2 Port the pure primitives.
+- [x] 2.2a Port the drawing primitives.
   Acceptance: `shell-gauge`, `shell-hover`, `terminal-theme`, `shell-card`, `shell-changes`,
-  `shell-usage`, `shell-todo`, `shell-prompt` land with co-located `*.test.mjs` covering
-  width maths, card frames and `sanitizeTerminalText` on OSC/CSI input.
+  `shell-usage`, `shell-todo`, `shell-prompt`, `shell-sidebar` and `review-sidebar-state` land
+  in `internal/assets/pi/biggz-shell/` as `factory: false` deploy entries, each carrying a
+  provenance header, with co-located `*.test.mjs` ported from the upstream suite and pi-tui
+  supplied by the repository's test oracle, which must be extended with whatever these
+  modules import from it.
+  Evidence needed: `go test ./internal/install/steps/`, and
+  `node --test internal/assets/pi/biggz-shell/*.test.mjs` green.
+
+- [ ] 2.2b Port the visual-customization modules.
+  Acceptance: `agent-home`, `animation-policy`, `visual-customization-policy` and
+  `theme-customization` land the same way, with the upstream `GENTLE_PI_*` env names, schema
+  ids and `Symbol.for` keys renamed into the `BIGGZ_*` / `biggz-ai.*` namespace and the
+  config-home paths mapped to biggz's own, plus their ported tests.
+  Evidence needed: the same two commands.
+
+  Decisions taken for 2.2 (2026-09-24): the visual-customization trio is ported in this unit,
+  as a second wave so each review stays small. `review-sidebar-state` is ported as-is, as a
+  neutral type and snapshot whose wiring to biggz's review belongs to 2.3. Deferred to 2.3 by
+  dependency rather than by choice: `shell-sidebar-banner` and `shell-sidebar-layout` import
+  `shell-bar` types, which 2.3 owns, and `quiet-tools-config` duplicates the native
+  `biggz-quiet-tools.js` config, so porting it would create a second source of truth for
+  `BIGGZ_QUIET_TOOLS`. New files are ported with `BIGGZ_*` names only: they are new, so there
+  is no compatibility alias to preserve, unlike the pre-existing aliases task 1.2 protected.
 
 - [ ] 2.3 Port `shell-bar` and its role palette.
   Acceptance: golden-line tests at widths 20/60/80/120/200; the `ROLE` map resolves against
@@ -116,6 +137,8 @@ Load-bearing choices already made by the human (2026-09-24):
 | 1.2 | `go test ./internal/install/steps/ -run "TestPiAssets|TestPortedFiles" -v`, plus pi's real `validateThemeJson` over all seven `pi/themes/*.json` | PASS. Guard logs "scanned 16 deployed pi assets"; provenance subtests pass 3/3; no brand asset under `pi/`; pi's real theme loader accepted the new `$comment` on all seven themes; `go test ./internal/install/...` green. A temporary probe proved the guard fails on a regression before reverting it. | `07aa401a` |
 | 1.3 | `find ~/.gentle-shell/agent -maxdepth 2 -printf '%T@ %p\n'` snapshotted before and after `go test ./...`, with `PI_CODING_AGENT_DIR` exported to that live home | `internal/install` and `internal/install/steps` green; the only home difference was `gentle-agents/presence`, the running session's own heartbeat. Seven pre-existing failures fixed. Before the fix the same command rewrote `settings.json`, `mcp.json`, `extensions/` and `agents/` in the live home. | `bff680c1` |
 | 2.1 | `go test ./internal/install/... -count=1`, `go test ./internal/install/steps/ -run TestPiExtensions -v`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs` | PASS. The guard now checks 16 factories instead of 13 and names the change as stricter; `TestPiExtensionsStep_DeploysNestedHelper` proves a flat factory and a nested helper land in the right places; `TestPiExtensionsLayout_Targets` covers helper-at-root, helper index file, nested factory and duplicate target; `TestPiExtensionsLayout_ShellSubdirManifest` covers the `pi` field. Node test 17/17. The brand guard still scans 16 deployed assets. | `8398ddeb` |
+| 2.2a | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent line-by-line diff of every ported module against upstream | PASS. 131 helper assertions and 17 factory assertions pass; both Go packages green. The guard scans 26 deployed assets (16 factories, 10 helpers) and finds no brand token outside a comment. The body diff shows seven modules identical to upstream line for line and the other three differing only in the four declared brand strings, with the header comment the only other change. | `35cdc44f` |
+| 2.2b | | | |
 | 2.2 | | | |
 | 2.3 | | | |
 | 2.4 | | | |
@@ -156,6 +179,12 @@ Load-bearing choices already made by the human (2026-09-24):
    only `GENTLE_PI_NO_SKILL_REGISTRY` while its Go sibling honors
    `BIGGZ_NO_SKILL_REGISTRY` first, so setting the biggz name stops the Go watcher and
    leaves the pi extension running.
+7. The asset test suites are not wired into CI. `ci.yml` runs `go test ./... -short`, the e2e
+   suite, the lens guards and three node scripts, but no `node --test` over
+   `internal/assets/pi/`. `docs/validation-guide.md:504` documents the factory test as a
+   command to run by hand, and the existing co-located asset suites (221 assertions) have
+   the same status. The port's tests are therefore unit evidence, not a CI gate, until
+   someone wires them in.
 
 ## Next
 
@@ -182,21 +211,29 @@ defect fixed here: `ask-user-choice.ts`, `codegraph-tools.ts` and `skill-registr
 pi extension factories deployed flat, and the old suffix rule validated none of them, so a
 broken TS factory would have crashed pi with nothing catching it.
 
+2.2a — the ten drawing primitives are ported into `internal/assets/pi/biggz-shell/` with
+provenance headers and co-located suites, and their bodies are upstream's to the line except
+the four brand strings that reach users or the wire. The pi-tui test oracle gained
+`wrapTextWithAnsi`, an ANSI-preserving `truncateToWidth` and a fuller width table, so these
+suites verify rendering logic against a faithful approximation rather than against pi
+itself; the deployed modules still resolve the real package at runtime.
+
 Known failures outside this work, identical on `HEAD` before the change (verified by
 stashing): `internal/agents/pi` 4, `internal/git` 1, `internal/project` 6, `cmd/biggz` 2,
 `internal/review` 2. `internal/agents/pi`'s four are the same `PI_CODING_AGENT_DIR`
 hermeticity class of bug and are not yet fixed.
 
-Next step: task 2.2, porting the pure primitives into `internal/assets/pi/biggz-shell/` with
-`factory: false` entries, now that the shape and its guards exist. The ported modules keep
-their `pi-tui` imports (the deployed assets already resolve that package at runtime) and
-must not import anything outside the subdirectory plus `pi-tui` and `node:*`.
+Next step: task 2.2b, the four visual-customization modules (`agent-home`,
+`animation-policy`, `visual-customization-policy`, `theme-customization`), same two commands
+as 2.2a plus the env and path renames this unit owes: `GENTLE_PI_AGENT_HOME`,
+`GENTLE_PI_CONFIG_HOME`, `gentlePiConfigHome()`, `gentle-pi.animations/v1` and
+`gentle-pi.visual-customization/v1`.
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
 path with the design in front of us (risk 5).
 
-Commit status: four work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
-(1.3), `07aa401a` (1.2), `8398ddeb` (2.1) — plus the tracking commits. Push and pull request
-remain human decisions. A pre-existing untracked change,
+Commit status: five work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
+(1.3), `07aa401a` (1.2), `8398ddeb` (2.1), `35cdc44f` (2.2a) — plus the tracking commits.
+Push and pull request remain human decisions. A pre-existing untracked change,
 `openspec/changes/fix-archived-change-identity/`, was left untouched.
