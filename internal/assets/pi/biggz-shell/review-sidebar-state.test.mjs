@@ -1,18 +1,36 @@
 // Ported from gentle-pi 3.7.0 tests/review-sidebar-state.test.ts
-// (MIT, Copyright (c) 2025 Mario Zechner). Behaviour unchanged for the module
-// this unit ships.
-//
-// Narrowing note: the upstream file also asserted against `renderShellSidebarBar`
-// from `../lib/shell-bar.ts`. `shell-bar` is owned by a later work unit (2.3) and
-// is not part of this one, so those render-only assertions are omitted here rather
-// than tested against an invented stub. The snapshot contract they exercised is
-// still asserted below.
+// (MIT, Copyright (c) 2025 Mario Zechner). Behaviour unchanged. Unit 2.2a
+// narrowed this suite because `shell-bar` did not exist yet; unit 2.3 restores
+// the upstream render assertions against the real module.
+// pi-tui is supplied by the repository's test oracle (see test/pi-tui-resolver.mjs).
 import assert from "node:assert/strict";
 import test from "node:test";
+import { PI_TUI_SPECIFIER } from "../test/pi-tui-resolver.mjs";
 import { reviewSidebarSnapshot } from "./review-sidebar-state.ts";
+
+const { visibleWidth } = await import(PI_TUI_SPECIFIER);
+const { renderShellSidebarBar } = await import("./shell-bar.ts");
 
 // Display contract only: lifecycle evidence must be normalized by the producer,
 // never inferred from a successful tool execution by the renderer.
+const theme = { fg: (_color, text) => text, bold: (text) => text };
+function model(review) {
+	return {
+		cwd: "/repo",
+		branch: "main",
+		dirty: undefined,
+		sessionName: undefined,
+		modelId: "test-model",
+		effort: undefined,
+		contextPercent: null,
+		contextWindow: 0,
+		costTotal: 0,
+		subscription: false,
+		usage: undefined,
+		statuses: [],
+		review,
+	};
+}
 
 test("RDD maps explicit native evidence conservatively without parsing opaque bindings", () => {
 	const nativeStatus = (state, paths = ["src/app.ts", "test/app.test.ts", "README.md"]) => ({
@@ -77,6 +95,36 @@ test("RDD completed STATUS evidence does not imply capture execution", () => {
 				},
 			});
 			assert.deepEqual(snapshot, { state: "in_review", scope: "app.ts" });
+			const pending = renderShellSidebarBar({ ...model(), review: snapshot }, theme, 46).join("\n");
+			assert.match(pending, /In review/);
+			assert.doesNotMatch(pending, /Reviewing/);
 		}
+	}
+	// The future publisher owns execution evidence; this slice only renders its
+	// explicit display state, never inferring it from a completed native result.
+	const active = renderShellSidebarBar(model({ state: "reviewing", scope: "app.ts" }), theme, 46).join("\n");
+	assert.match(active, /Reviewing/);
+	assert.doesNotMatch(active, /In review/);
+});
+
+test("RDD stays hidden without current-session evidence and occupies one group between Changes and Integrations", () => {
+	assert.doesNotMatch(renderShellSidebarBar(model(), theme, 46).join("\n"), /RDD/);
+	const text = renderShellSidebarBar(model({ state: "reviewing", scope: "app.ts +2" }), theme, 46).join("\n");
+	assert.equal((text.match(/RDD/g) ?? []).length, 1);
+	assert.ok(text.indexOf("Changes") < text.indexOf("RDD"));
+	assert.ok(text.indexOf("RDD") < text.indexOf("Integrations"));
+	assert.match(text, /Reviewing/);
+	assert.match(text, /app\.ts \+2/);
+});
+
+test("RDD distinguishes approval awaiting acknowledgement from confirmed closure and wraps narrow scopes", () => {
+	const approved = renderShellSidebarBar(model({ state: "approved", scope: "Candidate scope unavailable" }), theme, 60).join("\n");
+	assert.match(approved, /Approved.*awaiting acknowledgement/);
+	assert.doesNotMatch(approved, /Closed/);
+	const closed = renderShellSidebarBar(model({ state: "closed", scope: "app.ts" }), theme, 46).join("\n");
+	assert.match(closed, /Closed/);
+	for (const width of [20, 32, 46]) {
+		const lines = renderShellSidebarBar(model({ state: "reviewing", scope: "長い候補ファイル-name-with-many-characters.ts +2" }), theme, width);
+		assert.ok(lines.every((line) => visibleWidth(line) <= width), `RDD must fit ${width} columns`);
 	}
 });
