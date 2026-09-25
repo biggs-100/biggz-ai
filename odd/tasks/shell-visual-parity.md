@@ -36,12 +36,20 @@ Load-bearing choices already made by the human (2026-09-24):
   `internal/install/install.go` installs `Gentleman-Cute` by default.
   Evidence needed: `go test ./internal/install/...`, `go test ./internal/install/steps/...`.
 
-- [ ] 1.2 Attribution and brand quarantine.
-  Acceptance: a root `NOTICE` (or `THIRD_PARTY_NOTICES.md`) carries the verbatim MIT text
-  plus `Copyright (c) 2025 Mario Zechner` for the ported portions; every ported file header
-  names the source project, version and license; a test or lint step fails if any
-  `gentle-shell` / `gentle-pi` string, glyph or logo appears under `internal/assets/pi/`.
-  Evidence needed: `grep -ri "gentle-shell\|gentle-pi" internal/assets/pi/` returns nothing.
+- [x] 1.2 Attribution and brand quarantine.
+  Acceptance: a root `THIRD_PARTY_NOTICES.md` carries the verbatim MIT text plus
+  `Copyright (c) 2025 Mario Zechner` and lists what was ported; the three ported theme files
+  declare provenance in a `$comment`; the deployed surface is guarded by a test that fails
+  on a brand image or binary asset under `internal/assets/pi/`, on a `gentle-shell` /
+  `gentle-pi` token inside a quoted string on any non-comment line of a deployed asset, and
+  on a ported file that lost its provenance.
+  Deliberately NOT in scope: the `gentle-*` names this repository documents as compatibility
+  aliases — `GENTLE_AI_NO_ANIMATION` (`docs/comparison-with-gentle.md:110`),
+  `GENTLE_PI_NO_SKILL_REGISTRY` (`internal/skillregistry/watcher.go:31`),
+  `GENTLE_PI_QUIET_TOOLS` (`biggz-quiet-tools.js:17`) — and the provenance comments that
+  name the source truthfully. The trademark policy permits nominative references, so a
+  blanket ban would delete documented compatibility instead of protecting the brand.
+  Evidence needed: `go test ./internal/install/steps/ -run "TestPiAssets|TestPortedFiles" -v`.
 
 ### Phase 1.5 — blocker found while verifying 1.1
 
@@ -105,7 +113,7 @@ Load-bearing choices already made by the human (2026-09-24):
 | Task | Command | Result | Commit |
 |---|---|---|---|
 | 1.1 | `go test ./internal/install/... ./internal/install/steps/...` | ok, both packages. `TestPiThemes_StatusLineKeysResolvable` passes for all 7 themes; `TestDefaultPiThemeIsDeployed` and `TestEnsurePiThemeWritesDefaultAndPreservesOtherSettings` pass. `git diff` on `solarized-osaka.json` is exactly the 14 added keys. | `2bfa0ec0` |
-| 1.2 | | | |
+| 1.2 | `go test ./internal/install/steps/ -run "TestPiAssets|TestPortedFiles" -v`, plus pi's real `validateThemeJson` over all seven `pi/themes/*.json` | PASS. Guard logs "scanned 16 deployed pi assets"; provenance subtests pass 3/3; no brand asset under `pi/`; pi's real theme loader accepted the new `$comment` on all seven themes; `go test ./internal/install/...` green. A temporary probe proved the guard fails on a regression before reverting it. | `07aa401a` |
 | 1.3 | `find ~/.gentle-shell/agent -maxdepth 2 -printf '%T@ %p\n'` snapshotted before and after `go test ./...`, with `PI_CODING_AGENT_DIR` exported to that live home | `internal/install` and `internal/install/steps` green; the only home difference was `gentle-agents/presence`, the running session's own heartbeat. Seven pre-existing failures fixed. Before the fix the same command rewrote `settings.json`, `mcp.json`, `extensions/` and `agents/` in the live home. | `bff680c1` |
 | 2.1 | | | |
 | 2.2 | | | |
@@ -140,31 +148,47 @@ Load-bearing choices already made by the human (2026-09-24):
    `agents/` (`explore.md`, `general.md` and fourteen `sdd-*.md`) were not removed, because
    the step renders them instead of copying a shipped asset, so no byte-for-byte match
    exists to justify the delete by the agreed rule.
+6. Brand namespace inconsistencies found while scoping 1.2, tracked outside this change
+   because they are not part of the shell port: `GENTLE_PI_AUTONOMOUS_MODE` is the only
+   name for the autonomous-mode switch, with no `BIGGZ_` primary
+   (`internal/policy/guardrails.go:118`, `biggz-synthesis-gate.js:1132`,
+   `opencode/plugins/safety.ts:119`); and `internal/assets/pi/skill-registry.ts:26` honors
+   only `GENTLE_PI_NO_SKILL_REGISTRY` while its Go sibling honors
+   `BIGGZ_NO_SKILL_REGISTRY` first, so setting the biggz name stops the Go watcher and
+   leaves the pi extension running.
 
 ## Next
 
-Verified outcome: task 1.1 is done and green. The three Gentle Shell themes are installed
-assets under `internal/assets/pi/themes/`, every theme now resolves every `statusLine*` key
-that any deployed asset reads (which also repaired the pre-existing `solarized-osaka.json`
-gap, where selecting that theme threw inside the footer), and `DefaultPiTheme` is
-`Gentleman-Cute` so the Gentle look is the installed default.
+Verified outcome: tasks 1.1, 1.2 and 1.3 are done and green.
 
-Task 1.3 is done and green. `internal/install` and `internal/install/steps` are now
-hermetic against an exported `PI_CODING_AGENT_DIR`, which fixed seven pre-existing failures
-and stopped the suite from writing into a live pi agent home.
+1.1 — the three Gentle Shell themes are installed assets, every theme resolves every
+`statusLine*` key any deployed asset reads (repairing the pre-existing `solarized-osaka.json`
+gap), and `DefaultPiTheme` is `Gentleman-Cute`.
+
+1.2 — `THIRD_PARTY_NOTICES.md` carries the MIT notice and copyright, the three ported themes
+declare provenance in a `$comment` that pi's real loader accepts, two literals that were
+naming upstream on a shipped surface now name biggz-ai, and the new guard covers the 16
+deployed assets plus the logo rule, with non-deployed test fixtures deliberately out of
+scope.
+
+1.3 — `internal/install` and `internal/install/steps` are hermetic against an exported
+`PI_CODING_AGENT_DIR`, which fixed seven pre-existing failures and stopped the suite from
+writing into a live pi agent home.
 
 Known failures outside this work, identical on `HEAD` before the change (verified by
 stashing): `internal/agents/pi` 4, `internal/git` 1, `internal/project` 6, `cmd/biggz` 2,
 `internal/review` 2. `internal/agents/pi`'s four are the same `PI_CODING_AGENT_DIR`
 hermeticity class of bug and are not yet fixed.
 
-Next step: task 1.2, attribution and brand quarantine, then task 2.1 (the hybrid deploy
-shape) which every later unit depends on.
+Next step: task 2.1, the hybrid deploy shape and installer guard. Every remaining unit
+depends on it, because the shell helpers cannot sit flat in `extensions/` without Pi loading
+them as extensions.
 
-Open items pending human input: whether to also remove the sixteen biggz SDD agent files
-this suite rendered into the live `~/.gentle-shell/agent/agents/` directory (see risk 5).
+Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
+`~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
+path with the design in front of us (risk 5).
 
-Commit status: landed as two work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1,
-themes and the `statusLine*` guard) and `bff680c1` (1.3, test hermeticity). Push and pull
-request remain human decisions. A pre-existing untracked change,
+Commit status: three work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1),
+`bff680c1` (1.3), `07aa401a` (1.2) — plus the tracking commits. Push and pull request remain
+human decisions. A pre-existing untracked change,
 `openspec/changes/fix-archived-change-identity/`, was left untouched.
