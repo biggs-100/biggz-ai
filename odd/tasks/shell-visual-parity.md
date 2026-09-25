@@ -95,16 +95,21 @@ Load-bearing choices already made by the human (2026-09-24):
 
   Decisions taken for 2.2 (2026-09-24): the visual-customization trio is ported in this unit,
   as a second wave so each review stays small. `review-sidebar-state` is ported as-is, as a
-  neutral type and snapshot whose wiring to biggz's review belongs to 2.3. Deferred to 2.3 by
-  dependency rather than by choice: `shell-sidebar-banner` and `shell-sidebar-layout` import
-  `shell-bar` types, which 2.3 owns, and `quiet-tools-config` duplicates the native
+  neutral type and snapshot whose wiring to biggz's review belongs to 2.11, because biggz's
+  review contract is its own and the ported parser would never match it (risk 10). Deferred to
+  2.3 by dependency rather than by choice: `shell-sidebar-banner` and `shell-sidebar-layout`
+  import `shell-bar` types, which 2.3 owns, and `quiet-tools-config` duplicates the native
   `biggz-quiet-tools.js` config, so porting it would create a second source of truth for
   `BIGGZ_QUIET_TOOLS`. New files are ported with `BIGGZ_*` names only: they are new, so there
   is no compatibility alias to preserve, unlike the pre-existing aliases task 1.2 protected.
 
-- [ ] 2.3 Port `shell-bar` and its role palette.
+- [x] 2.3 Port `shell-bar` and its role palette.
   Acceptance: golden-line tests at widths 20/60/80/120/200; the `ROLE` map resolves against
-  all seven installed themes.
+  all seven installed themes. Shipped as `shell-bar-themes.test.mjs`, which renders the bar,
+  the header, the header rule and the sidebar card through a strict stub theme for every
+  shipped theme, so an undefined role fails the suite instead of silently degrading the line.
+  `shell-sidebar-banner.ts` came with it, because it needs only shell-bar's type;
+  `shell-sidebar-layout.ts` stays in 2.6.
 
 - [ ] 2.4 Single `setFooter` owner.
   Acceptance: `biggz-footer.js` leaves `piExtensionsDeployList` and joins the stale
@@ -129,7 +134,7 @@ Load-bearing choices already made by the human (2026-09-24):
   registrations (including the `pi-pretty` effect) are gated by the ownership guard rather
   than by load order.
 
-### Phase 4 — defect found while porting 2.2b
+### Phase 4 — defects found while porting 2.2b and 2.3
 
 - [ ] 2.9 Make the theme source preview tolerate pi's terminal-default colours.
   Acceptance: `sourcePalettePreview` returns a preview for `dark`, `light` and `titanium`,
@@ -144,6 +149,34 @@ Load-bearing choices already made by the human (2026-09-24):
   `Gentleman-Cute` and `solarized-osaka` return a preview. The ported suite hides this by
   supplying a literal text colour in its fixture.
 
+- [x] 2.10 Brand sweep: widen the literal guard and fix the leaks it missed.
+  Acceptance: the guard in `internal/install/steps/pi_assets_brand_test.go` fails when any
+  string literal on a non-comment line of a deployed asset contains `gentle`, unless the
+  literal also carries one of a small enumerated allowlist of interop and compatibility
+  identifiers, each with its reason in the code; a sub-test fails when an allowlist entry no
+  longer appears anywhere in the deployed set, so a stale exception cannot hide; and the two
+  literals with no interop meaning are renamed — `CHANGES_COMMAND` in `shell-changes.ts`,
+  which must equal the `/biggz-changes` hint the bar already prints, and the flag description
+  at `skill-registry.ts:554`.
+  Why: the guard shipped in 1.2 banned only `gentle-shell` and `gentle-pi`, so it passed a
+  `gentle:` command name, a `gentle-ai` event name and a `gentleTodo` key through four ported
+  files. A guard narrower than the invariant it claims to protect is worse than no guard,
+  because it reads as coverage.
+  Evidence: `go test ./internal/install/steps/ -run TestPiAssets -v`.
+
+- [ ] 2.11 Wire the review sidebar to biggz's own review protocol.
+  Acceptance: the parser in `review-sidebar-state.ts` matches the schema ids and event name
+  biggz actually emits — `biggz-ai.review-integration/v1` and `/v2`, per `internal/review` and
+  `contracts/review-integration/` — proven by a test built from a real envelope in
+  `contracts/review-integration/v1/fixtures`, instead of upstream's
+  `gentle-ai.review-integration.status/v[3-9]` and `gentle-ai:review-sidebar`.
+  Why: porting the module faithfully preserved upstream's protocol strings, and biggz speaks a
+  different contract, so as ported the review segment can never match a biggz envelope and the
+  sidebar would silently never show review state. The 2.2 decision deferred this wiring on
+  purpose; this is where it lands, and it is the reason those literals sit in the 2.10
+  allowlist instead of being renamed away.
+  Evidence: `node --test internal/assets/pi/biggz-shell/review-sidebar-state.test.mjs`.
+
 ## Evidence
 
 | Task | Command | Result | Commit |
@@ -154,14 +187,15 @@ Load-bearing choices already made by the human (2026-09-24):
 | 2.1 | `go test ./internal/install/... -count=1`, `go test ./internal/install/steps/ -run TestPiExtensions -v`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs` | PASS. The guard now checks 16 factories instead of 13 and names the change as stricter; `TestPiExtensionsStep_DeploysNestedHelper` proves a flat factory and a nested helper land in the right places; `TestPiExtensionsLayout_Targets` covers helper-at-root, helper index file, nested factory and duplicate target; `TestPiExtensionsLayout_ShellSubdirManifest` covers the `pi` field. Node test 17/17. The brand guard still scans 16 deployed assets. | `8398ddeb` |
 | 2.2a | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent line-by-line diff of every ported module against upstream | PASS. 131 helper assertions and 17 factory assertions pass; both Go packages green. The guard scans 26 deployed assets (16 factories, 10 helpers) and finds no brand token outside a comment. The body diff shows seven modules identical to upstream line for line and the other three differing only in the four declared brand strings, with the header comment the only other change. | `35cdc44f` |
 | 2.2b | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent body diff against upstream and a `~/.biggz` mtime snapshot | PASS. 144 helper assertions and 17 factory assertions pass; both Go packages green. `theme-customization.ts` is identical to upstream line for line and the other three differ only at the declared renames. The brand guard scans 30 deployed assets with no token outside a comment, and `~/.biggz` was unchanged by the suites. | `1cffbe2c` |
-| 2.2 | | | |
-| 2.3 | | | |
+| 2.3 | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent body diff of both modules against upstream | PASS. 194 helper assertions, up from 144, and 17 factory assertions; both Go packages green; the guard scans 32 deployed assets. `shell-bar.ts` differs from upstream only in the five declared changes plus the two instructed comment rewrites, and `shell-sidebar-banner.ts` only in the declared brand lines. The role-palette suite reports 791 width assertions across the seven themes. | `562ef0d0` |
 | 2.4 | | | |
 | 2.5 | | | |
 | 2.6 | | | |
 | 2.7 | | | |
 | 2.8 | | | |
 | 2.9 | | | |
+| 2.10 | `go test ./internal/install/steps/ -run TestPiAssets -v` and `node --test internal/assets/pi/biggz-shell/*.test.mjs` | PASS. The guard scans 32 deployed assets; its stale-entry sub-test fails on an inserted stale entry with its delete-this message, verified by inserting one and reverting, and passes again after. Both renames confirmed by diff. An independent scan of the 32 assets found zero `gentle` literals outside the allowlist. | `e165d77a` |
+| 2.11 | | | |
 
 ## Known risks
 
@@ -209,6 +243,18 @@ Load-bearing choices already made by the human (2026-09-24):
 9. The ported `theme-customization` suite cannot exercise the symlink branch on this host:
    `symlinkSync` returns EPERM without `SeCreateSymbolicLinkPrivilege`, so the test falls back
    to the source path directly and the `realpathSync` indirection is only covered elsewhere.
+10. The ported review sidebar reads upstream's review protocol, not biggz's. As shipped,
+    `review-sidebar-state.ts` matches `gentle-ai.review-integration.status/v[3-9]`, the
+    `gentle-ai.review-last-event-closure/v1` closure schema and the `gentle-ai:review-sidebar`
+    event, while biggz's own contract is `biggz-ai.review-integration/v1|v2`
+    (`internal/review`, `contracts/review-integration/v1` and `v2`). Nothing in the repository
+    emits the upstream ids, so the review segment can never match and fails silently. Task 2.11
+    rewires it against a real fixture from this repository's own contract.
+11. Task 2.10 exists because the literal guard from 1.2 was narrower than its own invariant. It
+    banned `gentle-shell` and `gentle-pi`, and therefore passed a `gentle:` command name, a
+    `gentle-ai` event name and a `gentleTodo` key through four ported files. When a guard reads
+    as coverage but only covers the examples found the day it was written, the reading itself
+    is the hazard.
 
 ## Next
 
@@ -249,21 +295,35 @@ biggz's own (`BIGGZ_CONFIG_HOME` or `~/.biggz`) and both persisted schema ids re
 differ only at that seam. The suites prove they never touch a real home: `~/.biggz` was
 unchanged across the runs, checked by the author and repeated by me.
 
+2.3 — `shell-bar.ts` and `shell-sidebar-banner.ts` are ported with five declared changes each
+side of the brand decision, and the new role-palette suite renders the bar, the header, the
+header rule and the sidebar card through a strict stub for all seven shipped themes, 791 width
+assertions, so an undefined theme role fails loudly instead of degrading the line. That is the
+same class of gap 1.1 closed for `statusLine*`.
+
+2.10 — the literal guard now enforces the invariant it claimed: any `gentle` in a string
+literal on a non-comment line of a deployed asset, with a closed seven-entry allowlist each
+carrying its reason and a sub-test that fails once an entry goes stale. Four leaks the old
+two-token rule let through are gone, two by rename and two by being named in the allowlist
+because their fix is a wiring change, not a relabel.
+
 Known failures outside this work, identical on `HEAD` before the change (verified by
 stashing): `internal/agents/pi` 4, `internal/git` 1, `internal/project` 6, `cmd/biggz` 2,
 `internal/review` 2. `internal/agents/pi`'s four are the same `PI_CODING_AGENT_DIR`
 hermeticity class of bug and are not yet fixed.
 
-Next step: task 2.3, `shell-bar.ts` and its role palette, which closes phase 2 by giving the
-helpers a renderer. It also unblocks `shell-sidebar-banner` and `shell-sidebar-layout`, both
-deferred here because they import shell-bar types, and it must replace the upstream
-`SHELL_BAR_BRAND = "✿ gentle shell"` display string with biggz's own before it can ship.
+Next step: task 2.4, the single `setFooter` owner, which is what makes the bar real: it
+retires `biggz-footer.js` from the deploy list and hands the slot to the shell bar, and it is
+the unit two TODO(2.4) comments in `shell-bar.ts` point at, because the header's usage command
+and the prompt frame role have no owner until then. Queued right behind it are the two defect
+fixes 2.9 (theme preview on terminal-default colours) and 2.11 (review sidebar protocol).
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
 path with the design in front of us (risk 5).
 
-Commit status: six work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
-(1.3), `07aa401a` (1.2), `8398ddeb` (2.1), `35cdc44f` (2.2a), `1cffbe2c` (2.2b) — plus the
-tracking commits. Push and pull request remain human decisions. A pre-existing untracked
-change, `openspec/changes/fix-archived-change-identity/`, was left untouched.
+Commit status: eight work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
+(1.3), `07aa401a` (1.2), `8398ddeb` (2.1), `35cdc44f` (2.2a), `1cffbe2c` (2.2b), `562ef0d0`
+(2.3), `e165d77a` (2.10) — plus the tracking commits. Push and pull request remain human
+decisions. A pre-existing untracked change, `openspec/changes/fix-archived-change-identity/`,
+was left untouched.
