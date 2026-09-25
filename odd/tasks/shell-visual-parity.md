@@ -104,9 +104,9 @@ Load-bearing choices already made by the human (2026-09-24):
 
 | Task | Command | Result | Commit |
 |---|---|---|---|
-| 1.1 | `go test ./internal/install/... ./internal/install/steps/...` | ok, both packages. `TestPiThemes_StatusLineKeysResolvable` passes for all 7 themes; `TestDefaultPiThemeIsDeployed` and `TestEnsurePiThemeWritesDefaultAndPreservesOtherSettings` pass. `git diff` on `solarized-osaka.json` is exactly the 14 added keys. | pending |
+| 1.1 | `go test ./internal/install/... ./internal/install/steps/...` | ok, both packages. `TestPiThemes_StatusLineKeysResolvable` passes for all 7 themes; `TestDefaultPiThemeIsDeployed` and `TestEnsurePiThemeWritesDefaultAndPreservesOtherSettings` pass. `git diff` on `solarized-osaka.json` is exactly the 14 added keys. | `2bfa0ec0` |
 | 1.2 | | | |
-| 1.3 | `find ~/.gentle-shell/agent -maxdepth 2 -printf '%T@ %p\n'` snapshotted before and after `go test ./...`, with `PI_CODING_AGENT_DIR` exported to that live home | `internal/install` and `internal/install/steps` green; the only home difference was `gentle-agents/presence`, the running session's own heartbeat. Seven pre-existing failures fixed. Before the fix the same command rewrote `settings.json`, `mcp.json`, `extensions/` and `agents/` in the live home. | pending |
+| 1.3 | `find ~/.gentle-shell/agent -maxdepth 2 -printf '%T@ %p\n'` snapshotted before and after `go test ./...`, with `PI_CODING_AGENT_DIR` exported to that live home | `internal/install` and `internal/install/steps` green; the only home difference was `gentle-agents/presence`, the running session's own heartbeat. Seven pre-existing failures fixed. Before the fix the same command rewrote `settings.json`, `mcp.json`, `extensions/` and `agents/` in the live home. | `bff680c1` |
 | 2.1 | | | |
 | 2.2 | | | |
 | 2.3 | | | |
@@ -133,7 +133,12 @@ Load-bearing choices already made by the human (2026-09-24):
    `HomeDir` a caller passes, so any `internal/install` test that forgets the override
    writes into that real directory. Seven tests shipped with that hole; running
    `go test ./internal/install/...` on 2026-09-24 deployed biggz assets into a live
-   `~/.gentle-shell/agent` home. Task 1.3 closes it at the package level.
+   `~/.gentle-shell/agent` home. Task 1.3 closes it at the package level. The live home was
+   reverted the same day: `settings.json` and `mcp.json` restored to their recorded byte
+   sizes (351 and 562), `extensions/` (16 files) and `themes/` (7 files) removed, and
+   `.pre-shell-revert` backups left beside both config files. Fourteen files written into
+   `agents/` were not removed, because the step renders them instead of copying a shipped
+   asset and no byte-for-byte match exists to justify the delete.
 
 ## Next
 
@@ -155,8 +160,10 @@ hermeticity class of bug and are not yet fixed.
 Next step: task 1.2, attribution and brand quarantine, then task 2.1 (the hybrid deploy
 shape) which every later unit depends on.
 
-Open items pending human input: how to treat the pi agent home this repository's test suite
-wrote into on 2026-09-24 (see risk 5), and whether to land these two work units as commits.
+Open items pending human input: whether to also remove the fourteen files this suite wrote
+into the live `~/.gentle-shell/agent/agents/` directory (see risk 5).
 
-Commit status: no commit has been made. Repository policy here is that commits need an
-explicit request, so the two finished units sit in the working tree.
+Commit status: landed as two work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1,
+themes and the `statusLine*` guard) and `bff680c1` (1.3, test hermeticity). Push and pull
+request remain human decisions. A pre-existing untracked change,
+`openspec/changes/fix-archived-change-identity/`, was left untouched.
