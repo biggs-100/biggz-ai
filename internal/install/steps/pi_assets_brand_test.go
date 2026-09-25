@@ -16,13 +16,66 @@ var brandAssetExtensions = []string{
 	".png", ".jpg", ".jpeg", ".svg", ".ico", ".webp", ".gif", ".bmp",
 }
 
-// brandStringTokens are the upstream product names that must never appear
-// inside a string literal in a pi asset source. This is a deliberate
-// over-approximation: a string literal reaches users or the wire, so it is a
-// brand surface, while a comment can name the source truthfully because the
-// upstream policy permits nominative references. The comment heuristic is
-// intentionally line-local and simple; it is a guard, not a parser.
-var brandStringTokens = []string{"gentle-shell", "gentle-pi"}
+// brandLiteralAllowlist enumerates the interop and compatibility identifiers
+// that may carry "gentle" inside a deployed string literal.
+//
+// A comment may name the upstream project truthfully because the trademark
+// policy permits nominative references, but a string literal reaches users or
+// the wire, so it is a brand surface. These entries are the narrow exceptions:
+// each names an identifier biggz must speak to interoperate with a documented
+// compatibility alias, an internal registry key, or the review protocol the
+// ported sidebar is not yet wired to. Every entry states its reason in a
+// comment, because an exception the reader cannot justify is indistinguishable
+// from an oversight.
+//
+// Keep the list closed. Anything a rename can fix does not belong here, and the
+// stale-entry sub-test below fails once an entry stops appearing, so an
+// exception cannot quietly outlive its reason.
+var brandLiteralAllowlist = []string{
+	// GENTLE_AI_NO_ANIMATION: documented compatibility alias, BIGGZ_NO_ANIMATION
+	// being the primary name; read at biggz-extension-api.js:68,
+	// biggz-footer.js:114 and biggz-tool-pills.js:31, and recorded in
+	// docs/comparison-with-gentle.md:110.
+	"GENTLE_AI_NO_ANIMATION",
+	// GENTLE_PI_NO_SKILL_REGISTRY: documented compatibility alias;
+	// internal/skillregistry/watcher.go:31 reads BIGGZ_NO_SKILL_REGISTRY first
+	// and this one second.
+	"GENTLE_PI_NO_SKILL_REGISTRY",
+	// __gentlePiSkillRegistryExtensionSource: internal global registry key at
+	// skill-registry.ts:31, never user-visible.
+	"__gentlePiSkillRegistryExtensionSource",
+	// gentle-ai:review-sidebar: the upstream review-protocol event the ported
+	// sidebar listens on. Biggz speaks its own contract, so task 2.11 rewires
+	// this; renaming the string now would hide the mismatch instead of fixing
+	// it.
+	"gentle-ai:review-sidebar",
+	// gentle-ai.review-last-event-closure/v1: the same, for the closure schema.
+	"gentle-ai.review-last-event-closure/v1",
+	// gentle-ai.review-integration.status: the same, for the status schema the
+	// parser matches by regex.
+	"gentle-ai.review-integration.status",
+	// gentleTodo: the key the todo tool uses to carry its snapshot in tool-result
+	// details; the producer is wired in task 2.7.
+	"gentleTodo",
+}
+
+// brandLiteralAllowlisted reports whether an already-detected "gentle" literal
+// is one of the allowlisted interop identifiers.
+//
+// The status schema ships inside a regex literal, so its dots are escaped
+// (gentle-ai\.review-integration\.status). Unescaping only escaped dots keeps
+// the allowlist entry readable as the identifier it names and lets the live
+// check match its own source form; unescaping nothing else keeps the match
+// narrow.
+func brandLiteralAllowlisted(literal string) bool {
+	unescaped := strings.ReplaceAll(literal, `\.`, ".")
+	for _, entry := range brandLiteralAllowlist {
+		if strings.Contains(unescaped, entry) {
+			return true
+		}
+	}
+	return false
+}
 
 // TestPiAssets_NoBrandAssets walks every file under pi/ and fails when one is a
 // brand or image asset (.png, .jpg, .jpeg, .svg, .ico, .webp, .gif, .bmp).
@@ -52,10 +105,10 @@ func TestPiAssets_NoBrandAssets(t *testing.T) {
 }
 
 // TestPiAssets_NoBrandInStringLiterals scans exactly the deployed pi asset set
-// returned by piExtensionsDeployList() and fails when the token "gentle-shell"
-// or "gentle-pi" appears after a quote character (double quote, single quote or
-// backtick) on a line whose first non-space token does not start a comment
-// (//, /* or *).
+// returned by piExtensionsDeployList() and fails when "gentle" appears inside a
+// string literal (the text after a double quote, single quote or backtick) on a
+// line whose first non-space token does not start a comment (//, /* or *),
+// unless that same literal is an allowlisted interop identifier.
 //
 // The invariant is about the shipped surface, and piExtensionsDeployList() is
 // the single source of truth for what ships. Iterating it means the guard
@@ -63,17 +116,21 @@ func TestPiAssets_NoBrandAssets(t *testing.T) {
 // deployed; a future asset added to the deploy list is covered here with no
 // edit to this test.
 //
-// Files that are not deployed, such as *.test.mjs and the test/ helpers, are
-// deliberately out of scope: a test fixture may quote the upstream name in a
-// parity assertion exactly as a comment may name the source truthfully. The
-// two "(gentle-shell parity)" assertion messages in
-// biggz-subagent-runtime.test.mjs are legitimate under this rule and must stay
-// as they are. The heuristic encodes one rule: a comment may name the source
+// The rule is deliberately wider than the two upstream product names it used to
+// name: the namespace is "gentle", not two spellings of it, and a guard that
+// bans only the examples found on the day it was written reads as coverage
+// while missing the rest of the family. A comment may name the source
 // truthfully, because the upstream trademark policy permits nominative
 // references, but a string literal may not, because string literals reach users
 // or the wire and would present the upstream name as biggz-ai's own surface.
-// The line-local comment skip is a deliberate approximation; it keeps the guard
-// cheap and readable while still catching the brand surfaces that ship.
+// The only exceptions are the enumerated interop identifiers in
+// brandLiteralAllowlist, each carrying its reason. The line-local comment skip
+// is a deliberate approximation; it keeps the guard cheap and readable while
+// still catching the brand surfaces that ship.
+//
+// Files that are not deployed, such as *.test.mjs and the test/ helpers, are
+// deliberately out of scope: a test fixture may quote the upstream name in a
+// parity assertion exactly as a comment may name the source truthfully.
 func TestPiAssets_NoBrandInStringLiterals(t *testing.T) {
 	deployed := piExtensionsDeployList()
 	if len(deployed) == 0 {
@@ -102,15 +159,42 @@ func TestPiAssets_NoBrandInStringLiterals(t *testing.T) {
 					continue
 				}
 				rest := line[qi+1:]
-				for _, token := range brandStringTokens {
-					if strings.Contains(rest, token) {
-						t.Errorf("%s:%d uses the upstream brand token %q inside a string literal; a comment may name the source truthfully but a string literal reaches users or the wire: %s", path, i+1, token, trimmed)
-					}
+				if !strings.Contains(strings.ToLower(rest), "gentle") {
+					continue
 				}
+				if brandLiteralAllowlisted(rest) {
+					continue
+				}
+				t.Errorf("%s:%d carries \"gentle\" inside a string literal: %s\n"+
+					"a comment may name the upstream source truthfully, because the trademark policy permits nominative references, but a string literal reaches users or the wire and must not carry upstream branding; if this literal is a genuine interop or compatibility identifier, add it to brandLiteralAllowlist with its reason, otherwise rename it to biggz's own name",
+					path, i+1, trimmed)
+				break
 			}
 		}
 	}
 	t.Logf("scanned %d deployed pi assets", scanned)
+
+	// A stale exception protects nothing and is indistinguishable from an
+	// oversight the next time someone reads the list, so fail until it is
+	// deleted.
+	t.Run("allowlist entries are live", func(t *testing.T) {
+		for _, entry := range brandLiteralAllowlist {
+			live := false
+			for _, deployedEntry := range deployed {
+				data, err := fs.ReadFile(assets.FS, deployedEntry.asset)
+				if err != nil {
+					t.Fatalf("read deployed asset %s: %v", deployedEntry.asset, err)
+				}
+				if strings.Contains(strings.ReplaceAll(string(data), `\.`, "."), entry) {
+					live = true
+					break
+				}
+			}
+			if !live {
+				t.Errorf("brand-literal allowlist entry %q no longer appears anywhere in the deployed pi asset set: delete it from brandLiteralAllowlist rather than leaving a stale exception to accrue", entry)
+			}
+		}
+	})
 }
 
 // TestPortedFiles_DeclareProvenance fails unless each ported theme file carries
