@@ -12,11 +12,13 @@ const __dirname = path.dirname(__filename);
 // extensions/*.js|*.ts as an extension and crashes on one that does not export
 // `export default function(pi)`. That includes the three TypeScript factories
 // (ask-user-choice.ts, codegraph-tools.ts, skill-registry.ts) an earlier
-// extension-suffix guard silently skipped, so this guard checks all 16. The ten
-// `pi/biggz-shell/*.ts` helpers are factory:false and are NOT listed here: they are
-// covered by the Go layout guard (validatePiExtensionsFactory/Layout, which require
-// every helper to sit under biggz-shell/ and forbid a factory export) plus their own
-// co-located `biggz-shell/*.test.mjs` suites. Do not add fake entries to pad a count.
+// extension-suffix guard silently skipped, so this guard checks all 16. The
+// sixteen `pi/biggz-shell/*.ts` helpers are factory:false and are NOT listed
+// here: they are covered by the Go layout guard (validatePiExtensionsFactory/
+// Layout, which require every helper to sit under biggz-shell/ and forbid a
+// factory export) plus their own co-located `biggz-shell/*.test.mjs` suites. Do
+// not add fake entries to pad a count. Neither mirror is a manifest of that
+// helper set, so a helper rename or drop is caught by nothing today (task 2.12).
 const DEPLOY_LIST = [
   { asset: 'pi/biggz-thinking-wrap.js', target: 'biggz-thinking-wrap.js', factory: true },
   { asset: 'pi/biggz-memory-chrome.js', target: 'biggz-memory-chrome.js', factory: true },
@@ -26,7 +28,7 @@ const DEPLOY_LIST = [
   { asset: 'pi/biggz-ask-guard.js', target: 'biggz-ask-guard.js', factory: true },
   { asset: 'pi/biggz-last-model.js', target: 'biggz-last-model.js', factory: true },
   { asset: 'pi/biggz-subagent-runtime.js', target: 'biggz-subagent-runtime.js', factory: true },
-  { asset: 'pi/biggz-footer.js', target: 'biggz-footer.js', factory: true },
+  { asset: 'pi/biggz-shell.ts', target: 'biggz-shell.ts', factory: true },
   { asset: 'pi/biggz-tool-pills.js', target: 'biggz-tool-pills.js', factory: true },
   { asset: 'pi/biggz-web-search.js', target: 'biggz-web-search.js', factory: true },
   { asset: 'pi/biggz-question-mouse.js', target: 'biggz-question-mouse.js', factory: true },

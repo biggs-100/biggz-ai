@@ -36,7 +36,7 @@ func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
 		{asset: "pi/biggz-ask-guard.js", target: "biggz-ask-guard.js", factory: true},
 		{asset: "pi/biggz-last-model.js", target: "biggz-last-model.js", factory: true},
 		{asset: "pi/biggz-subagent-runtime.js", target: "biggz-subagent-runtime.js", factory: true},
-		{asset: "pi/biggz-footer.js", target: "biggz-footer.js", factory: true},
+		{asset: "pi/biggz-shell.ts", target: "biggz-shell.ts", factory: true},
 		{asset: "pi/biggz-tool-pills.js", target: "biggz-tool-pills.js", factory: true},
 		{asset: "pi/biggz-web-search.js", target: "biggz-web-search.js", factory: true},
 		{asset: "pi/biggz-question-mouse.js", target: "biggz-question-mouse.js", factory: true},
@@ -75,9 +75,13 @@ func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
 }
 
 // TestPiExtensionsStep_RemovesRetiredWaitPretty ensures the stale self-heal
-// removes retired biggz-wait-pretty.js copies (retired with the j0k3r cutover,
-// replaced by the deployed subagent runtime) alongside biggz-synthesis-gate.js,
-// and that a second Apply with no stale files is a silent no-op.
+// removes every name in retiredPiExtensionTargets — biggz-wait-pretty.js
+// (retired with the j0k3r cutover, replaced by the deployed subagent runtime),
+// biggz-synthesis-gate.js (the native Go gate is the only enforcement path) and
+// biggz-footer.js (retired in unit 2.4, replaced by the deployed shell
+// extension) — and that a second Apply with no stale files is a silent no-op.
+// The seed list is derived from that variable instead of repeated here, so a new
+// retired target cannot be removed by Apply without this test exercising it.
 func TestPiExtensionsStep_RemovesRetiredWaitPretty(t *testing.T) {
 	tmp := t.TempDir()
 	agent := &plugintest.FakeAgent{Installed: true, AgentID: agents.AgentPi}
@@ -86,7 +90,10 @@ func TestPiExtensionsStep_RemovesRetiredWaitPretty(t *testing.T) {
 	if err := os.MkdirAll(extDir, 0o755); err != nil {
 		t.Fatalf("mkdir extDir: %v", err)
 	}
-	stale := []string{"biggz-wait-pretty.js", "biggz-synthesis-gate.js"}
+	stale := append([]string(nil), retiredPiExtensionTargets...)
+	if len(stale) == 0 {
+		t.Fatal("retiredPiExtensionTargets is empty: the seed list this test proves against would be empty too")
+	}
 	for _, name := range stale {
 		if err := os.WriteFile(filepath.Join(extDir, name), []byte("stale"), 0o644); err != nil {
 			t.Fatalf("seed stale %s: %v", name, err)

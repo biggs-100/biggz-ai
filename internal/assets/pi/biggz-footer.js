@@ -16,8 +16,14 @@
  * Powerline: separator from STATUS_LINE_PRESETS.default.separator ("powerline-thin" → "›" / fallback "▕")
  * rendered with theme.fg("statusLineSep") so color follows active theme (dark/light/titanium etc.).
  *
- * Deploy: ~/.pi/agent/extensions/biggz-footer.js via install.DeployPiFooter + assets.FS embed all:pi
- * Flags: BIGGZ_PRETTY=0 disables footer, PI_SUBAGENT_CHILD=1 bypass (no footer in subagents).
+ * Retired in unit 2.4: this file left piExtensionsDeployList, so it is no longer
+ * the footer owner and install no longer writes it. The ported shell extension
+ * (biggz-shell.ts) owns the footer slot now. This asset stays in the repository
+ * as the rollback reference — the installer's retired-file list deletes any copy
+ * already installed in a home, and the retained biggz-footer.test.mjs still
+ * covers it. Deploy it by hand to roll back.
+ * Flags (for this file when it is used): BIGGZ_PRETTY=0 disables its footer,
+ * PI_SUBAGENT_CHILD=1 bypass (no footer in subagents).
  *
  * Pure rendering helpers exported for tests; no side effects outside pi.on("session_start").
  *

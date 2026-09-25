@@ -91,7 +91,13 @@ type piExtension struct {
 }
 
 // piExtensionsDeployList returns the canonical deploy list for pi extensions.
-// Keep in sync with internal/assets/pi/biggz-pi-extensions-factory.test.mjs.
+// Two test mirrors repeat the FACTORY subset: internal/assets/pi/
+// biggz-pi-extensions-factory.test.mjs and the mirror list in
+// pi_extensions_guard_test.go. The Go cross-check compares the factory count
+// only and the JS mirror imports no canonical list, so a renamed or dropped
+// factory entry is caught by neither, and a helper rename or drop is caught by
+// nothing: the three lists agree today, but nothing keeps them agreeing. Task
+// 2.12 tracks the deploy-manifest parity guard.
 // biggz-synthesis-gate.js wrapper is excluded: native Go synthesis gate
 // (internal/sdd/synthesis_gate.go) is the only enforcement path. JS source
 // stays on disk until the Phase-2 stability gate + one-release soak allows
@@ -117,7 +123,7 @@ func piExtensionsDeployList() []piExtension {
 		{asset: "pi/biggz-ask-guard.js", target: "biggz-ask-guard.js", factory: true},
 		{asset: "pi/biggz-last-model.js", target: "biggz-last-model.js", factory: true},
 		{asset: "pi/biggz-subagent-runtime.js", target: "biggz-subagent-runtime.js", factory: true},
-		{asset: "pi/biggz-footer.js", target: "biggz-footer.js", factory: true},
+		{asset: "pi/biggz-shell.ts", target: "biggz-shell.ts", factory: true},
 		{asset: "pi/biggz-tool-pills.js", target: "biggz-tool-pills.js", factory: true},
 		{asset: "pi/biggz-web-search.js", target: "biggz-web-search.js", factory: true},
 		{asset: "pi/biggz-question-mouse.js", target: "biggz-question-mouse.js", factory: true},
@@ -146,6 +152,23 @@ func piExtensionsDeployList() []piExtension {
 	}
 }
 
+// retiredPiExtensionTargets lists pi extension file names that are no longer in
+// piExtensionsDeployList but may still exist in an already-installed home, so
+// Apply removes them. Absent files are a silent no-op, which is the existing
+// self-heal contract (os.Remove error ignored).
+//
+// biggz-synthesis-gate.js: the native Go synthesis gate
+// (internal/sdd/synthesis_gate.go) is the only enforcement path, so a stale copy
+// would keep enforcing the retired duplicate gate.
+// biggz-wait-pretty.js: retired with the j0k3r cutover; a stale copy keeps
+// wrapping hooks that no longer exist.
+// biggz-footer.js: retired in unit 2.4, when biggz-shell.ts took over the footer
+// slot. The asset stays in the repository as the rollback reference, but a stale
+// installed copy would register a second footer.
+// biggz-memory-chrome.js is NOT retired — it is deployed (see
+// piExtensionsDeployList).
+var retiredPiExtensionTargets = []string{"biggz-synthesis-gate.js", "biggz-wait-pretty.js", "biggz-footer.js"}
+
 // validatePiExtensionsFactory asserts the factory role recorded on every deploy
 // entry, regardless of file extension. For a factory the asset must contain
 // `export default function` (pi otherwise crashes with "Extension does not
@@ -157,13 +180,17 @@ func piExtensionsDeployList() []piExtension {
 // factories, and the previous suffix rule silently skipped ask-user-choice.ts,
 // codegraph-tools.ts and skill-registry.ts.
 //
-// Runtime width smoke (future): biggz-footer.js must never exceed visibleWidth>width
-// for fixture branch 25c (chore/agent-lesson-guards) + model 80c at widths 20..120.
-// Currently enforced via JS gate internal/assets/pi/biggz-footer.test.mjs (regression
-// fixture + fuzz 60c/80c/100c combos). Parity with internal/tui/sanitize.go
-// (go-runewidth/StringWidth + TruncateToWidth) per tui-sanitize spec. Not duplicating
-// in Go to avoid over-engineering; installer already validates factory export.
-// This comment is the width-gate anchor for a future Go runtime check if needed.
+// Runtime width smoke (future): the deployed single-line surface is the shell
+// bar, and it must never render wider than the terminal. Currently enforced via
+// the JS gates internal/assets/pi/biggz-shell/shell-bar-themes.test.mjs (791
+// width assertions across the seven shipped themes: it renders the bar, header,
+// rule and sidebar card at five widths and fails on any role a theme does not
+// define) and internal/assets/pi/biggz-shell.test.mjs (the registered footer
+// paints exactly one line at widths 20..200). Parity with
+// internal/tui/sanitize.go (go-runewidth/StringWidth + TruncateToWidth) per
+// tui-sanitize spec. Not duplicating in Go to avoid over-engineering; installer
+// already validates factory export. This comment is the width-gate anchor for a
+// future Go runtime check if needed.
 func validatePiExtensionsFactory(fsys fs.FS) error {
 	if fsys == nil {
 		fsys = assets.FS
@@ -340,12 +367,13 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 		for _, stale := range []string{"gentle-ai.ts", "quiet-tools.ts", "sdd-init.ts", "startup-banner.ts"} {
 			_ = os.Remove(filepath.Join(extDir, stale))
 		}
-		// Self-heal retired wrappers: stale biggz-synthesis-gate.js copies keep
-		// enforcing the duplicate gate; stale biggz-wait-pretty.js copies keep
-		// wrapping j0k3r-only hooks that no longer exist. Absent files are a
-		// silent no-op (os.Remove error ignored). biggz-memory-chrome.js is NOT
-		// stale — it is deployed (see piExtensionsDeployList).
-		for _, stale := range []string{"biggz-synthesis-gate.js", "biggz-wait-pretty.js"} {
+		// Self-heal retired wrappers: remove every target in
+		// retiredPiExtensionTargets (biggz-synthesis-gate.js,
+		// biggz-wait-pretty.js, biggz-footer.js). Each entry's reason lives on
+		// the variable. Absent files are a silent no-op (os.Remove error
+		// ignored), and biggz-memory-chrome.js is NOT stale — it is deployed
+		// (see piExtensionsDeployList).
+		for _, stale := range retiredPiExtensionTargets {
 			_ = os.Remove(filepath.Join(extDir, stale))
 		}
 		_ = os.RemoveAll(filepath.Join(extDir, "_disabled_broken_backup"))

@@ -33,9 +33,11 @@ var brandAssetExtensions = []string{
 // exception cannot quietly outlive its reason.
 var brandLiteralAllowlist = []string{
 	// GENTLE_AI_NO_ANIMATION: documented compatibility alias, BIGGZ_NO_ANIMATION
-	// being the primary name; read at biggz-extension-api.js:68,
-	// biggz-footer.js:114 and biggz-tool-pills.js:31, and recorded in
-	// docs/comparison-with-gentle.md:110.
+	// being the primary name; the deployed readers are
+	// biggz-extension-api.js:68 and biggz-tool-pills.js:31, and it is recorded in
+	// docs/comparison-with-gentle.md:110. (biggz-footer.js:114 used to read it
+	// too; that asset was retired from the deploy list in unit 2.4, so it no
+	// longer keeps this entry live.)
 	"GENTLE_AI_NO_ANIMATION",
 	// GENTLE_PI_NO_SKILL_REGISTRY: documented compatibility alias;
 	// internal/skillregistry/watcher.go:31 reads BIGGZ_NO_SKILL_REGISTRY first

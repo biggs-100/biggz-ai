@@ -27,8 +27,14 @@ type piThemeFile struct {
 }
 
 // TestPiThemes_StatusLineKeysResolvable guards the contract between
-// internal/assets/pi/themes/*.json and the deployed assets that paint the
-// status line.
+// internal/assets/pi/themes/*.json and the pi assets that read statusLine*
+// color keys.
+//
+// After unit 2.4 no deployed asset paints through statusLine*: the deployed
+// shell bar uses its own role palette. The keys are still read by the retained
+// biggz-footer.js, which is the rollback path, and by pi's own built-in footer
+// whenever the shell is off, so the scanner deliberately walks every pi asset
+// rather than only the deployed set.
 //
 // pi's Theme.fg throws "Unknown theme color: X" for a key the active theme does
 // not define, and pi's own theme fallbacks (withThemeColorFallbacks) do not

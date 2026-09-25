@@ -204,7 +204,7 @@ export function renderShellSidebarBar(model: ShellBarModel, theme: ShellBarTheme
 	// the always-visible header row; this event-driven card keeps only what a
 	// footer/model-switch event does not already refresh every frame. The
 	// full-table command the header points at is not registered in biggz yet —
-	// TODO(2.4): wire it when the shell bar takes over the footer slot.
+	// TODO(2.5): the header widget that renders that row owns the command too.
 	const groups: Array<{ title: string; lines: string[] }> = [
 		{
 			title: "Project",
@@ -328,10 +328,10 @@ export function renderShellHeaderBar(model: ShellHeaderModel, theme: ShellBarThe
 
 // The rule row painted directly under the header bar: one full-width horizontal
 // line in the same theme role as the editor frame (PROMPT_FRAME_ROLE), so the
-// status row and the prompt read as one panel. That role has no biggz owner
-// yet — TODO(2.4): bind it when the shell bar takes over the footer slot. It
-// exists only while the fullscreen sidebar is active — when the sidebar is not
-// shown the header rail never renders and the rule goes away with it.
+// status row and the prompt read as one panel. The prompt editor owns that role
+// in biggz — TODO(2.8): bind it when the prompt editor is ported. It exists only
+// while the fullscreen sidebar is active — when the sidebar is not shown the
+// header rail never renders and the rule goes away with it.
 const HEADER_RULE_CHAR = "─";
 const HEADER_RULE_ROLE = "border";
 
