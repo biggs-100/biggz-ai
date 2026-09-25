@@ -15,56 +15,62 @@ import (
 	"github.com/biggs-100/biggz-ai/plugintest"
 )
 
-// TestPiExtensionsGuard_FactoryExport ensures every JS pi extension asset
-// deployed via PiExtensionsStep exports a valid pi factory. Regression guard
-// for biggz-session-guard.js crash: pi loader requires every .js in
-// ~/.pi/agent/extensions to export `export default function(pi)` — missing
-// factory crashes pi with "Extension does not export a valid factory function".
+// TestPiExtensionsGuard_FactoryExport ensures every deployed pi extension asset
+// exports a valid pi factory. Regression guard for the biggz-session-guard.js
+// crash: pi loads every direct extensions/*.js|*.ts as an extension and throws
+// "Extension does not export a valid factory function" when one has no
+// `export default function(pi)`.
+//
+// The mirror list carries the recorded factory flag and this test checks all 16
+// factories, not just the 13 JS ones: ask-user-choice.ts, codegraph-tools.ts and
+// skill-registry.ts were deployed and unchecked before this change, so the guard
+// is stricter, not looser.
 func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
-	// Must mirror the deploy list in pi_extensions.go (13 JS + 3 TS).
-	// TS entries are not pi ExtensionAPI factories and are intentionally skipped.
-	deployList := []struct{ asset, target string }{
-		{"pi/biggz-thinking-wrap.js", "biggz-thinking-wrap.js"},
-		{"pi/biggz-memory-chrome.js", "biggz-memory-chrome.js"},
-		{"pi/biggz-tool-interception.js", "biggz-tool-interception.js"},
-		{"pi/biggz-extension-api.js", "biggz-extension-api.js"},
-		{"pi/biggz-session-guard.js", "biggz-session-guard.js"},
-		{"pi/biggz-ask-guard.js", "biggz-ask-guard.js"},
-		{"pi/biggz-last-model.js", "biggz-last-model.js"},
-		{"pi/biggz-subagent-runtime.js", "biggz-subagent-runtime.js"},
-		{"pi/biggz-footer.js", "biggz-footer.js"},
-		{"pi/biggz-tool-pills.js", "biggz-tool-pills.js"},
-		{"pi/biggz-web-search.js", "biggz-web-search.js"},
-		{"pi/biggz-question-mouse.js", "biggz-question-mouse.js"},
-		{"pi/biggz-quiet-tools.js", "biggz-quiet-tools.js"},
-		{"pi/ask-user-choice.ts", "ask-user-choice.ts"},
-		{"pi/codegraph-tools.ts", "codegraph-tools.ts"},
-		{"pi/skill-registry.ts", "skill-registry.ts"},
+	// Must mirror the deploy list in pi_extensions.go (16 factories).
+	deployList := []piExtension{
+		{asset: "pi/biggz-thinking-wrap.js", target: "biggz-thinking-wrap.js", factory: true},
+		{asset: "pi/biggz-memory-chrome.js", target: "biggz-memory-chrome.js", factory: true},
+		{asset: "pi/biggz-tool-interception.js", target: "biggz-tool-interception.js", factory: true},
+		{asset: "pi/biggz-extension-api.js", target: "biggz-extension-api.js", factory: true},
+		{asset: "pi/biggz-session-guard.js", target: "biggz-session-guard.js", factory: true},
+		{asset: "pi/biggz-ask-guard.js", target: "biggz-ask-guard.js", factory: true},
+		{asset: "pi/biggz-last-model.js", target: "biggz-last-model.js", factory: true},
+		{asset: "pi/biggz-subagent-runtime.js", target: "biggz-subagent-runtime.js", factory: true},
+		{asset: "pi/biggz-footer.js", target: "biggz-footer.js", factory: true},
+		{asset: "pi/biggz-tool-pills.js", target: "biggz-tool-pills.js", factory: true},
+		{asset: "pi/biggz-web-search.js", target: "biggz-web-search.js", factory: true},
+		{asset: "pi/biggz-question-mouse.js", target: "biggz-question-mouse.js", factory: true},
+		{asset: "pi/biggz-quiet-tools.js", target: "biggz-quiet-tools.js", factory: true},
+		{asset: "pi/ask-user-choice.ts", target: "ask-user-choice.ts", factory: true},
+		{asset: "pi/codegraph-tools.ts", target: "codegraph-tools.ts", factory: true},
+		{asset: "pi/skill-registry.ts", target: "skill-registry.ts", factory: true},
 	}
-	jsCount := 0
+	factoryCount := 0
 	for _, e := range deployList {
-		if strings.HasSuffix(e.target, ".js") {
-			jsCount++
-			data, err := fs.ReadFile(assets.FS, e.asset)
-			if err != nil {
-				t.Fatalf("missing pi extension asset %s: %v", e.asset, err)
-			}
-			content := string(data)
-			if !strings.Contains(content, "export default") {
-				t.Errorf("pi extension %s missing factory: must contain 'export default' (pi requires valid factory) — first 200 bytes: %q", e.asset, truncateForTest(content, 200))
-			}
-			if !strings.Contains(content, "export default function") {
-				t.Errorf("pi extension %s missing factory function: must contain 'export default function' (pi loader expects factory function) — asset %s", e.asset, e.asset)
-			}
+		if !e.factory {
+			continue
+		}
+		factoryCount++
+		data, err := fs.ReadFile(assets.FS, e.asset)
+		if err != nil {
+			t.Fatalf("missing pi extension asset %s: %v", e.asset, err)
+		}
+		content := string(data)
+		if !strings.Contains(content, "export default") {
+			t.Errorf("pi extension %s missing factory: must contain 'export default' (pi requires valid factory) — first 200 bytes: %q", e.asset, truncateForTest(content, 200))
+		}
+		if !strings.Contains(content, "export default function") {
+			t.Errorf("pi extension %s missing factory function: must contain 'export default function' (pi loader expects factory function) — asset %s", e.asset, e.asset)
 		}
 	}
-	if jsCount != 13 {
-		t.Errorf("deploy list drift: expected 13 JS extensions, got %d — sync with pi_extensions.go and biggz-pi-extensions-factory.test.mjs", jsCount)
+	if factoryCount != 16 {
+		t.Errorf("deploy list drift: expected 16 pi extension factories, got %d — the three TS factories were deployed and unchecked before this change, so the guard is stricter, not looser; sync with pi_extensions.go and biggz-pi-extensions-factory.test.mjs", factoryCount)
 	}
-	// Also verify our canonical helper lists the same JS count — catches drift
-	// where pi_extensions.go was updated but this test wasn't (or vice versa).
-	if helperCount := countJS(piExtensionsDeployList()); helperCount != jsCount {
-		t.Errorf("helper drift: piExtensionsDeployList() has %d JS, test list has %d — keep them in sync", helperCount, jsCount)
+	// Also verify our canonical helper lists the same factory count — catches
+	// drift where pi_extensions.go was updated but this test wasn't (or vice
+	// versa).
+	if helperCount := countFactories(piExtensionsDeployList()); helperCount != factoryCount {
+		t.Errorf("helper drift: piExtensionsDeployList() has %d factories, test list has %d — keep them in sync", helperCount, factoryCount)
 	}
 }
 
@@ -107,10 +113,10 @@ func TestPiExtensionsStep_RemovesRetiredWaitPretty(t *testing.T) {
 	}
 }
 
-func countJS(list []struct{ asset, target string }) int {
+func countFactories(list []piExtension) int {
 	n := 0
 	for _, e := range list {
-		if strings.HasSuffix(e.target, ".js") {
+		if e.factory {
 			n++
 		}
 	}
@@ -125,27 +131,35 @@ func truncateForTest(s string, n int) string {
 }
 
 // TestPiExtensionsPrepare_RejectsBrokenFactory ensures validatePiExtensionsFactory
-// fails fast on a broken JS asset rather than deploying it and crashing pi.
+// fails fast on a broken factory asset rather than deploying it and crashing pi.
+// The role comes from the recorded factory flag, so a broken TS factory is now
+// rejected too — the regression this unit fixes.
 func TestPiExtensionsPrepare_RejectsBrokenFactory(t *testing.T) {
-	// Build a synthetic FS with all 13 JS assets valid except one broken.
-	validStub := "export default function broken(pi){ if(typeof pi?.on==='function') pi.on('session_stop', async()=>{}); }\n"
+	validStub := "export default function valid(pi){ if(typeof pi?.on==='function') pi.on('session_stop', async()=>{}); }\n"
+	helperStub := "export const SHELL_WIDTH = 80;\n"
 	brokenContent := "// no factory here\nconsole.log('broken');\n"
 
 	validFS := fstest.MapFS{}
-	brokenFS := fstest.MapFS{}
+	brokenJS := fstest.MapFS{}
+	brokenTS := fstest.MapFS{}
 	for _, e := range piExtensionsDeployList() {
-		if strings.HasSuffix(e.target, ".js") {
-			if e.asset == "pi/biggz-session-guard.js" {
-				validFS[e.asset] = &fstest.MapFile{Data: []byte(validStub)}
-				brokenFS[e.asset] = &fstest.MapFile{Data: []byte(brokenContent)}
-			} else {
-				validFS[e.asset] = &fstest.MapFile{Data: []byte(validStub)}
-				brokenFS[e.asset] = &fstest.MapFile{Data: []byte(validStub)}
-			}
+		if !e.factory {
+			// Helpers must not look like extensions.
+			validFS[e.asset] = &fstest.MapFile{Data: []byte(helperStub)}
+			brokenJS[e.asset] = &fstest.MapFile{Data: []byte(helperStub)}
+			brokenTS[e.asset] = &fstest.MapFile{Data: []byte(helperStub)}
+			continue
+		}
+		validFS[e.asset] = &fstest.MapFile{Data: []byte(validStub)}
+		if e.asset == "pi/biggz-session-guard.js" {
+			brokenJS[e.asset] = &fstest.MapFile{Data: []byte(brokenContent)}
 		} else {
-			// TS assets — content irrelevant, but include empty to satisfy FS reads if any
-			validFS[e.asset] = &fstest.MapFile{Data: []byte("export const dummy=1;")}
-			brokenFS[e.asset] = &fstest.MapFile{Data: []byte("export const dummy=1;")}
+			brokenJS[e.asset] = &fstest.MapFile{Data: []byte(validStub)}
+		}
+		if e.asset == "pi/skill-registry.ts" {
+			brokenTS[e.asset] = &fstest.MapFile{Data: []byte(brokenContent)}
+		} else {
+			brokenTS[e.asset] = &fstest.MapFile{Data: []byte(validStub)}
 		}
 	}
 
@@ -155,18 +169,116 @@ func TestPiExtensionsPrepare_RejectsBrokenFactory(t *testing.T) {
 	if err := validatePiExtensionsFactory(assets.FS); err != nil {
 		t.Fatalf("valid embedded assets should pass factory validation, got: %v", err)
 	}
-	err := validatePiExtensionsFactory(brokenFS)
-	if err == nil {
-		t.Fatalf("expected validatePiExtensionsFactory to reject broken JS asset, got nil")
+
+	jsErr := validatePiExtensionsFactory(brokenJS)
+	if jsErr == nil {
+		t.Fatalf("expected validatePiExtensionsFactory to reject broken JS factory, got nil")
 	}
-	if !strings.Contains(err.Error(), "biggz-session-guard.js") || !strings.Contains(err.Error(), "export default") {
-		t.Fatalf("error should mention missing factory and asset name, got: %v", err)
+	if !strings.Contains(jsErr.Error(), "biggz-session-guard.js") || !strings.Contains(jsErr.Error(), "export default") {
+		t.Fatalf("error should mention missing factory and asset name, got: %v", jsErr)
+	}
+
+	// Regression: a broken TS factory must be rejected even though the target is
+	// not .js. Before this unit the suffix rule skipped it, so a broken TS
+	// factory would crash pi on startup with nothing in the installer catching it.
+	tsErr := validatePiExtensionsFactory(brokenTS)
+	if tsErr == nil {
+		t.Fatalf("expected validatePiExtensionsFactory to reject broken TS factory pi/skill-registry.ts, got nil — the factory role must not be inferred from the file extension")
+	}
+	if !strings.Contains(tsErr.Error(), "skill-registry.ts") || !strings.Contains(tsErr.Error(), "export default") {
+		t.Fatalf("error should mention the broken TS factory and missing export, got: %v", tsErr)
+	}
+}
+
+// TestPiExtensionsLayout_Targets covers the pure target rules: helpers must be
+// under the shell subdirectory, factories must be flat, no helper may be an
+// index file (which would make pi load the subdirectory as an extension), and
+// targets must be unique.
+func TestPiExtensionsLayout_Targets(t *testing.T) {
+	if err := validatePiExtensionsTargets(piExtensionsDeployList()); err != nil {
+		t.Fatalf("canonical deploy list must satisfy the layout rules, got: %v", err)
+	}
+	hybrid := []piExtension{
+		{asset: "pi/biggz-footer.js", target: "biggz-footer.js", factory: true},
+		{asset: "pi/biggz-shell/shell-card.js", target: piShellSubdir + "/shell-card.js", factory: false},
+	}
+	if err := validatePiExtensionsTargets(hybrid); err != nil {
+		t.Fatalf("hybrid list of one flat factory and one nested helper must pass, got: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		list []piExtension
+		want string
+	}{
+		{
+			name: "helper at the extensions root",
+			list: []piExtension{{asset: "pi/shell-card.js", target: "shell-card.js", factory: false}},
+			want: piShellSubdir,
+		},
+		{
+			name: "helper index file in the subdirectory",
+			list: []piExtension{{asset: "pi/" + piShellSubdir + "/index.ts", target: piShellSubdir + "/index.ts", factory: false}},
+			want: "index",
+		},
+		{
+			name: "factory with a nested target",
+			list: []piExtension{{asset: "pi/biggz-footer.js", target: "nested/biggz-footer.js", factory: true}},
+			want: "direct child",
+		},
+		{
+			name: "duplicate target",
+			list: []piExtension{
+				{asset: "pi/biggz-footer.js", target: "biggz-footer.js", factory: true},
+				{asset: "pi/biggz-footer-copy.js", target: "biggz-footer.js", factory: true},
+			},
+			want: "duplicate",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validatePiExtensionsTargets(tc.list)
+			if err == nil {
+				t.Fatalf("validatePiExtensionsTargets(%s) = nil, want an error mentioning %q", tc.name, tc.want)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error for %s should mention %q, got: %v", tc.name, tc.want, err)
+			}
+		})
+	}
+}
+
+// TestPiExtensionsLayout_ShellSubdirManifest covers the manifest rule: a
+// pi/biggz-shell/package.json that declares a `pi` field makes pi load the
+// subdirectory as an extension, so it must be rejected. A manifest without the
+// field, and an absent manifest, both pass.
+func TestPiExtensionsLayout_ShellSubdirManifest(t *testing.T) {
+	manifest := "pi/" + piShellSubdir + "/package.json"
+	withPi := fstest.MapFS{
+		manifest: &fstest.MapFile{Data: []byte(`{"name":"biggz-shell","pi":{"extensions":["index.js"]}}`)},
+	}
+	if err := validatePiShellSubdirManifest(withPi); err == nil {
+		t.Fatalf("manifest %s declaring a `pi` field must be rejected: pi would load %s/ as an extension", manifest, piShellSubdir)
+	} else if !strings.Contains(err.Error(), "`pi` field") {
+		t.Fatalf("error should name the offending `pi` field, got: %v", err)
+	}
+	withoutPi := fstest.MapFS{
+		manifest: &fstest.MapFile{Data: []byte(`{"name":"biggz-shell","private":true}`)},
+	}
+	if err := validatePiShellSubdirManifest(withoutPi); err != nil {
+		t.Fatalf("manifest without a `pi` field must pass, got: %v", err)
+	}
+	if err := validatePiShellSubdirManifest(fstest.MapFS{}); err != nil {
+		t.Fatalf("absent manifest must pass, got: %v", err)
+	}
+	if err := validatePiExtensionsLayout(assets.FS); err != nil {
+		t.Fatalf("embedded assets must satisfy the layout rules, got: %v", err)
 	}
 }
 
 // TestPiExtensionsGuard_ValidateHelperCoversAll ensures the helper and the
-// JS factory test agree on the asset set. If pi_extensions.go adds a new JS
-// extension without updating the JS test, either this or the JS test will fail.
+// factory test agree on the asset set. If pi_extensions.go adds a new extension
+// without updating the factory test, either this or the factory test will fail.
 func TestPiExtensionsGuard_ValidateHelperCoversAll(t *testing.T) {
 	assetsList := piExtensionsDeployList()
 	// Ensure every entry in helper is readable from embedded FS (except when

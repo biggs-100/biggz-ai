@@ -8,34 +8,37 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Mirrors internal/install/steps/pi_extensions.go deploy list.
-// 13 JS extensions + 3 TS (skill-registry family). TS are not pi ExtensionAPI factories.
+// Every entry is a pi extension factory: pi loads every direct
+// extensions/*.js|*.ts as an extension and crashes on one that does not export
+// `export default function(pi)`. That includes the three TypeScript factories
+// (ask-user-choice.ts, codegraph-tools.ts, skill-registry.ts) an earlier
+// extension-suffix guard silently skipped, so this guard checks all 16.
 const DEPLOY_LIST = [
-  { asset: 'pi/biggz-thinking-wrap.js', target: 'biggz-thinking-wrap.js' },
-  { asset: 'pi/biggz-memory-chrome.js', target: 'biggz-memory-chrome.js' },
-  { asset: 'pi/biggz-tool-interception.js', target: 'biggz-tool-interception.js' },
-  { asset: 'pi/biggz-extension-api.js', target: 'biggz-extension-api.js' },
-  { asset: 'pi/biggz-session-guard.js', target: 'biggz-session-guard.js' },
-  { asset: 'pi/biggz-ask-guard.js', target: 'biggz-ask-guard.js' },
-  { asset: 'pi/biggz-last-model.js', target: 'biggz-last-model.js' },
-  { asset: 'pi/biggz-subagent-runtime.js', target: 'biggz-subagent-runtime.js' },
-  { asset: 'pi/biggz-footer.js', target: 'biggz-footer.js' },
-  { asset: 'pi/biggz-tool-pills.js', target: 'biggz-tool-pills.js' },
-  { asset: 'pi/biggz-web-search.js', target: 'biggz-web-search.js' },
-  { asset: 'pi/biggz-question-mouse.js', target: 'biggz-question-mouse.js' },
-  { asset: 'pi/biggz-quiet-tools.js', target: 'biggz-quiet-tools.js' },
-  // TS — skill-registry family, not pi extension factories (no factory check)
-  { asset: 'pi/ask-user-choice.ts', target: 'ask-user-choice.ts' },
-  { asset: 'pi/codegraph-tools.ts', target: 'codegraph-tools.ts' },
-  { asset: 'pi/skill-registry.ts', target: 'skill-registry.ts' },
+  { asset: 'pi/biggz-thinking-wrap.js', target: 'biggz-thinking-wrap.js', factory: true },
+  { asset: 'pi/biggz-memory-chrome.js', target: 'biggz-memory-chrome.js', factory: true },
+  { asset: 'pi/biggz-tool-interception.js', target: 'biggz-tool-interception.js', factory: true },
+  { asset: 'pi/biggz-extension-api.js', target: 'biggz-extension-api.js', factory: true },
+  { asset: 'pi/biggz-session-guard.js', target: 'biggz-session-guard.js', factory: true },
+  { asset: 'pi/biggz-ask-guard.js', target: 'biggz-ask-guard.js', factory: true },
+  { asset: 'pi/biggz-last-model.js', target: 'biggz-last-model.js', factory: true },
+  { asset: 'pi/biggz-subagent-runtime.js', target: 'biggz-subagent-runtime.js', factory: true },
+  { asset: 'pi/biggz-footer.js', target: 'biggz-footer.js', factory: true },
+  { asset: 'pi/biggz-tool-pills.js', target: 'biggz-tool-pills.js', factory: true },
+  { asset: 'pi/biggz-web-search.js', target: 'biggz-web-search.js', factory: true },
+  { asset: 'pi/biggz-question-mouse.js', target: 'biggz-question-mouse.js', factory: true },
+  { asset: 'pi/biggz-quiet-tools.js', target: 'biggz-quiet-tools.js', factory: true },
+  { asset: 'pi/ask-user-choice.ts', target: 'ask-user-choice.ts', factory: true },
+  { asset: 'pi/codegraph-tools.ts', target: 'codegraph-tools.ts', factory: true },
+  { asset: 'pi/skill-registry.ts', target: 'skill-registry.ts', factory: true },
 ];
 
-// pi loader expects every .js in ~/.pi/agent/extensions to export a valid factory.
+// pi loader expects every direct extensions/*.js|*.ts to export a valid factory.
 // Regression guard for biggz-session-guard.js crash: "Extension does not export a valid factory function".
 const FACTORY_RE = /export\s+default\s+function/;
 
 describe('pi extensions must export valid factory', () => {
   for (const entry of DEPLOY_LIST) {
-    if (!entry.target.endsWith('.js')) continue;
+    if (!entry.factory) continue;
     it(`${entry.asset} exports default factory`, () => {
       const abs = path.join(__dirname, path.basename(entry.asset));
       let content;
@@ -56,9 +59,14 @@ describe('pi extensions must export valid factory', () => {
     });
   }
 
-  it('deploy list covers all expected js extensions', () => {
-    const jsCount = DEPLOY_LIST.filter((e) => e.target.endsWith('.js')).length;
-    // Guard against deploy list drift: if pi_extensions.go adds a new JS, this test must be updated.
-    assert.equal(jsCount, 13, `expected 13 JS extensions in deploy list, got ${jsCount} — sync with pi_extensions.go`);
+  it('deploy list covers all expected pi extension factories', () => {
+    const factoryCount = DEPLOY_LIST.filter((e) => e.factory).length;
+    // Guard against deploy list drift: if pi_extensions.go adds a factory, this test must be updated.
+    // 16, not 13: the three TS factories were deployed and unchecked before this change, so the guard is stricter, not looser.
+    assert.equal(
+      factoryCount,
+      16,
+      `expected 16 pi extension factories in deploy list, got ${factoryCount} — the three TS factories were deployed and unchecked before this change, so the guard is stricter, not looser; sync with pi_extensions.go`,
+    );
   });
 });

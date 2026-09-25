@@ -2,9 +2,11 @@ package steps
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -55,8 +57,37 @@ func (p *PiExtensionsStep) Prepare(ctx context.Context) error {
 	if err := validatePiExtensionsFactory(fsys); err != nil {
 		return err
 	}
+	if err := validatePiExtensionsLayout(fsys); err != nil {
+		return err
+	}
 	_ = ctx
 	return nil
+}
+
+// piShellSubdir is the subdirectory under the pi agent's extensions/ directory
+// that holds shell helper modules. A helper cannot sit flat: pi loads every
+// direct extensions/*.js|*.ts as an extension and crashes on one that does not
+// export a factory. pi loads a subdirectory only when it carries an
+// index.js/index.ts or a package.json with a `pi` field, so helpers parked here
+// stay importable by the flat factories while remaining invisible to the loader.
+const piShellSubdir = "biggz-shell"
+
+// piExtension is one entry of the pi extensions deploy list.
+//
+//   - asset is the path inside the embedded assets FS.
+//   - target is the path relative to the pi agent's extensions/ directory.
+//   - factory means "pi loads this file as an extension, so it must export
+//     `export default function(pi)`".
+//
+// The role is recorded rather than inferred from the file extension because this
+// repository ships TypeScript factories (ask-user-choice.ts, codegraph-tools.ts,
+// skill-registry.ts) that pi loads as extensions. The old extension-suffix
+// inference treated every TS asset as a non-factory and silently skipped
+// validating those three deployed extensions.
+type piExtension struct {
+	asset   string
+	target  string
+	factory bool
 }
 
 // piExtensionsDeployList returns the canonical deploy list for pi extensions.
@@ -72,36 +103,41 @@ func (p *PiExtensionsStep) Prepare(ctx context.Context) error {
 // j0k3r cutover (agent discovery, one RPC child per task, background delivery,
 // widget, `subagent*` tools). biggz-wait-pretty.js is retired with the fork —
 // the runtime's `subagent_wait` carries the headline.
-func piExtensionsDeployList() []struct{ asset, target string } {
-	list := []struct{ asset, target string }{
-		{"pi/biggz-thinking-wrap.js", "biggz-thinking-wrap.js"},
-		{"pi/biggz-memory-chrome.js", "biggz-memory-chrome.js"},
-		{"pi/biggz-tool-interception.js", "biggz-tool-interception.js"},
-		{"pi/biggz-extension-api.js", "biggz-extension-api.js"},
-		{"pi/biggz-session-guard.js", "biggz-session-guard.js"},
-		{"pi/biggz-ask-guard.js", "biggz-ask-guard.js"},
-		{"pi/biggz-last-model.js", "biggz-last-model.js"},
-		{"pi/biggz-subagent-runtime.js", "biggz-subagent-runtime.js"},
-		{"pi/biggz-footer.js", "biggz-footer.js"},
-		{"pi/biggz-tool-pills.js", "biggz-tool-pills.js"},
-		{"pi/biggz-web-search.js", "biggz-web-search.js"},
-		{"pi/biggz-question-mouse.js", "biggz-question-mouse.js"},
-		{"pi/biggz-quiet-tools.js", "biggz-quiet-tools.js"},
+//
+// Every entry in this list is currently a factory, including the three TS
+// files: pi loads every direct extensions/*.js|*.ts as an extension. Helpers go
+// under piShellSubdir/ with factory:false (a later unit).
+func piExtensionsDeployList() []piExtension {
+	return []piExtension{
+		{asset: "pi/biggz-thinking-wrap.js", target: "biggz-thinking-wrap.js", factory: true},
+		{asset: "pi/biggz-memory-chrome.js", target: "biggz-memory-chrome.js", factory: true},
+		{asset: "pi/biggz-tool-interception.js", target: "biggz-tool-interception.js", factory: true},
+		{asset: "pi/biggz-extension-api.js", target: "biggz-extension-api.js", factory: true},
+		{asset: "pi/biggz-session-guard.js", target: "biggz-session-guard.js", factory: true},
+		{asset: "pi/biggz-ask-guard.js", target: "biggz-ask-guard.js", factory: true},
+		{asset: "pi/biggz-last-model.js", target: "biggz-last-model.js", factory: true},
+		{asset: "pi/biggz-subagent-runtime.js", target: "biggz-subagent-runtime.js", factory: true},
+		{asset: "pi/biggz-footer.js", target: "biggz-footer.js", factory: true},
+		{asset: "pi/biggz-tool-pills.js", target: "biggz-tool-pills.js", factory: true},
+		{asset: "pi/biggz-web-search.js", target: "biggz-web-search.js", factory: true},
+		{asset: "pi/biggz-question-mouse.js", target: "biggz-question-mouse.js", factory: true},
+		{asset: "pi/biggz-quiet-tools.js", target: "biggz-quiet-tools.js", factory: true},
+		{asset: "pi/ask-user-choice.ts", target: "ask-user-choice.ts", factory: true},
+		{asset: "pi/codegraph-tools.ts", target: "codegraph-tools.ts", factory: true},
+		{asset: "pi/skill-registry.ts", target: "skill-registry.ts", factory: true},
 	}
-	list = append(list, []struct{ asset, target string }{
-		{"pi/ask-user-choice.ts", "ask-user-choice.ts"},
-		{"pi/codegraph-tools.ts", "codegraph-tools.ts"},
-		{"pi/skill-registry.ts", "skill-registry.ts"},
-	}...)
-	return list
 }
 
-// validatePiExtensionsFactory ensures every JS pi extension asset that will be
-// deployed as a pi extension exports a valid factory. pi loader requires every
-// .js in ~/.pi/agent/extensions to export `export default function(pi)` —
-// otherwise pi crashes with "Extension does not export a valid factory function".
-// This is a cheap string-contains check gated to JS targets only; TS assets are
-// skill-registry and not pi factories.
+// validatePiExtensionsFactory asserts the factory role recorded on every deploy
+// entry, regardless of file extension. For a factory the asset must contain
+// `export default function` (pi otherwise crashes with "Extension does not
+// export a valid factory function"). For a helper (factory false) the asset must
+// NOT contain `export default function`: a helper that looks like an extension
+// is one that will eventually be moved flat by mistake and crash pi.
+//
+// The check follows the recorded role, not the suffix: the repository ships TS
+// factories, and the previous suffix rule silently skipped ask-user-choice.ts,
+// codegraph-tools.ts and skill-registry.ts.
 //
 // Runtime width smoke (future): biggz-footer.js must never exceed visibleWidth>width
 // for fixture branch 25c (chore/agent-lesson-guards) + model 80c at widths 20..120.
@@ -115,9 +151,6 @@ func validatePiExtensionsFactory(fsys fs.FS) error {
 		fsys = assets.FS
 	}
 	for _, e := range piExtensionsDeployList() {
-		if !strings.HasSuffix(e.target, ".js") {
-			continue
-		}
 		data, err := fs.ReadFile(fsys, e.asset)
 		if err != nil {
 			// Missing file is not a factory error — test stubs may provide
@@ -127,12 +160,82 @@ func validatePiExtensionsFactory(fsys fs.FS) error {
 			continue
 		}
 		content := string(data)
+		if !e.factory {
+			if strings.Contains(content, "export default function") {
+				return fmt.Errorf("pi shell helper %s looks like an extension: it contains 'export default function', but %s is deployed under %s/ where pi must not load it as an extension — drop the factory export or move the module flat", e.asset, e.target, piShellSubdir)
+			}
+			continue
+		}
 		if !strings.Contains(content, "export default") {
 			return fmt.Errorf("pi extension %s missing factory: must contain 'export default' (pi requires valid factory) — %s will crash pi with 'Extension does not export a valid factory function'", e.asset, e.target)
 		}
 		if !strings.Contains(content, "export default function") {
 			return fmt.Errorf("pi extension %s missing factory function: must contain 'export default function' (pi loader expects factory function) — %s", e.asset, e.target)
 		}
+	}
+	return nil
+}
+
+// validatePiExtensionsLayout asserts the hybrid deploy shape: factories flat in
+// the extensions directory, helpers sealed in a subdirectory pi never loads as
+// an extension. It composes the pure target rules with the embedded-manifest
+// rule so a broken shape fails fast, before Apply writes anything.
+func validatePiExtensionsLayout(fsys fs.FS) error {
+	if err := validatePiExtensionsTargets(piExtensionsDeployList()); err != nil {
+		return err
+	}
+	return validatePiShellSubdirManifest(fsys)
+}
+
+// validatePiExtensionsTargets checks the target paths of a deploy list without
+// touching a filesystem, so the shape rules are testable with synthetic lists:
+// a helper must live under piShellSubdir/, a factory must be a direct child of
+// the extensions directory, no helper may be an index file (which would make pi
+// load the subdirectory as an extension), and two entries may not share a
+// target.
+func validatePiExtensionsTargets(list []piExtension) error {
+	seen := make(map[string]struct{}, len(list))
+	for _, e := range list {
+		if _, dup := seen[e.target]; dup {
+			return fmt.Errorf("duplicate pi extension target %q: two deploy entries would overwrite each other", e.target)
+		}
+		seen[e.target] = struct{}{}
+		if e.factory {
+			if strings.ContainsAny(e.target, "/\\") {
+				return fmt.Errorf("pi extension factory %q must be a direct child of the extensions directory: pi loads only direct extensions/*.js|*.ts entries as extensions, so a factory may not be a nested target", e.target)
+			}
+			continue
+		}
+		if !strings.HasPrefix(e.target, piShellSubdir+"/") {
+			return fmt.Errorf("pi shell helper %q must target a path under %s/: a helper parked flat is loaded by pi as an extension and crashes it", e.target, piShellSubdir)
+		}
+		switch path.Base(e.target) {
+		case "index.js", "index.ts", "index.mjs":
+			return fmt.Errorf("pi shell helper %q may not be an index file: pi loads %s/ as an extension when it carries index.js/index.ts, which is exactly what this design depends on not happening", e.target, piShellSubdir)
+		}
+	}
+	return nil
+}
+
+// validatePiShellSubdirManifest rejects a pi/biggz-shell/package.json that
+// declares a `pi` field: such a manifest makes pi load the subdirectory as an
+// extension. An absent manifest is fine, and any other manifest content is out
+// of scope here.
+func validatePiShellSubdirManifest(fsys fs.FS) error {
+	if fsys == nil {
+		fsys = assets.FS
+	}
+	manifest := "pi/" + piShellSubdir + "/package.json"
+	data, err := fs.ReadFile(fsys, manifest)
+	if err != nil {
+		return nil
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("pi shell subdir manifest %s is not valid JSON: %w", manifest, err)
+	}
+	if _, ok := doc["pi"]; ok {
+		return fmt.Errorf("pi shell subdir manifest %s declares a `pi` field: pi would load %s/ as an extension, which this design depends on not happening — remove the field", manifest, piShellSubdir)
 	}
 	return nil
 }
@@ -155,9 +258,13 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 	if fsys == nil {
 		fsys = assets.FS
 	}
-	// Fail fast if any JS extension lacks a valid factory — prevents
-	// deploying a broken extension that would crash pi on startup.
+	// Fail fast if any deployed extension lacks a valid factory, or if the
+	// hybrid layout is broken — prevents deploying a shape that would crash
+	// pi on startup.
 	if err := validatePiExtensionsFactory(fsys); err != nil {
+		return err
+	}
+	if err := validatePiExtensionsLayout(fsys); err != nil {
 		return err
 	}
 	// Deploy pi subagents.
@@ -188,43 +295,8 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 	// (2026-09-08 pi-wrapper-removal: biggz-synthesis-gate.js no longer
 	// deployed either — excluded from piExtensionsDeployList with stale
 	// self-heal; native /mcp via pi-mcp-adapter@^2 is the only memory path.)
-	extCount := 0
-	for i, e := range extensions {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		if p.FailAfter > 0 && extCount >= p.FailAfter {
-			return fmt.Errorf("injected failure after %d extensions", p.FailAfter)
-		}
-		data, err := fs.ReadFile(fsys, e.asset)
-		if err != nil {
-			continue
-		}
-		extDir := piExtensionsDir(p.HomeDir)
-		target := filepath.Join(extDir, e.target)
-		if p.DryRun {
-			extCount++
-			p.Deployed++
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			return err
-		}
-		if err := p.tracker.write(target, data, 0644); err != nil {
-			return err
-		}
-		extCount++
-		p.Deployed++
-		if ch != nil && i%3 == 0 {
-			select {
-			case ch <- pipeline.ProgressEvent{Step: p.Name(), Percent: 30 + i*5, Message: e.target}:
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
-			}
-		}
+	if _, err := p.deployExtensionFiles(ctx, fsys, extensions, ch); err != nil {
+		return err
 	}
 	// Deploy themes.
 	if !p.DryRun {
@@ -262,6 +334,56 @@ func (p *PiExtensionsStep) Apply(ctx context.Context, ch pipeline.ProgressChan) 
 	}
 	return nil
 }
+
+// deployExtensionFiles writes every entry of list into the pi agent's
+// extensions/ directory, creating the target's parent directory so nested
+// helpers (targets under piShellSubdir) land in their subdirectory. It returns
+// the number of entries it wrote or would write (DryRun counts too); an entry
+// whose asset is unreadable is skipped silently and not counted, preserving the
+// original loop's continue. Extracted from Apply so the hybrid shape is
+// testable without a full install run.
+func (p *PiExtensionsStep) deployExtensionFiles(ctx context.Context, fsys fs.FS, list []piExtension, ch pipeline.ProgressChan) (int, error) {
+	extDir := piExtensionsDir(p.HomeDir)
+	extCount := 0
+	for i, e := range list {
+		select {
+		case <-ctx.Done():
+			return extCount, ctx.Err()
+		default:
+		}
+		if p.FailAfter > 0 && extCount >= p.FailAfter {
+			return extCount, fmt.Errorf("injected failure after %d extensions", p.FailAfter)
+		}
+		data, err := fs.ReadFile(fsys, e.asset)
+		if err != nil {
+			continue
+		}
+		target := filepath.Join(extDir, e.target)
+		if p.DryRun {
+			extCount++
+			p.Deployed++
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return extCount, err
+		}
+		if err := p.tracker.write(target, data, 0644); err != nil {
+			return extCount, err
+		}
+		extCount++
+		p.Deployed++
+		if ch != nil && i%3 == 0 {
+			select {
+			case ch <- pipeline.ProgressEvent{Step: p.Name(), Percent: 30 + i*5, Message: e.target}:
+			case <-ctx.Done():
+				return extCount, ctx.Err()
+			default:
+			}
+		}
+	}
+	return extCount, nil
+}
+
 func (p *PiExtensionsStep) deploySubAgents(ctx context.Context, fsys fs.FS) (int, error) {
 	agentsDir := piAgentsDir(p.HomeDir)
 	count := 0
