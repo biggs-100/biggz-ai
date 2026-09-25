@@ -66,7 +66,7 @@ Load-bearing choices already made by the human (2026-09-24):
 
 ### Phase 2 — deploy plumbing
 
-- [ ] 2.1 Hybrid deploy shape plus installer guard.
+- [x] 2.1 Hybrid deploy shape plus installer guard.
   Acceptance: `piExtensionsDeployList` supports nested targets so helpers land in
   `<agentDir>/extensions/biggz-shell/`; a new guard asserts that directory never gains
   `index.js`/`index.ts` or a `package.json` with a `pi` field (which would make Pi load it
@@ -115,7 +115,7 @@ Load-bearing choices already made by the human (2026-09-24):
 | 1.1 | `go test ./internal/install/... ./internal/install/steps/...` | ok, both packages. `TestPiThemes_StatusLineKeysResolvable` passes for all 7 themes; `TestDefaultPiThemeIsDeployed` and `TestEnsurePiThemeWritesDefaultAndPreservesOtherSettings` pass. `git diff` on `solarized-osaka.json` is exactly the 14 added keys. | `2bfa0ec0` |
 | 1.2 | `go test ./internal/install/steps/ -run "TestPiAssets|TestPortedFiles" -v`, plus pi's real `validateThemeJson` over all seven `pi/themes/*.json` | PASS. Guard logs "scanned 16 deployed pi assets"; provenance subtests pass 3/3; no brand asset under `pi/`; pi's real theme loader accepted the new `$comment` on all seven themes; `go test ./internal/install/...` green. A temporary probe proved the guard fails on a regression before reverting it. | `07aa401a` |
 | 1.3 | `find ~/.gentle-shell/agent -maxdepth 2 -printf '%T@ %p\n'` snapshotted before and after `go test ./...`, with `PI_CODING_AGENT_DIR` exported to that live home | `internal/install` and `internal/install/steps` green; the only home difference was `gentle-agents/presence`, the running session's own heartbeat. Seven pre-existing failures fixed. Before the fix the same command rewrote `settings.json`, `mcp.json`, `extensions/` and `agents/` in the live home. | `bff680c1` |
-| 2.1 | | | |
+| 2.1 | `go test ./internal/install/... -count=1`, `go test ./internal/install/steps/ -run TestPiExtensions -v`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs` | PASS. The guard now checks 16 factories instead of 13 and names the change as stricter; `TestPiExtensionsStep_DeploysNestedHelper` proves a flat factory and a nested helper land in the right places; `TestPiExtensionsLayout_Targets` covers helper-at-root, helper index file, nested factory and duplicate target; `TestPiExtensionsLayout_ShellSubdirManifest` covers the `pi` field. Node test 17/17. The brand guard still scans 16 deployed assets. | `8398ddeb` |
 | 2.2 | | | |
 | 2.3 | | | |
 | 2.4 | | | |
@@ -175,20 +175,28 @@ scope.
 `PI_CODING_AGENT_DIR`, which fixed seven pre-existing failures and stopped the suite from
 writing into a live pi agent home.
 
+2.1 — the deploy list records each entry's role instead of inferring it from the file
+extension, helpers are sealed in `extensions/biggz-shell/` where the pi loader never looks,
+and both validators run before anything is written. Reading the installer also exposed a
+defect fixed here: `ask-user-choice.ts`, `codegraph-tools.ts` and `skill-registry.ts` are
+pi extension factories deployed flat, and the old suffix rule validated none of them, so a
+broken TS factory would have crashed pi with nothing catching it.
+
 Known failures outside this work, identical on `HEAD` before the change (verified by
 stashing): `internal/agents/pi` 4, `internal/git` 1, `internal/project` 6, `cmd/biggz` 2,
 `internal/review` 2. `internal/agents/pi`'s four are the same `PI_CODING_AGENT_DIR`
 hermeticity class of bug and are not yet fixed.
 
-Next step: task 2.1, the hybrid deploy shape and installer guard. Every remaining unit
-depends on it, because the shell helpers cannot sit flat in `extensions/` without Pi loading
-them as extensions.
+Next step: task 2.2, porting the pure primitives into `internal/assets/pi/biggz-shell/` with
+`factory: false` entries, now that the shape and its guards exist. The ported modules keep
+their `pi-tui` imports (the deployed assets already resolve that package at runtime) and
+must not import anything outside the subdirectory plus `pi-tui` and `node:*`.
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
 path with the design in front of us (risk 5).
 
-Commit status: three work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1),
-`bff680c1` (1.3), `07aa401a` (1.2) — plus the tracking commits. Push and pull request remain
-human decisions. A pre-existing untracked change,
+Commit status: four work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
+(1.3), `07aa401a` (1.2), `8398ddeb` (2.1) — plus the tracking commits. Push and pull request
+remain human decisions. A pre-existing untracked change,
 `openspec/changes/fix-archived-change-identity/`, was left untouched.
