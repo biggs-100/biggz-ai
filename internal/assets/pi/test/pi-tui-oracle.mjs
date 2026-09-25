@@ -3,9 +3,10 @@
  *
  * Resolved by `pi-tui-resolver.mjs` ONLY when no real pi-tui install is reachable,
  * so the runtime test suite runs on machines without pi. Implements the cell-aware
- * subset the runtime renders with — `visibleWidth` / `truncateToWidth` — mirroring
- * pi-tui 0.85.1 semantics for the S4 fixture families (ASCII, emoji, CJK, Hangul,
- * ZWJ, ANSI, combining marks). The real pi-tui stays authoritative: the fidelity
+ * subset the runtime and the ported shell modules render with — `visibleWidth`,
+ * `truncateToWidth` and `wrapTextWithAnsi` — mirroring pi-tui 0.85.1 semantics for
+ * the S4 fixture families (ASCII, emoji, CJK, Hangul, ZWJ, ANSI, combining marks).
+ * The real pi-tui stays authoritative: the fidelity
  * test in `biggz-subagent-runtime.test.mjs` compares both implementations whenever
  * an install is available. No runtime code may use this module directly.
  */
@@ -24,6 +25,18 @@ const isCombining = (cp) =>
 	(cp >= 0xfe00 && cp <= 0xfe0f) ||
 	(cp >= 0xfe20 && cp <= 0xfe2f);
 
+// pi-tui resolves these Misc Symbols / Dingbats to width 2 (emoji presentation);
+// the rest of the 0x2600-0x27bf block is width 1, so a blanket range would
+// mis-measure the shell's petals (✿ ❀ ❁ ✾) and status glyphs (✓ ◐ ▰ ✎).
+const WIDE_MISC_SYMBOLS = new Set([
+	0x2614, 0x2615, 0x2630, 0x2631, 0x2632, 0x2633, 0x2634, 0x2635, 0x2636, 0x2637,
+	0x2648, 0x2649, 0x264a, 0x264b, 0x264c, 0x264d, 0x264e, 0x264f, 0x2650, 0x2651,
+	0x2652, 0x2653, 0x267f, 0x268a, 0x268b, 0x268c, 0x268d, 0x268e, 0x268f, 0x2693,
+	0x26a1, 0x26aa, 0x26ab, 0x26bd, 0x26be, 0x26c4, 0x26c5, 0x26ce, 0x26d4, 0x26ea,
+	0x26f2, 0x26f3, 0x26f5, 0x26fa, 0x26fd, 0x2705, 0x270a, 0x270b, 0x2728, 0x274c,
+	0x274e, 0x2753, 0x2754, 0x2755, 0x2757, 0x2795, 0x2796, 0x2797, 0x27b0, 0x27bf,
+]);
+
 // East-Asian-wide / emoji ranges covering the harness fixtures (subset of get-east-asian-width).
 const isWide = (cp) =>
 	(cp >= 0x1100 && cp <= 0x115f) ||
@@ -36,7 +49,7 @@ const isWide = (cp) =>
 	(cp >= 0xff00 && cp <= 0xff60) ||
 	(cp >= 0xffe0 && cp <= 0xffe6) ||
 	(cp >= 0x231a && cp <= 0x231b) ||
-	(cp >= 0x2600 && cp <= 0x27bf) ||
+	WIDE_MISC_SYMBOLS.has(cp) ||
 	(cp >= 0x2b1b && cp <= 0x2b1c) ||
 	cp === 0x2b50 ||
 	cp === 0x2b55 ||
@@ -79,12 +92,129 @@ function sliceByWidth(text, limit) {
 	return out;
 }
 
+// Word wrap that preserves ANSI codes, mirroring pi-tui's wrapTextWithAnsi:
+// only breaks at whitespace, hard-breaks a token wider than the limit, and
+// never pads. The resolver supplies this symbol to the ported shell modules.
+const ANSI_CODE_RE = /\u001B\[[0-9;?]*[ -/]*[@-~]|\u001B\][\s\S]*?(?:\u0007|\u001B\\|\u009C|$)|\u001B[@-Z\\-_]|\u009B[0-9;?]*[ -/]*[@-~]/y;
+
+function ansiCodeAt(text, index) {
+	ANSI_CODE_RE.lastIndex = index;
+	const match = ANSI_CODE_RE.exec(text);
+	return match && match.index === index ? match[0] : null;
+}
+
+function wrapTokens(line) {
+	const tokens = [];
+	let pendingAnsi = "";
+	let index = 0;
+	while (index < line.length) {
+		const ansi = ansiCodeAt(line, index);
+		if (ansi) {
+			pendingAnsi += ansi;
+			index += ansi.length;
+			continue;
+		}
+		let end = index;
+		while (end < line.length && !ansiCodeAt(line, end)) end += 1;
+		for (const { segment } of SEGMENTER.segment(line.slice(index, end))) {
+			const space = segment === " ";
+			const text = pendingAnsi + segment;
+			pendingAnsi = "";
+			const last = tokens[tokens.length - 1];
+			if (last && last.space === space) last.text += text;
+			else tokens.push({ space, text });
+		}
+		index = end;
+	}
+	if (pendingAnsi) {
+		const last = tokens[tokens.length - 1];
+		if (last) last.text += pendingAnsi;
+		else tokens.push({ space: false, text: pendingAnsi });
+	}
+	return tokens;
+}
+
+function breakToken(token, width) {
+	const parts = [];
+	let current = "";
+	let used = 0;
+	let index = 0;
+	while (index < token.length) {
+		const ansi = ansiCodeAt(token, index);
+		if (ansi) {
+			current += ansi;
+			index += ansi.length;
+			continue;
+		}
+		const segment = graphemes(token.slice(index))[0] ?? token[index];
+		const segmentWidth = graphemeWidth(segment);
+		if (used > 0 && used + segmentWidth > width) {
+			parts.push(current);
+			current = "";
+			used = 0;
+		}
+		current += segment;
+		used += segmentWidth;
+		index += segment.length;
+	}
+	if (current) parts.push(current);
+	return parts.length > 0 ? parts : [""];
+}
+
+function wrapSingleLine(line, width) {
+	if (!line) return [""];
+	if (visibleWidth(line) <= width) return [line];
+	const lines = [];
+	let current = "";
+	let currentWidth = 0;
+	for (const token of wrapTokens(line)) {
+		const tokenWidth = visibleWidth(token.text);
+		if (tokenWidth > width && !token.space) {
+			if (current) {
+				lines.push(current.trimEnd());
+				current = "";
+				currentWidth = 0;
+			}
+			const broken = breakToken(token.text, width);
+			for (let i = 0; i < broken.length - 1; i += 1) lines.push(broken[i]);
+			current = broken[broken.length - 1];
+			currentWidth = visibleWidth(current);
+			continue;
+		}
+		if (currentWidth > 0 && currentWidth + tokenWidth > width) {
+			lines.push(current.trimEnd());
+			if (token.space) {
+				current = "";
+				currentWidth = 0;
+			} else {
+				current = token.text;
+				currentWidth = tokenWidth;
+			}
+		} else {
+			current += token.text;
+			currentWidth += tokenWidth;
+		}
+	}
+	if (current) lines.push(current.trimEnd());
+	return lines.length > 0 ? lines.map((wrapped) => wrapped.trimEnd()) : [""];
+}
+
+export function wrapTextWithAnsi(text, width) {
+	if (!text) return [""];
+	const limit = Math.max(1, Math.floor(Number(width) || 0));
+	const result = [];
+	for (const inputLine of String(text).split(/\r\n|\r|\n/)) {
+		for (const wrapped of wrapSingleLine(inputLine, limit)) result.push(wrapped);
+	}
+	return result.length > 0 ? result : [""];
+}
+
 export function truncateToWidth(text, maxWidth, ellipsis = "...", pad = false) {
 	const limit = Math.floor(Number(maxWidth) || 0);
 	const raw = stripTerminalSequences(text);
 	if (limit <= 0) return "";
 	const width = visibleWidth(raw);
-	if (width <= limit) return pad ? raw + " ".repeat(limit - width) : raw;
+	if (width <= limit) return pad ? text + " ".repeat(limit - width) : text;
 	const ellipsisWidth = visibleWidth(ellipsis);
 	if (ellipsisWidth >= limit) {
 		// Mirror pi-tui: clip the ellipsis itself when it cannot fit alongside text.

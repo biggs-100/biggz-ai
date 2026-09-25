@@ -106,7 +106,7 @@ type piExtension struct {
 //
 // Every entry in this list is currently a factory, including the three TS
 // files: pi loads every direct extensions/*.js|*.ts as an extension. Helpers go
-// under piShellSubdir/ with factory:false (a later unit).
+// under piShellSubdir/ with factory:false, after the factory block.
 func piExtensionsDeployList() []piExtension {
 	return []piExtension{
 		{asset: "pi/biggz-thinking-wrap.js", target: "biggz-thinking-wrap.js", factory: true},
@@ -125,6 +125,18 @@ func piExtensionsDeployList() []piExtension {
 		{asset: "pi/ask-user-choice.ts", target: "ask-user-choice.ts", factory: true},
 		{asset: "pi/codegraph-tools.ts", target: "codegraph-tools.ts", factory: true},
 		{asset: "pi/skill-registry.ts", target: "skill-registry.ts", factory: true},
+		// Shell helpers: pure drawing primitives imported by the shell factories.
+		// pi must never load them as extensions, so they live in piShellSubdir/.
+		{asset: "pi/biggz-shell/shell-gauge.ts", target: piShellSubdir + "/shell-gauge.ts", factory: false},
+		{asset: "pi/biggz-shell/shell-hover.ts", target: piShellSubdir + "/shell-hover.ts", factory: false},
+		{asset: "pi/biggz-shell/terminal-theme.ts", target: piShellSubdir + "/terminal-theme.ts", factory: false},
+		{asset: "pi/biggz-shell/shell-card.ts", target: piShellSubdir + "/shell-card.ts", factory: false},
+		{asset: "pi/biggz-shell/shell-changes.ts", target: piShellSubdir + "/shell-changes.ts", factory: false},
+		{asset: "pi/biggz-shell/shell-usage.ts", target: piShellSubdir + "/shell-usage.ts", factory: false},
+		{asset: "pi/biggz-shell/shell-todo.ts", target: piShellSubdir + "/shell-todo.ts", factory: false},
+		{asset: "pi/biggz-shell/shell-prompt.ts", target: piShellSubdir + "/shell-prompt.ts", factory: false},
+		{asset: "pi/biggz-shell/shell-sidebar.ts", target: piShellSubdir + "/shell-sidebar.ts", factory: false},
+		{asset: "pi/biggz-shell/review-sidebar-state.ts", target: piShellSubdir + "/review-sidebar-state.ts", factory: false},
 	}
 }
 

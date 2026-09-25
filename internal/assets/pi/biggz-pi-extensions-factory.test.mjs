@@ -8,11 +8,15 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Mirrors internal/install/steps/pi_extensions.go deploy list.
-// Every entry is a pi extension factory: pi loads every direct
+// This mirror deliberately covers the FACTORY entries only: pi loads every direct
 // extensions/*.js|*.ts as an extension and crashes on one that does not export
 // `export default function(pi)`. That includes the three TypeScript factories
 // (ask-user-choice.ts, codegraph-tools.ts, skill-registry.ts) an earlier
-// extension-suffix guard silently skipped, so this guard checks all 16.
+// extension-suffix guard silently skipped, so this guard checks all 16. The ten
+// `pi/biggz-shell/*.ts` helpers are factory:false and are NOT listed here: they are
+// covered by the Go layout guard (validatePiExtensionsFactory/Layout, which require
+// every helper to sit under biggz-shell/ and forbid a factory export) plus their own
+// co-located `biggz-shell/*.test.mjs` suites. Do not add fake entries to pad a count.
 const DEPLOY_LIST = [
   { asset: 'pi/biggz-thinking-wrap.js', target: 'biggz-thinking-wrap.js', factory: true },
   { asset: 'pi/biggz-memory-chrome.js', target: 'biggz-memory-chrome.js', factory: true },
