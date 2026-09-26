@@ -271,28 +271,47 @@ review.
   coexists, so the banner was separable from the row and was made a decision (D9) instead of a
   side effect.
 
-- [ ] 2.15 Close the four findings the native review of 2.6 admitted.
+- [x] 2.15a Close the two WARNING findings of the native review of 2.6.
   Acceptance: (a) a pi-tui release that drops `ScrollView` or `VStack` no longer takes the whole
-  shell extension down — the rail's import is loaded so that a missing export degrades to the
-  no-rail bar instead of failing at ESM link time, and a test proves the extension still installs
-  its footer, header row and command with the rail module unloadable; (b) the D12 detector fails
-  only when no candidate resolved, so a stale pi-tui sitting beside a usable one, or an explicit
-  `PI_TUI_DIR`, cannot produce a spurious hard failure with a message that misstates the fallback;
-  (c) `reclaimFooterRow`'s re-host path has a test that actually builds a dock whose layout node
-  holds a nested entry, since every current fixture takes the early return; (d) the rail wiring in
-  `biggz-shell.ts` is asserted rather than grepped: the digest over `footerModel()`/presentation
-  changing when the model changes, the header usage-span click handler, and the
-  `disposeHeader`/`uninstall`/`part.dispose` chain on a throwing component.
-  Why: these are the four findings of the native review of 2.6 (R3-001 and R3-002 WARNING, R3-003
-  and R3-004 SUGGESTION, all inferential and `informational`). R3-001 is the one that matters:
-  D12 promises that losing the private internals costs the rail and nothing else, but the static
-  import means a dropped export costs the entire shell — the footer, the header row and
-  `/biggz-usage` go with it — because no guard can run when the specifier itself stops resolving.
-  R3-002 is the mirror image: the detector built to be loud is loud in the wrong case, failing on
-  a candidate the resolver was designed to skip past.
-  Evidence: the reviewer's ledger, `internal/assets/pi/biggz-shell/shell-sidebar-layout.ts:16`
-  (R3-001), `shell-sidebar-layout.test.mjs:99` (R3-002), `shell-sidebar-layout.ts:285` (R3-003)
-  and `internal/assets/pi/biggz-shell.ts:321` (R3-004).
+  shell extension down — the rail is loaded through a cached lazy import whose failure maps to a
+  handle or `undefined`, the former `invalidateSidebar` call sites degrade to no-ops, a module
+  that resolves after the footer callback still installs the rail exactly once, a throw on that
+  late path is contained, and disposal across the async gap is correct; a subprocess fixture with
+  a stub pi-tui lacking both exports proves the footer, the widget, `/biggz-usage` and `alt+u`
+  still install with the rail absent and the layout root untouched; (b) the D12 detector fails
+  only when nothing resolved, so a stale pi-tui beside a usable one, or an explicit `PI_TUI_DIR`,
+  cannot produce a spurious hard failure with a message that misstates the fallback.
+  Evidence: `node --test internal/assets/pi/biggz-shell.test.mjs
+  internal/assets/pi/biggz-shell/*.test.mjs` (258 assertions), `node --test internal/assets/pi/test/*.test.mjs`
+  (5, covering the containment fixture and the three timing cases), `go test ./internal/install/... -count=1`.
+  Both directions of the D12 rule and both timing guards were mutation-checked: dropping the
+  `disposed` check fails the dispose-before-resolve case, removing the `try/catch` fails the
+  throwing-late-install case, and the doctored candidate still fails the detector while a stale
+  sibling beside a usable install passes.
+  Deliberate boundary: the shell's own public pi-tui symbols (`truncateToWidth`, `visibleWidth`,
+  `wrapTextWithAnsi`, `Key`, `matchesKey`) remain hard static dependencies, so losing one of those
+  still takes the shell down. That is the shell's rendering API, not the rail's private internals.
+
+- [ ] 2.15b Close the four remaining coverage and behaviour findings.
+  Acceptance: (a) the synchronous rail install branch in `biggz-shell.ts` is exercised — it is the
+  steady-state path for every session after the first in the same process, and no current test
+  reaches it because the timing suite always gates the module and the containment fixture makes it
+  unloadable; (b) a rail installed after the footer callback requests a render, so the first
+  session's rail cannot stay invisible until an unrelated render, with the timing suite asserting
+  the render rather than only that `installSidebar` was invoked; (c) `reclaimFooterRow`'s re-host
+  path has a test that builds a dock whose layout node holds a nested entry, since every current
+  fixture takes the early return; (d) the rail wiring in `biggz-shell.ts` is asserted rather than
+  grepped: the digest over `footerModel()`/presentation changing when the model changes, the
+  header usage-span click handler, and the `disposeHeader`/`uninstall`/`part.dispose` chain on a
+  throwing component.
+  Why: (a) and (b) are the two findings of the native review of 2.15a (R3-001 WARNING and
+  deterministic — the unproved branch is the common one — and R3-002 SUGGESTION about the missing
+  render); (c) and (d) are R3-003 and R3-004 from the review of 2.6. All four are advisory and
+  `informational`, so they are later work by construction and never a reason to re-review an
+  approved candidate.
+  Evidence: the reviewers' ledgers, `internal/assets/pi/biggz-shell.ts:399` and `:392` for (a) and
+  (b), `internal/assets/pi/biggz-shell/shell-sidebar-layout.ts:285` for (c) and
+  `internal/assets/pi/biggz-shell.ts:321` for (d).
 
 ## Evidence
 
@@ -313,6 +332,7 @@ review.
 | 2.9 | | | |
 | 2.10 | `go test ./internal/install/steps/ -run TestPiAssets -v` and `node --test internal/assets/pi/biggz-shell/*.test.mjs` | PASS. The guard scans 32 deployed assets; its stale-entry sub-test fails on an inserted stale entry with its delete-this message, verified by inserting one and reverting, and passes again after. Both renames confirmed by diff. An independent scan of the 32 assets found zero `gentle` literals outside the allowlist. | `e165d77a` |
 | 2.11 | | | |
+| 2.15a | `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; the containment fixture and the timing suite individually; both D12 directions; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiShellWidget\|TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. 258 rail-suite assertions, 5 in the test directory (the containment fixture plus the three timing cases) and 17 factory, all green; brand guard scans 34 deployed assets; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged across the run. The containment is proved by execution, not prose: with a stub pi-tui that lacks `ScrollView`/`VStack`, the fixture's first test pins the link error itself (a `SyntaxError` naming the missing export, so the control cannot pass for an unrelated reason) and the second asserts the footer, widget, `/biggz-usage` and `alt+u` all install with the rail absent. The async-gap cases settle a test-held promise rather than sleeping, and both guards were mutation-checked. Independent verification returned PASS WITH FINDINGS and all four items were closed in-unit, including the unchecked cast — now `typeof import(...)`, validated by a scoped `tsc --noEmit` run whose error set is identical before and after. Native review of the same tree: lineage `review-8e81366b1896f49f`, 6 paths, 577 changed lines, `approved`, two advisory findings now in 2.15b. | `e7b5e3bf` |
 
 ## Known risks
 
@@ -508,18 +528,19 @@ producer. Queued behind it are the two defect fixes 2.9 (theme preview on termin
 colours) and 2.11 (review sidebar protocol, now also the owner of the lineage/lens/budget facts
 risk 12 describes), then 2.8 (prompt ownership), 2.12 (the two guards 2.4's verification found
 narrower than their invariants), 2.13 (the two reliability findings the native review of 2.5
-admitted), 2.14 (the banner, deferred by D9) and 2.15 (the four findings the native review of 2.6
-admitted, the static-import one first).
+admitted), 2.14 (the banner, deferred by D9) and 2.15b (the coverage and behaviour findings the
+reviews of 2.6 and 2.15a left behind).
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
 path with the design in front of us (risk 5).
 
-Commit status: eleven work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
+Commit status: twelve work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
 (1.3), `07aa401a` (1.2), `8398ddeb` (2.1), `35cdc44f` (2.2a), `1cffbe2c` (2.2b), `562ef0d0`
-(2.3), `e165d77a` (2.10), `da28997d` (2.4), `7fe76875` (2.5), `bca03d1f` (2.6) — plus the
-tracking commits. Push and pull request remain human decisions. A pre-existing untracked change,
-`openspec/changes/fix-archived-change-identity/`, was left untouched.
+(2.3), `e165d77a` (2.10), `da28997d` (2.4), `7fe76875` (2.5), `bca03d1f` (2.6), `e7b5e3bf`
+(2.15a) — plus the tracking commits. Push and pull request remain human decisions. A
+pre-existing untracked change, `openspec/changes/fix-archived-change-identity/`, was left
+untouched.
 
 Review size: 2.4 changed 748 lines, 613 of them new files (the factory, its suite and the new
 Go guard). That is above the 400-line review budget, and it is the exception this repository
@@ -543,3 +564,13 @@ file it points at — so it followed 2.5 down the same path: native review befor
 the `current-changes` projection, lineage `review-194f0bd3d9575e4b`, one `review-reliability`
 lens, medium tier, correction budget 200, `approved` with four advisory findings (2.15). The
 staged tree was again compared against the reviewed candidate tree and matched byte for byte.
+
+2.15a is the first unit written to close another unit's review, and it changed a promise rather
+than a feature: D12 said losing the private internals costs the rail and nothing else, but the
+static import meant a dropped `ScrollView`/`VStack` export cost the entire shell, because no guard
+runs when the specifier stops resolving. The rail is now loaded lazily, with the type still
+derived from the module so the call signatures stay checked, and the containment is proved by a
+stub pi-tui in a subprocess rather than argued. Its own review then found the two things a
+containment fix usually leaves unproven — the synchronous branch that every later session takes,
+and the render a late install never requests — which is exactly the kind of finding the review is
+for, and they are 2.15b.
