@@ -5,14 +5,23 @@
 // This module binds to experimental pi-tui internals, not to its public API,
 // and is pinned to the 0.85.1 shapes the port was written against: the
 // `layout-node` symbol below, `host.mode` and `host.layoutRoot` on the TUI, and
-// the ScrollView/VStack constructors. D12 deliberately accepts silent runtime
-// degradation when a pi-tui bump changes those shapes (no user-visible
-// warning), so the co-located suite (shell-sidebar-layout.test.mjs) is the only
-// detector, and it is precise about its reach: it FAILS when a *discovered*
-// install keeps its package name but stops naming a required PI_TUI_SHELL_SYMBOLS
-// symbol (naming the directory and the missing symbols), shape-asserts an
-// install that does resolve, and skips only when no pi-tui install is present
-// at all, treating the oracle as the shape reference in that run.
+// the ScrollView/VStack constructors. biggz-shell.ts imports this module
+// lazily (biggz-shell.ts's SidebarLayoutModule), so a pi-tui release that drops
+// ScrollView/VStack fails this module's ESM link without touching the rest of
+// the shell: the footer, header row, /biggz-usage and its shortcut keep
+// installing and the rail is simply absent (D12's silent, clean no-rail bar).
+// D12 accepts that silent runtime degradation (no user-visible warning), so the
+// co-located suite (shell-sidebar-layout.test.mjs) is the only detector. Its
+// reach has four states, and the comments there enumerate them too: an install
+// that resolves is shape-asserted; a *discovered* install that kept its package
+// name but stopped naming a required PI_TUI_SHELL_SYMBOLS symbol FAILS the
+// suite when nothing resolved (naming the directory and the missing symbols) and
+// is a handled, passing condition when some other install resolved, because the
+// resolver skips a stale sibling by design; and when there is neither a usable
+// install nor such a rejected candidate — no install at all, or a directory
+// classified `not-a-pi-tui-package` (wrong package name, a missing or renamed
+// `main`, or an unparsable package.json) — the suite skips and the oracle is the
+// shape reference in that run.
 import { ScrollView, VStack, visibleWidth, type Component, type TUI, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { sidebarState, type SidebarRail } from "./shell-sidebar.ts";
 import type { ShellBarTheme } from "./shell-bar.ts";

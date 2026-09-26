@@ -12,9 +12,11 @@
 // pi-tui is supplied by the repository's test oracle (see test/pi-tui-resolver.mjs).
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PI_TUI_SPECIFIER } from "./test/pi-tui-resolver.mjs";
 
 // Keep the visual-settings read hermetic: resolveVisualSettings() reads
@@ -503,4 +505,21 @@ test("the extension's session_shutdown clears the header widget and disposes the
 	handlers.get("session_shutdown")();
 	assert.equal(footerData.unsubscribed.length, 1, "session_shutdown must be idempotent");
 	component.invalidate();
+});
+
+// R3-001 containment, proved by execution. The fixture runs in a fresh process
+// with a module hook that resolves @earendil-works/pi-tui to a stub missing
+// ScrollView/VStack: it asserts the footer, the below-editor widget, /biggz-usage
+// and the shortcut still install while no rail is installed, and that the stub
+// really does break the rail module's link. A subprocess is required because
+// installPiTuiResolver() cannot be re-pointed inside one process.
+test("a pi-tui that cannot provide ScrollView/VStack leaves the shell working and the rail absent (R3-001)", () => {
+	const fixture = fileURLToPath(new URL("./test/pi-tui-missing-scrollview.test.mjs", import.meta.url));
+	// Strip the parent test runner's context: a nested `node --test` that inherits
+	// NODE_TEST_CONTEXT refuses to run files, which would make this proof vacuous.
+	const env = { ...process.env };
+	delete env.NODE_TEST_CONTEXT;
+	const result = spawnSync(process.execPath, ["--test", fixture], { encoding: "utf8", env });
+	assert.equal(result.status, 0, `the rail's import must be contained to the rail\n${result.stdout}\n${result.stderr}`);
+	assert.match(result.stdout, /✔ a pi-tui without ScrollView\/VStack still installs the shell and no rail/, `the child fixture must actually have run\n${result.stdout}\n${result.stderr}`);
 });

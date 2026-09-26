@@ -35,7 +35,6 @@ import {
 	type ShellBarTheme,
 } from "./biggz-shell/shell-bar.ts";
 import { sidebarHeader, sidebarPart, sidebarState } from "./biggz-shell/shell-sidebar.ts";
-import { installSidebar, invalidateSidebar } from "./biggz-shell/shell-sidebar-layout.ts";
 import {
 	parseProviderUsage,
 	parseUsageSource,
@@ -79,6 +78,21 @@ interface BuildOptions {
 }
 
 type Presentation = ReturnType<typeof resolveVisualSettings>["settings"];
+
+// Unit 2.15 (R3-001) containment. shell-sidebar-layout.ts binds to pi-tui's
+// private ScrollView/VStack constructors (shell-sidebar-layout.ts:16). A static
+// import of that module here would make a pi-tui release that drops either
+// export fail at ESM link time and take the whole shell with it: the footer,
+// the below-editor header row, /biggz-usage and its shortcut. The module is
+// therefore imported lazily, and a module that cannot link leaves the rail
+// absent while everything else installs and runs (D12: silently, with no
+// user-visible warning and no thrown error out of the factory).
+//
+// The type is derived from the module (a type-only `typeof import`, erased at
+// runtime, so it adds no static import) rather than hand-declared: a signature
+// drift in installSidebar/invalidateSidebar is then a compile-time error at the
+// call sites below instead of an unchecked runtime assumption.
+type SidebarLayoutModule = typeof import("./biggz-shell/shell-sidebar-layout.ts");
 
 interface AssistantUsageEntry {
 	type: string;
@@ -213,6 +227,17 @@ export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
 	let presentation: Presentation | undefined;
 	let currentContext: ExtensionContext | undefined;
 	let renderHost: ShellRenderHost | undefined;
+	// R3-001: the rail module is loaded once and cached; a failed link resolves
+	// to undefined so every dependent path degrades to the no-rail bar. A
+	// session keeps its `tui` (see the footer callback below) so a module that
+	// resolves after the footer callback still installs rather than being lost.
+	let sidebarLayoutPromise: Promise<SidebarLayoutModule | undefined> | undefined;
+	let sidebarLayout: SidebarLayoutModule | undefined;
+	const loadSidebarLayout = (): Promise<SidebarLayoutModule | undefined> =>
+		(sidebarLayoutPromise ??= import("./biggz-shell/shell-sidebar-layout.ts").then(
+			(module) => (sidebarLayout = module),
+			() => undefined,
+		));
 
 	const usage = new UsageStore();
 	// Providers this port has never heard of get a usage source too, when the
@@ -305,7 +330,9 @@ export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
 			// Unit 2.6 hands the sidebar hook through host.invalidateSidebar: the
 			// fullscreen rail shares the branch/usage events the narrow footer
 			// re-renders on and the cache it marks stale is the rail's.
-			const host: ShellRenderHost = { requestRender: () => tui.requestRender(), invalidateSidebar: () => invalidateSidebar(tui) };
+			// R3-001: with the rail module unloadable there is no rail cache to
+			// invalidate, so the hook is a no-op instead of a throw.
+			const host: ShellRenderHost = { requestRender: () => tui.requestRender(), invalidateSidebar: () => sidebarLayout?.invalidateSidebar(tui) };
 			renderHost = host;
 			if (tui.terminal) sidebarState(tui).visibility = { todo: presentation?.visibility.todo };
 			const usageFor = () => usage.get(ctx.model?.provider ?? "");
@@ -352,7 +379,25 @@ export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
 			// before pi can invoke the footer factory, so the rail's live placement
 			// readers can treat it as set (the biggz equivalent of upstream's
 			// non-optional visualSettings).
-			const uninstall = installSidebar(tui, theme, () => presentation!.statusPlacement, () => presentation!.headerPlacement, () => presentation!.density);
+			// Install the rail on arrival. If the module is already loaded this is
+			// synchronous; otherwise the shared load resolves later and installs
+			// then, because this session still holds the `tui` the footer callback
+			// received. A session_shutdown that beats the load marks `disposed`, so
+			// a late resolution cannot bind a torn-down TUI. `presentation` is read
+			// through closures, so the live values are the ones the rail sees.
+			const rail = { disposed: false, uninstall: undefined as (() => void) | undefined };
+			const installRail = () => {
+				if (rail.disposed || rail.uninstall || !sidebarLayout) return;
+				try {
+					rail.uninstall = sidebarLayout.installSidebar(tui, theme, () => presentation!.statusPlacement, () => presentation!.headerPlacement, () => presentation!.density);
+				} catch {
+					// D12: a rail that throws on a shape change stays absent instead of
+					// escaping the factory (the async path would otherwise surface as an
+					// unhandled rejection and could take the process down).
+				}
+			};
+			if (sidebarLayout) installRail();
+			else void loadSidebarLayout().then(installRail);
 			// pi's public widget slot follows the editor even when the fullscreen
 			// rail is absent. TUI.mode is "regular" unless the user opts into
 			// fullscreen, so this row stays inert ([]) until headerPlacement is
@@ -380,9 +425,10 @@ export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
 			footer = {
 				...part,
 				dispose() {
+					rail.disposed = true;
 					ctx.ui.setWidget(HEADER_WIDGET_KEY, undefined);
 					disposeHeader();
-					uninstall();
+					rail.uninstall?.();
 					part.dispose();
 				},
 			};

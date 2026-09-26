@@ -9,10 +9,14 @@
 // otherwise the test-only oracle. The layout module binds to pi-tui 0.85.1
 // private shapes, so the "shapes" test below fails loudly when the resolved
 // package stops exposing them (D12); it never adds a user-visible warning to the
-// shipped rail.
+// shipped rail. The R3-002 fail rule and its comment enumerate all four resolver
+// states; the R3-002 proof at the foot of this file runs the failure and the
+// handled-stale-sibling directions in subprocesses.
 import assert from "node:assert/strict";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { installPiTuiResolver, resolvePiTuiEntry, piTuiResolutionReport, PI_TUI_SPECIFIER, PI_TUI_SHELL_SYMBOLS } from "../test/pi-tui-resolver.mjs";
@@ -90,16 +94,25 @@ test("the resolved pi-tui exposes the 0.85.1 rail shapes or the suite fails loud
 });
 
 // D12's fail rule, split from the shape assertions so the reach of "fails
-// loudly" is explicit. A discovered install that keeps its package name but
-// stops naming a symbol in PI_TUI_SHELL_SYMBOLS is rejected by the resolver and
-// silently falls back to the oracle at runtime; this suite is the only detector,
-// so it FAILS here with the directory and the missing names. Only a machine with
-// no pi-tui install at all may skip: there the oracle is the shape reference.
+// loudly" is explicit, and kept in exactly one place (R3-002). The resolver has
+// four states here:
+//   1. an install resolves -> the shape assertions above cover it; return.
+//   2. nothing resolved AND a candidate was rejected for missing
+//      PI_TUI_SHELL_SYMBOLS names -> this suite is the only detector, so FAIL
+//      with the directory and the missing names.
+//   3. a missing-symbols candidate exists but some other install resolved (a
+//      usable sibling, or an explicit PI_TUI_DIR) -> the resolver skipped the
+//      stale sibling by design, so it is a handled condition; return.
+//   4. neither a usable install nor a missing-symbols candidate: no install at
+//      all, or only directories classified `not-a-pi-tui-package` (wrong
+//      package name, a missing or renamed `main`, or an unparsable
+//      package.json) -> skip; the oracle is the shape reference in that run.
 test("a discovered pi-tui that loses a required shell symbol fails the suite instead of degrading silently (D12)", (t) => {
+	if (realEntry) return; // state 1 and 3: something resolved, rejected siblings were skipped by design
 	const missingSymbols = report.rejected.filter((candidate) => candidate.reason === "missing-symbols");
 	if (missingSymbols.length === 0) {
-		if (realTui) return;
-		t.skip("no pi-tui install is present — the oracle is the shape reference in this run");
+		// state 4: nothing resolved and no candidate lost a symbol
+		t.skip("no usable pi-tui install resolved (absent, or only directories that are not pi-tui packages) — the oracle is the shape reference in this run");
 		return;
 	}
 	assert.fail(
@@ -111,7 +124,7 @@ test("a discovered pi-tui that loses a required shell symbol fails the suite ins
 
 test("the real pi-tui exposes ScrollView/VStack with the shapes the rail binds to", (t) => {
 	if (!realTui) {
-		t.skip("no pi-tui install is present — the oracle is the shape reference in this run");
+		t.skip("no usable pi-tui install resolved (absent, or only directories that are not pi-tui packages) — the oracle is the shape reference in this run");
 		return;
 	}
 	assert.deepEqual(report.entry, realEntry, "the resolution report must agree with resolvePiTuiEntry");
@@ -776,4 +789,83 @@ test("the rail cache symbol is renamed off upstream's brand key", (t) => {
 	const symbols = Object.getOwnPropertySymbols(f.tui.terminal).map(String);
 	assert.ok(symbols.includes(String(CACHE)), "the cache must use the biggz-ai symbol");
 	assert.ok(!symbols.some((symbol) => symbol.includes("gentle")), "no upstream brand key may be attached to the terminal");
+});
+
+// ── R3-002 proof: the detector's reach, by execution ────────────────────────
+//
+// The detector above decides when a pi-tui shape change is a hard failure. This
+// test builds two throwaway candidate trees and re-runs this same file in a
+// subprocess, so the rule is exercised end to end instead of trusted:
+//   (a) only a doctored install exists (package name + main, every shell symbol
+//       but ScrollView/VStack) -> nothing resolves and the detector must FAIL,
+//       naming the directory and the missing symbols;
+//   (b) a stale install sits beside a usable one -> the detector must PASS,
+//       because resolvePiTuiEntry deliberately skipped the stale sibling.
+// A subprocess is required: installPiTuiResolver() is idempotent, so the
+// @earendil-works/pi-tui target cannot change inside one process. The child is
+// marked with BIGGZ_D12_PROOF_CHILD so this test skips there and cannot recurse.
+const RAIL_SUITE = fileURLToPath(import.meta.url);
+const ORACLE_PATH = path.join(path.dirname(RAIL_SUITE), "..", "test", "pi-tui-oracle.mjs");
+// The shell symbols except ScrollView/VStack, so a doctored candidate is
+// rejected for exactly the two rail shapes rather than for a short list.
+const SHELL_SYMBOLS_WITHOUT_LAYOUT = ["truncateToWidth", "visibleWidth", "wrapTextWithAnsi", "Key", "matchesKey"];
+
+function candidateDir(root, relative) {
+	const dir = path.join(root, relative);
+	fs.mkdirSync(path.join(dir, "dist"), { recursive: true });
+	fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: PI_TUI_SPECIFIER, main: "dist/index.js" }));
+	return dir;
+}
+
+function writeDoctoredCandidate(dir) {
+	const body = SHELL_SYMBOLS_WITHOUT_LAYOUT.map((name) => `export const ${name} = 1;`).join("\n");
+	fs.writeFileSync(path.join(dir, "dist", "index.js"), `${body}\n`);
+}
+
+function writeUsableCandidate(dir) {
+	const names = [...SHELL_SYMBOLS_WITHOUT_LAYOUT, "ScrollView", "VStack"];
+	fs.writeFileSync(path.join(dir, "dist", "index.js"), `export { ${names.join(", ")} } from ${JSON.stringify(pathToFileURL(ORACLE_PATH).href)};\n`);
+}
+
+function runRailSuite({ appData, home }) {
+	// Strip the parent test runner's context: a nested `node --test` that inherits
+	// NODE_TEST_CONTEXT refuses to run files, which would make this proof vacuous.
+	const env = { ...process.env, APPDATA: appData, USERPROFILE: home, HOME: home, PI_TUI_DIR: "", BIGGZ_D12_PROOF_CHILD: "1" };
+	delete env.NODE_TEST_CONTEXT;
+	return spawnSync(process.execPath, ["--test", RAIL_SUITE], { encoding: "utf8", env });
+}
+
+test("the detector is loud only when nothing resolved (R3-002 proof)", (t) => {
+	if (process.env.BIGGZ_D12_PROOF_CHILD === "1") {
+		t.skip("child run of the R3-002 proof");
+		return;
+	}
+	const appData = fs.mkdtempSync(path.join(os.tmpdir(), "biggz-d12-appdata-"));
+	const home = fs.mkdtempSync(path.join(os.tmpdir(), "biggz-d12-home-"));
+	t.after(() => {
+		fs.rmSync(appData, { recursive: true, force: true });
+		fs.rmSync(home, { recursive: true, force: true });
+	});
+
+	// (a) one doctored install and nothing else: no candidate resolves, so the
+	// suite must fail rather than silently degrade to the oracle.
+	const doctored = candidateDir(appData, path.join("npm", "node_modules", "@earendil-works", "pi-coding-agent", "node_modules", "@earendil-works", "pi-tui"));
+	writeDoctoredCandidate(doctored);
+	const failing = runRailSuite({ appData, home });
+	const failingOutput = `${failing.stdout}\n${failing.stderr}`;
+	assert.notEqual(failing.status, 0, `the detector must fail when no pi-tui resolves and a candidate lost ScrollView/VStack\n${failingOutput}`);
+	assert.match(failingOutput, /loses a required shell symbol/, "the failing child must actually have run the detector");
+	assert.match(failingOutput, /ScrollView/, "the failure must name a missing symbol");
+	assert.ok(failingOutput.includes(doctored), "the failure must name the rejected directory");
+
+	// (b) the same stale candidate beside a usable one: the resolver skips the
+	// stale sibling, so both the shape checks and the detector must pass.
+	const usable = candidateDir(home, path.join(".pi", "agent", "npm", "node_modules", "@earendil-works", "pi-tui"));
+	writeUsableCandidate(usable);
+	const passing = runRailSuite({ appData, home });
+	assert.equal(passing.status, 0, `a stale candidate beside a usable one must not fail the suite\n${passing.stdout}\n${passing.stderr}`);
+	assert.match(passing.stdout, /✔ a discovered pi-tui that loses a required shell symbol/, `the passing child must actually have run the detector\n${passing.stdout}\n${passing.stderr}`);
+	const failureLine = failingOutput.split("\n").find((line) => line.includes("no longer names every shell symbol")) ?? "";
+	t.diagnostic(`R3-002 (a): nothing resolved; child exit ${failing.status}; ${failureLine.trim()}`);
+	t.diagnostic(`R3-002 (b): stale sibling skipped; child exit ${passing.status}; detector passed=${/✔ a discovered pi-tui that loses a required shell symbol/.test(passing.stdout)}`);
 });
