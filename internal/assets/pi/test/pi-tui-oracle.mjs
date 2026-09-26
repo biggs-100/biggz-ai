@@ -224,3 +224,157 @@ export function truncateToWidth(text, maxWidth, ellipsis = "...", pad = false) {
 	}
 	return sliceByWidth(raw, limit - ellipsisWidth) + ellipsis;
 }
+
+// ---------------------------------------------------------------------------
+// Key / matchesKey — the legacy-sequence subset of pi-tui's keys.ts.
+//
+// The ported shell modules match input by key identifier (`Key.escape`,
+// `matchesKey(data, Key.up)`) instead of comparing raw bytes, so the oracle
+// offers the same API for the fallback path. It implements the legacy terminal
+// sequences and printable keys with their ctrl/alt/shift forms; the Kitty
+// keyboard protocol and the modifyOtherKeys encoding are not part of the
+// fallback, so a sequence this table does not name simply does not match.
+// ---------------------------------------------------------------------------
+
+export const Key = Object.freeze({
+	escape: "escape",
+	esc: "esc",
+	enter: "enter",
+	return: "return",
+	tab: "tab",
+	space: "space",
+	backspace: "backspace",
+	delete: "delete",
+	insert: "insert",
+	clear: "clear",
+	home: "home",
+	end: "end",
+	pageUp: "pageUp",
+	pageDown: "pageDown",
+	up: "up",
+	down: "down",
+	left: "left",
+	right: "right",
+	f1: "f1", f2: "f2", f3: "f3", f4: "f4", f5: "f5", f6: "f6",
+	f7: "f7", f8: "f8", f9: "f9", f10: "f10", f11: "f11", f12: "f12",
+	backtick: "`", hyphen: "-", equals: "=", leftbracket: "[", rightbracket: "]",
+	backslash: "\\", semicolon: ";", quote: "'", comma: ",", period: ".", slash: "/",
+	exclamation: "!", at: "@", hash: "#", dollar: "$", percent: "%", caret: "^",
+	ampersand: "&", asterisk: "*", leftparen: "(", rightparen: ")", underscore: "_",
+	plus: "+", pipe: "|", tilde: "~", leftbrace: "{", rightbrace: "}", colon: ":",
+	lessthan: "<", greaterthan: ">", question: "?",
+	ctrl: (key) => `ctrl+${key}`,
+	shift: (key) => `shift+${key}`,
+	alt: (key) => `alt+${key}`,
+	super: (key) => `super+${key}`,
+	ctrlShift: (key) => `ctrl+shift+${key}`,
+	shiftCtrl: (key) => `shift+ctrl+${key}`,
+	ctrlAlt: (key) => `ctrl+alt+${key}`,
+	altCtrl: (key) => `alt+ctrl+${key}`,
+	shiftAlt: (key) => `shift+alt+${key}`,
+	altShift: (key) => `alt+shift+${key}`,
+});
+
+const LEGACY_KEY_SEQUENCES = {
+	up: ["\x1b[A", "\x1bOA"],
+	down: ["\x1b[B", "\x1bOB"],
+	right: ["\x1b[C", "\x1bOC"],
+	left: ["\x1b[D", "\x1bOD"],
+	home: ["\x1b[H", "\x1bOH", "\x1b[1~", "\x1b[7~"],
+	end: ["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"],
+	insert: ["\x1b[2~"],
+	delete: ["\x1b[3~"],
+	pageUp: ["\x1b[5~", "\x1b[[5~"],
+	pageDown: ["\x1b[6~", "\x1b[[6~"],
+	clear: ["\x1b[E", "\x1bOE"],
+	f1: ["\x1bOP", "\x1b[11~", "\x1b[[A"],
+	f2: ["\x1bOQ", "\x1b[12~", "\x1b[[B"],
+	f3: ["\x1bOR", "\x1b[13~", "\x1b[[C"],
+	f4: ["\x1bOS", "\x1b[14~", "\x1b[[D"],
+	f5: ["\x1b[15~", "\x1b[[E"],
+	f6: ["\x1b[17~"],
+	f7: ["\x1b[18~"],
+	f8: ["\x1b[19~"],
+	f9: ["\x1b[20~"],
+	f10: ["\x1b[21~"],
+	f11: ["\x1b[23~"],
+	f12: ["\x1b[24~"],
+};
+
+const LEGACY_SHIFT_SEQUENCES = {
+	up: ["\x1b[a"],
+	down: ["\x1b[b"],
+	right: ["\x1b[c"],
+	left: ["\x1b[d"],
+	clear: ["\x1b[e"],
+	insert: ["\x1b[2$"],
+	delete: ["\x1b[3$"],
+	pageUp: ["\x1b[5$"],
+	pageDown: ["\x1b[6$"],
+	home: ["\x1b[7$"],
+	end: ["\x1b[8$"],
+};
+
+const LEGACY_CTRL_SEQUENCES = {
+	up: ["\x1bOa"],
+	down: ["\x1bOb"],
+	right: ["\x1bOc"],
+	left: ["\x1bOd"],
+	clear: ["\x1bOe"],
+	insert: ["\x1b[2^"],
+	delete: ["\x1b[3^"],
+	pageUp: ["\x1b[5^"],
+	pageDown: ["\x1b[6^"],
+	home: ["\x1b[7^"],
+	end: ["\x1b[8^"],
+};
+
+function parseKeyId(keyId) {
+	const parts = String(keyId).toLowerCase().split("+");
+	const key = parts[parts.length - 1];
+	if (!key) return null;
+	return { key, ctrl: parts.includes("ctrl"), shift: parts.includes("shift"), alt: parts.includes("alt"), super: parts.includes("super") };
+}
+
+function matchesAny(data, sequences) {
+	return sequences?.includes(data) === true;
+}
+
+export function matchesKey(data, keyId) {
+	const parsed = parseKeyId(keyId);
+	if (!parsed) return false;
+	const { key, ctrl, shift, alt, super: superModifier } = parsed;
+	if (superModifier) return false;
+	const plain = !ctrl && !shift && !alt;
+
+	if (key === "escape" || key === "esc") return plain && data === "\x1b";
+	if (key === "enter" || key === "return") {
+		if (shift) return false;
+		if (ctrl) return data === "\n" || data === "\r";
+		if (alt) return data === "\x1b\r" || data === "\x1b\n";
+		return data === "\r" || data === "\n" || data === "\x1bOM";
+	}
+	if (key === "tab") {
+		if (shift && !ctrl && !alt) return data === "\x1b[Z";
+		return plain && data === "\t";
+	}
+	if (key === "space") {
+		if (ctrl && !alt && !shift) return data === "\x00";
+		if (alt && !ctrl && !shift) return data === "\x1b ";
+		return plain && data === " ";
+	}
+	if (key === "backspace") {
+		if (ctrl || shift) return false;
+		return alt ? data === "\x1b\x7f" || data === "\x1b\b" : data === "\x7f" || data === "\x08";
+	}
+	if (key in LEGACY_KEY_SEQUENCES || key === "clear" || key === "insert" || key === "delete" || key === "home" || key === "end" || /^f\d{1,2}$/.test(key)) {
+		if (shift) return matchesAny(data, LEGACY_SHIFT_SEQUENCES[key]);
+		if (ctrl) return matchesAny(data, LEGACY_CTRL_SEQUENCES[key]);
+		return plain && matchesAny(data, LEGACY_KEY_SEQUENCES[key]);
+	}
+	// Alt-modified printable keys arrive as ESC followed by the key.
+	if (alt && !ctrl && !shift && key.length === 1) return data === `\x1b${key}`;
+	// Ctrl+letter is the C0 control code (ctrl+a = \x01 ... ctrl+z = \x1a).
+	if (ctrl && !shift && !alt && /^[a-z]$/.test(key)) return data === String.fromCharCode(key.charCodeAt(0) - 96);
+	return plain && data === key;
+}

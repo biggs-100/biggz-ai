@@ -25,8 +25,11 @@ export const PI_TUI_ORACLE_URL = new URL("./pi-tui-oracle.mjs", import.meta.url)
 
 // Symbols the ported shell modules import from `@earendil-works/pi-tui`. The
 // oracle implements them all, so a discovered install must mention them in its
-// source for the shell suites to link against it instead of the fallback.
-export const PI_TUI_SHELL_SYMBOLS = Object.freeze(["truncateToWidth", "visibleWidth", "wrapTextWithAnsi"]);
+// source for the shell suites to link against it instead of the fallback. The
+// list must cover every symbol those modules import, not just the layout
+// helpers: shell-usage-view.ts also imports Key and matchesKey, so an install
+// that lacks them is rejected here instead of failing later at import.
+export const PI_TUI_SHELL_SYMBOLS = Object.freeze(["truncateToWidth", "visibleWidth", "wrapTextWithAnsi", "Key", "matchesKey"]);
 
 const join = (...parts) => path.join(...parts.filter(Boolean));
 

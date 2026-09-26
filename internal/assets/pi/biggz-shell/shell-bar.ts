@@ -203,8 +203,8 @@ export function renderShellSidebarBar(model: ShellBarModel, theme: ShellBarTheme
 	// Model, effort, context, cost, and the per-model usage table now live in
 	// the always-visible header row; this event-driven card keeps only what a
 	// footer/model-switch event does not already refresh every frame. The
-	// full-table command the header points at is not registered in biggz yet —
-	// TODO(2.5): the header widget that renders that row owns the command too.
+	// full-table command the header row points at is registered by the shell
+	// factory as USAGE_COMMAND_NAME ("biggz-usage").
 	const groups: Array<{ title: string; lines: string[] }> = [
 		{
 			title: "Project",

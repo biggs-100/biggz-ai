@@ -139,6 +139,7 @@ func piExtensionsDeployList() []piExtension {
 		{asset: "pi/biggz-shell/shell-card.ts", target: piShellSubdir + "/shell-card.ts", factory: false},
 		{asset: "pi/biggz-shell/shell-changes.ts", target: piShellSubdir + "/shell-changes.ts", factory: false},
 		{asset: "pi/biggz-shell/shell-usage.ts", target: piShellSubdir + "/shell-usage.ts", factory: false},
+		{asset: "pi/biggz-shell/shell-usage-view.ts", target: piShellSubdir + "/shell-usage-view.ts", factory: false},
 		{asset: "pi/biggz-shell/shell-todo.ts", target: piShellSubdir + "/shell-todo.ts", factory: false},
 		{asset: "pi/biggz-shell/shell-prompt.ts", target: piShellSubdir + "/shell-prompt.ts", factory: false},
 		{asset: "pi/biggz-shell/shell-sidebar.ts", target: piShellSubdir + "/shell-sidebar.ts", factory: false},
