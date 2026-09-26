@@ -11,6 +11,10 @@
  *      but only when their source mentions every symbol in `PI_TUI_SHELL_SYMBOLS`.
  *   4. `pi-tui-oracle.mjs` — the test-only fallback when no real pi-tui is installed
  *      or the installed one cannot satisfy the ported shell modules' imports.
+ * `piTuiResolutionReport()` reports that same outcome plus every candidate
+ * directory that existed but was rejected (`missing-symbols` vs
+ * `not-a-pi-tui-package`), so a suite can tell "no install present" apart from
+ * "an install exists but lost a required symbol name".
  * A test file can also `import "./test/pi-tui-resolver.mjs"` for the side effect before
  * dynamically importing the runtime (static imports of the bare specifier would link first).
  */
@@ -27,9 +31,11 @@ export const PI_TUI_ORACLE_URL = new URL("./pi-tui-oracle.mjs", import.meta.url)
 // oracle implements them all, so a discovered install must mention them in its
 // source for the shell suites to link against it instead of the fallback. The
 // list must cover every symbol those modules import, not just the layout
-// helpers: shell-usage-view.ts also imports Key and matchesKey, so an install
-// that lacks them is rejected here instead of failing later at import.
-export const PI_TUI_SHELL_SYMBOLS = Object.freeze(["truncateToWidth", "visibleWidth", "wrapTextWithAnsi", "Key", "matchesKey"]);
+// helpers: shell-usage-view.ts also imports Key and matchesKey, and
+// shell-sidebar-layout.ts imports the ScrollView/VStack layout primitives, so an
+// install that lacks any of them is rejected here instead of failing later at
+// import.
+export const PI_TUI_SHELL_SYMBOLS = Object.freeze(["truncateToWidth", "visibleWidth", "wrapTextWithAnsi", "Key", "matchesKey", "ScrollView", "VStack"]);
 
 const join = (...parts) => path.join(...parts.filter(Boolean));
 
@@ -44,25 +50,35 @@ export function piTuiCandidateDirs(env = process.env) {
 	];
 }
 
-function entryIn(dir, requireSymbols = false) {
-	if (!dir) return null;
+// Classify one candidate directory without deciding resolution. `null` means the
+// path does not exist (absent, not rejected); an accepted record carries the
+// resolved entry file. `piTuiResolutionReport()` uses the rejection reason,
+// while entryIn() keeps the historical two-outcome shape for the resolver.
+function classifyCandidateDir(dir, requireSymbols) {
+	if (!dir || !fs.existsSync(dir)) return null;
 	try {
 		const pkg = JSON.parse(fs.readFileSync(join(dir, "package.json"), "utf8"));
-		if (pkg?.name !== PI_TUI_SPECIFIER) return null;
+		if (pkg?.name !== PI_TUI_SPECIFIER) return { dir, accepted: false, reason: "not-a-pi-tui-package" };
 		const main = typeof pkg.main === "string" && pkg.main ? pkg.main : "dist/index.js";
 		const file = join(dir, main);
-		if (!fs.existsSync(file)) return null;
-		if (requireSymbols && !packageMentionsSymbols(dir, PI_TUI_SHELL_SYMBOLS)) return null;
-		return { dir, file };
+		if (!fs.existsSync(file)) return { dir, accepted: false, reason: "not-a-pi-tui-package" };
+		const missing = requireSymbols ? packageMissingSymbols(dir, PI_TUI_SHELL_SYMBOLS) : [];
+		if (missing.length > 0) return { dir, accepted: false, reason: "missing-symbols", missing };
+		return { dir, accepted: true, file };
 	} catch {
-		return null;
+		return { dir, accepted: false, reason: "not-a-pi-tui-package" };
 	}
 }
 
-// True when some `.js` file under the package root mentions every symbol. The
-// probe reads source text instead of importing, so it stays synchronous and
-// side-effect free; a union across files survives `export * from "./utils.js"`.
-function packageMentionsSymbols(dir, symbols) {
+function entryIn(dir, requireSymbols = false) {
+	const classified = classifyCandidateDir(dir, requireSymbols);
+	return classified?.accepted ? { dir: classified.dir, file: classified.file } : null;
+}
+
+// The names a package's source does not mention. The probe reads source text
+// instead of importing, so it stays synchronous and side-effect free; a union
+// across files survives `export * from "./utils.js"`.
+function packageMissingSymbols(dir, symbols) {
 	const found = new Set();
 	const walk = (current, depth) => {
 		if (depth > 4) return;
@@ -89,12 +105,41 @@ function packageMentionsSymbols(dir, symbols) {
 		}
 	};
 	walk(dir, 0);
-	return found.size === symbols.length;
+	return symbols.filter((symbol) => !found.has(symbol));
 }
 
 // PI_TUI_DIR override first, then the installed-pi candidates — null when absent.
 export function resolvePiTuiEntry(env = process.env) {
 	return entryIn(String(env.PI_TUI_DIR ?? "").trim()) ?? piTuiCandidateDirs(env).map((dir) => entryIn(dir, true)).find(Boolean) ?? null;
+}
+
+// The resolution REPORT: the entry resolvePiTuiEntry() resolves, the same `mode`
+// string installPiTuiResolver() reports, and every candidate directory that
+// exists but was not accepted, each `{ dir, reason }` (`reason` is
+// "missing-symbols", with a `missing` array, or "not-a-pi-tui-package"). It is
+// additive: resolvePiTuiEntry() resolves exactly what it resolved before. The
+// report is what lets the rail suite distinguish "no pi-tui installed" from "a
+// pi-tui install exists but lost a required PI_TUI_SHELL_SYMBOLS name" — the
+// regression D12 accepts silently at runtime, so only the suite can catch it.
+export function piTuiResolutionReport(env = process.env) {
+	const explicit = classifyCandidateDir(String(env.PI_TUI_DIR ?? "").trim(), false);
+	const candidates = piTuiCandidateDirs(env).map((dir) => ({ dir, classified: classifyCandidateDir(dir, true) }));
+	const discovered = candidates.find(({ classified }) => classified?.accepted)?.classified ?? null;
+	const rejected = [];
+	if (explicit && !explicit.accepted) rejected.push(rejection(explicit.dir, explicit));
+	for (const { dir, classified } of candidates) if (classified && !classified.accepted) rejected.push(rejection(dir, classified));
+	const accepted = explicit?.accepted ? explicit : discovered;
+	return {
+		entry: accepted ? { dir: accepted.dir, file: accepted.file } : null,
+		mode: explicit?.accepted ? `install:${explicit.dir}` : discovered ? `install:${discovered.dir}` : "oracle",
+		rejected,
+	};
+}
+
+function rejection(dir, classified) {
+	return classified.missing
+		? { dir, reason: classified.reason, missing: classified.missing }
+		: { dir, reason: classified.reason };
 }
 
 let installed = false;

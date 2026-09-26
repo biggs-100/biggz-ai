@@ -9,9 +9,9 @@
 // pi's footer with ctx.ui.setFooter, registers the header row with
 // ctx.ui.setWidget(HEADER_WIDGET_KEY, ..., { placement: "belowEditor" }) and
 // registers the usage command (plus its optional shortcut) that the header
-// row's usage segment points at. Deliberately NOT ported here, with the unit
-// that owns each:
-//   - the fullscreen sidebar part / installSidebar   → unit 2.6
+// row's usage segment points at, and (unit 2.6) installs the fullscreen sidebar
+// rail: the Status card as the "footer" rail part and the live header row as its
+// "header" part. Deliberately NOT ported here, with the unit that owns each:
 //   - the changes tracker                            → unit 2.7
 //   - the prompt editor / ownsPrompt                 → unit 2.8
 //   - the provider-usage fetch                       → out of scope for this port
@@ -29,10 +29,13 @@ import {
 	renderShellBar,
 	renderShellHeaderBar,
 	renderShellHeaderRule,
+	renderShellSidebarBar,
 	shellEnabled,
 	type ShellBarModel,
 	type ShellBarTheme,
 } from "./biggz-shell/shell-bar.ts";
+import { sidebarHeader, sidebarPart, sidebarState } from "./biggz-shell/shell-sidebar.ts";
+import { installSidebar, invalidateSidebar } from "./biggz-shell/shell-sidebar-layout.ts";
 import {
 	parseProviderUsage,
 	parseUsageSource,
@@ -299,14 +302,57 @@ export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
 		presentation = resolveVisualSettings().settings;
 		currentContext = ctx;
 		ctx.ui.setFooter((tui, theme, footerData) => {
-			// Unit 2.6 supplies the sidebar hook through host.invalidateSidebar;
-			// this slice only needs requestRender.
-			const host: ShellRenderHost = { requestRender: () => tui.requestRender() };
+			// Unit 2.6 hands the sidebar hook through host.invalidateSidebar: the
+			// fullscreen rail shares the branch/usage events the narrow footer
+			// re-renders on and the cache it marks stale is the rail's.
+			const host: ShellRenderHost = { requestRender: () => tui.requestRender(), invalidateSidebar: () => invalidateSidebar(tui) };
 			renderHost = host;
+			if (tui.terminal) sidebarState(tui).visibility = { todo: presentation?.visibility.todo };
 			const usageFor = () => usage.get(ctx.model?.provider ?? "");
 			const component = createShellBarComponent(pi, ctx, host, theme, footerData, undefined, usageFor, () => presentation);
+			// The Status card paints live session state no event re-registers a rail
+			// part for (model, effort, context, cost, session name, extension
+			// statuses), so the rail declares a digest and the fullscreen memo
+			// notices by itself. D10: no review facts reach the rail — no lineage,
+			// lens or budget — because the model never supplies them; unit 2.11 owns
+			// the review protocol wiring.
+			const footerModel = (): ShellBarModel => buildShellBarModel(pi, ctx, footerData, { usage: usageFor() });
+			const part = sidebarPart(tui, "footer", component, {
+				digest: () => JSON.stringify([footerModel(), presentation]),
+				render: (width) => renderShellSidebarBar(footerModel(), theme, width, presentation),
+				invalidate() {},
+			});
+			// Deliberate deviation from upstream: its showChanges() registers a
+			// `sidebarPart(tui, "changes", ...)` (upstream extensions/gentle-shell.ts:1230),
+			// but the rail's section list is literally ["footer", "agents", "todo"]
+			// (upstream lib/shell-sidebar-layout.ts:199), so that part can never
+			// render. It is not ported here; unit 2.7 owns the changes tracker and the
+			// Status card above already carries its summary.
+			// The header row carries everything that ticks every frame (model,
+			// effort, context, cost, usage) plus session identity; it never sees
+			// extension statuses or the working/thinking state. D11: this part owns
+			// the rail's `top` case; the below-editor widget further down owns only
+			// `below-input`, so the header is never painted twice in fullscreen.
 			const headerBar = (width: number) =>
-				renderShellHeaderBar(buildShellHeaderModel(buildShellBarModel(pi, ctx, footerData, { usage: usageFor() })), theme, width, usageShortcutKey, presentation);
+				renderShellHeaderBar(buildShellHeaderModel(footerModel()), theme, width, usageShortcutKey, presentation);
+			const disposeHeader = sidebarHeader(tui, {
+				digest: () => JSON.stringify([buildShellHeaderModel(footerModel()), presentation]),
+				render: (width) => [headerBar(width).text, renderShellHeaderRule(theme, width)],
+				invalidate() {},
+				handleMouse(event) {
+					if (event.type !== "click" || event.button !== "left") return undefined;
+					if (event.y !== 0) return undefined; // the rule row under the status line is decorative, never clickable
+					const { usageSpan } = headerBar(event.width);
+					if (!usageSpan || event.x < usageSpan.start || event.x >= usageSpan.end) return undefined;
+					void openUsage(ctx);
+					return { handled: true, render: true };
+				},
+			});
+			// presentation is assigned earlier in this same session_start handler,
+			// before pi can invoke the footer factory, so the rail's live placement
+			// readers can treat it as set (the biggz equivalent of upstream's
+			// non-optional visualSettings).
+			const uninstall = installSidebar(tui, theme, () => presentation!.statusPlacement, () => presentation!.headerPlacement, () => presentation!.density);
 			// pi's public widget slot follows the editor even when the fullscreen
 			// rail is absent. TUI.mode is "regular" unless the user opts into
 			// fullscreen, so this row stays inert ([]) until headerPlacement is
@@ -328,17 +374,19 @@ export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
 				},
 			}), { placement: "belowEditor" });
 			// pi calls dispose() on session shutdown; clearing the widget here is
-			// what keeps a second session from painting a stale header row.
-			const withHeader: ShellBarComponent = {
-				render: (width) => component.render(width),
-				invalidate: () => component.invalidate(),
+			// what keeps a second session from painting a stale header row. The
+			// rail uninstalls and the header part releases its slot on the same
+			// path, so a second session starts from the native layout.
+			footer = {
+				...part,
 				dispose() {
 					ctx.ui.setWidget(HEADER_WIDGET_KEY, undefined);
-					component.dispose();
+					disposeHeader();
+					uninstall();
+					part.dispose();
 				},
 			};
-			footer = withHeader;
-			return withHeader;
+			return footer;
 		});
 		// Force one registry-only refresh per session: a source that registered
 		// before this session_start (its owning extension's factory runs first)

@@ -378,3 +378,223 @@ export function matchesKey(data, keyId) {
 	if (ctrl && !shift && !alt && /^[a-z]$/.test(key)) return data === String.fromCharCode(key.charCodeAt(0) - 96);
 	return plain && data === key;
 }
+
+// ---------------------------------------------------------------------------
+// VStack / ScrollView — the layout primitives the fullscreen rail builds on.
+//
+// `shell-sidebar-layout.ts` constructs these from `@earendil-works/pi-tui` and
+// reads their public surface (ScrollView.getContentWidth/scrollTop/scrollBy/
+// updateLayout/isScrollbarVisible/handleMouse/hideTransientScrollbar, VStack's
+// [LAYOUT_NODE] and render). This mirrors pi-tui 0.85.1's shapes for the
+// fallback path so the rail suite runs without a real install; the real package
+// stays authoritative (see the resolver fidelity tests). No runtime code may
+// import this module directly.
+// ---------------------------------------------------------------------------
+
+export const LAYOUT_NODE = Symbol.for("@earendil-works/pi-tui/layout-node");
+
+function normalizeSize(value, fallback) {
+	return value === undefined || !Number.isFinite(value) ? fallback : Math.max(0, Math.floor(value));
+}
+
+function clampSize(size, entry) {
+	const min = Math.max(0, Math.floor(entry.minSize ?? 0));
+	const max = Math.max(min, Math.floor(entry.maxSize ?? Number.MAX_SAFE_INTEGER));
+	return Math.max(min, Math.min(max, Math.max(0, Math.floor(size))));
+}
+
+// The intrinsic (availableSize === undefined) branch of pi-tui's
+// allocateStackSizes: an entry's numeric/auto basis or its intrinsic height,
+// clamped to [minSize, maxSize]. The rail only ever constructs VStacks whose
+// entries are measured this way (the dock re-host and the fixtures).
+function allocateStackSizes(entries, intrinsicSizes) {
+	return entries.map((entry, index) => clampSize(entry.basis === undefined || entry.basis === "auto" ? (intrinsicSizes[index] ?? 0) : entry.basis, entry));
+}
+
+export class VStack {
+	constructor(children = [], options = {}) {
+		this.entries = [];
+		this.gap = normalizeSize(options.gap, 0);
+		this.align = options.align ?? "stretch";
+		for (const child of children) {
+			if (child && typeof child === "object" && !("render" in child)) this.addChild(child.component, child);
+			else this.addChild(child);
+		}
+	}
+	addChild(component, options = {}) {
+		this.entries.push({
+			component,
+			...(options.basis === undefined ? {} : { basis: options.basis }),
+			...(options.grow === undefined ? {} : { grow: normalizeSize(options.grow, 0) }),
+			...(options.shrink === undefined ? {} : { shrink: normalizeSize(options.shrink, 1) }),
+			...(options.minSize === undefined ? {} : { minSize: normalizeSize(options.minSize, 0) }),
+			...(options.maxSize === undefined ? {} : { maxSize: normalizeSize(options.maxSize, Number.MAX_SAFE_INTEGER) }),
+			...(options.visible === undefined ? {} : { visible: options.visible }),
+		});
+	}
+	render(width) {
+		const viewportWidth = Math.max(1, width);
+		const rendered = this.entries.map((entry) => entry.component?.render(viewportWidth) ?? []);
+		const sizes = allocateStackSizes(this.entries, rendered.map((lines) => lines.length));
+		const lines = [];
+		for (let index = 0; index < this.entries.length; index++) {
+			if (index > 0) for (let gap = 0; gap < this.gap; gap++) lines.push("");
+			const childLines = rendered[index].slice(0, sizes[index]);
+			lines.push(...childLines);
+			for (let padding = childLines.length; padding < sizes[index]; padding++) lines.push("");
+		}
+		return lines;
+	}
+	invalidate() {
+		for (const entry of this.entries) entry.component?.invalidate?.();
+	}
+	[LAYOUT_NODE]() {
+		return { type: "vstack", entries: this.entries, gap: this.gap, align: this.align };
+	}
+}
+
+export class ScrollView {
+	constructor(component, options = {}) {
+		if (options.axis !== undefined && options.axis !== "vertical") {
+			throw new Error(`Unsupported ScrollView axis: ${options.axis}`);
+		}
+		this.child = component;
+		this.followEnd = (options.follow ?? "none") === "end";
+		this.followingEnd = this.followEnd;
+		this.primary = options.primary ?? false;
+		this.overscroll = options.overscroll ?? "chain";
+		this.currentScrollbar = options.scrollbar ?? "hidden";
+		this.scrollbarTrackStyle = options.scrollbarTrackStyle ?? ((text) => `\x1b[90m${text}\x1b[39m`);
+		this.scrollbarThumbStyle = options.scrollbarThumbStyle ?? ((text) => `\x1b[37m${text}\x1b[39m`);
+		this.scrollbarHideDelayMs = Math.max(0, Math.floor(options.scrollbarHideDelayMs ?? 1000));
+		this.currentScrollTop = 0;
+		this.contentHeight = 0;
+		this.currentViewportHeight = 0;
+		this.followSuppressedAtEnd = false;
+		this.requestRenderCallback = undefined;
+		this.transientScrollbarVisible = false;
+		this.scrollbarActive = false;
+		this.scrollbarHideTimer = undefined;
+	}
+	get scrollTop() { return this.currentScrollTop; }
+	get isFollowingEnd() { return this.followingEnd; }
+	get viewportHeight() { return this.currentViewportHeight; }
+	get scrollbar() { return this.currentScrollbar; }
+	get isScrollbarVisible() {
+		if (this.scrollbar === "always") return this.currentViewportHeight > 0;
+		return this.scrollbar === "auto" && this.contentHeight > this.currentViewportHeight && this.transientScrollbarVisible;
+	}
+	get isScrollbarActive() { return this.scrollbarActive; }
+	setScrollbar(scrollbar) {
+		if (scrollbar === this.currentScrollbar) return;
+		this.currentScrollbar = scrollbar;
+		if (scrollbar !== "auto") this.hideTransientScrollbar();
+		else if (this.scrollbarActive) this.markScrollbarActivity();
+		this.requestRenderCallback?.();
+	}
+	getContentWidth(width) {
+		return this.scrollbar === "always" && width > 1 ? width - 1 : width;
+	}
+	markScrollbarActivity() {
+		if (this.scrollbar !== "auto" || this.contentHeight <= this.currentViewportHeight) return;
+		this.transientScrollbarVisible = true;
+		if (this.scrollbarHideTimer) {
+			clearTimeout(this.scrollbarHideTimer);
+			this.scrollbarHideTimer = undefined;
+		}
+		if (this.scrollbarActive) return;
+		this.scrollbarHideTimer = setTimeout(() => {
+			this.scrollbarHideTimer = undefined;
+			this.transientScrollbarVisible = false;
+			this.requestRenderCallback?.();
+		}, this.scrollbarHideDelayMs);
+		this.scrollbarHideTimer.unref?.();
+	}
+	hideTransientScrollbar() {
+		this.transientScrollbarVisible = false;
+		if (!this.scrollbarHideTimer) return;
+		clearTimeout(this.scrollbarHideTimer);
+		this.scrollbarHideTimer = undefined;
+	}
+	setScrollbarActive(active) {
+		if (active === this.scrollbarActive) return;
+		this.scrollbarActive = active;
+		this.markScrollbarActivity();
+		this.requestRenderCallback?.();
+	}
+	scrollTo(scrollTop, options = {}) {
+		const requested = Number.isFinite(scrollTop) ? Math.trunc(scrollTop) : this.currentScrollTop;
+		const maxScrollTop = Math.max(0, this.contentHeight - this.currentViewportHeight);
+		const next = Math.max(0, Math.min(maxScrollTop, requested));
+		const nextFollowSuppressedAtEnd = options.disableFollow === true && next === maxScrollTop;
+		const nextFollowingEnd = !nextFollowSuppressedAtEnd && this.followEnd && next === maxScrollTop;
+		if (next === this.currentScrollTop && nextFollowingEnd === this.followingEnd && nextFollowSuppressedAtEnd === this.followSuppressedAtEnd) return;
+		const moved = next !== this.currentScrollTop;
+		this.currentScrollTop = next;
+		this.followingEnd = nextFollowingEnd;
+		this.followSuppressedAtEnd = nextFollowSuppressedAtEnd;
+		if (moved) this.markScrollbarActivity();
+		this.requestRenderCallback?.();
+	}
+	scrollBy(lines) {
+		const requested = Number.isFinite(lines) ? Math.trunc(lines) : 0;
+		if (requested === 0) return 0;
+		const maxScrollTop = Math.max(0, this.contentHeight - this.currentViewportHeight);
+		const start = this.followingEnd ? maxScrollTop : this.currentScrollTop;
+		const next = Math.max(0, Math.min(maxScrollTop, start + requested));
+		const moved = next - start;
+		const wasFollowingEnd = this.followingEnd;
+		this.currentScrollTop = next;
+		this.followingEnd = this.followEnd && next === maxScrollTop;
+		this.followSuppressedAtEnd = false;
+		if (moved !== 0) this.markScrollbarActivity();
+		if (moved !== 0 || this.followingEnd !== wasFollowingEnd) this.requestRenderCallback?.();
+		return requested - moved;
+	}
+	scrollToStart() {
+		const changed = this.currentScrollTop !== 0 || this.followingEnd !== (this.followEnd && this.contentHeight <= this.currentViewportHeight);
+		this.currentScrollTop = 0;
+		this.followingEnd = this.followEnd && this.contentHeight <= this.currentViewportHeight;
+		this.followSuppressedAtEnd = false;
+		if (changed) {
+			this.markScrollbarActivity();
+			this.requestRenderCallback?.();
+		}
+	}
+	scrollToEnd() {
+		const next = Math.max(0, this.contentHeight - this.currentViewportHeight);
+		const changed = this.currentScrollTop !== next || this.followingEnd !== this.followEnd;
+		this.currentScrollTop = next;
+		this.followingEnd = this.followEnd;
+		this.followSuppressedAtEnd = false;
+		if (changed) {
+			this.markScrollbarActivity();
+			this.requestRenderCallback?.();
+		}
+	}
+	updateLayout(contentHeight, viewportHeight, requestRender) {
+		this.contentHeight = Math.max(0, Math.floor(contentHeight));
+		this.currentViewportHeight = Math.max(0, Math.floor(viewportHeight));
+		this.requestRenderCallback = requestRender;
+		const maxScrollTop = Math.max(0, this.contentHeight - this.currentViewportHeight);
+		if (this.followingEnd) this.currentScrollTop = maxScrollTop;
+		else this.currentScrollTop = Math.max(0, Math.min(this.currentScrollTop, maxScrollTop));
+		if (this.currentScrollTop < maxScrollTop) this.followSuppressedAtEnd = false;
+		if (this.followEnd && this.currentScrollTop === maxScrollTop && !this.followSuppressedAtEnd) this.followingEnd = true;
+		if (this.contentHeight <= this.currentViewportHeight) this.hideTransientScrollbar();
+	}
+	invalidate() {
+		this.child?.invalidate?.();
+	}
+	// pi-tui's Container dispatches to its child; the rail child carries no
+	// handleMouse of its own, so a non-wheel miss resolves to undefined either way.
+	handleMouse() { return undefined; }
+	render(width) {
+		const contentWidth = this.getContentWidth(width);
+		const lines = this.child.render(contentWidth);
+		return contentWidth === width ? lines : lines.map((line) => `${line} `);
+	}
+	[LAYOUT_NODE]() {
+		return { type: "scroll", component: this.child, state: this };
+	}
+}
