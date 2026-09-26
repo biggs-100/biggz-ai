@@ -11,7 +11,8 @@ banner/changes/todo/usage, shell cards and gauges, and the `Gentle` / `Gentleman
 ## Decisions
 
 Load-bearing choices already made. D1–D5 by the human (2026-09-24); D6–D8 were taken while
-implementing unit 2.4 and D9 while implementing unit 2.5, listed here so they are visible for
+implementing unit 2.4, D9 while implementing unit 2.5, and D10–D12 while implementing unit 2.6
+— the last three answered by the human from the 2.6 mapping, listed here so they are visible for
 review.
 
 | # | Decision | Choice |
@@ -25,6 +26,9 @@ review.
 | D7 | Name and shape of the new wiring file | **`internal/assets/pi/biggz-shell.ts`, flat and `factory: true`** (2.4). pi loads direct `extensions/*.ts` files plus subdirectories that carry an `index.ts` entry point, and the 2.1 guards forbid that entry point in `biggz-shell/`, so the factory and its helper directory can coexist |
 | D8 | Gates on the shell footer | **`isPrettyEnabled() && shellEnabled()`** (2.4). The first is the repo-wide kill switch every other deployed pretty asset already honours, so the documented `BIGGZ_PRETTY=0` still turns the footer off; the second is the bar's own `BIGGZ_SHELL` |
 | D9 | pi's single-owner header slot (`setHeader`) | **Left unclaimed** (2.5). The startup banner is not ported with the header row. `setHeader` is a last-writer-wins slot, so claiming it is a decision that must update `pi_shell_widget_owner_test.go` clause (c) in the same unit, not a side effect of adding a row. The row uses the keyed `ctx.ui.setWidget(..., { placement: "belowEditor" })` slot instead, which coexists with other widgets; the banner itself is task 2.14 |
+| D10 | Review facts in the sidebar rail | **None** (2.6). The rail carries no lineage, lens or budget. Upstream's shell never shows them either — its Status card's RDD group is unreachable, because the event that would carry it (`gentle-ai:review-sidebar`) has no emitter and no consumer in 3.7.0 — and the retired powerline footer read speculative `ctx.*`/`footerData.*` fields that no producer ever supplied, so its `lineage▕lens▕budget` segments never rendered real data. The real facts live in biggz's review CLI and store, and giving the shell access is a producer problem: risk 12's successor is **task 2.11** |
+| D11 | Who paints the header when the rail is active | **The rail, for the `top` placement** (2.6). `headerPlacement` has exactly two disjoint values, so the rail's `"header"` part owns `top` and the below-editor widget keeps owning `below-input`, and no value can make both paint. Faithful to upstream, which registers the part unconditionally and gates the widget on `below-input` |
+| D12 | Behaviour when the pi-tui internals are missing | **Silent, clean no-rail bar** (2.6), superseding risk 1's "task 2.6 must fail visibly instead". Upstream's own behaviour: every absent internal is a silent `state.active = false`. With no runtime signal, the loud detector has to be the suite, so the resolver gained a resolution report and the suite now fails — naming the directory and the missing symbols — when a discovered install stopped exposing a required symbol. The one case no in-module guard can cover is R3-001 (task 2.15): a static import that stops resolving fails at link time, before any guard runs |
 
 ## Tasks
 
@@ -155,10 +159,23 @@ review.
   `go test ./internal/install/... -count=1`, and `go test ./internal/install/steps/ -run
   TestPiShellWidget -v`.
 
-- [ ] 2.6 Sidebar rail.
-  Acceptance: the rail activates only when `host.layoutRoot` and the pi-tui layout symbol
-  are both present, and falls back to a clean no-rail shell bar otherwise; a test covers
-  both branches. This unit carries the private-internals risk.
+- [x] 2.6 Sidebar rail.
+  Acceptance: the rail activates only when `host.layoutRoot` and the pi-tui layout symbol are
+  both present, and falls back to a clean no-rail shell bar otherwise, with a test covering both
+  branches — asserted against `root[NODE]()`, the node shape, `sidebarState.active`, the bottom
+  component's `render()` and the untouched root, so a port that never replaced the node fails.
+  It also carries the Status card as the `"footer"` rail part, hands `invalidateSidebar` through
+  the render host hook, disposes the widget, the header part and the rail together, and the new
+  helper is a `factory: false` deploy entry.
+  Why the unit is shaped this way: D10 (no review facts, risk 12 reassigned to 2.11), D11 (the
+  rail owns the `top` header case), D12 (silent no-rail degradation, with the suite as the loud
+  detector).
+  Evidence: `node --test internal/assets/pi/biggz-shell.test.mjs
+  internal/assets/pi/biggz-shell/*.test.mjs` (256 assertions, 218 of them the pre-existing
+  helper suites plus the rail's 38), `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`
+  (17), `go test ./internal/install/... -count=1`, `go test ./internal/install/steps/ -run
+  'TestPiShellWidget|TestPiFooterOwner|TestPiExtensions|TestPiAssets|TestPiThemes' -v`,
+  `go build ./...` and `go vet ./internal/install/...`.
 
 - [ ] 2.7 Todo rail.
   Acceptance: the todo widget coexists with the `biggz-subagents` widget (distinct
@@ -225,7 +242,7 @@ review.
   single-quoted or template-literal key. Same class as risk 11: the guard reads as
   coverage, and the reading is the hazard.
 
-### Phase 5 — the native review of 2.5 and what it deferred
+### Phase 5 — native review findings, and what they deferred
 
 - [ ] 2.13 Close the two reliability findings the native review of 2.5 admitted.
   Acceptance: `refreshUsage`'s registry-only body is exercised by a test that reaches past
@@ -254,6 +271,29 @@ review.
   coexists, so the banner was separable from the row and was made a decision (D9) instead of a
   side effect.
 
+- [ ] 2.15 Close the four findings the native review of 2.6 admitted.
+  Acceptance: (a) a pi-tui release that drops `ScrollView` or `VStack` no longer takes the whole
+  shell extension down — the rail's import is loaded so that a missing export degrades to the
+  no-rail bar instead of failing at ESM link time, and a test proves the extension still installs
+  its footer, header row and command with the rail module unloadable; (b) the D12 detector fails
+  only when no candidate resolved, so a stale pi-tui sitting beside a usable one, or an explicit
+  `PI_TUI_DIR`, cannot produce a spurious hard failure with a message that misstates the fallback;
+  (c) `reclaimFooterRow`'s re-host path has a test that actually builds a dock whose layout node
+  holds a nested entry, since every current fixture takes the early return; (d) the rail wiring in
+  `biggz-shell.ts` is asserted rather than grepped: the digest over `footerModel()`/presentation
+  changing when the model changes, the header usage-span click handler, and the
+  `disposeHeader`/`uninstall`/`part.dispose` chain on a throwing component.
+  Why: these are the four findings of the native review of 2.6 (R3-001 and R3-002 WARNING, R3-003
+  and R3-004 SUGGESTION, all inferential and `informational`). R3-001 is the one that matters:
+  D12 promises that losing the private internals costs the rail and nothing else, but the static
+  import means a dropped export costs the entire shell — the footer, the header row and
+  `/biggz-usage` go with it — because no guard can run when the specifier itself stops resolving.
+  R3-002 is the mirror image: the detector built to be loud is loud in the wrong case, failing on
+  a candidate the resolver was designed to skip past.
+  Evidence: the reviewer's ledger, `internal/assets/pi/biggz-shell/shell-sidebar-layout.ts:16`
+  (R3-001), `shell-sidebar-layout.test.mjs:99` (R3-002), `shell-sidebar-layout.ts:285` (R3-003)
+  and `internal/assets/pi/biggz-shell.ts:321` (R3-004).
+
 ## Evidence
 
 | Task | Command | Result | Commit |
@@ -267,7 +307,7 @@ review.
 | 2.3 | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent body diff of both modules against upstream | PASS. 194 helper assertions, up from 144, and 17 factory assertions; both Go packages green; the guard scans 32 deployed assets. `shell-bar.ts` differs from upstream only in the five declared changes plus the two instructed comment rewrites, and `shell-sidebar-banner.ts` only in the declared brand lines. The role-palette suite reports 791 width assertions across the seven themes. | `562ef0d0` |
 | 2.4 | `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go build ./...`; `go vet ./internal/install/...` | PASS. Still 16 factories and 16 helpers; the brand guard scans 32 deployed assets with its allowlist sub-test green; 223 node assertions pass, including the bar's 791 width assertions; `TestPiFooterOwner_SingleDeployedFooter` fails on the pre-change tree naming `pi/biggz-footer.js` as the owner with 20 `statusLine*` hits, then passes. Independent verification returned PASS WITH FINDINGS — six findings, none blocking: the scanner's registration forms and the retirement seed list were widened inside this unit (with a table test pinning the forms), the deploy-manifest parity gap and the single-quote `statusLine` form are task 2.12, and two findings were wording rather than code. | `da28997d` |
 | 2.5 | `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiShellWidget\|TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. 235 node assertions, up from 223: the new `UsageView` suite contributes 8 cases and the factory suite still reports 17. `TestPiShellWidget_Owners` passes with its four clauses, the brand guard scans 33 deployed assets with its allowlist sub-test green, and both `internal/install` packages are green. `go build ./...` and `go vet` clean. An `~/.biggz` and `~/.gentle-shell/agent` mtime sweep across the whole run shows only `gentle-agents/presence`, the running session's own heartbeat, so the new suites are hermetic like 2.2b's. Independent verification of this unit (`gentle-ai-verify`) returned PASS WITH FINDINGS and two of its findings were fixed inside the unit: the kill switches moved from `session_start` to factory scope, because `registerCommand`/`registerShortcut`/`pi.events.on` are factory-time registrations that a later check cannot undo, and the `PI_TUI_SHELL_SYMBOLS` gate was widened to cover `Key`/`matchesKey`, which the new code depends on. Native review of the same tree: lineage `review-70667592872dbc72`, `approved`, two advisory findings now tracked as 2.13. | `7fe76875` |
-| 2.6 | | | |
+| 2.6 | `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; the rail suite four ways (default resolution, explicit `PI_TUI_DIR` on real 0.85.1, no pi-tui at all, doctored candidate); `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiShellWidget\|TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. 256 node assertions (218 pre-existing plus the rail's 38) and 17 factory assertions, all green; the brand guard scans 34 deployed assets with its allowlist sub-test green; both `internal/install` packages green; build and vet clean. The port's fidelity was checked by diff, not by line count: against upstream `lib/shell-sidebar-layout.ts` (342 lines) the only hunks are the header comment and the cache-symbol rename. The D12 detector was proved adversarial rather than trusted: with a doctored candidate whose `dist/index.js` names every shell symbol except `ScrollView`/`VStack`, the suite FAILS naming that directory and those symbols, while with no pi-tui present it skips and says the oracle is the shape reference. Independent verification returned PASS WITH FINDINGS and both findings were closed in-unit — the D12 skip gap (now a fail) and a wrong upstream line count. Native review of the same tree: lineage `review-194f0bd3d9575e4b`, 6 paths, 1508 changed lines, correction budget 200, `approved`, four advisory findings now tracked as 2.15. | `bca03d1f` |
 | 2.7 | | | |
 | 2.8 | | | |
 | 2.9 | | | |
@@ -278,7 +318,12 @@ review.
 
 1. `shell-sidebar-layout.ts` binds to private pi-tui internals
    (`Symbol.for("@earendil-works/pi-tui/layout-node")`, `host.layoutRoot`, `tui.terminal`).
-   A pi-tui bump can make the rail disappear silently; task 2.6 must fail visibly instead.
+   A pi-tui bump can make the rail disappear silently. D12 chose upstream's silent degradation
+   over a visible notice, so the suite is the detector: a discovered install that stopped naming
+   a required symbol fails the suite with the directory and the symbols, and only a machine with
+   no pi-tui at all falls back to the oracle and skips. Two limits stay open in task 2.15: the
+   detector cannot see a bump that keeps every symbol name, and a dropped `ScrollView`/`VStack`
+   export fails at ESM link time and takes the whole shell extension, not just the rail (R3-001).
 2. The footer is a single slot, and pi silently lets the last loaded owner win. Unit 2.4
    retired `biggz-footer.js` from the deploy list, and `TestPiFooterOwner_SingleDeployedFooter`
    now fails if a second deployed asset names the slot, if the retired asset regains its entry,
@@ -340,12 +385,13 @@ review.
     dropped helper is invisible — and task 2.12 closes both.
 12. 2.4 changed what the one-line footer says, by design (D3). The retired powerline footer
     painted `branch▕change▕lineage▕lens▕budget`; the shell bar paints location, model, effort,
-    context, cost, usage and extension statuses instead, so the review lineage, lens and budget
-    facts have no successor in that line and move to the sidebar Status card and the RDD card
-    `shell-bar.ts` already renders. The gates changed with it: `BIGGZ_PRETTY=0` still turns the
-    footer off because the factory reads `isPrettyEnabled()`, and `BIGGZ_SHELL=0` is the new
-    shell-specific switch. Re-examine the lineage/lens/budget gap in 2.6 rather than assuming
-    the sidebar covers it.
+    context, cost, usage and extension statuses instead. Re-examined in 2.6 and answered there
+    (D10): the gap is real but the three facts have no shell-side successor, because upstream's
+    shell never showed them either, and the retired footer's segments read fields no producer
+    ever supplied. Their owner is now **task 2.11**, which already has to build the producer side
+    of the review sidebar. The gates changed with the footer: `BIGGZ_PRETTY=0` still turns it off
+    because the factory reads `isPrettyEnabled()`, and `BIGGZ_SHELL=0` is the shell-specific
+    switch.
 13. The native review needs a lens model this environment does not provide by default. The
     host relay reads lens routing from `<configHome>/models.json`, where `configHome` is
     `GENTLE_PI_CONFIG_HOME` or `~/.pi/gentle-ai`, but the `gentle-shell` launcher sets
@@ -374,10 +420,12 @@ review.
 
 ## Next
 
-Verified outcome: the footer is real and the row under the editor follows it — `biggz install`
-deploys a shell bar that owns pi's single footer slot, the old powerline footer is retired, and
-the same factory paints the header row and registers `/biggz-usage`. Tasks 1.1, 1.2, 1.3, 2.1,
-2.2a, 2.2b, 2.3, 2.4, 2.5 and 2.10 are done and green.
+Verified outcome: the footer is real, the row under the editor follows it and fullscreen gets
+its rail — `biggz install` deploys a shell bar that owns pi's single footer slot, the old
+powerline footer is retired, the same factory paints the header row and registers `/biggz-usage`,
+and a second deployed helper replaces pi's private layout root with the transcript-plus-rail
+split when the terminal can hold it. Tasks 1.1, 1.2, 1.3, 2.1, 2.2a, 2.2b, 2.3, 2.4, 2.5, 2.6
+and 2.10 are done and green.
 
 1.1 — the three Gentle Shell themes are installed assets, every theme resolves every
 `statusLine*` key any deployed asset reads (repairing the pre-existing `solarized-osaka.json`
@@ -437,26 +485,40 @@ deliberately left unclaimed so the banner could not arrive as a side effect (D9,
 This is also the first unit in this repository reviewed natively before its commit, which is
 what the provider's `current-changes` projection is built for.
 
+2.6 — the rail is the port's most invasive move and it is exactly as invasive as upstream's.
+`installSidebar` monkey-patches pi's private layout node from inside the `setFooter` callback,
+replacing the root with the transcript-plus-rail split, saving and restoring the property
+descriptor, re-hosting the dock to reclaim the footer's reserved row, and re-binding on a 100 ms
+timer because pi swaps renderers without an event. The port is faithful to the line — the diff is
+two hunks — and every guard came with it. Three choices shaped the unit: the rail carries no
+review facts (D10, with risk 12 handed to 2.11), the rail owns the `top` header case so the
+header cannot be painted twice (D11), and missing internals degrade silently with the suite as
+the detector (D12). That last one forced the test plumbing open: the oracle gained
+`ScrollView`/`VStack`, the symbol gate gained both names, and the resolver gained a report so the
+suite can tell "nothing installed" from "installed and no longer exposing the symbols" — a
+distinction the first version of that detector got wrong, which is exactly what R3-002 caught.
+
 Known failures outside this work, identical on `HEAD` before the change (verified by
 stashing): `internal/agents/pi` 4, `internal/git` 1, `internal/project` 6, `cmd/biggz` 2,
 `internal/review` 2. `internal/agents/pi`'s four are the same `PI_CODING_AGENT_DIR`
 hermeticity class of bug and are not yet fixed.
 
-Next step: task 2.6, the sidebar rail, which carries the private-internals risk and owns the
-lineage/lens/budget gap risk 12 names. Queued behind it are the two defect fixes 2.9 (theme
-preview on terminal-default colours) and 2.11 (review sidebar protocol), then 2.7 (todo rail),
-2.8 (prompt ownership), 2.12 (the two guards 2.4's verification found narrower than their
-invariants), 2.13 (the two reliability findings the native review of 2.5 admitted) and 2.14
-(the banner, deferred by D9).
+Next step: task 2.7, the todo rail, which is the last of the rail's three sections to get a
+producer. Queued behind it are the two defect fixes 2.9 (theme preview on terminal-default
+colours) and 2.11 (review sidebar protocol, now also the owner of the lineage/lens/budget facts
+risk 12 describes), then 2.8 (prompt ownership), 2.12 (the two guards 2.4's verification found
+narrower than their invariants), 2.13 (the two reliability findings the native review of 2.5
+admitted), 2.14 (the banner, deferred by D9) and 2.15 (the four findings the native review of 2.6
+admitted, the static-import one first).
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
 path with the design in front of us (risk 5).
 
-Commit status: ten work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
+Commit status: eleven work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
 (1.3), `07aa401a` (1.2), `8398ddeb` (2.1), `35cdc44f` (2.2a), `1cffbe2c` (2.2b), `562ef0d0`
-(2.3), `e165d77a` (2.10), `da28997d` (2.4), `7fe76875` (2.5) — plus the tracking commits. Push
-and pull request remain human decisions. A pre-existing untracked change,
+(2.3), `e165d77a` (2.10), `da28997d` (2.4), `7fe76875` (2.5), `bca03d1f` (2.6) — plus the
+tracking commits. Push and pull request remain human decisions. A pre-existing untracked change,
 `openspec/changes/fix-archived-change-identity/`, was left untouched.
 
 Review size: 2.4 changed 748 lines, 613 of them new files (the factory, its suite and the new
@@ -473,3 +535,11 @@ reviewed natively before its commit, on the provider's `current-changes` project
 budget 200, `approved` with the two advisory findings that are now task 2.13. The staged tree
 was compared against the reviewed candidate tree and matched byte for byte, so what is
 committed is what was reviewed.
+
+2.6 is the largest unit yet by changed lines: six paths, 1508 changed lines and 1479 insertions,
+of which 779 are its suite and 357 the rail module itself. It was not split either — the rail
+module, its wiring and its guard describe one seam, and the deploy entry cannot land before the
+file it points at — so it followed 2.5 down the same path: native review before the commit, on
+the `current-changes` projection, lineage `review-194f0bd3d9575e4b`, one `review-reliability`
+lens, medium tier, correction budget 200, `approved` with four advisory findings (2.15). The
+staged tree was again compared against the reviewed candidate tree and matched byte for byte.
