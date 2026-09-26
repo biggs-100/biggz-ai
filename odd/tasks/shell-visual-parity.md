@@ -11,7 +11,8 @@ banner/changes/todo/usage, shell cards and gauges, and the `Gentle` / `Gentleman
 ## Decisions
 
 Load-bearing choices already made. D1–D5 by the human (2026-09-24); D6–D8 were taken while
-implementing unit 2.4 and are listed here so they are visible for review.
+implementing unit 2.4 and D9 while implementing unit 2.5, listed here so they are visible for
+review.
 
 | # | Decision | Choice |
 |---|---|---|
@@ -23,6 +24,7 @@ implementing unit 2.4 and are listed here so they are visible for review.
 | D6 | Fate of the retired `biggz-footer.js` asset | **Keep the file, retire it from the deploy list** (2.4). The file stays as the rollback reference, the way `biggz-synthesis-gate.js` does, which keeps its suite meaningful and its declared boundary in `.github/guard-baseline.txt` valid; the installer deletes any copy already in a home |
 | D7 | Name and shape of the new wiring file | **`internal/assets/pi/biggz-shell.ts`, flat and `factory: true`** (2.4). pi loads direct `extensions/*.ts` files plus subdirectories that carry an `index.ts` entry point, and the 2.1 guards forbid that entry point in `biggz-shell/`, so the factory and its helper directory can coexist |
 | D8 | Gates on the shell footer | **`isPrettyEnabled() && shellEnabled()`** (2.4). The first is the repo-wide kill switch every other deployed pretty asset already honours, so the documented `BIGGZ_PRETTY=0` still turns the footer off; the second is the bar's own `BIGGZ_SHELL` |
+| D9 | pi's single-owner header slot (`setHeader`) | **Left unclaimed** (2.5). The startup banner is not ported with the header row. `setHeader` is a last-writer-wins slot, so claiming it is a decision that must update `pi_shell_widget_owner_test.go` clause (c) in the same unit, not a side effect of adding a row. The row uses the keyed `ctx.ui.setWidget(..., { placement: "belowEditor" })` slot instead, which coexists with other widgets; the banner itself is task 2.14 |
 
 ## Tasks
 
@@ -136,11 +138,22 @@ implementing unit 2.4 and are listed here so they are visible for review.
   usage fetch (out of scope for this port). The two `TODO(2.4)` comments in `shell-bar.ts`
   are repointed at 2.5 and 2.8, which own the two items they name.
 
-- [ ] 2.5 Startup banner via `setHeader`.
-  Acceptance: the banner renders through a fake `pi` render harness; its config probes
-  respect the `PI_CODING_AGENT_DIR`-aware agent dir instead of hardcoding `~/.pi/agent`.
-  It also owns the full-table usage command the header row points at, which 2.4 left
-  unregistered and marked `TODO(2.5)`.
+- [x] 2.5 Header row and the usage command.
+  Acceptance: the header row renders through `ctx.ui.setWidget(HEADER_WIDGET_KEY, ...,
+  { placement: "belowEditor" })` and stays inert until the theme's `headerPlacement` is
+  `below-input` and the TUI is fullscreen, the same condition upstream's row obeys;
+  `/biggz-usage` and its global `alt+u` shortcut (`BIGGZ_SHELL_USAGE_KEY` overrides the
+  default) open a `UsageView` that refreshes only through a source registered on
+  `USAGE_SOURCE_EVENT`, throttled per provider, with no built-in provider fetch; both kill
+  switches return at factory scope, so a disabled layer installs no command, no shortcut, no
+  widget and no event subscription; and `pi_shell_widget_owner_test.go` pins the widget key's
+  single owner, the command name's single owner, pi's header slot as unclaimed and the footer
+  slot to the 2.4 scanner.
+  Why the banner is not part of this unit: D9.
+  Evidence: `node --test internal/assets/pi/biggz-shell.test.mjs
+  internal/assets/pi/biggz-shell/*.test.mjs` (235 assertions, 218 helper plus 17 factory),
+  `go test ./internal/install/... -count=1`, and `go test ./internal/install/steps/ -run
+  TestPiShellWidget -v`.
 
 - [ ] 2.6 Sidebar rail.
   Acceptance: the rail activates only when `host.layoutRoot` and the pi-tui layout symbol
@@ -212,6 +225,35 @@ implementing unit 2.4 and are listed here so they are visible for review.
   single-quoted or template-literal key. Same class as risk 11: the guard reads as
   coverage, and the reading is the hazard.
 
+### Phase 5 — the native review of 2.5 and what it deferred
+
+- [ ] 2.13 Close the two reliability findings the native review of 2.5 admitted.
+  Acceptance: `refreshUsage`'s registry-only body is exercised by a test that reaches past
+  both of its guards — a fake model, a registered source and the recorded `UsageStore` entry
+  asserted end to end — and the fire-and-forget call sites (`void refreshUsage(...)` at the
+  command, at the event handler and at the widget) attach rejection handling instead of
+  discarding the promise, with `renderHost` cleared on `session_shutdown` so a fetch that
+  settles afterwards cannot reach a torn-down TUI.
+  Why: these are the two findings of the native review of 2.5 (R3-001 and R3-002, WARNING,
+  evidence class inferential, disposition `informational`). The review approved the candidate
+  and its closure states that none of the findings opened a correction, so they are later
+  work by construction and never a reason to re-review that candidate. R3-001 is the sharper
+  one: the unit's headline behaviour, the registry-only refresh, is never executed by any
+  test, because every test that reaches the path stops at one of the two guards.
+  Evidence: the reviewer's ledger, `internal/assets/pi/biggz-shell.ts:224-243` (R3-001) and
+  `internal/assets/pi/biggz-shell.ts:347` (R3-002).
+
+- [ ] 2.14 Startup banner via `setHeader` (deferred by D9).
+  Acceptance: the banner renders through a fake `pi` render harness; its config probes respect
+  the `PI_CODING_AGENT_DIR`-aware agent dir instead of hardcoding `~/.pi/agent`; and
+  `pi_shell_widget_owner_test.go` clause (c) is updated deliberately, so the unit that claims
+  pi's header slot is the same unit that stops asserting the slot stays unclaimed.
+  Why: pi's header slot is a single last-writer-wins slot, so claiming it silently replaces
+  whatever pi or another extension put there. 2.4's guard exists precisely so a slot claim
+  cannot arrive unnoticed, and the row did not need that slot: the keyed below-editor widget
+  coexists, so the banner was separable from the row and was made a decision (D9) instead of a
+  side effect.
+
 ## Evidence
 
 | Task | Command | Result | Commit |
@@ -224,7 +266,7 @@ implementing unit 2.4 and are listed here so they are visible for review.
 | 2.2b | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent body diff against upstream and a `~/.biggz` mtime snapshot | PASS. 144 helper assertions and 17 factory assertions pass; both Go packages green. `theme-customization.ts` is identical to upstream line for line and the other three differ only at the declared renames. The brand guard scans 30 deployed assets with no token outside a comment, and `~/.biggz` was unchanged by the suites. | `1cffbe2c` |
 | 2.3 | `go test ./internal/install/... -count=1`, `node --test internal/assets/pi/biggz-shell/*.test.mjs`, `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`, plus an independent body diff of both modules against upstream | PASS. 194 helper assertions, up from 144, and 17 factory assertions; both Go packages green; the guard scans 32 deployed assets. `shell-bar.ts` differs from upstream only in the five declared changes plus the two instructed comment rewrites, and `shell-sidebar-banner.ts` only in the declared brand lines. The role-palette suite reports 791 width assertions across the seven themes. | `562ef0d0` |
 | 2.4 | `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go build ./...`; `go vet ./internal/install/...` | PASS. Still 16 factories and 16 helpers; the brand guard scans 32 deployed assets with its allowlist sub-test green; 223 node assertions pass, including the bar's 791 width assertions; `TestPiFooterOwner_SingleDeployedFooter` fails on the pre-change tree naming `pi/biggz-footer.js` as the owner with 20 `statusLine*` hits, then passes. Independent verification returned PASS WITH FINDINGS — six findings, none blocking: the scanner's registration forms and the retirement seed list were widened inside this unit (with a table test pinning the forms), the deploy-manifest parity gap and the single-quote `statusLine` form are task 2.12, and two findings were wording rather than code. | `da28997d` |
-| 2.5 | | | |
+| 2.5 | `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiShellWidget\|TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. 235 node assertions, up from 223: the new `UsageView` suite contributes 8 cases and the factory suite still reports 17. `TestPiShellWidget_Owners` passes with its four clauses, the brand guard scans 33 deployed assets with its allowlist sub-test green, and both `internal/install` packages are green. `go build ./...` and `go vet` clean. An `~/.biggz` and `~/.gentle-shell/agent` mtime sweep across the whole run shows only `gentle-agents/presence`, the running session's own heartbeat, so the new suites are hermetic like 2.2b's. Independent verification of this unit (`gentle-ai-verify`) returned PASS WITH FINDINGS and two of its findings were fixed inside the unit: the kill switches moved from `session_start` to factory scope, because `registerCommand`/`registerShortcut`/`pi.events.on` are factory-time registrations that a later check cannot undo, and the `PI_TUI_SHELL_SYMBOLS` gate was widened to cover `Key`/`matchesKey`, which the new code depends on. Native review of the same tree: lineage `review-70667592872dbc72`, `approved`, two advisory findings now tracked as 2.13. | `7fe76875` |
 | 2.6 | | | |
 | 2.7 | | | |
 | 2.8 | | | |
@@ -304,12 +346,38 @@ implementing unit 2.4 and are listed here so they are visible for review.
     footer off because the factory reads `isPrettyEnabled()`, and `BIGGZ_SHELL=0` is the new
     shell-specific switch. Re-examine the lineage/lens/budget gap in 2.6 rather than assuming
     the sidebar covers it.
+13. The native review needs a lens model this environment does not provide by default. The
+    host relay reads lens routing from `<configHome>/models.json`, where `configHome` is
+    `GENTLE_PI_CONFIG_HOME` or `~/.pi/gentle-ai`, but the `gentle-shell` launcher sets
+    `PI_CODING_AGENT_DIR` and `GENTLE_PI_AGENT_HOME` to its resolved home and never sets
+    `GENTLE_PI_CONFIG_HOME` (`runtime/gentle-shell-launcher.mjs:947`). Under the launcher's
+    default isolated home the two paths diverge, no routing file exists there, and a capture
+    fails with "no model is configured for review-reliability" before running anything — a
+    configuration refusal that reads like a broken candidate. It was fixed by hand here, by
+    writing the four `review-*` keys into `~/.pi/gentle-ai/models.json`. biggz-ai sets neither
+    variable, so its own deployed home keeps both paths coherent and does not inherit this;
+    the defect is the launcher's, and upstream's to fix.
+14. A test writes model routing into the user's real global config file, and it does so by
+    design of the code under test rather than by a missing override in one fixture.
+    `internal/tui/models.go:192` persists through
+    `opencode.WriteModelConfig(opencode.DefaultModelConfigPath(), m.userConfig)`, and
+    `DefaultModelConfigPath()` (`internal/opencode/models.go:464`) hardcodes `~/.biggz` with
+    no env override and no injection seam. `internal/tui/models_test.go:104` then calls
+    `SetModel("sdd-design", "test-model")`, so running `go test ./internal/tui/...` overwrites
+    the developer's `~/.biggz/models.json` with that fixture — which is exactly what is on
+    disk in this environment: `{"sdd-design": {"model": "test-model"}}`. Same class as risk 5
+    and the same incident shape as 1.3, but worse, because the file it destroys is
+    user-owned configuration rather than a deployed asset. Found on 2026-09-26 while
+    configuring the review lenses, not yet reproduced under a controlled snapshot, and
+    outside this feature's scope: it needs its own work unit in `internal/tui` and
+    `internal/opencode`.
 
 ## Next
 
-Verified outcome: the footer is real — `biggz install` deploys a shell bar that owns pi's
-single footer slot, and the old powerline footer is retired. Tasks 1.1, 1.2, 1.3, 2.1, 2.2a,
-2.2b, 2.3, 2.4 and 2.10 are done and green.
+Verified outcome: the footer is real and the row under the editor follows it — `biggz install`
+deploys a shell bar that owns pi's single footer slot, the old powerline footer is retired, and
+the same factory paints the header row and registers `/biggz-usage`. Tasks 1.1, 1.2, 1.3, 2.1,
+2.2a, 2.2b, 2.3, 2.4, 2.5 and 2.10 are done and green.
 
 1.1 — the three Gentle Shell themes are installed assets, every theme resolves every
 `statusLine*` key any deployed asset reads (repairing the pre-existing `solarized-osaka.json`
@@ -357,26 +425,38 @@ carrying its reason and a sub-test that fails once an entry goes stale. Four lea
 two-token rule let through are gone, two by rename and two by being named in the allowlist
 because their fix is a wiring change, not a relabel.
 
+2.5 — the factory second surface is real and gated the way 2.4's is. The header row goes into
+pi's keyed below-editor widget slot, which coexists with other widgets, and it stays inert
+until the theme asks for `below-input` and the TUI is fullscreen, so a home that is not
+fullscreen keeps exactly the one-line bar 2.4 installed. `/biggz-usage` and its global `alt+u`
+shortcut open the ported `UsageView`, whose refresh is registry-only: the port ships no provider
+fetch, so a provider with no source registered on `USAGE_SOURCE_EVENT` says so in the panel
+instead of inventing a request. The two kill switches now return before anything registers,
+which is the difference between a disabled layer and a half-alive one, and pi's header slot was
+deliberately left unclaimed so the banner could not arrive as a side effect (D9, task 2.14).
+This is also the first unit in this repository reviewed natively before its commit, which is
+what the provider's `current-changes` projection is built for.
+
 Known failures outside this work, identical on `HEAD` before the change (verified by
 stashing): `internal/agents/pi` 4, `internal/git` 1, `internal/project` 6, `cmd/biggz` 2,
 `internal/review` 2. `internal/agents/pi`'s four are the same `PI_CODING_AGENT_DIR`
 hermeticity class of bug and are not yet fixed.
 
-Next step: task 2.5, the startup banner via `setHeader` — the next piece of the same factory,
-which also takes the usage command `shell-bar.ts` marks `TODO(2.5)`. Queued right behind it are
-the two defect fixes 2.9 (theme preview on terminal-default colours) and 2.11 (review sidebar
-protocol), then 2.6 (sidebar rail, which owns the lineage/lens/budget gap risk 12 names), 2.7
-(todo rail), 2.8 (prompt ownership) and 2.12 (the two guards 2.4's verification found narrower
-than their invariants).
+Next step: task 2.6, the sidebar rail, which carries the private-internals risk and owns the
+lineage/lens/budget gap risk 12 names. Queued behind it are the two defect fixes 2.9 (theme
+preview on terminal-default colours) and 2.11 (review sidebar protocol), then 2.7 (todo rail),
+2.8 (prompt ownership), 2.12 (the two guards 2.4's verification found narrower than their
+invariants), 2.13 (the two reliability findings the native review of 2.5 admitted) and 2.14
+(the banner, deferred by D9).
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
 path with the design in front of us (risk 5).
 
-Commit status: nine work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
+Commit status: ten work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
 (1.3), `07aa401a` (1.2), `8398ddeb` (2.1), `35cdc44f` (2.2a), `1cffbe2c` (2.2b), `562ef0d0`
-(2.3), `e165d77a` (2.10), `da28997d` (2.4) — plus the tracking commits. Push and pull request
-remain human decisions. A pre-existing untracked change,
+(2.3), `e165d77a` (2.10), `da28997d` (2.4), `7fe76875` (2.5) — plus the tracking commits. Push
+and pull request remain human decisions. A pre-existing untracked change,
 `openspec/changes/fix-archived-change-identity/`, was left untouched.
 
 Review size: 2.4 changed 748 lines, 613 of them new files (the factory, its suite and the new
@@ -384,3 +464,12 @@ Go guard). That is above the 400-line review budget, and it is the exception thi
 already grants a new self-contained module with its suite. It cannot be split further: pi has
 one footer slot, so between two commits the slot would either be empty or doubled, which is
 exactly what risk 2 forbids.
+
+2.5 is larger again: nine paths, 1186 changed lines and 1125 insertions. It could not be split
+either — the header row, the command and the guard describe one factory, and a commit between
+them would leave a registered command pointing at nothing — so instead of splitting it was
+reviewed natively before its commit, on the provider's `current-changes` projection: lineage
+`review-70667592872dbc72`, one `review-reliability` lens, medium tier, 9 paths, correction
+budget 200, `approved` with the two advisory findings that are now task 2.13. The staged tree
+was compared against the reviewed candidate tree and matched byte for byte, so what is
+committed is what was reviewed.
