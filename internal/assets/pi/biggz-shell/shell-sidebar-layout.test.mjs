@@ -232,6 +232,46 @@ test("a real layout-root object is patched through NODE and its native render su
 	assert.deepEqual(bottom.render(80), []);
 });
 
+// reclaimFooterRow's re-host path: the fullscreen root's last entry is the dock
+// (pi's chat viewport), and the dock's own layout node keeps a footer entry pi
+// reserved even though our footer paints nothing while the rail is active. Every
+// fixture above builds a root node with no nested entry and so takes the early
+// return; this root's last entry is a dock whose node DOES hold nested entries,
+// so the re-host path runs and must free only that built-in footer row.
+test("reclaimFooterRow re-hosts a dock that has nested entries and frees only its footer row", (t) => {
+	const transcript = { render: () => ["transcript"], invalidate() {} };
+	const dockFooter = { render: () => [""], invalidate() {} };
+	const dock = new VStack([
+		{ component: transcript, basis: 0, grow: 1, shrink: 1, minSize: 1 },
+		{ component: dockFooter, basis: "auto", grow: 0, shrink: 0, minSize: 1 },
+	], { gap: 2, align: "center" });
+	const native = { type: "vstack", gap: 0, align: "stretch", entries: [{ component: dock, basis: 0, grow: 1, shrink: 1, minSize: 1 }] };
+	const root = { render: () => ["transcript"], invalidate() {}, [NODE]: () => native };
+	const host = { mode: "fullscreen", terminal: { columns: 140 }, layoutRoot: root, requestRender() {} };
+	sidebarPart(host, "footer", { render: () => ["Status"], invalidate() {} });
+	t.after(installSidebar(host, theme));
+
+	const hstack = root[NODE]();
+	assert.equal(hstack.type, "hstack");
+	const left = hstack.entries[0].component;
+	const reclaimed = left[NODE]();
+	assert.equal(reclaimed.type, "vstack");
+	assert.equal(reclaimed.gap, 0, "the outer stack's own geometry is preserved");
+	assert.equal(reclaimed.entries.length, 1);
+	const wrapper = reclaimed.entries[0].component;
+	assert.notEqual(wrapper, dock, "the dock is re-hosted in a fresh VStack, never reused");
+	assert.ok(wrapper instanceof VStack, "the re-host uses a real VStack");
+	const inner = wrapper[NODE]();
+	assert.equal(inner.type, "vstack");
+	assert.equal(inner.gap, 2, "the re-host keeps the dock's gap");
+	assert.equal(inner.align, "center", "the re-host keeps the dock's align");
+	assert.deepEqual(inner.entries.map((entry) => entry.minSize), [1, 0], "only the dock's last (footer) entry is freed to minSize 0");
+	assert.equal(inner.entries[0].component, transcript, "the transcript child survives untouched");
+	assert.equal(inner.entries[1].component, dockFooter, "the footer child survives untouched");
+	assert.equal(native.entries[0].component, dock, "the native layout node is not mutated");
+	assert.equal(left[NODE]().entries[0].component, wrapper, "the WeakMap memo reuses one wrapper per dock across frames");
+});
+
 // ── header row (D11) ────────────────────────────────────────────────────────
 
 test("an active header wraps the hstack in a vstack and removes the banner from the rail", (t) => {

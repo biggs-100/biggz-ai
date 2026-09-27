@@ -207,6 +207,15 @@ async function fetchFromSource(source: UsageSource, apiKey: string | undefined, 
 	}
 }
 
+// One bounded line for a footer-dispose step whose failure was swallowed: the
+// step names what could not be released, the capped message names the cause, and
+// the stack is dropped because this is a stderr diagnostic, not a crash report.
+// It runs at most once per session (the idempotent session_shutdown dispose).
+function describeDisposeFailure(step: string, err: unknown): string {
+	const detail = err instanceof Error ? err.message : String(err);
+	return `[biggz-shell] footer dispose: ${step} failed: ${detail.slice(0, 160)}`;
+}
+
 export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = process.env): void {
 	// Upstream evaluates the shell kill switch at factory scope and returns
 	// before registering anything (`extensions/gentle-shell.ts`:
@@ -386,18 +395,31 @@ export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
 			// a late resolution cannot bind a torn-down TUI. `presentation` is read
 			// through closures, so the live values are the ones the rail sees.
 			const rail = { disposed: false, uninstall: undefined as (() => void) | undefined };
-			const installRail = () => {
+			const installRail = (late: boolean) => {
 				if (rail.disposed || rail.uninstall || !sidebarLayout) return;
 				try {
 					rail.uninstall = sidebarLayout.installSidebar(tui, theme, () => presentation!.statusPlacement, () => presentation!.headerPlacement, () => presentation!.density);
+					// The synchronous caller is pi's footer callback, which runs inside the
+					// render pass that is already painting this bar, so the rail it installs is
+					// drawn on that same pass (the module's own attach also requests a render).
+					// A late caller runs after that pass with nothing left to cover the
+					// install, so without this request the first session's rail can stay
+					// invisible until an unrelated render. Only the late path asks, so the
+					// common, cached-module path never schedules a redundant frame.
+					// The request lives inside this try on purpose: on the async path a
+					// throwing requestRender would otherwise reject the promise that installs
+					// the rail and surface as an unhandled rejection.
+					if (late) tui.requestRender();
 				} catch {
 					// D12: a rail that throws on a shape change stays absent instead of
 					// escaping the factory (the async path would otherwise surface as an
-					// unhandled rejection and could take the process down).
+					// unhandled rejection and could take the process down). The same
+					// containment covers a throwing render request.
+					return;
 				}
 			};
-			if (sidebarLayout) installRail();
-			else void loadSidebarLayout().then(installRail);
+			if (sidebarLayout) installRail(false);
+			else void loadSidebarLayout().then(() => installRail(true));
 			// pi's public widget slot follows the editor even when the fullscreen
 			// rail is absent. TUI.mode is "regular" unless the user opts into
 			// fullscreen, so this row stays inert ([]) until headerPlacement is
@@ -426,10 +448,32 @@ export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
 				...part,
 				dispose() {
 					rail.disposed = true;
-					ctx.ui.setWidget(HEADER_WIDGET_KEY, undefined);
-					disposeHeader();
-					rail.uninstall?.();
-					part.dispose();
+					// Each release runs independently: a step that throws must not skip the
+					// rest of the chain or escape into session_shutdown, so a throwing
+					// dispose cannot take the shutdown down (the widget clear, the header
+					// slot release, the rail uninstall and the component's own dispose are
+					// all best-effort teardown). The three non-quiet steps name themselves
+					// on stderr because each releases state that would otherwise outlive
+					// the session: `header widget clear` (a missed clear risks a stale
+					// header row painting into a later session), `header slot release`
+					// (the rail's header part would stay registered), and `footer component
+					// dispose` (its branch subscription would stay live). `quiet` marks the
+					// single step that needs no diagnostic: the rail's own uninstall, which
+					// D12 already accepts as failing on a shape change.
+					const releases: { step: string; run: () => void; quiet?: boolean }[] = [
+						{ step: "header widget clear", run: () => ctx.ui.setWidget(HEADER_WIDGET_KEY, undefined) },
+						{ step: "header slot release", run: disposeHeader },
+						{ step: "rail uninstall", run: () => rail.uninstall?.(), quiet: true },
+						{ step: "footer component dispose", run: () => part.dispose() },
+					];
+					for (const { step, run, quiet } of releases) {
+						try {
+							run();
+						} catch (err) {
+							if (quiet) continue;
+							console.error(describeDisposeFailure(step, err));
+						}
+					}
 				},
 			};
 			return footer;

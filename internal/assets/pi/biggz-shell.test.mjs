@@ -26,6 +26,7 @@ process.env.BIGGZ_CONFIG_HOME = join(tmpdir(), "biggz-shell-test-config-does-not
 
 const { visibleWidth } = await import(PI_TUI_SPECIFIER);
 const { buildShellBarModel, createShellBarComponent, default: biggzShell } = await import("./biggz-shell.ts");
+const { sidebarState } = await import("./biggz-shell/shell-sidebar.ts");
 const { DEFAULT_VISUAL_SETTINGS, HEADER_PLACEMENT, VISUAL_SCHEMA } = await import("./biggz-shell/visual-customization-policy.ts");
 
 const TAGGED_THEME = {
@@ -452,7 +453,7 @@ test("the header row's usage span opens the overlay on a left click", async () =
 		assert.ok(x >= 0, "the row must carry the standing usage segment");
 		assert.equal(widget.handleMouse({ type: "click", button: "left", x: x + 1, y: 1, width: 120, height: 2 }), undefined, "the rule row is decorative and never clickable");
 		assert.deepEqual(widget.handleMouse({ type: "click", button: "left", x: x + 1, y: 0, width: 120, height: 2 }), { handled: true, render: true });
-		await new Promise((resolve) => setTimeout(resolve, 0));
+		await new Promise((resolve) => setImmediate(resolve));
 		assert.equal(customCalls.length, 1, "the usage span opens the same overlay as the command");
 		assert.equal(customCalls[0][1].overlay, true);
 	} finally {
@@ -522,4 +523,49 @@ test("a pi-tui that cannot provide ScrollView/VStack leaves the shell working an
 	const result = spawnSync(process.execPath, ["--test", fixture], { encoding: "utf8", env });
 	assert.equal(result.status, 0, `the rail's import must be contained to the rail\n${result.stdout}\n${result.stderr}`);
 	assert.match(result.stdout, /✔ a pi-tui without ScrollView\/VStack still installs the shell and no rail/, `the child fixture must actually have run\n${result.stdout}\n${result.stderr}`);
+});
+
+// The rail wiring (biggz-shell.ts) behavioural assertions: a digest that
+// silently stops changing, a click that no longer reaches the usage span, or a
+// throwing dispose must fail a test, not only a source grep. The footer and
+// header parts are the sidebarRail objects the factory registers on the
+// session's terminal; a host with `terminal` is what makes sidebarPart install
+// them instead of returning the bare bottom component.
+function railHost(mode = "regular") {
+	const renders = { count: 0 };
+	return { tui: { terminal: {}, mode, requestRender() { renders.count += 1; } }, renders };
+}
+
+test("the rail footer part's digest tracks the live model and is stable otherwise", () => {
+	const host = railHost();
+	const { ctx, footerFactory } = startSession();
+	footerFactory()(host.tui, PLAIN_THEME, fakeFooterData().data);
+	const rail = sidebarState(host.tui).parts.get("footer");
+	assert.ok(rail, "the factory registers the rail's footer part on a host with a terminal");
+	assert.equal(typeof rail.digest, "function", "the footer part declares a digest so the rail memo can notice live session state");
+	const first = rail.digest();
+	assert.equal(rail.digest(), first, "an unchanged frame keeps the same digest");
+	ctx.model = { id: "model-a", contextWindow: 1000 };
+	const second = rail.digest();
+	assert.notEqual(second, first, "a model change must change the digest, or the rail would paint stale state");
+	ctx.model = { id: "model-a", contextWindow: 2000 };
+	assert.notEqual(rail.digest(), second, "a context-window change must change the digest too");
+});
+
+test("the rail header's usage span opens the overlay while a click outside it or on the rule row does not", async () => {
+	const host = railHost();
+	const { footerFactory, customCalls } = startSession();
+	footerFactory()(host.tui, PLAIN_THEME, fakeFooterData().data);
+	const header = sidebarState(host.tui).parts.get("header");
+	assert.ok(header, "the factory registers the rail's header part");
+	const [statusLine] = header.render(120);
+	const x = statusLine.indexOf("usage");
+	assert.ok(x >= 0, "the header carries the standing usage segment");
+	const click = (overrides) => ({ type: "click", button: "left", y: 0, x: x + 1, width: 120, height: 2, ...overrides });
+	assert.equal(header.handleMouse(click({ x: 0 })), undefined, "a click left of the usage span is ignored");
+	assert.equal(header.handleMouse(click({ y: 1 })), undefined, "the rule row is decorative and never clickable");
+	assert.equal(customCalls.length, 0, "an ignored click opens nothing");
+	assert.deepEqual(header.handleMouse(click()), { handled: true, render: true });
+	await new Promise((resolve) => setImmediate(resolve));
+	assert.equal(customCalls.length, 1, "a click inside the usage span opens the usage overlay");
 });
