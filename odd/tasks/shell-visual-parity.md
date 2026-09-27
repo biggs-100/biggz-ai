@@ -11,9 +11,9 @@ banner/changes/todo/usage, shell cards and gauges, and the `Gentle` / `Gentleman
 ## Decisions
 
 Load-bearing choices already made. D1–D5 by the human (2026-09-24); D6–D8 were taken while
-implementing unit 2.4, D9 while implementing unit 2.5, and D10–D12 while implementing unit 2.6
-— the last three answered by the human from the 2.6 mapping, listed here so they are visible for
-review.
+implementing unit 2.4, D9 while implementing unit 2.5, D10–D12 while implementing unit 2.6, and
+D13–D14 while implementing unit 2.7 — the ones answered by the human from the mapping of each
+unit are marked as such, and all are listed here so they are visible for review.
 
 | # | Decision | Choice |
 |---|---|---|
@@ -29,6 +29,8 @@ review.
 | D10 | Review facts in the sidebar rail | **None** (2.6). The rail carries no lineage, lens or budget. Upstream's shell never shows them either — its Status card's RDD group is unreachable, because the event that would carry it (`gentle-ai:review-sidebar`) has no emitter and no consumer in 3.7.0 — and the retired powerline footer read speculative `ctx.*`/`footerData.*` fields that no producer ever supplied, so its `lineage▕lens▕budget` segments never rendered real data. The real facts live in biggz's review CLI and store, and giving the shell access is a producer problem: risk 12's successor is **task 2.11** |
 | D11 | Who paints the header when the rail is active | **The rail, for the `top` placement** (2.6). `headerPlacement` has exactly two disjoint values, so the rail's `"header"` part owns `top` and the below-editor widget keeps owning `below-input`, and no value can make both paint. Faithful to upstream, which registers the part unconditionally and gates the widget on `below-input` |
 | D12 | Behaviour when the pi-tui internals are missing | **Silent, clean no-rail bar** (2.6), superseding risk 1's "task 2.6 must fail visibly instead". Upstream's own behaviour: every absent internal is a silent `state.active = false`. With no runtime signal, the loud detector has to be the suite, so the resolver gained a resolution report and the suite now fails — naming the directory and the missing symbols — when a discovered install stopped exposing a required symbol. The one case no in-module guard can cover is R3-001 (task 2.15): a static import that stops resolving fails at link time, before any guard runs |
+| D13 | Whether biggz ships a todo producer | **Yes, ported whole** (2.7, by the human). Upstream's producer is the extension itself: a `todo` tool whose result carries the state in its `details`, replayed from the session branch on `session_start`. Nothing else in biggz produces a todo list, so without the producer the rail's `"todo"` section can never render and the already-deployed `shell-todo.ts` stays orphaned. This adds a model-facing tool to the deployed harness, which is why it was a decision and not an implementation detail |
+| D14 | The todo port's naming and placement defaults | **`aboveEditor` (upstream's own default, by the human), `TODO_DETAILS_KEY` renamed to `biggzTodo` with the brand allowlist entry deleted, `BIGGZ_TODO` / `BIGGZ_TODO_KEY`, the child guard renamed to the established `PI_SUBAGENT_CHILD`, and the `"agents"` rail section left empty** (2.7). The placement is upstream's, so the todo card never competes with `"biggz-subagents"`; the key rename deletes an allowlist entry whose stated reason was exactly this unit, rather than keeping a brand literal with a resolved reason — the hazard class 2.10 and 2.12 exist for. Porting `GENTLE_PI_AGENTS_CHILD` literally would have been a functional bug, not a brand leak, because biggz's children set `PI_SUBAGENT_CHILD` |
 
 ## Tasks
 
@@ -177,9 +179,52 @@ review.
   'TestPiShellWidget|TestPiFooterOwner|TestPiExtensions|TestPiAssets|TestPiThemes' -v`,
   `go build ./...` and `go vet ./internal/install/...`.
 
-- [ ] 2.7 Todo rail.
-  Acceptance: the todo widget coexists with the `biggz-subagents` widget (distinct
-  `setWidget` keys, no row-budget collision); a test asserts both registrations survive.
+- [x] 2.7a Port the native pointer region helper.
+  Acceptance: `internal/assets/pi/biggz-shell/native-pointer-region.ts` is a faithful port of
+  upstream `lib/native-pointer-region.ts` — the diff is the two-line provenance header and nothing
+  else — with its upstream suite ported case for case; `MouseRegion` is covered by the test
+  plumbing (the resolver's `PI_TUI_SHELL_SYMBOLS` and a faithful oracle implementation); and the
+  module enters the deploy list as a `factory: false` helper sealed in the `biggz-shell`
+  subdirectory, leaving the factory count at 16.
+  Why it is its own slice: upstream's todo extension imports this helper as a hard dependency, so
+  the producer cannot be written before it exists; splitting on that dependency keeps each slice
+  reviewable.
+  Evidence: `node --test internal/assets/pi/biggz-shell/native-pointer-region.test.mjs` (6 cases,
+  the same six upstream asserts, against the real pi-tui install), the rail suite at 267
+  assertions, `go test ./internal/install/... -count=1`, brand guard at 35 deployed assets,
+  `go build ./...` and `go vet` clean. One repair shipped with it: adding `MouseRegion` broke the
+  R3-002 subprocess proof in the rail suite, whose fixtures hardcoded the symbol list, so both
+  lists now derive from `PI_TUI_SHELL_SYMBOLS` and the proof additionally asserts that the
+  doctored fixture omits exactly the layout shapes — the assertion that fails if the list is
+  widened again without the fixtures being revisited.
+
+- [ ] 2.7b Port the todo producer (the `todo` tool and the rail part).
+  Acceptance: the ported extension registers the `todo` tool the model calls and replays the last
+  successful result on `session_start`, renders the card through the `"todo"` rail part with the
+  faithful `aboveEditor` placement for the widget, and coexists with `"biggz-subagents"` (distinct
+  `setWidget` keys — pi keeps one keyed map per placement and deletes only the same key, so two
+  factories do coexist); a test asserts both registrations survive and that the rail section
+  renders; the brand rule holds with the `gentleTodo` allowlist entry DELETED rather than kept,
+  since its stated reason was this unit.
+  Why the producer is ported at all: nothing else in biggz produces a todo list, so without it the
+  rail's `"todo"` section can never render and `shell-todo.ts` stays orphaned (D13).
+
+- [ ] 2.7c Close the three coverage findings the native review of 2.7a admitted.
+  Acceptance: the scope-level hover coordination is exercised across TWO regions (leave one,
+  enter the other, assert the sibling's hover was cleared) instead of only single-region scopes;
+  the disabled guard is proved against an interactive child that WOULD consume the event, not only
+  against a passive `Text`; and `createMouseObserver`'s render request on a hover clear is
+  asserted.
+  Why: all three are `informational` advisory findings of the review of 2.7a
+  (`native-pointer-region.ts:145-150`, `:51-54` and `:117`). They are gaps in upstream's own
+  coverage rather than defects introduced here, which is why the port stayed faithful — but 2.7b
+  wires this helper to a clickable todo card, so they stop being academic the moment it lands.
+
+- [ ] 2.7d (not planned) The `"agents"` rail section stays empty on purpose.
+  Recorded so nobody re-opens it as a defect: upstream 3.7.0 removed the agents rail part
+  explicitly (`extensions/gentle-agents.ts:907-911`), `visibility.agents` is parsed but never
+  filtered by the rail, and the biggz subagents surface is a plain `setWidget`. Producing it would
+  be new work, not parity.
 
 - [ ] 2.8 Custom prompt editor and prompt ownership.
   Acceptance: the prompt editor owner is established once, and competing editor/working
@@ -353,6 +398,7 @@ review.
 | 2.11 | | | |
 | 2.15a | `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; the containment fixture and the timing suite individually; both D12 directions; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiShellWidget\|TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. 258 rail-suite assertions, 5 in the test directory (the containment fixture plus the three timing cases) and 17 factory, all green; brand guard scans 34 deployed assets; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged across the run. The containment is proved by execution, not prose: with a stub pi-tui that lacks `ScrollView`/`VStack`, the fixture's first test pins the link error itself (a `SyntaxError` naming the missing export, so the control cannot pass for an unrelated reason) and the second asserts the footer, widget, `/biggz-usage` and `alt+u` all install with the rail absent. The async-gap cases settle a test-held promise rather than sleeping, and both guards were mutation-checked. Independent verification returned PASS WITH FINDINGS and all four items were closed in-unit, including the unchecked cast — now `typeof import(...)`, validated by a scoped `tsc --noEmit` run whose error set is identical before and after. Native review of the same tree: lineage `review-8e81366b1896f49f`, 6 paths, 577 changed lines, `approved`, two advisory findings now in 2.15b. | `e7b5e3bf` |
 | 2.15b | `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; the six timing cases and the dock re-host case individually; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiShellWidget\|TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. 261 rail-suite assertions, 9 in the test directory and 17 factory, all green; brand guard scans 34 deployed assets; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged. Two independent verifications: the first returned PASS WITH FINDINGS with two WARNINGs (the last-step-only dispose test, and a swallow with no diagnostic) and both were closed in-unit; the second returned PASS WITH FINDINGS with three SUGGESTIONs, two of which were closed (the unexecuted `quiet` branch now has a case, the comment now matches the four-step list). Native review of the same tree: lineage `review-e529ee8994efc911`, 4 paths, 313 changed lines, correction budget 157 — and it found a CRITICAL the coverage work could not have caught, `tui.requestRender()` sitting outside the D12 `try`/`catch` on the late install path, so a throwing render could reject the installing promise. A refuter corroborated it; one bounded correction was declared (22 diff lines) and applied; a targeted validator approved the corrected candidate; the review closed `approved` with one advisory finding left (2.15c). | `516a1742` |
+| 2.7a | `node --test internal/assets/pi/biggz-shell/native-pointer-region.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiExtensions\|TestPiAssets\|TestPiShellWidget\|TestPiFooterOwner' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. The port is byte-faithful: `diff -U0` against upstream shows one hunk, the two provenance lines, and the ported suite's assertion stream is identical to upstream's (6 cases, same order). 267 rail-suite assertions, 9 in the test directory and 17 factory, all green; the brand guard now scans 35 deployed assets with the factory count still 16; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged. Independent verification returned PASS with three SUGGESTIONs and no defect — one of them (the derived fixture losing the independent cross-check on `PI_TUI_SHELL_SYMBOLS`) was closed in-unit by asserting that the doctored fixture omits exactly the layout shapes. Native review of the same tree: lineage `review-1bfa97db2f9357cf`, 6 paths, 486 changed lines, `approved`, three advisory findings now tracked as 2.7c. The first reviewer run died on a provider transport error (`Stream ended without finish_reason` after 157s, no mutation) and the fresh-STATUS-then-resubmit route recovered it. | `303e7b55` |
 
 ## Known risks
 
@@ -550,24 +596,27 @@ stashing): `internal/agents/pi` 4, `internal/git` 1, `internal/project` 6, `cmd/
 `internal/review` 2. `internal/agents/pi`'s four are the same `PI_CODING_AGENT_DIR`
 hermeticity class of bug and are not yet fixed.
 
-Next step: task 2.7, the todo rail, which is the last of the rail's three sections to get a
-producer. Queued behind it are the two defect fixes 2.9 (theme preview on terminal-default
-colours) and 2.11 (review sidebar protocol, now also the owner of the lineage/lens/budget facts
-risk 12 describes), then 2.8 (prompt ownership), 2.12 (the two guards 2.4's verification found
-narrower than their invariants), 2.13 (the two reliability findings the native review of 2.5
-admitted), 2.14 (the banner, deferred by D9) and 2.15c (the one advisory finding the review of
-2.15b left: a diagnostic that can itself throw inside the release loop's catch).
+Next step: task 2.7b, the todo producer — the ported extension that registers the `todo` tool,
+replays the session branch on `session_start` and renders through the rail's `"todo"` section.
+Queued behind it are 2.7c (the three coverage findings the review of 2.7a left, which matter the
+moment the helper is wired to a clickable card), then the two defect fixes 2.9 (theme preview on
+terminal-default colours) and 2.11 (review sidebar protocol, now also the owner of the
+lineage/lens/budget facts risk 12 describes), then 2.8 (prompt ownership), 2.12 (the two guards
+2.4's verification found narrower than their invariants), 2.13 (the two reliability findings the
+native review of 2.5 admitted), 2.14 (the banner, deferred by D9) and 2.15c (the one advisory
+finding the review of 2.15b left: a diagnostic that can itself throw inside the release loop's
+catch).
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
 path with the design in front of us (risk 5).
 
-Commit status: thirteen work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
+Commit status: fourteen work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
 (1.3), `07aa401a` (1.2), `8398ddeb` (2.1), `35cdc44f` (2.2a), `1cffbe2c` (2.2b), `562ef0d0`
 (2.3), `e165d77a` (2.10), `da28997d` (2.4), `7fe76875` (2.5), `bca03d1f` (2.6), `e7b5e3bf`
-(2.15a), `516a1742` (2.15b) — plus the tracking commits. Push and pull request remain human
-decisions. A pre-existing untracked change, `openspec/changes/fix-archived-change-identity/`, was
-left untouched.
+(2.15a), `516a1742` (2.15b), `303e7b55` (2.7a) — plus the tracking commits. Push and pull request
+remain human decisions. A pre-existing untracked change,
+`openspec/changes/fix-archived-change-identity/`, was left untouched.
 
 Review size: 2.4 changed 748 lines, 613 of them new files (the factory, its suite and the new
 Go guard). That is above the 400-line review budget, and it is the exception this repository
