@@ -292,26 +292,45 @@ review.
   `wrapTextWithAnsi`, `Key`, `matchesKey`) remain hard static dependencies, so losing one of those
   still takes the shell down. That is the shell's rendering API, not the rail's private internals.
 
-- [ ] 2.15b Close the four remaining coverage and behaviour findings.
+- [x] 2.15b Close the four remaining coverage and behaviour findings, plus the one the review of
+  this unit found.
   Acceptance: (a) the synchronous rail install branch in `biggz-shell.ts` is exercised — it is the
-  steady-state path for every session after the first in the same process, and no current test
-  reaches it because the timing suite always gates the module and the containment fixture makes it
-  unloadable; (b) a rail installed after the footer callback requests a render, so the first
-  session's rail cannot stay invisible until an unrelated render, with the timing suite asserting
-  the render rather than only that `installSidebar` was invoked; (c) `reclaimFooterRow`'s re-host
-  path has a test that builds a dock whose layout node holds a nested entry, since every current
-  fixture takes the early return; (d) the rail wiring in `biggz-shell.ts` is asserted rather than
-  grepped: the digest over `footerModel()`/presentation changing when the model changes, the
-  header usage-span click handler, and the `disposeHeader`/`uninstall`/`part.dispose` chain on a
-  throwing component.
+  steady-state path for every session after the first in the same process, and no test reached it
+  because the timing suite always gated the module and the containment fixture made it unloadable;
+  (b) a rail installed after the footer callback requests a render, so the first session's rail
+  cannot stay invisible until an unrelated render; (c) `reclaimFooterRow`'s re-host path has a test
+  whose fixture builds a dock whose layout node holds a nested entry, so the early return is not
+  taken; (d) the rail wiring is asserted rather than grepped: the footer digest tracking the live
+  model, the header usage-span click handler, and the release chain on a throwing component.
   Why: (a) and (b) are the two findings of the native review of 2.15a (R3-001 WARNING and
-  deterministic — the unproved branch is the common one — and R3-002 SUGGESTION about the missing
-  render); (c) and (d) are R3-003 and R3-004 from the review of 2.6. All four are advisory and
-  `informational`, so they are later work by construction and never a reason to re-review an
+  `deterministic` — the unproved branch is the common one — and R3-002 SUGGESTION about the missing
+  render); (c) and (d) are R3-003 and R3-004 from the review of 2.6. All four were advisory and
+  `informational`, so they were later work by construction and never a reason to re-review an
   approved candidate.
-  Evidence: the reviewers' ledgers, `internal/assets/pi/biggz-shell.ts:399` and `:392` for (a) and
-  (b), `internal/assets/pi/biggz-shell/shell-sidebar-layout.ts:285` for (c) and
-  `internal/assets/pi/biggz-shell.ts:321` for (d).
+  Evidence: `node --test internal/assets/pi/biggz-shell.test.mjs
+  internal/assets/pi/biggz-shell/*.test.mjs` (261 assertions), `node --test internal/assets/pi/test/*.test.mjs`
+  (9, covering the containment fixture, the six timing cases and the earlier controls),
+  `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs` (17), `go test
+  ./internal/install/... -count=1`, `go build ./...`, `go vet ./internal/install/...`; brand guard
+  scans 34 deployed assets; `~/.biggz` unchanged. Non-vacuity was mutation-checked twice: dropping
+  `quiet` from the rail uninstall fails the new quiet-branch case on its diagnostics assertion, and
+  removing the per-step guard fails the first-step-throw case. The rail module stayed byte-identical
+  to upstream — item (c) found no defect to fix.
+  The unit's own review found one CRITICAL that the coverage work could not have caught: the new
+  late `requestRender()` sat outside the D12 `try`/`catch`, so a throwing render rejected the promise
+  installing the rail and could surface as an unhandled rejection. A refuter corroborated it, the
+  provider required one bounded correction (22 declared diff lines of a 157-line budget), and a
+  targeted validator approved the corrected candidate.
+
+- [ ] 2.15c Guard the dispose diagnostic itself.
+  Acceptance: `describeDisposeFailure` cannot throw out of the release loop's `catch` — its own
+  call is guarded, so a step that throws a value whose string conversion throws, or an `Error`
+  whose `message` is not a string, still leaves the remaining releases running — with a test that
+  injects exactly that kind of thrown value and asserts the later releases still ran.
+  Why: it is the one advisory finding left by the review of 2.15b (R3-002 WARNING, `informational`,
+  `internal/assets/pi/biggz-shell.ts:470`). The loop was added so one failing step cannot skip the
+  rest; a diagnostic that can itself throw defeats exactly that, and the fix is one guarded call.
+  Evidence: the reviewer's ledger for lineage `review-e529ee8994efc911`.
 
 ## Evidence
 
@@ -333,6 +352,7 @@ review.
 | 2.10 | `go test ./internal/install/steps/ -run TestPiAssets -v` and `node --test internal/assets/pi/biggz-shell/*.test.mjs` | PASS. The guard scans 32 deployed assets; its stale-entry sub-test fails on an inserted stale entry with its delete-this message, verified by inserting one and reverting, and passes again after. Both renames confirmed by diff. An independent scan of the 32 assets found zero `gentle` literals outside the allowlist. | `e165d77a` |
 | 2.11 | | | |
 | 2.15a | `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; the containment fixture and the timing suite individually; both D12 directions; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiShellWidget\|TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. 258 rail-suite assertions, 5 in the test directory (the containment fixture plus the three timing cases) and 17 factory, all green; brand guard scans 34 deployed assets; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged across the run. The containment is proved by execution, not prose: with a stub pi-tui that lacks `ScrollView`/`VStack`, the fixture's first test pins the link error itself (a `SyntaxError` naming the missing export, so the control cannot pass for an unrelated reason) and the second asserts the footer, widget, `/biggz-usage` and `alt+u` all install with the rail absent. The async-gap cases settle a test-held promise rather than sleeping, and both guards were mutation-checked. Independent verification returned PASS WITH FINDINGS and all four items were closed in-unit, including the unchecked cast — now `typeof import(...)`, validated by a scoped `tsc --noEmit` run whose error set is identical before and after. Native review of the same tree: lineage `review-8e81366b1896f49f`, 6 paths, 577 changed lines, `approved`, two advisory findings now in 2.15b. | `e7b5e3bf` |
+| 2.15b | `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; the six timing cases and the dock re-host case individually; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiShellWidget\|TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. 261 rail-suite assertions, 9 in the test directory and 17 factory, all green; brand guard scans 34 deployed assets; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged. Two independent verifications: the first returned PASS WITH FINDINGS with two WARNINGs (the last-step-only dispose test, and a swallow with no diagnostic) and both were closed in-unit; the second returned PASS WITH FINDINGS with three SUGGESTIONs, two of which were closed (the unexecuted `quiet` branch now has a case, the comment now matches the four-step list). Native review of the same tree: lineage `review-e529ee8994efc911`, 4 paths, 313 changed lines, correction budget 157 — and it found a CRITICAL the coverage work could not have caught, `tui.requestRender()` sitting outside the D12 `try`/`catch` on the late install path, so a throwing render could reject the installing promise. A refuter corroborated it; one bounded correction was declared (22 diff lines) and applied; a targeted validator approved the corrected candidate; the review closed `approved` with one advisory finding left (2.15c). | `516a1742` |
 
 ## Known risks
 
@@ -422,7 +442,14 @@ review.
     configuration refusal that reads like a broken candidate. It was fixed by hand here, by
     writing the four `review-*` keys into `~/.pi/gentle-ai/models.json`. biggz-ai sets neither
     variable, so its own deployed home keeps both paths coherent and does not inherit this;
-    the defect is the launcher's, and upstream's to fix.
+    the defect is the launcher's, and upstream's to fix. Two further facts learned by running the
+    flow: the refuter and the targeted validator are host-mediated ROLES with their own routing
+    keys (`review-refuter` and `review-validator`, `lib/review-host-relay.ts:306-309`), so a config
+    with only the four `review-*` lens keys fails the moment a lens raises an inferential blocker;
+    and a bounded correction's plan must be DECLARED BEFORE the tree is edited — the correction
+    binding carries the frozen target identity, so editing first makes the binding mismatch and the
+    capture is rejected with "does not carry one non-empty matching provider lineage and target
+    token", which is recoverable only by restoring the reviewed bytes and declaring the plan first.
 14. A test writes model routing into the user's real global config file, and it does so by
     design of the code under test rather than by a missing override in one fixture.
     `internal/tui/models.go:192` persists through
@@ -528,19 +555,19 @@ producer. Queued behind it are the two defect fixes 2.9 (theme preview on termin
 colours) and 2.11 (review sidebar protocol, now also the owner of the lineage/lens/budget facts
 risk 12 describes), then 2.8 (prompt ownership), 2.12 (the two guards 2.4's verification found
 narrower than their invariants), 2.13 (the two reliability findings the native review of 2.5
-admitted), 2.14 (the banner, deferred by D9) and 2.15b (the coverage and behaviour findings the
-reviews of 2.6 and 2.15a left behind).
+admitted), 2.14 (the banner, deferred by D9) and 2.15c (the one advisory finding the review of
+2.15b left: a diagnostic that can itself throw inside the release loop's catch).
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
 path with the design in front of us (risk 5).
 
-Commit status: twelve work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
+Commit status: thirteen work units on `feat/shell-visual-parity` — `2bfa0ec0` (1.1), `bff680c1`
 (1.3), `07aa401a` (1.2), `8398ddeb` (2.1), `35cdc44f` (2.2a), `1cffbe2c` (2.2b), `562ef0d0`
 (2.3), `e165d77a` (2.10), `da28997d` (2.4), `7fe76875` (2.5), `bca03d1f` (2.6), `e7b5e3bf`
-(2.15a) — plus the tracking commits. Push and pull request remain human decisions. A
-pre-existing untracked change, `openspec/changes/fix-archived-change-identity/`, was left
-untouched.
+(2.15a), `516a1742` (2.15b) — plus the tracking commits. Push and pull request remain human
+decisions. A pre-existing untracked change, `openspec/changes/fix-archived-change-identity/`, was
+left untouched.
 
 Review size: 2.4 changed 748 lines, 613 of them new files (the factory, its suite and the new
 Go guard). That is above the 400-line review budget, and it is the exception this repository
@@ -574,3 +601,16 @@ stub pi-tui in a subprocess rather than argued. Its own review then found the tw
 containment fix usually leaves unproven — the synchronous branch that every later session takes,
 and the render a late install never requests — which is exactly the kind of finding the review is
 for, and they are 2.15b.
+
+2.15b is what happens when the review is allowed to review its own fixes, and it earned its keep
+twice over. The four findings it closed were coverage: the steady-state synchronous install that
+no test reached, the render a late install never requested, the dock re-host path every fixture
+skipped, and a wiring block asserted by grepping the source. Closing them introduced the render
+request — and the review of that change found a CRITICAL nobody's coverage could have caught: the
+request sat outside the D12 `try`/`catch`, so a throwing render would have rejected the promise
+that installs the rail and surfaced as an unhandled rejection, which is precisely the failure mode
+the containment exists to prevent. The flow then did what it is designed to do: a refuter
+corroborated the finding, the provider required one bounded correction, the plan was declared (22
+diff lines against a 157-line budget) and applied, and a targeted validator approved the corrected
+candidate. The lesson worth keeping is operational and now lives in risk 13: declare the plan
+before editing, because the binding carries the frozen target identity.
