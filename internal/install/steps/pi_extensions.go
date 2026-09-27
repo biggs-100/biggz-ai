@@ -151,6 +151,7 @@ func piExtensionsDeployList() []piExtension {
 		{asset: "pi/biggz-shell/theme-customization.ts", target: piShellSubdir + "/theme-customization.ts", factory: false},
 		{asset: "pi/biggz-shell/shell-bar.ts", target: piShellSubdir + "/shell-bar.ts", factory: false},
 		{asset: "pi/biggz-shell/shell-sidebar-banner.ts", target: piShellSubdir + "/shell-sidebar-banner.ts", factory: false},
+		{asset: "pi/biggz-shell/native-pointer-region.ts", target: piShellSubdir + "/native-pointer-region.ts", factory: false},
 	}
 }
 

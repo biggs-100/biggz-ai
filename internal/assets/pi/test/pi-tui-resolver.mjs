@@ -31,11 +31,11 @@ export const PI_TUI_ORACLE_URL = new URL("./pi-tui-oracle.mjs", import.meta.url)
 // oracle implements them all, so a discovered install must mention them in its
 // source for the shell suites to link against it instead of the fallback. The
 // list must cover every symbol those modules import, not just the layout
-// helpers: shell-usage-view.ts also imports Key and matchesKey, and
-// shell-sidebar-layout.ts imports the ScrollView/VStack layout primitives, so an
-// install that lacks any of them is rejected here instead of failing later at
-// import.
-export const PI_TUI_SHELL_SYMBOLS = Object.freeze(["truncateToWidth", "visibleWidth", "wrapTextWithAnsi", "Key", "matchesKey", "ScrollView", "VStack"]);
+// helpers: shell-usage-view.ts also imports Key and matchesKey,
+// shell-sidebar-layout.ts imports the ScrollView/VStack layout primitives, and
+// native-pointer-region.ts imports MouseRegion, so an install that lacks any of
+// them is rejected here instead of failing later at import.
+export const PI_TUI_SHELL_SYMBOLS = Object.freeze(["truncateToWidth", "visibleWidth", "wrapTextWithAnsi", "Key", "matchesKey", "ScrollView", "VStack", "MouseRegion"]);
 
 const join = (...parts) => path.join(...parts.filter(Boolean));
 

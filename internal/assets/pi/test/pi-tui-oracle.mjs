@@ -598,3 +598,52 @@ export class ScrollView {
 		return { type: "scroll", component: this.child, state: this };
 	}
 }
+
+// MouseRegion — the public adapter the shell's native-pointer-region.ts wraps.
+//
+// pi-tui's MouseRegion (components/mouse-region.js) is a four-line adapter: it
+// delegates render/invalidate to its child and, on a mouse event, dispatches to
+// the child first and only calls `onMouse` when the child does not consume the
+// event. The dispatch is `dispatchMouseEvent` (tui.js), which retains the exact
+// target and coordinate transform: it returns undefined for a falsy result or a
+// result that is neither handled/capture/focus, passes an already-targeted
+// result through unchanged, and otherwise marks it handled and attaches
+// `target` (component plus screen-relative origin) and `focusTarget` when the
+// child claimed focus. Both are reproduced faithfully here; the Container/Box/
+// Text children the region wraps are not part of this oracle, so the region is
+// exercised against whatever child implements handleMouse.
+function dispatchMouseEvent(component, event) {
+	const result = component.handleMouse?.(event);
+	if (!result) return undefined;
+	if ("target" in result) return result;
+	if (!result.handled && !result.capture && !result.focus) return undefined;
+	return {
+		...result,
+		handled: true,
+		...(result.focus ? { focusTarget: component } : {}),
+		target: {
+			component,
+			originX: event.screenX - event.x,
+			originY: event.screenY - event.y,
+			width: event.width,
+			height: event.height,
+		},
+	};
+}
+
+export class MouseRegion {
+	constructor(child, onMouse) {
+		this.child = child;
+		this.onMouse = onMouse;
+	}
+	render(width) {
+		return this.child.render(width);
+	}
+	handleMouse(event) {
+		const childResult = dispatchMouseEvent(this.child, event);
+		return childResult ?? this.onMouse(event);
+	}
+	invalidate() {
+		this.child.invalidate();
+	}
+}

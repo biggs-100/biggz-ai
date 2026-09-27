@@ -846,9 +846,13 @@ test("the rail cache symbol is renamed off upstream's brand key", (t) => {
 // marked with BIGGZ_D12_PROOF_CHILD so this test skips there and cannot recurse.
 const RAIL_SUITE = fileURLToPath(import.meta.url);
 const ORACLE_PATH = path.join(path.dirname(RAIL_SUITE), "..", "test", "pi-tui-oracle.mjs");
-// The shell symbols except ScrollView/VStack, so a doctored candidate is
-// rejected for exactly the two rail shapes rather than for a short list.
-const SHELL_SYMBOLS_WITHOUT_LAYOUT = ["truncateToWidth", "visibleWidth", "wrapTextWithAnsi", "Key", "matchesKey"];
+// The shell symbols except the two layout shapes, so a doctored candidate is
+// rejected for exactly the rail shapes rather than for a short list. Both lists
+// derive from PI_TUI_SHELL_SYMBOLS on purpose: when the resolver's list grew for
+// MouseRegion these fixtures went stale and the "usable" candidate stopped being
+// usable, which failed the passing direction of this very proof.
+const LAYOUT_SYMBOLS = ["ScrollView", "VStack"];
+const SHELL_SYMBOLS_WITHOUT_LAYOUT = PI_TUI_SHELL_SYMBOLS.filter((symbol) => !LAYOUT_SYMBOLS.includes(symbol));
 
 function candidateDir(root, relative) {
 	const dir = path.join(root, relative);
@@ -863,7 +867,9 @@ function writeDoctoredCandidate(dir) {
 }
 
 function writeUsableCandidate(dir) {
-	const names = [...SHELL_SYMBOLS_WITHOUT_LAYOUT, "ScrollView", "VStack"];
+	// Every symbol the resolver demands, taken from the resolver itself, so this
+	// fixture cannot go stale the way the hardcoded list did.
+	const names = [...PI_TUI_SHELL_SYMBOLS];
 	fs.writeFileSync(path.join(dir, "dist", "index.js"), `export { ${names.join(", ")} } from ${JSON.stringify(pathToFileURL(ORACLE_PATH).href)};\n`);
 }
 
@@ -891,11 +897,24 @@ test("the detector is loud only when nothing resolved (R3-002 proof)", (t) => {
 	// suite must fail rather than silently degrade to the oracle.
 	const doctored = candidateDir(appData, path.join("npm", "node_modules", "@earendil-works", "pi-coding-agent", "node_modules", "@earendil-works", "pi-tui"));
 	writeDoctoredCandidate(doctored);
+	// Independent cross-check of the derivation: the doctored fixture must omit
+	// EXACTLY the layout shapes. If PI_TUI_SHELL_SYMBOLS is widened and this file's
+	// fixtures absorb the new name silently, the second assertion below fails and
+	// names the drift, which is the check the derived lists would otherwise lose.
+	assert.deepEqual(
+		PI_TUI_SHELL_SYMBOLS.filter((symbol) => !SHELL_SYMBOLS_WITHOUT_LAYOUT.includes(symbol)),
+		LAYOUT_SYMBOLS,
+		"the doctored candidate must omit exactly the layout shapes, so widening the resolver's symbol list cannot be absorbed silently here",
+	);
 	const failing = runRailSuite({ appData, home });
 	const failingOutput = `${failing.stdout}\n${failing.stderr}`;
 	assert.notEqual(failing.status, 0, `the detector must fail when no pi-tui resolves and a candidate lost ScrollView/VStack\n${failingOutput}`);
 	assert.match(failingOutput, /loses a required shell symbol/, "the failing child must actually have run the detector");
-	assert.match(failingOutput, /ScrollView/, "the failure must name a missing symbol");
+	assert.match(
+		failingOutput,
+		new RegExp(`missing ${LAYOUT_SYMBOLS.join(", ")}\\)`),
+		`the failure must name exactly the missing symbols (${LAYOUT_SYMBOLS.join(", ")}), not merely one of them`,
+	);
 	assert.ok(failingOutput.includes(doctored), "the failure must name the rejected directory");
 
 	// (b) the same stale candidate beside a usable one: the resolver skips the
