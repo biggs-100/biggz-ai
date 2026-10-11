@@ -182,6 +182,9 @@ func TestInstallCommand_ContainsAdapterBeforeSubagents(t *testing.T) {
 
 func TestProvisionBigMemMCP_FreshProvisionCorrectShape(t *testing.T) {
 	t.Setenv("PI_SUBAGENT_CHILD", "")
+	// Hermetic: AgentConfigPath honors PI_CODING_AGENT_DIR, so clear it or the
+	// provision would write into a real agent home instead of t.TempDir().
+	t.Setenv("PI_CODING_AGENT_DIR", "")
 	home := t.TempDir()
 	a := NewAdapter()
 	changed, files, err := a.ProvisionBigMemMCP(home)
@@ -196,7 +199,9 @@ func TestProvisionBigMemMCP_FreshProvisionCorrectShape(t *testing.T) {
 	}
 	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
 	mcpPath := filepath.Join(home, ".pi", "agent", "mcp.json")
-	// settings.json MUST have bigmem with --prefix=biggz
+
+	// settings.json: native Pi has no mcpServers/directTools keys; only the
+	// packages reconcile survives there.
 	data, err := os.ReadFile(settingsPath)
 	if err != nil {
 		t.Fatalf("read settings: %v", err)
@@ -205,37 +210,17 @@ func TestProvisionBigMemMCP_FreshProvisionCorrectShape(t *testing.T) {
 	if err := json.Unmarshal(data, &sObj); err != nil {
 		t.Fatalf("unmarshal settings: %v", err)
 	}
-	servers, _ := sObj["mcpServers"].(map[string]any)
-	if servers == nil {
-		t.Fatal("settings mcpServers missing")
+	if _, ok := sObj["mcpServers"]; ok {
+		t.Errorf("settings.json must not carry mcpServers in the native contract: %v", sObj["mcpServers"])
 	}
-	bm, _ := servers["bigmem"].(map[string]any)
-	if bm == nil {
-		t.Fatal("settings mcpServers.bigmem missing")
+	if _, ok := sObj["directTools"]; ok {
+		t.Errorf("settings.json must not carry directTools in the native contract: %v", sObj["directTools"])
 	}
-	if bm["type"] != "local" {
-		t.Errorf("settings bigmem type = %v want local", bm["type"])
+	if _, ok := sObj["packages"]; !ok {
+		t.Error("settings.json packages reconcile must remain")
 	}
-	if cmd, _ := bm["command"].(string); cmd == "" {
-		t.Error("settings bigmem command empty")
-	}
-	args, _ := bm["args"].([]any)
-	hasPrefix, hasTools := false, false
-	for _, a := range args {
-		if s, _ := a.(string); s == "--prefix=biggz" {
-			hasPrefix = true
-		}
-		if s, _ := a.(string); s == "--tools=agent" {
-			hasTools = true
-		}
-	}
-	if !hasPrefix {
-		t.Errorf("settings bigmem args missing --prefix=biggz got %v", args)
-	}
-	if !hasTools {
-		t.Errorf("settings bigmem args missing --tools=agent got %v", args)
-	}
-	// mcp.json MUST have bigmem + imports:["opencode"] + directTools
+
+	// mcp.json: the native bigmem shape (decisions D6/D8).
 	data2, err := os.ReadFile(mcpPath)
 	if err != nil {
 		t.Fatalf("read mcp.json: %v", err)
@@ -243,6 +228,12 @@ func TestProvisionBigMemMCP_FreshProvisionCorrectShape(t *testing.T) {
 	var mObj map[string]any
 	if err := json.Unmarshal(data2, &mObj); err != nil {
 		t.Fatalf("unmarshal mcp: %v", err)
+	}
+	if imports, ok := mObj["imports"]; ok {
+		t.Errorf("mcp.json must not carry top-level imports: %v", imports)
+	}
+	if dt, ok := mObj["directTools"]; ok {
+		t.Errorf("mcp.json must not carry top-level directTools: %v", dt)
 	}
 	servers2, _ := mObj["mcpServers"].(map[string]any)
 	if servers2 == nil {
@@ -252,8 +243,17 @@ func TestProvisionBigMemMCP_FreshProvisionCorrectShape(t *testing.T) {
 	if bm2 == nil {
 		t.Fatal("mcp mcpServers.bigmem missing")
 	}
-	if bm2["type"] != "local" {
-		t.Errorf("mcp bigmem type = %v want local", bm2["type"])
+	if _, ok := bm2["type"]; ok {
+		t.Errorf("native bigmem must omit type (D6), got %v", bm2["type"])
+	}
+	if bm2["exposure"] != "codemode" {
+		t.Errorf("mcp bigmem exposure = %v want codemode", bm2["exposure"])
+	}
+	if desc, _ := bm2["description"].(string); desc == "" {
+		t.Error("mcp bigmem description missing")
+	}
+	if cmd, _ := bm2["command"].(string); cmd == "" {
+		t.Error("mcp bigmem command empty")
 	}
 	args2, _ := bm2["args"].([]any)
 	hasPrefix2, hasTools2 := false, false
@@ -271,62 +271,48 @@ func TestProvisionBigMemMCP_FreshProvisionCorrectShape(t *testing.T) {
 	if !hasTools2 {
 		t.Errorf("mcp bigmem args missing --tools=agent got %v", args2)
 	}
-	// imports
-	imports, _ := mObj["imports"].([]any)
-	foundOpencode := false
-	for _, v := range imports {
-		if s, _ := v.(string); s == "opencode" {
-			foundOpencode = true
-		}
-	}
-	if !foundOpencode {
-		t.Errorf("mcp imports missing opencode got %v", imports)
-	}
-	// directTools MUST equal exactly the 11-tool allowlist (pi-footprint-slim)
-	dt, _ := mObj["directTools"].([]any)
+	// toolExposure maps exactly the 11 piDirectTools server-declared names to "direct".
 	want11 := map[string]struct{}{
 		"biggz_mem_save": {}, "biggz_mem_search": {}, "biggz_mem_get_observation": {},
 		"biggz_mem_context": {}, "biggz_mem_session_summary": {}, "biggz_mem_save_prompt": {},
 		"biggz_mem_update": {}, "biggz_mem_timeline": {}, "biggz_mem_review": {},
 		"biggz_mem_judge": {}, "biggz_mem_current_project": {},
 	}
-	if len(dt) != len(want11) {
-		t.Errorf("fresh directTools len = %d, want exactly %d: %v", len(dt), len(want11), dt)
+	te, _ := bm2["toolExposure"].(map[string]any)
+	if len(te) != len(want11) {
+		t.Errorf("fresh toolExposure len = %d, want exactly %d: %v", len(te), len(want11), te)
 	}
-	for _, v := range dt {
-		if s, _ := v.(string); s != "" {
-			if _, ok := want11[s]; !ok {
-				t.Errorf("fresh directTools has unexpected entry %q: %v", s, dt)
-			}
+	for name := range want11 {
+		if te[name] != "direct" {
+			t.Errorf("fresh toolExposure[%q] = %v, want direct", name, te[name])
 		}
 	}
-	for w := range want11 {
-		found := false
-		for _, v := range dt {
-			if s, _ := v.(string); s == w {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("fresh directTools missing allowlist entry %q: %v", w, dt)
+	for name := range te {
+		if _, ok := want11[name]; !ok {
+			t.Errorf("fresh toolExposure has unexpected entry %q: %v", name, te)
 		}
 	}
 }
 
 func TestProvisionBigMemMCP_MergePreservesOthersAtomically(t *testing.T) {
 	t.Setenv("PI_SUBAGENT_CHILD", "")
+	t.Setenv("PI_CODING_AGENT_DIR", "")
 	home := t.TempDir()
 	a := NewAdapter()
 	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
 	mcpPath := filepath.Join(home, ".pi", "agent", "mcp.json")
-	// Pre-create with other server and custom imports
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Pre-create with another server, a biggz-owned legacy bigmem entry and
+	// adapter-era keys, plus a foreign top-level key that must survive.
 	preSettings := map[string]any{
 		"mcpServers": map[string]any{
-			"other": map[string]any{"command": "other-cmd", "args": []string{}, "type": "local"},
+			"other":  map[string]any{"command": "other-cmd", "args": []string{}, "type": "local"},
+			"bigmem": map[string]any{"command": "old-bigmem", "type": "local"},
 		},
+		"directTools":  []string{"existing_tool"},
+		"defaultTools": []string{"read"},
 	}
 	bs, _ := json.Marshal(preSettings)
 	if err := os.WriteFile(settingsPath, bs, 0o644); err != nil {
@@ -346,7 +332,7 @@ func TestProvisionBigMemMCP_MergePreservesOthersAtomically(t *testing.T) {
 	if _, _, err := a.ProvisionBigMemMCP(home); err != nil {
 		t.Fatalf("ProvisionBigMemMCP merge: %v", err)
 	}
-	// settings should preserve other
+	// settings.json: foreign server + foreign key survive; biggz-owned legacy keys pruned.
 	data, _ := os.ReadFile(settingsPath)
 	var sObj map[string]any
 	_ = json.Unmarshal(data, &sObj)
@@ -354,50 +340,40 @@ func TestProvisionBigMemMCP_MergePreservesOthersAtomically(t *testing.T) {
 	if _, ok := servers["other"]; !ok {
 		t.Error("settings merge lost mcpServers.other")
 	}
-	if _, ok := servers["bigmem"]; !ok {
-		t.Error("settings merge missing bigmem after merge")
+	if _, ok := servers["bigmem"]; ok {
+		t.Error("settings merge must prune biggz-owned mcpServers.bigmem")
 	}
-	// mcp should preserve other + opencode + existing + directTools merge
+	if _, ok := sObj["directTools"]; ok {
+		t.Error("settings merge must prune biggz-owned directTools")
+	}
+	if _, ok := sObj["defaultTools"]; !ok {
+		t.Error("settings merge lost foreign defaultTools")
+	}
+	// mcp.json: foreign server survives; adapter-era keys pruned; native bigmem added.
 	data2, _ := os.ReadFile(mcpPath)
 	var mObj map[string]any
 	_ = json.Unmarshal(data2, &mObj)
+	if _, ok := mObj["imports"]; ok {
+		t.Error("mcp merge must prune imports")
+	}
+	if _, ok := mObj["directTools"]; ok {
+		t.Error("mcp merge must prune directTools")
+	}
 	servers2, _ := mObj["mcpServers"].(map[string]any)
 	if _, ok := servers2["other"]; !ok {
 		t.Error("mcp merge lost mcpServers.other")
 	}
-	imports, _ := mObj["imports"].([]any)
-	hasOpencode, hasExisting := false, false
-	for _, v := range imports {
-		if s, _ := v.(string); s == "opencode" {
-			hasOpencode = true
-		}
-		if s, _ := v.(string); s == "existing" {
-			hasExisting = true
-		}
+	bm2, _ := servers2["bigmem"].(map[string]any)
+	if bm2 == nil {
+		t.Fatal("mcp merge missing bigmem")
 	}
-	if !hasOpencode {
-		t.Error("mcp imports missing opencode after merge")
+	if _, ok := bm2["type"]; ok {
+		t.Errorf("native bigmem must omit type, got %v", bm2["type"])
 	}
-	if !hasExisting {
-		t.Error("mcp imports lost existing after merge")
+	if bm2["exposure"] != "codemode" {
+		t.Errorf("mcp bigmem exposure = %v want codemode", bm2["exposure"])
 	}
-	dt, _ := mObj["directTools"].([]any)
-	hasExistingTool, hasSave := false, false
-	for _, v := range dt {
-		if s, _ := v.(string); s == "existing_tool" {
-			hasExistingTool = true
-		}
-		if s, _ := v.(string); s == "biggz_mem_save" {
-			hasSave = true
-		}
-	}
-	if !hasExistingTool {
-		t.Error("mcp directTools lost existing_tool")
-	}
-	if !hasSave {
-		t.Error("mcp directTools missing biggz_mem_save after merge")
-	}
-	// Failed write leaves target unchanged: invalid JSON in file returns error and file untouched
+	// Failed write leaves target unchanged: invalid JSON returns error and file untouched.
 	invalidPath := filepath.Join(home, ".pi", "agent", "invalid_mcp.json")
 	if err := os.WriteFile(invalidPath, []byte(`{ invalid json`), 0o644); err != nil {
 		t.Fatal(err)
@@ -414,6 +390,7 @@ func TestProvisionBigMemMCP_MergePreservesOthersAtomically(t *testing.T) {
 
 func TestProvisionBigMemMCP_Idempotent(t *testing.T) {
 	t.Setenv("PI_SUBAGENT_CHILD", "")
+	t.Setenv("PI_CODING_AGENT_DIR", "")
 	home := t.TempDir()
 	a := NewAdapter()
 	if _, _, err := a.ProvisionBigMemMCP(home); err != nil {
@@ -468,12 +445,13 @@ func TestMergePiMCPFileBigMem_PreservesOtherAndAtomic(t *testing.T) {
 		"mcpServers": map[string]any{
 			"other": map[string]any{"command": "other", "type": "local"},
 		},
+		"imports":     []string{"opencode"},
+		"directTools": []string{"biggz_mem_save"},
 	}
 	bs, _ := json.Marshal(pre)
 	if err := os.WriteFile(path, bs, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Ensure BiggzMCPPath is not empty; use explicit binary
 	res, err := a.mergePiMCPFileBigMem(path, "/tmp/biggz-mcp")
 	if err != nil {
 		t.Fatalf("mergePiMCPFileBigMem: %v", err)
@@ -484,14 +462,23 @@ func TestMergePiMCPFileBigMem_PreservesOtherAndAtomic(t *testing.T) {
 	data, _ := os.ReadFile(path)
 	var obj map[string]any
 	_ = json.Unmarshal(data, &obj)
+	if _, ok := obj["imports"]; ok {
+		t.Error("merge must prune top-level imports")
+	}
+	if _, ok := obj["directTools"]; ok {
+		t.Error("merge must prune top-level directTools")
+	}
 	servers, _ := obj["mcpServers"].(map[string]any)
 	if _, ok := servers["other"]; !ok {
 		t.Error("merge lost other")
 	}
-	if _, ok := servers["bigmem"]; !ok {
-		t.Error("merge missing bigmem")
-	}
 	bm, _ := servers["bigmem"].(map[string]any)
+	if bm == nil {
+		t.Fatal("merge missing bigmem")
+	}
+	if _, ok := bm["type"]; ok {
+		t.Errorf("native bigmem must omit type, got %v", bm["type"])
+	}
 	args, _ := bm["args"].([]any)
 	hasPrefix := false
 	for _, v := range args {
@@ -517,81 +504,77 @@ func TestMergePiMCPFileBigMem_PreservesOtherAndAtomic(t *testing.T) {
 	}
 }
 
-func TestMergePiDirectTools_PrunesStale10PreservesForeign(t *testing.T) {
-	// Simulate an existing fat install: all 20 promoted tools plus a foreign entry.
-	fat := []any{
-		"biggz_mem_capture_passive", "biggz_mem_compare", "biggz_mem_context",
-		"biggz_mem_current_project", "biggz_mem_delete", "biggz_mem_get_observation",
-		"biggz_mem_judge", "biggz_mem_pin", "biggz_mem_review", "biggz_mem_save",
-		"biggz_mem_save_prompt", "biggz_mem_search", "biggz_mem_session_end",
-		"biggz_mem_session_start", "biggz_mem_session_summary", "biggz_mem_stats",
-		"biggz_mem_suggest_topic_key", "biggz_mem_timeline", "biggz_mem_unpin",
-		"biggz_mem_update", "existing_tool",
+func TestMergePiMCPFileBigMem_PrunesLegacyKeysPreservesForeign(t *testing.T) {
+	home := t.TempDir()
+	a := NewAdapter()
+	path := filepath.Join(home, "mcp.json")
+	// Legacy adapter-era install: imports, directTools, a foreign top-level key
+	// and a foreign server must all be reconciled without collateral damage.
+	pre := map[string]any{
+		"mcpServers": map[string]any{
+			"other": map[string]any{"command": "other", "type": "local"},
+		},
+		"imports":     []string{"opencode", "existing"},
+		"directTools": []string{"existing_tool", "biggz_mem_save"},
+		"customKey":   "keep-me",
 	}
-	got := mergePiDirectTools(fat)
-	want := map[string]struct{}{
-		"biggz_mem_save": {}, "biggz_mem_search": {}, "biggz_mem_get_observation": {},
-		"biggz_mem_context": {}, "biggz_mem_session_summary": {}, "biggz_mem_save_prompt": {},
-		"biggz_mem_update": {}, "biggz_mem_timeline": {}, "biggz_mem_review": {},
-		"biggz_mem_judge": {}, "biggz_mem_current_project": {}, "existing_tool": {},
+	bs, _ := json.Marshal(pre)
+	if err := os.WriteFile(path, bs, 0o644); err != nil {
+		t.Fatal(err)
 	}
-	if len(got) != len(want) {
-		t.Fatalf("pruned merge len = %d, want %d: %v", len(got), len(want), got)
+	if _, err := a.mergePiMCPFileBigMem(path, "/tmp/biggz-mcp"); err != nil {
+		t.Fatalf("mergePiMCPFileBigMem: %v", err)
 	}
-	for _, v := range got {
-		s, _ := v.(string)
-		if _, ok := want[s]; !ok {
-			t.Errorf("pruned merge has unexpected entry %q: %v", s, got)
-		}
+	data, _ := os.ReadFile(path)
+	var obj map[string]any
+	_ = json.Unmarshal(data, &obj)
+	if _, ok := obj["imports"]; ok {
+		t.Error("legacy imports not pruned")
 	}
-	for _, dropped := range []string{
-		"biggz_mem_capture_passive", "biggz_mem_compare",
-		"biggz_mem_delete", "biggz_mem_pin", "biggz_mem_session_end",
-		"biggz_mem_session_start", "biggz_mem_stats", "biggz_mem_suggest_topic_key",
-		"biggz_mem_unpin",
-	} {
-		for _, v := range got {
-			if s, _ := v.(string); s == dropped {
-				t.Errorf("pruned merge kept removed tool %q: %v", dropped, got)
-			}
-		}
+	if _, ok := obj["directTools"]; ok {
+		t.Error("legacy directTools not pruned")
 	}
-	// Idempotent: merging the merged result is a fixed point.
-	again := mergePiDirectTools(got)
-	if len(again) != len(got) {
-		t.Fatalf("re-merge len = %d, want %d: %v", len(again), len(got), again)
+	if obj["customKey"] != "keep-me" {
+		t.Errorf("foreign top-level key lost: %v", obj["customKey"])
 	}
-	for i := range got {
-		if got[i] != again[i] {
-			t.Fatalf("re-merge not idempotent at %d: %v vs %v", i, got, again)
-		}
+	servers, _ := obj["mcpServers"].(map[string]any)
+	if _, ok := servers["other"]; !ok {
+		t.Error("foreign server lost")
+	}
+	// Idempotent: re-merging the merged file is a fixed point.
+	before, _ := os.ReadFile(path)
+	res, err := a.mergePiMCPFileBigMem(path, "/tmp/biggz-mcp")
+	if err != nil {
+		t.Fatalf("re-merge: %v", err)
+	}
+	if res.Changed {
+		t.Error("re-merge should be Changed=false")
+	}
+	after, _ := os.ReadFile(path)
+	if string(before) != string(after) {
+		t.Error("re-merge not idempotent")
 	}
 }
 
-func TestProvisionBigMemMCP_ReinstallPrunesStale10(t *testing.T) {
+func TestProvisionBigMemMCP_ReinstallPrunesLegacyAdapterKeys(t *testing.T) {
 	t.Setenv("PI_SUBAGENT_CHILD", "")
+	t.Setenv("PI_CODING_AGENT_DIR", "")
 	home := t.TempDir()
 	a := NewAdapter()
 	mcpPath := filepath.Join(home, ".pi", "agent", "mcp.json")
 	if err := os.MkdirAll(filepath.Dir(mcpPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Existing fat install with all 20 directTools.
-	fat := map[string]any{
+	// Existing adapter-era install: legacy bigmem shape + adapter keys + foreign server.
+	legacy := map[string]any{
 		"mcpServers": map[string]any{
-			"other": map[string]any{"command": "other-cmd", "args": []string{}, "type": "local"},
+			"other":  map[string]any{"command": "other-cmd", "args": []string{}, "type": "local"},
+			"bigmem": map[string]any{"command": "old-biggz-mcp", "args": []string{"--prefix=biggz"}, "type": "local"},
 		},
-		"directTools": []string{
-			"biggz_mem_capture_passive", "biggz_mem_compare", "biggz_mem_context",
-			"biggz_mem_current_project", "biggz_mem_delete", "biggz_mem_get_observation",
-			"biggz_mem_judge", "biggz_mem_pin", "biggz_mem_review", "biggz_mem_save",
-			"biggz_mem_save_prompt", "biggz_mem_search", "biggz_mem_session_end",
-			"biggz_mem_session_start", "biggz_mem_session_summary", "biggz_mem_stats",
-			"biggz_mem_suggest_topic_key", "biggz_mem_timeline", "biggz_mem_unpin",
-			"biggz_mem_update",
-		},
+		"imports":     []string{"opencode"},
+		"directTools": []string{"biggz_mem_save", "biggz_mem_search"},
 	}
-	bs, _ := json.Marshal(fat)
+	bs, _ := json.Marshal(legacy)
 	if err := os.WriteFile(mcpPath, bs, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -601,86 +584,72 @@ func TestProvisionBigMemMCP_ReinstallPrunesStale10(t *testing.T) {
 	data, _ := os.ReadFile(mcpPath)
 	var mObj map[string]any
 	_ = json.Unmarshal(data, &mObj)
-	dt, _ := mObj["directTools"].([]any)
-	if len(dt) != 11 {
-		t.Fatalf("reinstalled directTools len = %d, want 11: %v", len(dt), dt)
+	if _, ok := mObj["imports"]; ok {
+		t.Error("reinstall kept legacy imports")
 	}
-	for _, v := range dt {
-		s, _ := v.(string)
-		if _, dropped := removedPiDirectTools[s]; dropped {
-			t.Errorf("reinstalled directTools kept removed tool %q: %v", s, dt)
-		}
+	if _, ok := mObj["directTools"]; ok {
+		t.Error("reinstall kept legacy directTools")
 	}
 	servers, _ := mObj["mcpServers"].(map[string]any)
 	if _, ok := servers["other"]; !ok {
 		t.Error("reinstall lost mcpServers.other")
 	}
+	bm, _ := servers["bigmem"].(map[string]any)
+	if bm == nil {
+		t.Fatal("reinstall lost mcpServers.bigmem")
+	}
+	if _, ok := bm["type"]; ok {
+		t.Errorf("reinstall kept legacy type: %v", bm["type"])
+	}
+	te, _ := bm["toolExposure"].(map[string]any)
+	if len(te) != 11 {
+		t.Errorf("reinstall toolExposure len = %d, want 11: %v", len(te), te)
+	}
 }
 
-func TestProvisionBigMemMCP_SettingsPrunesStale9(t *testing.T) {
+func TestProvisionBigMemMCP_SettingsPrunesLegacyBigMemKeys(t *testing.T) {
 	t.Setenv("PI_SUBAGENT_CHILD", "")
+	t.Setenv("PI_CODING_AGENT_DIR", "")
 	home := t.TempDir()
 	a := NewAdapter()
 	settingsPath := filepath.Join(home, ".pi", "agent", "settings.json")
 	if err := os.MkdirAll(filepath.Dir(settingsPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// Stale settings.json with fat 20 directTools + foreign entry.
-	stale := map[string]any{
+	// Legacy settings.json with a biggz-owned bigmem entry, legacy directTools,
+	// a foreign server and a foreign top-level key.
+	legacy := map[string]any{
 		"mcpServers": map[string]any{
-			"other": map[string]any{"command": "other-cmd", "args": []string{}, "type": "local"},
+			"other":  map[string]any{"command": "other-cmd", "args": []string{}, "type": "local"},
+			"bigmem": map[string]any{"command": "old-biggz-mcp", "type": "local"},
 		},
-		"directTools": []string{
-			"biggz_mem_capture_passive", "biggz_mem_compare", "biggz_mem_context",
-			"biggz_mem_current_project", "biggz_mem_delete", "biggz_mem_get_observation",
-			"biggz_mem_judge", "biggz_mem_pin", "biggz_mem_review", "biggz_mem_save",
-			"biggz_mem_save_prompt", "biggz_mem_search", "biggz_mem_session_end",
-			"biggz_mem_session_start", "biggz_mem_session_summary", "biggz_mem_stats",
-			"biggz_mem_suggest_topic_key", "biggz_mem_timeline", "biggz_mem_unpin",
-			"biggz_mem_update", "existing_tool",
-		},
+		"directTools":  []string{"biggz_mem_save", "existing_tool"},
+		"defaultTools": []string{"read"},
 	}
-	bs, _ := json.Marshal(stale)
+	bs, _ := json.Marshal(legacy)
 	if err := os.WriteFile(settingsPath, bs, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := a.ProvisionBigMemMCP(home); err != nil {
-		t.Fatalf("provision with stale settings: %v", err)
+		t.Fatalf("provision with legacy settings: %v", err)
 	}
 	data, _ := os.ReadFile(settingsPath)
 	var sObj map[string]any
 	_ = json.Unmarshal(data, &sObj)
-	dt, _ := sObj["directTools"].([]any)
-	// 11-tool allowlist + preserved foreign entry.
-	if len(dt) != 12 {
-		t.Fatalf("settings directTools len = %d, want 12 (11 allowlist + foreign): %v", len(dt), dt)
-	}
-	for _, v := range dt {
-		s, _ := v.(string)
-		if _, dropped := removedPiDirectTools[s]; dropped {
-			t.Errorf("settings directTools kept removed tool %q: %v", s, dt)
-		}
-	}
-	hasForeign, hasCurrent := false, false
-	for _, v := range dt {
-		if s, _ := v.(string); s == "existing_tool" {
-			hasForeign = true
-		}
-		if s, _ := v.(string); s == "biggz_mem_current_project" {
-			hasCurrent = true
-		}
-	}
-	if !hasForeign {
-		t.Error("settings directTools lost foreign existing_tool")
-	}
-	if !hasCurrent {
-		t.Error("settings directTools missing restored biggz_mem_current_project")
+	if _, ok := sObj["directTools"]; ok {
+		t.Error("settings kept legacy directTools")
 	}
 	servers, _ := sObj["mcpServers"].(map[string]any)
-	if _, ok := servers["other"]; !ok {
-		t.Error("settings merge lost mcpServers.other")
+	if _, ok := servers["bigmem"]; ok {
+		t.Error("settings kept legacy mcpServers.bigmem")
 	}
-	if _, ok := servers["bigmem"]; !ok {
-		t.Error("settings merge missing bigmem after converge")
+	if _, ok := servers["other"]; !ok {
+		t.Error("settings lost foreign mcpServers.other")
+	}
+	if _, ok := sObj["defaultTools"]; !ok {
+		t.Error("settings lost foreign defaultTools")
+	}
+	if _, ok := sObj["packages"]; !ok {
+		t.Error("settings packages reconcile must remain")
 	}
 }
