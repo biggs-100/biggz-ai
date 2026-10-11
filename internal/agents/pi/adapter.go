@@ -525,6 +525,15 @@ var piDirectTools = []string{
 	"biggz_mem_current_project",
 }
 
+// PromotedBigMemTools returns the BigMem tool names Pi promotes to the model as
+// native `direct` tools — the keys of the bigmem server's toolExposure map.
+// Callers that verify the promoted surface (doctor's pi-native-mcp liveness
+// check) read this instead of duplicating the allowlist. The returned slice is
+// a copy, so callers cannot mutate the promotion set.
+func PromotedBigMemTools() []string {
+	return slices.Clone(piDirectTools)
+}
+
 // piBigMemDescription is the one-line summary Pi surfaces for the bigmem
 // server (for example in `pi mcp list`).
 const piBigMemDescription = "BigMem persistent memory for biggz-ai: search, save, timeline, stats, doctor"

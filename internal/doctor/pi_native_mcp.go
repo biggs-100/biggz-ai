@@ -1,7 +1,6 @@
 package doctor
 
 import (
-	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,12 +8,26 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
+	piagent "github.com/biggs-100/biggz-ai/internal/agents/pi"
 	"github.com/biggs-100/biggz-ai/internal/platform"
 )
 
 const PiNativeMCPCheckID CheckID = "pi-native-mcp"
+
+const (
+	// defaultPiMCPTimeout bounds each liveness probe when BIGGZ_MCP_TIMEOUT is
+	// unset or unparsable, matching the 30000ms the install flow documents.
+	defaultPiMCPTimeout = 30 * time.Second
+	// piBigMemServerName is the native server this check verifies.
+	piBigMemServerName = "bigmem"
+	// piBigMemConnectedStatus is the only `pi mcp list` status that proves
+	// Pi's native client loaded the server.
+	piBigMemConnectedStatus = "connected"
+)
 
 // piNativeExposures are the exposure values Pi's native MCP schema accepts,
 // both for a whole server (mcpServers.<name>.exposure) and for one entry of its
@@ -44,7 +57,7 @@ type PiNativeMCPCheck struct {
 	lookPath   func(string) (string, error)
 	statFn     func(string) (os.FileInfo, error)
 	readFileFn func(string) ([]byte, error)
-	execFn     func(string, ...string) ([]byte, error)
+	execFn     func(context.Context, string, ...string) ([]byte, error)
 	getenv     func(string) string
 	homeDirFn  func() (string, error)
 }
@@ -55,10 +68,20 @@ func NewPiNativeMCPCheck() *PiNativeMCPCheck {
 		lookPath:   exec.LookPath,
 		statFn:     os.Stat,
 		readFileFn: os.ReadFile,
-		execFn:     execCommand,
+		execFn:     execCommandContext,
 		getenv:     os.Getenv,
 		homeDirFn:  os.UserHomeDir,
 	}
+}
+
+// execCommandContext is the production liveness probe runner: it runs the
+// command under the deadline carried by ctx so a hung `biggz-mcp --help` or
+// `pi mcp list` cannot block doctor, and inherits a valid working directory
+// like the shared execCommand seam.
+func execCommandContext(ctx context.Context, name string, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	platform.EnsureCommandDir(cmd)
+	return cmd.Output()
 }
 
 // NewPiNativeMCPCheckWithCustom creates a PiNativeMCPCheck with injected functions for testing.
@@ -66,7 +89,7 @@ func NewPiNativeMCPCheckWithCustom(
 	lookPath func(string) (string, error),
 	statFn func(string) (os.FileInfo, error),
 	readFileFn func(string) ([]byte, error),
-	execFn func(string, ...string) ([]byte, error),
+	execFn func(context.Context, string, ...string) ([]byte, error),
 	getenv func(string) string,
 	homeDirFn func() (string, error),
 ) *PiNativeMCPCheck {
@@ -80,7 +103,7 @@ func NewPiNativeMCPCheckWithCustom(
 		readFileFn = os.ReadFile
 	}
 	if execFn == nil {
-		execFn = execCommand
+		execFn = execCommandContext
 	}
 	if getenv == nil {
 		getenv = os.Getenv
@@ -138,7 +161,7 @@ func (c *PiNativeMCPCheck) Run(ctx context.Context) *Result {
 		ID:       PiNativeMCPCheckID,
 		Status:   StatusPass,
 		Severity: SeverityInfo,
-		Message:  "pi-native-mcp healthy: no pi-mcp-adapter, mcp.json bigmem is native (resolvable command, no non-native type, sane exposure/toolExposure, no legacy keys), settings.json carries no MCP state, pi mcp list reports bigmem",
+		Message:  "pi-native-mcp healthy: no pi-mcp-adapter, mcp.json bigmem is native (resolvable command, no non-native type, sane exposure/toolExposure, no legacy keys), settings.json carries no MCP state, pi mcp list reports bigmem connected with the promoted biggz_mem_* tools",
 	}
 }
 
@@ -369,7 +392,9 @@ func (c *PiNativeMCPCheck) checkSettingsHasNoMCPState(home string) *Result {
 // checkBiggzMCPHealth runs the bounded liveness probes: the biggz-mcp stdio
 // probe (the binary that serves tools/list for biggz_mem_*) and the
 // `pi mcp list` enumeration, which proves Pi's own client loads the server.
-// A failing probe is a warn carrying BIGGZ_MCP_TIMEOUT guidance.
+// Each probe runs under a context deadline derived from BIGGZ_MCP_TIMEOUT, so a
+// hung command cannot block doctor. A failing probe, a non-connected status, or
+// a connected server that omits promoted tools is a warn naming the timeout.
 func (c *PiNativeMCPCheck) checkBiggzMCPHealth(ctx context.Context, command string) *Result {
 	select {
 	case <-ctx.Done():
@@ -377,7 +402,10 @@ func (c *PiNativeMCPCheck) checkBiggzMCPHealth(ctx context.Context, command stri
 	default:
 	}
 	timeout := c.mcpTimeout()
-	if _, err := c.execFn(command, "--help"); err != nil {
+	probeCtx, cancel := c.probeContext(ctx)
+	_, err := c.execFn(probeCtx, command, "--help")
+	cancel()
+	if err != nil {
 		return &Result{
 			ID:       PiNativeMCPCheckID,
 			Status:   StatusWarn,
@@ -386,7 +414,9 @@ func (c *PiNativeMCPCheck) checkBiggzMCPHealth(ctx context.Context, command stri
 			Error:    err.Error(),
 		}
 	}
-	out, err := c.execFn("pi", "mcp", "list")
+	probeCtx, cancel = c.probeContext(ctx)
+	out, err := c.execFn(probeCtx, "pi", "mcp", "list")
+	cancel()
 	if err != nil {
 		return &Result{
 			ID:       PiNativeMCPCheckID,
@@ -396,22 +426,121 @@ func (c *PiNativeMCPCheck) checkBiggzMCPHealth(ctx context.Context, command stri
 			Error:    err.Error(),
 		}
 	}
-	if !strings.Contains(string(out), "bigmem") {
+	return c.checkBigMemLiveness(timeout, string(out))
+}
+
+// checkBigMemLiveness decides whether `pi mcp list` proves the native bigmem
+// server is live: the status line must read `bigmem: connected` and the body
+// must name every promoted biggz_mem_* tool. Any other status — including
+// `disabled`, which exits 0 and would otherwise look healthy — a missing bigmem
+// line, or a connected server that lists fewer promoted tools is a warning.
+func (c *PiNativeMCPCheck) checkBigMemLiveness(timeout, out string) *Result {
+	status := piMCPServerStatus(out, piBigMemServerName)
+	if status == "" {
 		return &Result{
 			ID:       PiNativeMCPCheckID,
 			Status:   StatusWarn,
 			Severity: SeverityWarning,
 			Message:  fmt.Sprintf("`pi mcp list` does not report bigmem — Pi's native MCP client did not load mcpServers.bigmem (run: %s; try BIGGZ_MCP_TIMEOUT=%s)", piNativeInstallHint, timeout),
-			Error:    fmt.Sprintf("pi mcp list output: %s", strings.TrimSpace(string(out))),
+			Error:    fmt.Sprintf("pi mcp list output: %s", strings.TrimSpace(out)),
+		}
+	}
+	if status != piBigMemConnectedStatus {
+		return &Result{
+			ID:       PiNativeMCPCheckID,
+			Status:   StatusWarn,
+			Severity: SeverityWarning,
+			Message:  fmt.Sprintf("`pi mcp list` reports bigmem as %q, not %s — Pi's native MCP client did not load mcpServers.bigmem (run: %s; try BIGGZ_MCP_TIMEOUT=%s)", status, piBigMemConnectedStatus, piNativeInstallHint, timeout),
+			Error:    fmt.Sprintf("pi mcp list output: %s", strings.TrimSpace(out)),
+		}
+	}
+	missing := missingPromotedBigMemTools(out)
+	if len(missing) > 0 {
+		return &Result{
+			ID:       PiNativeMCPCheckID,
+			Status:   StatusWarn,
+			Severity: SeverityWarning,
+			Message:  fmt.Sprintf("`pi mcp list` reports bigmem connected but omits %d of %d promoted biggz_mem_* tools (%s) — the server's tools/list did not expose the promoted surface (try BIGGZ_MCP_TIMEOUT=%s, then re-run %s)", len(missing), len(piagent.PromotedBigMemTools()), strings.Join(missing, ", "), timeout, piNativeInstallHint),
+			Error:    fmt.Sprintf("pi mcp list output: %s", strings.TrimSpace(out)),
 		}
 	}
 	return nil
 }
 
-// mcpTimeout returns the configured MCP timeout guidance value, defaulting to
-// the 30000ms the install flow uses.
+// piMCPServerStatus extracts the status token `pi mcp list` prints for a
+// server, for example "connected" from "bigmem: connected (codemode, global)".
+// It returns "" when no line names the server.
+func piMCPServerStatus(out, server string) string {
+	for line := range strings.SplitSeq(out, "\n") {
+		name, rest, ok := strings.Cut(strings.TrimSpace(line), ":")
+		// Tolerate a leading list marker ("- bigmem: connected") without
+		// loosening the match to a bare substring.
+		name = strings.TrimLeft(strings.TrimSpace(name), "`*•-")
+		if !ok || name != server {
+			continue
+		}
+		fields := strings.Fields(rest)
+		if len(fields) == 0 {
+			return ""
+		}
+		return fields[0]
+	}
+	return ""
+}
+
+// missingPromotedBigMemTools returns the promoted biggz_mem_* names the
+// `pi mcp list` body does not mention, in promotion order.
+func missingPromotedBigMemTools(out string) []string {
+	var missing []string
+	for _, name := range piagent.PromotedBigMemTools() {
+		if !piToolListed(out, name) {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+// piToolListed reports whether `pi mcp list` output names tool. Pi prints
+// either the server-declared name (biggz_mem_save) or its namespaced form
+// (mcp__bigmem__biggz_mem_save), so tokens are matched on boundaries rather
+// than as raw substrings — biggz_mem_save is a prefix of
+// biggz_mem_save_prompt.
+func piToolListed(out, tool string) bool {
+	for field := range strings.FieldsSeq(out) {
+		field = strings.Trim(field, "`*•,;:()[]")
+		if field == tool || strings.HasSuffix(field, "__"+tool) {
+			return true
+		}
+	}
+	return false
+}
+
+// probeContext returns a context bounded by BIGGZ_MCP_TIMEOUT for one liveness
+// probe, derived from the check's parent context. The returned cancel MUST be
+// called to release the timer.
+func (c *PiNativeMCPCheck) probeContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, c.mcpTimeoutDuration())
+}
+
+// mcpTimeoutDuration returns the BIGGZ_MCP_TIMEOUT budget as a duration,
+// falling back to defaultPiMCPTimeout when it is unset, non-numeric, or
+// non-positive.
+func (c *PiNativeMCPCheck) mcpTimeoutDuration() time.Duration {
+	raw := strings.TrimSpace(c.getenv("BIGGZ_MCP_TIMEOUT"))
+	if raw == "" {
+		return defaultPiMCPTimeout
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms <= 0 {
+		return defaultPiMCPTimeout
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+// mcpTimeout returns the normalized BIGGZ_MCP_TIMEOUT guidance value in
+// milliseconds, matching mcpTimeoutDuration.
 func (c *PiNativeMCPCheck) mcpTimeout() string {
-	return cmp.Or(strings.TrimSpace(c.getenv("BIGGZ_MCP_TIMEOUT")), "30000")
+	return strconv.FormatInt(c.mcpTimeoutDuration().Milliseconds(), 10)
 }
 
 // warnf builds a warning Result naming the file the violation was found in.

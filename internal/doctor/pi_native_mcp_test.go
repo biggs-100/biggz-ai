@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	piagent "github.com/biggs-100/biggz-ai/internal/agents/pi"
 )
 
 // helpers for PiNativeMCP tests — distinct names to avoid colliding with the
@@ -77,9 +80,15 @@ func (f *piNativeFS) readFile(path string) ([]byte, error) {
 }
 
 // piNativeExec answers the two probes the check runs: the biggz-mcp stdio
-// liveness probe and the `pi mcp list` server enumeration.
-func piNativeExec(mcpErr error, listOut string, listErr error) func(string, ...string) ([]byte, error) {
-	return func(name string, args ...string) ([]byte, error) {
+// liveness probe and the `pi mcp list` server enumeration. A bare connected
+// body is expanded to the full healthy listing so the fixture matches what the
+// real command prints; any other body (disabled, unknown, partial tools) is
+// returned verbatim so tests can exercise those statuses.
+func piNativeExec(mcpErr error, listOut string, listErr error) func(context.Context, string, ...string) ([]byte, error) {
+	if strings.Contains(listOut, "bigmem: connected") && !strings.Contains(listOut, "biggz_mem_") {
+		listOut = piNativeConnectedOut()
+	}
+	return func(_ context.Context, name string, args ...string) ([]byte, error) {
 		if name == "pi" && len(args) > 0 && args[0] == "mcp" {
 			return []byte(listOut), listErr
 		}
@@ -88,6 +97,13 @@ func piNativeExec(mcpErr error, listOut string, listErr error) func(string, ...s
 		}
 		return []byte("biggz-mcp --help"), nil
 	}
+}
+
+// piNativeConnectedOut is a healthy `pi mcp list` body: the connected status
+// plus every promoted biggz_mem_* name, matching what the real command prints.
+func piNativeConnectedOut() string {
+	lines := append([]string{"bigmem: connected (codemode, global)"}, piagent.PromotedBigMemTools()...)
+	return strings.Join(lines, "\n") + "\n"
 }
 
 // piNativeBigMemEntry is the native mcp.json shape this repo writes: stdio
@@ -144,7 +160,9 @@ func TestPiNativeMCP_SkipsWhenPiNotInstalled(t *testing.T) {
 	c := NewPiNativeMCPCheckWithCustom(
 		func(string) (string, error) { return "", errors.New("pi not found") },
 		os.Stat, os.ReadFile,
-		func(string, ...string) ([]byte, error) { return nil, errors.New("should not be called") },
+		func(context.Context, string, ...string) ([]byte, error) {
+			return nil, errors.New("should not be called")
+		},
 		os.Getenv, func() (string, error) { return home, nil },
 	)
 	res := c.Run(context.Background())
@@ -577,7 +595,7 @@ func TestPiNativeMCP_PanicIsolation(t *testing.T) {
 	panicStat := func(string) (os.FileInfo, error) { panic("test panic in stat") }
 	cPanicking := NewPiNativeMCPCheckWithCustom(
 		piNativeLookPath, panicStat, os.ReadFile,
-		func(string, ...string) ([]byte, error) { return nil, errors.New("fail") },
+		func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("fail") },
 		os.Getenv, func() (string, error) { return home, nil },
 	)
 
@@ -666,5 +684,150 @@ func TestPiNativeMCP_Remedy(t *testing.T) {
 	}
 	if rem.Action == nil {
 		t.Fatalf("remedy Action nil")
+	}
+}
+
+// V1.3: `pi mcp list` exits 0 and prints `bigmem: disabled` when the server is
+// turned off, so a substring test for "bigmem" alone reports a false PASS.
+func TestPiNativeMCP_DisabledStatusWarns(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("BIGGZ_MCP_TIMEOUT", "45000")
+	home := t.TempDir()
+	command := filepath.Join(home, ".biggz", "biggz-mcp")
+	fs := newPiNativeFS()
+	fs.addRaw(command, "dummy")
+	fs.addJSON(t, piNativeMCPPath(home), map[string]any{
+		"mcpServers": map[string]any{"bigmem": piNativeBigMemEntry(command)},
+	})
+	c := NewPiNativeMCPCheckWithCustom(
+		piNativeLookPath, fs.stat, fs.readFile,
+		piNativeExec(nil, "bigmem: disabled (codemode, global)\n", nil),
+		os.Getenv, func() (string, error) { return home, nil },
+	)
+	res := c.Run(t.Context())
+	if res.Status != StatusWarn {
+		t.Fatalf("disabled bigmem must warn, got %v Status=%v Message=%q", res.ID, res.Status, res.Message)
+	}
+	if !strings.Contains(res.Message, "disabled") {
+		t.Errorf("warning should name the observed status, got %q", res.Message)
+	}
+}
+
+// V1.3: an unrecognized status must not be mistaken for a healthy connection.
+func TestPiNativeMCP_UnknownStatusWarns(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("BIGGZ_MCP_TIMEOUT", "45000")
+	home := t.TempDir()
+	command := filepath.Join(home, ".biggz", "biggz-mcp")
+	fs := newPiNativeFS()
+	fs.addRaw(command, "dummy")
+	fs.addJSON(t, piNativeMCPPath(home), map[string]any{
+		"mcpServers": map[string]any{"bigmem": piNativeBigMemEntry(command)},
+	})
+	c := NewPiNativeMCPCheckWithCustom(
+		piNativeLookPath, fs.stat, fs.readFile,
+		piNativeExec(nil, "bigmem: initializing (codemode, global)\n", nil),
+		os.Getenv, func() (string, error) { return home, nil },
+	)
+	res := c.Run(t.Context())
+	if res.Status != StatusWarn {
+		t.Fatalf("unknown bigmem status must warn, got %v Status=%v Message=%q", res.ID, res.Status, res.Message)
+	}
+	if !strings.Contains(res.Message, "initializing") {
+		t.Errorf("warning should name the observed status, got %q", res.Message)
+	}
+}
+
+// V1.2: the check only ran `biggz-mcp --help` and never verified that the
+// promoted biggz_mem_* tools are actually listed.
+func TestPiNativeMCP_ConnectedWithoutPromotedToolsWarns(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("BIGGZ_MCP_TIMEOUT", "45000")
+	home := t.TempDir()
+	command := filepath.Join(home, ".biggz", "biggz-mcp")
+	fs := newPiNativeFS()
+	fs.addRaw(command, "dummy")
+	fs.addJSON(t, piNativeMCPPath(home), map[string]any{
+		"mcpServers": map[string]any{"bigmem": piNativeBigMemEntry(command)},
+	})
+	c := NewPiNativeMCPCheckWithCustom(
+		piNativeLookPath, fs.stat, fs.readFile,
+		piNativeExec(nil, "bigmem: connected (codemode, global)\n  biggz_mem_save\n", nil),
+		os.Getenv, func() (string, error) { return home, nil },
+	)
+	res := c.Run(t.Context())
+	if res.Status != StatusWarn {
+		t.Fatalf("connected server missing promoted tools must warn, got %v Status=%v Message=%q", res.ID, res.Status, res.Message)
+	}
+	if !strings.Contains(res.Message, "biggz_mem_") {
+		t.Errorf("warning should name the missing promoted tools, got %q", res.Message)
+	}
+}
+
+// V1.1: both probes must run under a real deadline derived from
+// BIGGZ_MCP_TIMEOUT; without it a hung `biggz-mcp --help` or `pi mcp list`
+// blocks the whole doctor.
+func TestPiNativeMCP_ProbesRunUnderDeadline(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("BIGGZ_MCP_TIMEOUT", "1500")
+	home := t.TempDir()
+	command := filepath.Join(home, ".biggz", "biggz-mcp")
+	fs := newPiNativeFS()
+	fs.addRaw(command, "dummy")
+	fs.addJSON(t, piNativeMCPPath(home), map[string]any{
+		"mcpServers": map[string]any{"bigmem": piNativeBigMemEntry(command)},
+	})
+	var deadlines []time.Duration
+	exec := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return nil, errors.New("probe ran without a deadline")
+		}
+		deadlines = append(deadlines, time.Until(deadline))
+		if name == "pi" && len(args) > 0 && args[0] == "mcp" {
+			return []byte(piNativeConnectedOut()), nil
+		}
+		return []byte("biggz-mcp --help"), nil
+	}
+	c := NewPiNativeMCPCheckWithCustom(
+		piNativeLookPath, fs.stat, fs.readFile, exec,
+		os.Getenv, func() (string, error) { return home, nil },
+	)
+	res := c.Run(t.Context())
+	if len(deadlines) != 2 {
+		t.Fatalf("both probes must carry a deadline, got %d of 2", len(deadlines))
+	}
+	for i, d := range deadlines {
+		if d <= 0 || d > 1500*time.Millisecond {
+			t.Errorf("probe %d deadline %v is not within (0,1.5s]", i, d)
+		}
+	}
+	if res.Status != StatusPass {
+		t.Fatalf("healthy config should pass, got %v Status=%v Message=%q", res.ID, res.Status, res.Message)
+	}
+}
+
+// V1.1: the production runner must actually abandon a command that outlives
+// BIGGZ_MCP_TIMEOUT, not merely hand a deadline to a child that ignores it.
+// The test binary re-executes itself as the hung child, so no real pi is run.
+func TestPiNativeMCP_BoundedExecStopsHungCommand(t *testing.T) {
+	if os.Getenv("BIGGZ_MCP_TEST_HANG") == "1" {
+		time.Sleep(30 * time.Second)
+		return
+	}
+	t.Setenv("BIGGZ_MCP_TEST_HANG", "1")
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err := execCommandContext(ctx, os.Args[0], "-test.run=^TestPiNativeMCP_BoundedExecStopsHungCommand$")
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("a command that outlives the deadline must not report success")
+	}
+	if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		t.Fatalf("context should have expired, got %v", ctx.Err())
+	}
+	if elapsed > 10*time.Second {
+		t.Fatalf("bounded exec took %v; the deadline was not enforced", elapsed)
 	}
 }

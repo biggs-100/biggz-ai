@@ -32,10 +32,10 @@ The system MUST add `biggz doctor` RO checks `sddGlobalAssetDriftCount` and `sdd
 
 ### Requirement: Pi Native MCP Health Check
 
-`biggz doctor` MUST add a read-only, panic-isolated check with id `pi-native-mcp` (replacing the `pi-mcp-adapter` version check; no `^2` version check remains). It MUST skip with `pass` when Pi is absent; warn when `pi-mcp-adapter` is still installed, naming the consequence (while an extension registers `/mcp`, Pi ignores `mcp.json` and its own servers) and the remedy `pi remove npm:pi-mcp-adapter`; validate `~/.pi/agent/mcp.json` — `mcpServers.bigmem` present, `command` resolvable, no non-native `type`, `exposure`/`toolExposure` sane, no legacy `imports`/`directTools`; warn when `settings.json` carries `mcpServers.bigmem` or `directTools`; and run the bounded `biggz-mcp` stdio probe plus `pi mcp list` liveness behind `BIGGZ_MCP_TIMEOUT`. Missing config MUST be `warn` with the `biggz install --agent pi` hint; a crash MUST be `warn`/`fail` with `BIGGZ_MCP_TIMEOUT` guidance.
+`biggz doctor` MUST add a read-only, panic-isolated check with id `pi-native-mcp` (replacing the `pi-mcp-adapter` version check; no `^2` version check remains). It MUST skip with `pass` when Pi is absent; warn when `pi-mcp-adapter` is still installed, naming the consequence (while an extension registers `/mcp`, Pi ignores `mcp.json` and its own servers) and the remedy `pi remove npm:pi-mcp-adapter`; validate `mcp.json` under the agent root — resolved from `PI_CODING_AGENT_DIR` when it is set, otherwise `~/.pi/agent` — requiring `mcpServers.bigmem` present, `command` resolvable, no non-native `type`, `exposure`/`toolExposure` sane, and no legacy `imports`/`directTools`; and warn when `settings.json` carries `mcpServers.bigmem` or `directTools`. The check MUST run two liveness probes — the `biggz-mcp` stdio probe and `pi mcp list` — each under a real context deadline derived from `BIGGZ_MCP_TIMEOUT` (default 30000ms), so a hung probe cannot block the doctor; a probe that times out or cannot run MUST be `warn`/`fail` naming `BIGGZ_MCP_TIMEOUT`. Liveness MUST be `pass` only when `pi mcp list` reports `bigmem: connected` and names every promoted `biggz_mem_*` tool; any other bigmem status (including `disabled`), a missing bigmem line, and a connected server that lists fewer promoted tools MUST be `warn`. Missing config MUST be `warn` with the `biggz install --agent pi` hint.
 
 #### Scenario: Healthy native config passes
-- GIVEN no `pi-mcp-adapter`, native `mcp.json` `bigmem`, `settings.json` with no MCP state, `pi mcp list` reporting `bigmem`, and `biggz-mcp --help` exit 0
+- GIVEN no `pi-mcp-adapter`, native `mcp.json` `bigmem`, `settings.json` with no MCP state, `pi mcp list` reporting `bigmem: connected` with every promoted `biggz_mem_*` tool, and `biggz-mcp --help` exit 0
 - WHEN doctor runs
 - THEN check `pi-native-mcp` MUST be `pass`
 
@@ -54,10 +54,20 @@ The system MUST add `biggz doctor` RO checks `sddGlobalAssetDriftCount` and `sdd
 - WHEN doctor runs
 - THEN the first violation MUST be `warn` naming the hint `biggz install --agent pi`
 
-#### Scenario: Crash maps to BIGGZ_MCP_TIMEOUT
-- GIVEN `biggz-mcp` crashes or `pi mcp list` fails
+#### Scenario: Disabled or unknown bigmem status warns
+- GIVEN `pi mcp list` exits 0 and reports `bigmem: disabled`, or reports any status other than `connected`
 - WHEN doctor runs
-- THEN result MUST be `warn`/`fail` with `BIGGZ_MCP_TIMEOUT` guidance, others unaffected
+- THEN result MUST be `warn` naming the observed status, not `pass`
+
+#### Scenario: Connected without promoted tools warns
+- GIVEN `pi mcp list` reports `bigmem: connected` but lists fewer than the promoted `biggz_mem_*` tools
+- WHEN doctor runs
+- THEN result MUST be `warn` naming the missing promoted tools
+
+#### Scenario: Probe timeout or crash maps to BIGGZ_MCP_TIMEOUT
+- GIVEN `biggz-mcp --help` crashes, `pi mcp list` fails, or either probe outlives `BIGGZ_MCP_TIMEOUT`
+- WHEN doctor runs
+- THEN result MUST be `warn`/`fail` naming `BIGGZ_MCP_TIMEOUT`, others unaffected
 
 #### Scenario: Pi absent skips
 - GIVEN the `pi` binary is not on `PATH`

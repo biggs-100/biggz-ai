@@ -668,3 +668,48 @@ func TestProvisionBigMemMCP_SettingsPrunesLegacyBigMemKeys(t *testing.T) {
 		t.Error("settings packages reconcile must remain")
 	}
 }
+
+// TestPromotedBigMemTools_ExactNames pins the 11 promoted biggz_mem_* names,
+// their "direct" exposure in the native entry, and the copy semantics callers
+// rely on. This is the surface unit 1.1 preserved; nothing is renamed.
+func TestPromotedBigMemTools_ExactNames(t *testing.T) {
+	want := []string{
+		"biggz_mem_save",
+		"biggz_mem_search",
+		"biggz_mem_get_observation",
+		"biggz_mem_context",
+		"biggz_mem_session_summary",
+		"biggz_mem_save_prompt",
+		"biggz_mem_update",
+		"biggz_mem_timeline",
+		"biggz_mem_review",
+		"biggz_mem_judge",
+		"biggz_mem_current_project",
+	}
+	got := PromotedBigMemTools()
+	if len(got) != len(want) {
+		t.Fatalf("PromotedBigMemTools len = %d, want %d: %v", len(got), len(want), got)
+	}
+	for i, name := range want {
+		if got[i] != name {
+			t.Errorf("PromotedBigMemTools[%d] = %q, want %q", i, got[i], name)
+		}
+	}
+
+	entry := nativePiBigMemEntry("biggz-mcp")
+	exposure, _ := entry["toolExposure"].(map[string]any)
+	if len(exposure) != len(want) {
+		t.Fatalf("nativePiBigMemEntry toolExposure len = %d, want %d", len(exposure), len(want))
+	}
+	for _, name := range want {
+		if exposure[name] != "direct" {
+			t.Errorf("toolExposure[%q] = %v, want direct", name, exposure[name])
+		}
+	}
+
+	// The accessor must not expose the backing array to callers.
+	got[0] = "mutated"
+	if PromotedBigMemTools()[0] != want[0] {
+		t.Error("PromotedBigMemTools must return a copy")
+	}
+}
