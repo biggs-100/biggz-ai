@@ -175,13 +175,16 @@ func TestDeployMCPMergeIntoSettings_WritesBiggzServer(t *testing.T) {
 	t.Setenv("PI_SUBAGENT_CHILD", "")
 }
 
-// TestProvisionBigMemMCP_WritesBothFiles verifies pi's ProvisionBigMemMCP writes
-// both settings.json and mcp.json with mcpServers.bigmem {command, args, type:local},
-// preserves existing keys, cleans legacy vendors, and is idempotent.
+// TestProvisionBigMemMCP_WritesBothFiles verifies pi's ProvisionBigMemMCP writes the
+// native bigmem entry into mcp.json (no adapter-era "type"), keeps settings.json free of
+// mcpServers, preserves existing keys, cleans legacy vendors, and is idempotent.
 func TestProvisionBigMemMCP_WritesBothFiles(t *testing.T) {
 	// Isolate from PI_SUBAGENT_CHILD=1 inherited from pi harness. ProvisionBigMemMCP
 	// returns changed=false when child=1, so clear for the parent-provision path.
 	t.Setenv("PI_SUBAGENT_CHILD", "")
+	// Isolate from an ambient PI_CODING_AGENT_DIR: the provisioning path must only ever
+	// touch the temp home this test owns.
+	t.Setenv("PI_CODING_AGENT_DIR", "")
 	home := t.TempDir()
 	a := pi.NewAdapter()
 
@@ -211,37 +214,73 @@ func TestProvisionBigMemMCP_WritesBothFiles(t *testing.T) {
 		if _, err := os.Stat(want); err != nil {
 			t.Fatalf("file %q not created: %v", want, err)
 		}
-		data, _ := os.ReadFile(want)
-		var obj map[string]any
-		if err := json.Unmarshal(data, &obj); err != nil {
-			t.Fatalf("unmarshal %q: %v", want, err)
+	}
+
+	// mcp.json carries the native entry: no "type" (Pi infers stdio from command),
+	// exposure "codemode", and the promoted BigMem tools marked "direct".
+	mData, err := os.ReadFile(mcpPath)
+	if err != nil {
+		t.Fatalf("read %q: %v", mcpPath, err)
+	}
+	var mObj map[string]any
+	if err := json.Unmarshal(mData, &mObj); err != nil {
+		t.Fatalf("unmarshal %q: %v", mcpPath, err)
+	}
+	servers, _ := mObj["mcpServers"].(map[string]any)
+	bm, _ := servers["bigmem"].(map[string]any)
+	if bm == nil {
+		t.Fatalf("%q missing mcpServers.bigmem", mcpPath)
+	}
+	if got, ok := bm["type"]; ok {
+		t.Errorf("mcp.json bigmem.type must be absent (native Pi infers the transport), got %v", got)
+	}
+	if bm["exposure"] != "codemode" {
+		t.Errorf("mcp.json bigmem.exposure = %v, want codemode", bm["exposure"])
+	}
+	toolExposure, _ := bm["toolExposure"].(map[string]any)
+	if len(toolExposure) == 0 {
+		t.Errorf("mcp.json bigmem.toolExposure missing, got %v", bm["toolExposure"])
+	}
+	for name, exposure := range toolExposure {
+		if exposure != "direct" {
+			t.Errorf("mcp.json bigmem.toolExposure[%q] = %v, want direct", name, exposure)
 		}
-		servers, _ := obj["mcpServers"].(map[string]any)
-		if servers == nil {
-			t.Fatalf("%q missing mcpServers", want)
+	}
+	for _, gone := range []string{"imports", "directTools"} {
+		if _, ok := mObj[gone]; ok {
+			t.Errorf("mcp.json must not carry the adapter-era %q key", gone)
 		}
-		bm, _ := servers["bigmem"].(map[string]any)
-		if bm == nil {
-			t.Fatalf("%q missing mcpServers.bigmem", want)
+	}
+	cmd, _ := bm["command"].(string)
+	if cmd == "" {
+		t.Errorf("mcp.json bigmem.command empty")
+	}
+	// args must contain --tools=agent
+	args, _ := bm["args"].([]any)
+	hasTools := false
+	for _, a := range args {
+		if s, _ := a.(string); s == "--tools=agent" {
+			hasTools = true
 		}
-		if bm["type"] != "local" {
-			t.Errorf("%q bigmem.type = %v, want local", want, bm["type"])
-		}
-		cmd, _ := bm["command"].(string)
-		if cmd == "" {
-			t.Errorf("%q bigmem.command empty", want)
-		}
-		// args must contain --tools=agent
-		args, _ := bm["args"].([]any)
-		hasTools := false
-		for _, a := range args {
-			if s, _ := a.(string); s == "--tools=agent" {
-				hasTools = true
-			}
-		}
-		if !hasTools {
-			t.Errorf("%q bigmem.args missing --tools=agent, got %v", want, args)
-		}
+	}
+	if !hasTools {
+		t.Errorf("mcp.json bigmem.args missing --tools=agent, got %v", args)
+	}
+
+	// settings.json keeps the packages reconcile only: native Pi has no mcpServers key.
+	sData, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read %q: %v", settingsPath, err)
+	}
+	var sObj map[string]any
+	if err := json.Unmarshal(sData, &sObj); err != nil {
+		t.Fatalf("unmarshal %q: %v", settingsPath, err)
+	}
+	if _, ok := sObj["mcpServers"]; ok {
+		t.Error("settings.json must not carry mcpServers (native Pi reads them from mcp.json)")
+	}
+	if _, ok := sObj["directTools"]; ok {
+		t.Error("settings.json must not carry the adapter-era directTools key")
 	}
 
 	// Idempotent second run: should report changed=false and file unchanged

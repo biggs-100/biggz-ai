@@ -267,21 +267,46 @@ func AgentConfigPath(homeDir string) string {
 }
 
 // ProvisionBigMemMCP atomically merges the native mcpServers.bigmem entry into
-// ~/.pi/agent/mcp.json (MCPConfigFile strategy) and reconciles
-// ~/.pi/agent/settings.json packages, pruning the adapter-era
-// mcpServers.bigmem/directTools keys an earlier install left there. It drops
-// legacy pi-subagents* package entries from settings.json packages, creates
-// parent dirs if missing, and uses filemerge.WriteFileAtomic for atomicity.
+// ~/.pi/agent/mcp.json (MCPConfigFile strategy), reconciles
+// ~/.pi/agent/settings.json packages, prunes the adapter-era
+// mcpServers.bigmem/directTools keys an earlier install left there, and folds
+// every server the retired pi-mcp-adapter used to import into mcp.json in its
+// native shape. It drops legacy pi-subagents* package entries from settings.json
+// packages, creates parent dirs if missing, and uses filemerge.WriteFileAtomic
+// for atomicity.
 //
 // BigMem is Go-native SQLite at ~/.biggz/bigmem/bigmem.db with a native Go
 // MCP server (cmd/biggz-mcp, also exposed via `biggz mcp`). This is NOT
 // Engram (gentle-ai's JS/Python external + Cloud).
 func (a *Adapter) ProvisionBigMemMCP(homeDir string) (bool, []string, error) {
+	report, err := a.ProvisionBigMemMCPReport(homeDir)
+	if err != nil {
+		return false, nil, err
+	}
+	return report.Changed, report.Files, nil
+}
+
+// PiMCPProvisionReport is the observable result of ProvisionBigMemMCPReport: the
+// files the pass reconciled, whether any of them changed, and what the one-time
+// adapter migration folded into mcp.json.
+//
+// The (changed, files, error) triple ProvisionBigMemMCP returns stays intact for
+// install callers; the migrated server names live here instead of being appended
+// to the changed-path list.
+type PiMCPProvisionReport struct {
+	Changed   bool
+	Files     []string
+	Migration MCPMigrationReport
+}
+
+// ProvisionBigMemMCPReport is ProvisionBigMemMCP plus the adapter migration
+// report (unit 1.2).
+func (a *Adapter) ProvisionBigMemMCPReport(homeDir string) (PiMCPProvisionReport, error) {
 	// Never run inside fresh/isolated subagent children — they have empty
 	// sessions and would race settings.json/mcp.json writes. Mirrors
 	// biggz-last-model.js guard: if (process.env.PI_SUBAGENT_CHILD === "1") return;
 	if os.Getenv("PI_SUBAGENT_CHILD") == "1" {
-		return false, nil, nil
+		return PiMCPProvisionReport{}, nil
 	}
 	settingsPath := a.SettingsPath(homeDir)
 	mcpPath := a.MCPConfigPath(homeDir, "")
@@ -289,20 +314,27 @@ func (a *Adapter) ProvisionBigMemMCP(homeDir string) (bool, []string, error) {
 
 	for _, dir := range []string{filepath.Dir(settingsPath), filepath.Dir(mcpPath)} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return false, nil, fmt.Errorf("mkdir %q: %w", dir, err)
+			return PiMCPProvisionReport{}, fmt.Errorf("mkdir %q: %w", dir, err)
 		}
 	}
 
 	changedSettings, err := a.mergePiSettingsBigMem(settingsPath, homeDir)
 	if err != nil {
-		return false, nil, err
+		return PiMCPProvisionReport{}, err
 	}
-	changedMCP, err := a.mergePiMCPFileBigMem(mcpPath, mcpBinary)
+	// Migrated servers land in the same atomic mcp.json write as the bigmem
+	// entry: a name that file already defines is skipped, so the pass is
+	// non-destructive and byte-stable on a second run.
+	changedMCP, migration, err := a.mergePiMCPFileBigMemWithMigration(mcpPath, mcpBinary, importedMCPSources(homeDir, settingsPath))
 	if err != nil {
-		return false, nil, err
+		return PiMCPProvisionReport{}, err
 	}
-	changed := changedSettings.Changed || changedSettings.Created || changedMCP.Changed || changedMCP.Created
-	return changed, []string{settingsPath, mcpPath}, nil
+	changed := changedSettings.Changed || changedSettings.Created || changedMCP.Changed || changedMCP.Created || migration.Changed
+	return PiMCPProvisionReport{
+		Changed:   changed,
+		Files:     []string{settingsPath, mcpPath},
+		Migration: migration,
+	}, nil
 }
 
 // ProvisionEngramMCP is kept for backward compatibility. Biggz uses BigMem,
@@ -412,9 +444,21 @@ func (a *Adapter) mergePiSettingsBigMem(path, homeDir string) (filemerge.WriteRe
 }
 
 func (a *Adapter) mergePiMCPFileBigMem(path, mcpBinary string) (filemerge.WriteResult, error) {
+	result, _, err := a.mergePiMCPFile(path, mcpBinary, nil)
+	return result, err
+}
+
+// mergePiMCPFileBigMemWithMigration is mergePiMCPFileBigMem plus the one-time
+// adapter migration: every server still declared by sources joins mcpServers in
+// the same atomic write, but only under a name mcp.json does not already define.
+func (a *Adapter) mergePiMCPFileBigMemWithMigration(path, mcpBinary string, sources []mcpImportSource) (filemerge.WriteResult, MCPMigrationReport, error) {
+	return a.mergePiMCPFile(path, mcpBinary, sources)
+}
+
+func (a *Adapter) mergePiMCPFile(path, mcpBinary string, sources []mcpImportSource) (filemerge.WriteResult, MCPMigrationReport, error) {
 	obj, err := readPiJSONObject(path)
 	if err != nil {
-		return filemerge.WriteResult{}, err
+		return filemerge.WriteResult{}, MCPMigrationReport{}, err
 	}
 	// Prune adapter-era keys so a reinstall converges an earlier install. Pi
 	// ignores unknown top-level keys, so this is hygiene plus a real signal
@@ -426,28 +470,35 @@ func (a *Adapter) mergePiMCPFileBigMem(path, mcpBinary string) (filemerge.WriteR
 	if servers == nil {
 		servers = map[string]any{}
 	}
-	// Native shape (decisions D6/D8): no "type" (Pi infers stdio from
-	// "command"), exposure controls the model-facing surface, and
-	// toolExposure maps server-declared names to their exposure.
+	servers["bigmem"] = nativePiBigMemEntry(mcpBinary)
+	migration := migrateMCPServers(servers, sources)
+	obj["mcpServers"] = servers
+
+	encoded, err := json.MarshalIndent(obj, "", "  ")
+	if err != nil {
+		return filemerge.WriteResult{}, MCPMigrationReport{}, fmt.Errorf("marshal pi mcp %q: %w", path, err)
+	}
+	encoded = append(encoded, '\n')
+	result, err := filemerge.WriteFileAtomic(path, encoded, 0o644)
+	return result, migration, err
+}
+
+// nativePiBigMemEntry is the native mcp.json entry for the biggz-owned bigmem
+// server (decisions D6/D8): no "type" (Pi infers stdio from "command"),
+// exposure controls the model-facing surface, and toolExposure maps
+// server-declared names to their exposure.
+func nativePiBigMemEntry(mcpBinary string) map[string]any {
 	toolExposure := make(map[string]any, len(piDirectTools))
 	for _, name := range piDirectTools {
 		toolExposure[name] = "direct"
 	}
-	servers["bigmem"] = map[string]any{
+	return map[string]any{
 		"command":      mcpBinary,
 		"args":         []string{"--tools=agent", "--prefix=biggz"},
 		"description":  piBigMemDescription,
 		"exposure":     "codemode",
 		"toolExposure": toolExposure,
 	}
-	obj["mcpServers"] = servers
-
-	encoded, err := json.MarshalIndent(obj, "", "  ")
-	if err != nil {
-		return filemerge.WriteResult{}, fmt.Errorf("marshal pi mcp %q: %w", path, err)
-	}
-	encoded = append(encoded, '\n')
-	return filemerge.WriteFileAtomic(path, encoded, 0o644)
 }
 
 // piDirectTools are the BigMem tools promoted to the model as native Pi
