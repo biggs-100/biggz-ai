@@ -118,8 +118,8 @@ export function formatCost(total: number, subscription: boolean): string {
 	return subscription ? `$${amount} sub` : `$${amount}`;
 }
 
-// Extensions may paint their status themselves (pi-mcp-adapter does); the bar
-// owns the palette, so their escapes go and the text takes the status role.
+// Extensions may paint their status themselves; the bar owns the palette, so
+// their escapes go and the text takes the status role.
 function sanitizeStatus(text: string): string {
 	return sanitizeTerminalText(text.replace(/[\r\n\t]/g, " ")).replace(/ +/g, " ").trim();
 }

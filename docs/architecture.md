@@ -19,12 +19,12 @@ biggz-ai is an **AI agent harness** — it runs inside AI coding agents (OpenCod
 ```
 cmd/
 ├── biggz/           — CLI entry point (SDD, review, RDD, memory, backup, release verbs)
-├── biggz-mcp/       — MCP server for BigMem protocol
+├── biggz-mcp/       — MCP server for BigMem protocol (Pi loads it through its own native `mcpServers.bigmem` client; the retired `pi-mcp-adapter` is gone)
 
 internal/
 ├── agents/          — Agent adapters (opencode, claude, qwen)
 ├── agentbuilder/    — Custom SDD agent generation (engines, parser, installer, registry)
-├── assets/          — Embedded skills + configs + OpenCode plugins (opencode plugins + biggz-orchestrator.md [internal/assets/biggz/] + pi extensions [internal/assets/pi/]; wrappers `biggz-memory-chrome.js` + `biggz-synthesis-gate.js` stay embedded but are excluded from the pi deploy list — native-only `/mcp`, sources kept pending Phase-2 gate)
+├── assets/          — Embedded skills + configs + OpenCode plugins (opencode plugins + biggz-orchestrator.md [internal/assets/biggz/] + pi extensions [internal/assets/pi/]; wrappers `biggz-memory-chrome.js` + `biggz-synthesis-gate.js` stay embedded but are excluded from the pi deploy list — Pi's own MCP client reads `mcpServers.bigmem` from `~/.pi/agent/mcp.json` while the retired `pi-mcp-adapter` is neither installed nor deployed (`biggz install` removes it), sources kept pending Phase-2 gate)
 ├── backup/          — tar.gz snapshot/restore
 ├── bigmem/          — Persistent observation store + MCP tools (22 agent-facing + 3 internal branching (25 total), SQLite) — Profiles[agent]=20, admin=3 — files: bigmem.go (Store/Search/Save+FTS5/dedup), full.go (sessions/prompts/timeline/stats/doctor), graph.go (BuildGraph/Render*), blobstore.go (PutBlob/GetBlob), sync.go (FileTransport), sync_journal.go (journal/lease), engram_import.go (compat)
 ├── codegraph/       — CodeGraph index + change-intent report (safe-root validation)
@@ -153,6 +153,8 @@ Transitions are validated by `FSM.Transition(current, target, role, counters)` v
 ## BigMem Memory Protocol
 
 22 agent-facing + 3 internal branching (25 total) MCP tools exposed by `biggz-mcp` plus Session Boot Recall hard gate (Profiles[agent]=20, admin=3):
+
+**Pi transport (native):** Pi reaches these tools through its own MCP client, which reads `mcpServers.bigmem` from `~/.pi/agent/mcp.json` (native `command` + `args`, `exposure: "codemode"`, and `toolExposure` for the 11 direct tools; no `type`). The retired `pi-mcp-adapter` is never installed, and `biggz install --agent pi` removes it when present so Pi keeps its own client.
 
 **Session Boot Recall (HARD GATE):** before SDD Session Preflight the orchestrator MUST run `biggz_mem_context(limit=5)` + `biggz recall` / `Search("", opts)` → `ORDER BY updated_at DESC` (for recency, "en que nos quedamos?") + `biggz_mem_search(query:"sdd {project}" limit=10)` (relevance), inject a short recap, emit `## Session Recall` markdown, and fallback to `git log --oneline -15` + `biggz sdd-status --json --instructions` when BigMem is empty (never use FTS term search for 'latest'). FTS rank is for relevance, not recency. See `internal/assets/biggz/biggz-orchestrator-workflow.md` Session Boot Recall.
 

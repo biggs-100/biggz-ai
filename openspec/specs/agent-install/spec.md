@@ -238,16 +238,28 @@ Each `Step` MUST implement `Apply` that is idempotent and `Rollback` that restor
 - WHEN rollback completes
 - THEN TempDir MUST be restored to pre-Apply state
 
-### Requirement: Pi MCP Adapter in InstallCommand
+### Requirement: Pi Native MCP in InstallCommand
 
-`Adapter.InstallCommand` MUST include `npm:pi-mcp-adapter@^2` before `npm:pi-subagents-j0k3r@1.6.1` (exact pin, never floating), idempotent, offline-tolerant with doc fallback. The pinned identity MUST also be used by `desiredPiPackages` reconciliation.
-(Previously: j0k3r referenced unpinned/floating.)
+`Adapter.InstallCommand` MUST NOT install `pi-mcp-adapter`: Pi's own MCP client reads `mcp.json`, so installing the retired extension would make Pi ignore its own servers. The `npm:pi-subagents-j0k3r@1.6.1` pin MUST stay exact (never floating), idempotent and offline-tolerant with doc fallback, and the pinned identity MUST also be used by `desiredPiPackages` reconciliation. `internal/install:Run` MUST reconcile the retired adapter's removal best-effort while it is present (the package's npm directory or a leftover `npm:pi-mcp-adapter*` entry in `settings.json` packages, under the home root and `PI_CODING_AGENT_DIR`), never failing the install and never running on `--dry-run`.
+(Previously: `InstallCommand` installed `npm:pi-mcp-adapter@^2` first.)
 
-#### Scenario: Includes adapter in order
+#### Scenario: Adapter is not installed
 
 - GIVEN Pi `InstallCommand` invoked
 - WHEN the list is generated
-- THEN it MUST contain `npm:pi-mcp-adapter` with `^2` preceding `npm:pi-subagents-j0k3r@1.6.1`
+- THEN it MUST NOT contain `npm:pi-mcp-adapter` and MUST still contain `npm:pi-subagents-j0k3r@1.6.1`
+
+#### Scenario: Removal reconcile never fails the install
+
+- GIVEN `pi-mcp-adapter` present (npm directory or `settings.json` packages entry) and `pi uninstall` failing
+- WHEN `biggz install --agent pi` runs
+- THEN the install MUST still succeed and `settings.json`/`mcp.json` MUST stay valid
+
+#### Scenario: Dry-run makes no removal call
+
+- GIVEN `--dry-run` and `pi-mcp-adapter` present
+- WHEN the install runs
+- THEN no removal command MUST be executed
 
 #### Scenario: Pin is exact
 
@@ -257,7 +269,7 @@ Each `Step` MUST implement `Apply` that is idempotent and `Rollback` that restor
 
 #### Scenario: Idempotent second run
 
-- GIVEN adapter already installed
+- GIVEN the adapter already absent
 - WHEN command runs again
 - THEN it MUST succeed without duplication
 

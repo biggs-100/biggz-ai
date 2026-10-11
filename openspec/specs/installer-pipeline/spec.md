@@ -136,17 +136,22 @@ The Installing stage MUST consume the existing Orchestrator `ProgressChan(32)` v
 
 ### Requirement: Pi Deploy Ordering with ProvisionBigMemMCP
 
-`internal/install:Run` MUST order `DeployMCPBinaryToHomeDir` → `ProvisionBigMemMCP` (both `settings.json` + `mcp.json` via `WriteFileAtomic`) → `pi install`. All writes MUST be atomic temp+rename, idempotent, rollback reverse-order, `--dry-run` zero writes, `verifyOrchestratorDeployment` confirms presence.
+`internal/install:Run` MUST order `DeployMCPBinaryToHomeDir` → `ProvisionBigMemMCP` (native `mcpServers.bigmem` into `mcp.json`, `settings.json` reduced to the `packages` reconcile, plus the one-time adapter migration, all via `WriteFileAtomic`) → `removeLegacyPiMCPAdapter` (best-effort removal of the retired adapter, never failing the install, never running on `--dry-run`) → `pi install` (which MUST NOT install `pi-mcp-adapter`). All writes MUST be atomic temp+rename, idempotent, rollback reverse-order, `--dry-run` zero writes, `verifyOrchestratorDeployment` confirms presence.
 
 #### Scenario: Ordered success
 - GIVEN fresh pi install
 - WHEN `Run` executes
-- THEN binary MUST precede `ProvisionBigMemMCP` and `pi install` MUST run last with `Success==true`
+- THEN binary MUST precede `ProvisionBigMemMCP`, adapter removal MUST precede `pi install`, and `pi install` MUST run last with `Success==true`
 
 #### Scenario: Dry-run zero writes
 - GIVEN `--dry-run`
 - WHEN `Orchestrator.Run` executes
-- THEN only `Prepare` runs and zero files outside TempDir MUST be written
+- THEN only `Prepare` runs, no adapter-removal command is executed, and zero files outside TempDir MUST be written
+
+#### Scenario: Adapter removal never fails the install
+- GIVEN the retired `pi-mcp-adapter` is present and its uninstall fails
+- WHEN `Run` executes
+- THEN the install MUST still succeed and `pi install` MUST still run
 
 #### Scenario: Rollback atomic
 - GIVEN `ProvisionBigMemMCP` succeeded then `pi install` fails
