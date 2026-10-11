@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,11 +100,106 @@ func piNativeExec(mcpErr error, listOut string, listErr error) func(context.Cont
 	}
 }
 
-// piNativeConnectedOut is a healthy `pi mcp list` body: the connected status
-// plus every promoted biggz_mem_* name, matching what the real command prints.
+// piNativeConnectedOut is a healthy `pi mcp list` body in the format Pi 1.1.0
+// really prints — captured from the binary in this workspace, and the reason
+// the previously fabricated "bigmem: connected (codemode, global)" fixture let
+// a regression through: the real status token carries the list separator.
 func piNativeConnectedOut() string {
-	lines := append([]string{"bigmem: connected (codemode, global)"}, piagent.PromotedBigMemTools()...)
-	return strings.Join(lines, "\n") + "\n"
+	return piNativeRealListOut("connected", piagent.PromotedBigMemTools())
+}
+
+// piNativeRealListOut renders one `pi mcp list` server block exactly as the
+// binary does: "<name>: <state>, <n> tool(s) (<exposure>, <scope>)", the
+// transport line, then the tools line. Refresh from a real capture if Pi's
+// format changes.
+func piNativeRealListOut(state string, tools []string) string {
+	marked := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		marked = append(marked, tool+" [direct]")
+	}
+	return strings.Join([]string{
+		fmt.Sprintf("bigmem: %s, %d tools (codemode, global)", state, len(tools)),
+		"  C:/Users/USER/.biggz/biggz-mcp.exe --tools=agent --prefix=biggz",
+		"  tools: " + strings.Join(marked, ", "),
+	}, "\n") + "\n"
+}
+
+// TestPiNativeMCP_RealListFormatHealthyPasses guards the regression that made
+// every healthy install warn: the status token Pi prints is "connected," with a
+// trailing comma, and a parser that compares the raw token never passes.
+func TestPiNativeMCP_RealListFormatHealthyPasses(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("BIGGZ_MCP_TIMEOUT", "30000")
+	home := t.TempDir()
+	command := filepath.Join(home, ".biggz", "biggz-mcp")
+	fs := newPiNativeFS()
+	fs.addRaw(command, "dummy")
+	fs.addJSON(t, piNativeMCPPath(home), map[string]any{
+		"mcpServers": map[string]any{"bigmem": piNativeBigMemEntry(command)},
+	})
+
+	c := NewPiNativeMCPCheckWithCustom(
+		piNativeLookPath, fs.stat, fs.readFile,
+		piNativeExec(nil, piNativeConnectedOut(), nil),
+		os.Getenv, func() (string, error) { return home, nil },
+	)
+	res := c.Run(context.Background())
+	if res.Status != StatusPass {
+		t.Fatalf("real `pi mcp list` format must pass, got Status=%v Message=%q", res.Status, res.Message)
+	}
+}
+
+// TestPiNativeMCP_ForeignServerToolsDoNotSatisfy proves the promoted-tool scan
+// is scoped to the bigmem block: another server listing the same names cannot
+// turn a bigmem that exposes nothing into a healthy state.
+func TestPiNativeMCP_ForeignServerToolsDoNotSatisfy(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("BIGGZ_MCP_TIMEOUT", "30000")
+	home := t.TempDir()
+	command := filepath.Join(home, ".biggz", "biggz-mcp")
+	fs := newPiNativeFS()
+	fs.addRaw(command, "dummy")
+	fs.addJSON(t, piNativeMCPPath(home), map[string]any{
+		"mcpServers": map[string]any{"bigmem": piNativeBigMemEntry(command)},
+	})
+	out := piNativeConnectedOut() + piNativeRealListOut("connected", piagent.PromotedBigMemTools())
+	out = strings.Replace(out, "bigmem: connected,", "other: connected,", 1)
+	out = "bigmem: connected, 0 tools (codemode, global)\n" + out
+
+	c := NewPiNativeMCPCheckWithCustom(
+		piNativeLookPath, fs.stat, fs.readFile,
+		piNativeExec(nil, out, nil),
+		os.Getenv, func() (string, error) { return home, nil },
+	)
+	res := c.Run(context.Background())
+	if res.Status != StatusWarn {
+		t.Fatalf("tools listed by another server must not satisfy bigmem, got Status=%v Message=%q", res.Status, res.Message)
+	}
+}
+
+// TestPiNativeMCP_LaterFailedBigMemLineWarns proves every bigmem line is read,
+// not just the first one.
+func TestPiNativeMCP_LaterFailedBigMemLineWarns(t *testing.T) {
+	t.Setenv("PI_CODING_AGENT_DIR", "")
+	t.Setenv("BIGGZ_MCP_TIMEOUT", "30000")
+	home := t.TempDir()
+	command := filepath.Join(home, ".biggz", "biggz-mcp")
+	fs := newPiNativeFS()
+	fs.addRaw(command, "dummy")
+	fs.addJSON(t, piNativeMCPPath(home), map[string]any{
+		"mcpServers": map[string]any{"bigmem": piNativeBigMemEntry(command)},
+	})
+	out := piNativeConnectedOut() + "bigmem: failed (codemode, global)\n"
+
+	c := NewPiNativeMCPCheckWithCustom(
+		piNativeLookPath, fs.stat, fs.readFile,
+		piNativeExec(nil, out, nil),
+		os.Getenv, func() (string, error) { return home, nil },
+	)
+	res := c.Run(context.Background())
+	if res.Status != StatusWarn {
+		t.Fatalf("a later non-connected bigmem line must warn, got Status=%v Message=%q", res.Status, res.Message)
+	}
 }
 
 // piNativeBigMemEntry is the native mcp.json shape this repo writes: stdio

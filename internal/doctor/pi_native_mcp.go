@@ -468,9 +468,14 @@ func (c *PiNativeMCPCheck) checkBigMemLiveness(timeout, out string) *Result {
 }
 
 // piMCPServerStatus extracts the status token `pi mcp list` prints for a
-// server, for example "connected" from "bigmem: connected (codemode, global)".
-// It returns "" when no line names the server.
+// server, for example "connected" from
+// "bigmem: connected, 20 tools (codemode, global)". Pi renders the tool count
+// after the status, so the token carries the list separator and must be
+// normalized before it is compared. Every line naming the server is read, and a
+// non-connected line wins, so a later failure is never masked by an earlier
+// connected line. It returns "" when no line names the server.
 func piMCPServerStatus(out, server string) string {
+	status := ""
 	for line := range strings.SplitSeq(out, "\n") {
 		name, rest, ok := strings.Cut(strings.TrimSpace(line), ":")
 		// Tolerate a leading list marker ("- bigmem: connected") without
@@ -483,17 +488,50 @@ func piMCPServerStatus(out, server string) string {
 		if len(fields) == 0 {
 			return ""
 		}
-		return fields[0]
+		token := strings.TrimRight(fields[0], ",;")
+		if token != piBigMemConnectedStatus {
+			return token
+		}
+		status = token
 	}
-	return ""
+	return status
 }
 
-// missingPromotedBigMemTools returns the promoted biggz_mem_* names the
-// `pi mcp list` body does not mention, in promotion order.
+// piBigMemBlock returns the `pi mcp list` body that belongs to server: its
+// status line plus the detail lines that follow it, ending at the next server
+// status line. Scoping the tool scan matters because a tool name listed under a
+// different server must not satisfy the promoted-tool requirement.
+func piBigMemBlock(out, server string) string {
+	var block []string
+	inBlock := false
+	for line := range strings.SplitSeq(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !inBlock {
+			name, _, ok := strings.Cut(trimmed, ":")
+			name = strings.TrimLeft(strings.TrimSpace(name), "`*•-")
+			if ok && name == server {
+				inBlock = true
+				block = append(block, line)
+			}
+			continue
+		}
+		// Detail lines are indented; the next server starts an unindented
+		// "<name>: <state>" line.
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && strings.Contains(trimmed, ":") {
+			break
+		}
+		block = append(block, line)
+	}
+	return strings.Join(block, "\n")
+}
+
+// missingPromotedBigMemTools returns the promoted biggz_mem_* names the bigmem
+// block of the `pi mcp list` body does not mention, in promotion order.
 func missingPromotedBigMemTools(out string) []string {
+	block := piBigMemBlock(out, piBigMemServerName)
 	var missing []string
 	for _, name := range piagent.PromotedBigMemTools() {
-		if !piToolListed(out, name) {
+		if !piToolListed(block, name) {
 			missing = append(missing, name)
 		}
 	}
