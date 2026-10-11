@@ -98,8 +98,14 @@ func (a *Adapter) Detect(_ context.Context, homeDir string) (bool, string, strin
 //	rpiv-todo, pi-btw (see piSubagentsInstallCommand + engramInitCommand).
 //
 // Biggz uses BigMem (native Go at cmd/biggz-mcp / `biggz mcp`), not Engram,
-// so it does NOT need gentle-pi, gentle-engram, pi-mcp-adapter, pi-engram init,
-// or rpiv-* / pi-btw. The only runtime dependency beyond the pi CLI itself is
+// so it does NOT need gentle-pi, gentle-engram, pi-engram init, or rpiv-* /
+// pi-btw. Memory is served by pi's own native MCP client: ProvisionBigMemMCP
+// writes the native mcpServers.bigmem entry into mcp.json (settings.json keeps
+// only the package list) and pi reads it directly. The retired pi-mcp-adapter
+// extension is therefore NOT installed —
+// while it is present pi ignores mcp.json and its own servers, so `biggz
+// install` removes it when found (removeLegacyPiMCPAdapter).
+// The only runtime dependency beyond the pi CLI itself is
 // the subagent dispatcher (j0k3r-dev-rgl/pi-subagents-j0k3r, maintained fork
 // of nicobailon/pi-subagents) which provides subagent_run/continue,
 // background delegation, task history and model profiles. Without it pi has
@@ -132,12 +138,10 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	// packages invisible to pi's capability probes and FleetView would never
 	// become ready. `pi install` writes into the agent-owned node_modules
 	// where pi actually discovers packages.
-	// - npm:pi-mcp-adapter@^2 (nicobailon/pi-mcp-adapter, 761k/mo, stdio +
-	//   streamable-http/sse, imports:["opencode"], directTools) is the
-	//   canonical MCP client for Pi — it spawns `biggz-mcp --tools=agent
-	//   --prefix=biggz` and exposes `biggz_mem_*` as native Pi tools with
-	//   `/mcp` health. Pinned `^2` (v2.32.1 shape), idempotent via `pi
-	//   install`, offline-tolerant (MCP JSON remains harmless).
+	// - No MCP adapter source: pi's built-in MCP client loads
+	//   mcpServers.bigmem from mcp.json, so pi-mcp-adapter is deliberately
+	//   absent (installing it makes pi ignore the native client). `biggz
+	//   install` removes any legacy copy instead (removeLegacyPiMCPAdapter).
 	// - npm:pi-subagents-j0k3r@1.6.1 (exact pin, never floating) must use
 	//   `pi install` (not `npm install -g`) — pi loader only scans
 	//   ~/.pi/agent/npm.
@@ -156,7 +160,6 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	//   via `pi install`; it is copied to `~/.pi/agent/extensions/` via
 	//   DeployPiQuestionMouse (filemerge) during `biggz install --agent pi`.
 	cmds := [][]string{
-		{"pi", "install", "npm:pi-mcp-adapter@^2"},
 		{"pi", "install", piSubagentsJ0k3rPinned},
 		{"pi", "install", "npm:@juicesharp/rpiv-ask-user-question"},
 		{"pi", "install", "npm:rpiv-todo"},

@@ -131,52 +131,67 @@ func TestGentleAiConfigHome_EnvOverride(t *testing.T) {
 
 // --- PR1 pi-mcp-adapter migration tests ---
 
-func TestInstallCommand_ContainsAdapterBeforeSubagents(t *testing.T) {
+// TestInstallCommand_ExcludesMCPAdapter pins the native-MCP decision: BigMem is
+// served by pi's built-in MCP client, so no install source may pull the retired
+// pi-mcp-adapter extension — while it is installed pi ignores mcp.json and its
+// own servers. The remaining sources keep their relative order and the command
+// stays idempotent (no duplicated source).
+func TestInstallCommand_ExcludesMCPAdapter(t *testing.T) {
 	t.Setenv("PI_CODING_AGENT_DIR", t.TempDir()) // no runtime marker: pre-cutover list
 	a := NewAdapter()
 	cmds, err := a.InstallCommand(nil)
 	if err != nil {
 		t.Fatalf("InstallCommand error: %v", err)
 	}
-	var idxAdapter, idxJ0k3r = -1, -1
-	for i, cmd := range cmds {
-		joined := strings.Join(cmd, " ")
-		if strings.Contains(joined, "pi-mcp-adapter") {
-			idxAdapter = i
-			if !strings.Contains(joined, "@^2") {
-				t.Errorf("adapter entry must pin ^2, got %q", joined)
-			}
-			if !strings.Contains(joined, "npm:pi-mcp-adapter@^2") {
-				t.Errorf("adapter entry must be npm:pi-mcp-adapter@^2, got %q", joined)
-			}
-		}
-		if strings.Contains(joined, "pi-subagents-j0k3r") {
-			idxJ0k3r = i
-		}
-	}
-	if idxAdapter == -1 {
-		t.Fatal("InstallCommand missing npm:pi-mcp-adapter@^2")
-	}
-	if idxJ0k3r == -1 {
-		t.Fatal("InstallCommand missing pi-subagents-j0k3r")
-	}
-	if idxAdapter >= idxJ0k3r {
-		t.Fatalf("adapter must precede pi-subagents-j0k3r: adapter idx %d, j0k3r idx %d", idxAdapter, idxJ0k3r)
-	}
-	// Idempotent: second call same
-	cmds2, _ := a.InstallCommand(nil)
-	if len(cmds) != len(cmds2) {
-		t.Error("InstallCommand not idempotent length mismatch")
-	}
-	// No duplication of adapter
-	count := 0
+	joined := make([]string, 0, len(cmds))
 	for _, cmd := range cmds {
-		if strings.Contains(strings.Join(cmd, " "), "pi-mcp-adapter") {
-			count++
+		line := strings.Join(cmd, " ")
+		if strings.Contains(line, "pi-mcp-adapter") {
+			t.Errorf("InstallCommand must not install the retired pi-mcp-adapter extension, got %q", line)
 		}
+		joined = append(joined, line)
 	}
-	if count != 1 {
-		t.Errorf("expected exactly 1 pi-mcp-adapter entry, got %d", count)
+	// Remaining sources keep their relative order with the adapter slot removed.
+	wantOrder := []string{
+		"npm:pi-subagents-j0k3r@1.6.1",
+		"npm:@juicesharp/rpiv-ask-user-question",
+		"npm:rpiv-todo",
+		"npm:pi-web-access",
+		"npm:pi-btw",
+	}
+	last := -1
+	for _, want := range wantOrder {
+		idx := -1
+		for i, line := range joined {
+			if strings.Contains(line, want) {
+				idx = i
+				break
+			}
+		}
+		if idx == -1 {
+			t.Fatalf("InstallCommand missing %q, got %v", want, joined)
+		}
+		if idx <= last {
+			t.Fatalf("InstallCommand source order drifted: %q at index %d after index %d", want, idx, last)
+		}
+		last = idx
+	}
+	// Idempotent: a second call returns the same list with no duplicated source.
+	cmds2, err := a.InstallCommand(nil)
+	if err != nil {
+		t.Fatalf("second InstallCommand error: %v", err)
+	}
+	if len(cmds) != len(cmds2) {
+		t.Errorf("InstallCommand not idempotent: %d vs %d commands", len(cmds), len(cmds2))
+	}
+	counts := make(map[string]int, len(joined))
+	for _, line := range joined {
+		counts[line]++
+	}
+	for line, n := range counts {
+		if n != 1 {
+			t.Errorf("InstallCommand duplicated source %q (%d times)", line, n)
+		}
 	}
 }
 

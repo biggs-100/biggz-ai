@@ -57,7 +57,7 @@ func TestInstallCommand_CutoverDropsJ0k3r(t *testing.T) {
 		}
 		joined = append(joined, line)
 	}
-	for _, want := range []string{"pi install npm:pi-mcp-adapter@^2", "pi install npm:rpiv-todo", "pi install npm:pi-web-access", "pi install npm:pi-btw"} {
+	for _, want := range []string{"pi install npm:rpiv-todo", "pi install npm:pi-web-access", "pi install npm:pi-btw"} {
 		found := false
 		for _, got := range joined {
 			if got == want {
