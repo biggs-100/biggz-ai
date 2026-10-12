@@ -16,10 +16,10 @@ already covers the change.
 
 - Blank issues are disabled: every issue goes through `bug_report.yml` or
   `feature_request.yml`.
-- Each template declares its own label: `type:bug` or `type:feature`. The web form applies it,
-  while `gh issue create` needs `--label` (the examples pass it). No workflow applies a
-  `status:*` label, and `status:approved` is the only status label this repository defines, so
-  an issue waits until a maintainer approves it.
+- Each template declares its own label: `type:bug` or `type:feature`. The web form applies it;
+  when filing with `gh issue create`, pass `--label "type:bug"` as the examples do. No workflow
+  applies a `status:*` label, and `status:approved` is the only status label this repository
+  defines, so an issue waits until a maintainer approves it.
 - An issue is approved before its PR opens: a maintainer adds `status:approved`, or a
   maintainer authored the issue, in which case authorship **is** the approval. The label is a
   filterable marker, never a CI gate: `pr-check.yml` reads only a `Closes`, `Fixes` or
@@ -46,16 +46,15 @@ already covers the change.
    `gh issue create --template bug_report.yml --title "fix(scope): ..."` or
    `--template feature_request.yml --title "feat(scope): ..."`. The field-by-field bodies and
    worked examples are in `references/issue-flow.md`.
-3. `gh label list` is the source of truth for labels; nothing adds a status automatically, so
-   an issue needs no marking before a maintainer approves it.
+3. `gh label list` is the source of truth; nothing adds a status automatically, so an issue
+   needs no marking before a maintainer approves it.
 4. As maintainer, approve it for implementation:
    `gh issue edit <N> --add-label status:approved`. The PR can open afterwards.
 
 ## Output Contract
 
-Return: the issue number and URL; the template used and the labels applied; the existing
-issue linked instead, if any; and whether it waits for approval or is already approved by
-authorship.
+Return: the issue number and URL; the template and labels used; the existing issue linked
+instead, if any; and whether it waits for approval or is already approved by authorship.
 
 ## References
 

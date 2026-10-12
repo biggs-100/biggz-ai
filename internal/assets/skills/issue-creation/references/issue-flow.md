@@ -32,9 +32,10 @@ not have to guess.
 
 ## Examples
 
-These two are shape references: the field names, the labels and the flow are this
-repository's, while the reproduced command and the pasted output are the reporter's own —
-substitute yours. Nothing below is copied from a real issue.
+These two are shapes, not reports: the field names, the labels, the scopes and the flow are
+this repository's, and every `<placeholder>` is yours to replace. Nothing below asserts how
+biggz currently behaves, and nothing is copied from a real issue - an example claiming a
+defect the code cannot produce is exactly the error this file exists to prevent.
 
 Bug report:
 
@@ -58,7 +59,7 @@ Windows 11
 
 ### Relevant output
 \`\`\`
-<the line biggz doctor printed; its shape is: icon> <check id>: <message>
+<the line biggz doctor printed, e.g. the icon, then the check id, a colon and the message>
 \`\`\`
 "
 ```
@@ -67,16 +68,16 @@ Feature request:
 
 ```bash
 gh issue create --template feature_request.yml --label "type:feature" \
-  --title "feat(review): report the review budget before the first capture" \
+  --title "feat(review): <the capability you want>" \
   --body "
 ### Problem
-The correction budget is only visible after a capture has been admitted.
+<the pain, and what you have to do today instead>
 
 ### Proposed solution
-Print it in the transition status that offers the first collect slot.
+<how it should behave from the user's side, not how to build it>
 
 ### Alternatives considered
-Reading the store directly, which duplicates the provider's projection.
+<other approaches and why they lose>
 
 ### Area
 Review System
