@@ -1,228 +1,64 @@
 ---
 name: issue-creation
-description: "Create GitHub issues with issue-first checks. Trigger: creating GitHub issues, bug reports, or feature requests."
+description: "Trigger: creating GitHub issues, bug reports, feature requests, issue triage. File and triage issues for biggs-100/biggz-ai with the real templates, labels and approval rule."
 license: Apache-2.0
 ---
 
-## When to Use
+## Activation Contract
 
-Use this skill when:
-- Creating a GitHub issue (bug report or feature request)
-- Helping a contributor file an issue
-- Triaging or approving issues as a maintainer
+Activate when filing a bug report or a feature request in `biggs-100/biggz-ai`, or when
+triaging and approving an issue as a maintainer.
 
----
+Do not activate for questions or open-ended ideas (use Discussions), or when an open issue
+already covers the change.
 
-## Critical Rules
+## Hard Rules
 
-1. **Blank issues are disabled** — MUST use a template (bug report or feature request)
-2. **No `status:*` label is applied automatically** — the issue templates declare only their `type:*` label, and `status:approved` is the only status label this repository defines, so a new issue simply waits until a maintainer approves it
-3. **An issue must be approved before its PR is opened** — either a maintainer added `status:approved`, or a maintainer opened the issue themselves, in which case authorship **is** the approval and the label is only a filterable marker. No CI job reads the label: what CI actually enforces on the PR is its `Closes #<N>` reference, exactly one `type:*` label, and the 400-line budget (`size:exception` to exceed)
-4. **Questions go to [Discussions](https://github.com/biggs-100/biggz-ai/discussions)**, not issues
+- Blank issues are disabled: every issue goes through `bug_report.yml` or
+  `feature_request.yml`.
+- The template carries the label and nothing else: `type:bug` or `type:feature`. No workflow
+  applies a `status:*` label, so add `status:needs-review` by hand when the state should be
+  visible.
+- An issue is approved before its PR opens: a maintainer adds `status:approved`, or a
+  maintainer authored the issue, in which case authorship **is** the approval. The label is a
+  filterable marker, never a CI gate: `pr-check.yml` reads only the PR's `Closes #<N>`, its
+  single `type:*` label and the 400-line budget.
+- Search first, and link the existing issue instead of filing a duplicate.
+- These labels exist and no others: `type:*`, `status:approved`, `size:exception`, plus
+  GitHub's defaults. There is no `priority:*` label.
 
----
+## Decision Gates
 
-## Workflow
+| Situation | Action |
+| --- | --- |
+| Reproducible defect in a released build | `bug_report.yml`, including `biggz version` output and the OS |
+| New capability or improvement | `feature_request.yml` |
+| Question, or an idea not ready to be scoped | GitHub Discussions, not an issue |
+| Duplicate found | Link the existing issue and close the new one |
+| Maintainer reviewing an issue | Add `status:approved`, or comment with the reason and close |
+| Issue a maintainer opened themselves | Already approved by authorship; label it only to keep the list filterable |
 
-```
-1. Search existing issues for duplicates
-2. Choose the correct template (Bug Report or Feature Request)
-3. Fill in ALL required fields
-4. Check pre-flight checkboxes
-5. Submit → the template adds its `type:*` label; there is no waiting label, so the issue sits until a maintainer approves it
-6. Get the issue approved: a maintainer adds `status:approved`, or a maintainer authored it and authorship is the approval
-7. Only then open a PR linking this issue
-```
+## Execution Steps
 
----
+1. Search: `gh issue list --search "keyword" --state all`.
+2. Create through the template, never blank:
+   `gh issue create --template bug_report.yml --title "fix(scope): ..."` or
+   `--template feature_request.yml --title "feat(scope): ..."`. The field-by-field bodies and
+   worked examples are in `references/issue-flow.md`.
+3. Mark the state when it helps: `gh label list` shows what exists, and
+   `gh issue edit <N> --add-label status:needs-review` marks an issue as waiting.
+4. As maintainer, approve it for implementation:
+   `gh issue edit <N> --add-label status:approved`. The PR can open afterwards.
 
-## Issue Templates
+## Output Contract
 
-### Bug Report
+Return: the issue number and URL; the template used and the labels applied; the existing
+issue linked instead of filing, if any; and whether the issue waits for a maintainer's
+approval or is already approved by authorship.
 
-Template: `.github/ISSUE_TEMPLATE/bug_report.yml`
-Auto-applied label: `type:bug`
+## References
 
-#### Required Fields
-
-| Field | Description |
-|-------|-------------|
-| **Pre-flight Checks** | Checkboxes: no duplicate + understands approval workflow |
-| **Bug Description** | Clear description of the bug |
-| **Steps to Reproduce** | Numbered steps to reproduce |
-| **Expected Behavior** | What should have happened |
-| **Actual Behavior** | What happened instead (include errors/logs) |
-| **Operating System** | Dropdown: macOS, Linux variants, Windows, WSL |
-| **Agent / Client** | Dropdown: Claude Code, OpenCode, Gemini CLI, Cursor, Windsurf, Codex, Other |
-| **Shell** | Dropdown: bash, zsh, fish, Other |
-
-#### Optional Fields
-
-| Field | Description |
-|-------|-------------|
-| **Relevant Logs** | Log output (auto-formatted as code block) |
-| **Additional Context** | Screenshots, workarounds, extra info |
-
-#### Example — Bug Report via CLI
-
-```bash
-gh issue create --template "bug_report.yml" \
-  --title "fix(scripts): setup.sh fails on zsh with glob error" \
-  --body "
-### Pre-flight Checks
-- [x] I have searched existing issues and this is not a duplicate
-- [x] I understand this issue needs status:approved before a PR can be opened
-
-### Bug Description
-Running setup.sh on zsh throws a glob error when no matching files exist.
-
-### Steps to Reproduce
-1. Clone the repo
-2. Run \`./scripts/setup.sh\` in zsh
-3. See error: \`zsh: no matches found: skills/*\`
-
-### Expected Behavior
-The script should handle missing glob matches gracefully.
-
-### Actual Behavior
-Script crashes with glob error.
-
-### Operating System
-macOS
-
-### Agent / Client
-Claude Code
-
-### Shell
-zsh
-
-### Relevant Logs
-\`\`\`
-zsh: no matches found: skills/*
-\`\`\`
-"
-```
-
----
-
-### Feature Request
-
-Template: `.github/ISSUE_TEMPLATE/feature_request.yml`
-Auto-applied label: `type:feature`
-
-#### Required Fields
-
-| Field | Description |
-|-------|-------------|
-| **Pre-flight Checks** | Checkboxes: no duplicate + understands approval workflow |
-| **Problem Description** | The pain point this feature solves |
-| **Proposed Solution** | How it should work from the user's perspective |
-| **Affected Area** | Dropdown: Scripts, Skills, Examples, Documentation, CI/Workflows, Other |
-
-#### Optional Fields
-
-| Field | Description |
-|-------|-------------|
-| **Alternatives Considered** | Other approaches or workarounds |
-| **Additional Context** | Mockups, examples, references |
-
-#### Example — Feature Request via CLI
-
-```bash
-gh issue create --template "feature_request.yml" \
-  --title "feat(scripts): add Codex support to setup.sh" \
-  --body "
-### Pre-flight Checks
-- [x] I have searched existing issues and this is not a duplicate
-- [x] I understand this issue needs status:approved before a PR can be opened
-
-### Problem Description
-The setup script only configures Claude Code, Gemini CLI, and OpenCode. Codex users have to manually copy skills.
-
-### Proposed Solution
-Add a Codex option to setup.sh that links skills to the .codex/ directory.
-
-Example:
-\`\`\`bash
-./scripts/setup.sh --agent codex
-\`\`\`
-
-### Affected Area
-Scripts (setup, installation)
-
-### Alternatives Considered
-Manually symlinking, but that defeats the purpose of the setup script.
-"
-```
-
----
-
-## Label System
-
-### Declared by the Templates
-
-| Template | Labels declared |
-|----------|-------------|
-| Bug Report | `type:bug` |
-| Feature Request | `type:feature` |
-
-Those are the only automatic labels, and only when the issue is created through the
-template. Nothing applies a `status:*` label: an issue created with `gh issue create`
-carries exactly what `--label` lists and nothing more.
-
-### Applied by Maintainers
-
-| Label | When to apply |
-|-------|--------------|
-| `status:approved` | Issue accepted for implementation — its PR can be opened. An issue a maintainer created is already approved without it; the label keeps the list filterable |
-
-This repository defines no `priority:*` label: priority lives in the issue's text, not in a
-label nobody reads.
-
----
-
-## Maintainer Approval Workflow
-
-```
-1. Old or new issue needs a decision
-2. Review the issue — is it valid, clear, and in scope?
-3. If YES → add status:approved label
-4. If NO → comment with reason, close if needed
-5. The author can now open a PR linking this issue
-6. An issue a maintainer opened themselves needs no approval step: authorship is the
-   approval, and no CI job reads the label either way
-```
-
----
-
-## Decision Tree
-
-```
-Is it a bug?                    → Use Bug Report template
-Is it a new feature/improvement? → Use Feature Request template
-Is it a question?               → Use Discussions, NOT issues
-Is it a duplicate?              → Link to existing issue, close
-```
-
----
-
-## Commands
-
-```bash
-# Search existing issues before creating
-gh issue list --search "keyword"
-
-# Create bug report
-gh issue create --template "bug_report.yml" --title "fix(scope): description"
-
-# Create feature request
-gh issue create --template "feature_request.yml" --title "feat(scope): description"
-
-# Maintainer: approve an issue
-gh issue edit <number> --add-label "status:approved"
-
-# Not needed for an issue a maintainer created: authorship is the approval
-
-# Maintainer: allow an oversized PR, with the rationale documented
-gh pr edit <number> --add-label "size:exception"
-```
+- `references/issue-flow.md` — both templates field by field, with CLI examples and example
+  bodies.
+- `.github/workflows/pr-check.yml` — the three checks that actually gate a PR.
+- `.github/PULL_REQUEST_TEMPLATE.md` — what the PR that closes the issue must contain.
