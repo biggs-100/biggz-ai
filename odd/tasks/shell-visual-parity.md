@@ -198,7 +198,7 @@ unit are marked as such, and all are listed here so they are visible for review.
   doctored fixture omits exactly the layout shapes — the assertion that fails if the list is
   widened again without the fixtures being revisited.
 
-- [ ] 2.7b Port the todo producer (the `todo` tool and the rail part).
+- [x] 2.7b Port the todo producer (the `todo` tool and the rail part). *(verified: PASS; `fdf89b6e`)*
   Acceptance: the ported extension registers the `todo` tool the model calls and replays the last
   successful result on `session_start`, renders the card through the `"todo"` rail part with the
   faithful `aboveEditor` placement for the widget, and coexists with `"biggz-subagents"` (distinct
@@ -208,6 +208,21 @@ unit are marked as such, and all are listed here so they are visible for review.
   since its stated reason was this unit.
   Why the producer is ported at all: nothing else in biggz produces a todo list, so without it the
   rail's `"todo"` section can never render and `shell-todo.ts` stays orphaned (D13).
+  Evidence observed: **PASS, with one acceptance clause NOT covered — recorded as 2.7e item 1**.
+  `internal/assets/pi/biggz-todo.ts` (291 lines) is deployed as a factory and registers the `todo`
+  tool (`renderShell: "self"`), the card through `sidebarPart(tui, "todo", …)` and the widget under
+  the distinct key `biggz-todo`; its suite (332 lines, 10 cases) covers the write/show path, the
+  snapshot in `details`, the replay from the branch on `session_start` (rpiv-todo results
+  included), the drop of an already-finished list, the staleness signal, the collapse shortcut, the
+  hover/click behaviour and the R3-001 containment. The brand rule holds with the `gentleTodo`
+  allowlist entry DELETED and the key renamed to `biggzTodo`, the factory count moved 16 → 17 in
+  both guards, and `TestPiExtensionsDeployList_ShellBeforeTodo` pins the load order the benign
+  visibility race depends on. Numbers: 10/10 the new suite, 267 shell assertions, 9 in `test/`, 18
+  factory, `go test ./internal/install/...` green, `go build ./...` and `go vet` clean.
+  Native review of the same tree: lineage `review-e12d5b1d91db6315`, 8 paths, 683 changed lines,
+  risk `medium`, correction budget 200, the provider consolidating the two selected lenses into
+  `review-reliability`, `approved` — three advisory findings, all `informational`, none opening a
+  correction, now tracked as 2.7e.
 
 - [ ] 2.7c Close the three coverage findings the native review of 2.7a admitted.
   Acceptance: the scope-level hover coordination is exercised across TWO regions (leave one,
@@ -225,6 +240,25 @@ unit are marked as such, and all are listed here so they are visible for review.
   explicitly (`extensions/gentle-agents.ts:907-911`), `visibility.agents` is parsed but never
   filtered by the rail, and the biggz subagents surface is a plain `setWidget`. Producing it would
   be new work, not parity.
+
+- [ ] 2.7e Close the coverage 2.7b's acceptance asked for and the three findings its review admitted.
+  Acceptance: a test loads both the todo and the subagents factories into one host and asserts both
+  widget keys survive with the `"todo"` rail part registered; and each of the three advisory
+  findings of `review-e12d5b1d91db6315` is either closed by a case that fails before the fix or
+  re-worded as an explicit non-goal.
+  Why item 1 is real: 2.7b's acceptance asks for "a test asserts both registrations survive and that
+  the rail section renders", and no test does that today. Each extension's suite asserts only its
+  own key (`biggz-todo` in the new suite, `biggz-subagents` at `biggz-subagent-runtime.test.mjs:1456`)
+  and `TestPiExtensionsDeployList_ShellBeforeTodo` pins load order, not coexistence, so nothing fails
+  if the two keys ever collide or if the rail part stops being registered.
+  The findings, verbatim from the closure: R3-001 WARNING at `biggz-todo.ts:127` (the
+  `if (sidebarLayout) sidebarLayout.invalidateSidebar(tui)` guard on the lazily loaded rail module),
+  R3-002 WARNING at `:263-265` (the `session_shutdown` teardown that deletes the session entry) and
+  R3-003 SUGGESTION at `:172-176` (`onLeave` clearing hover and requesting a render outside the
+  region protocol's return value). The provider published ids, severity, disposition and locations
+  only: the descriptions here are this document's reading of the cited lines, and the reviewer's own
+  text stays in the native receipt. Because none of them opened a correction they are later work by
+  construction and never a reason to re-review the committed candidate.
 
 - [ ] 2.8 Custom prompt editor and prompt ownership.
   Acceptance: the prompt editor owner is established once, and competing editor/working
@@ -399,6 +433,7 @@ unit are marked as such, and all are listed here so they are visible for review.
 | 2.15a | `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; the containment fixture and the timing suite individually; both D12 directions; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiShellWidget\|TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. 258 rail-suite assertions, 5 in the test directory (the containment fixture plus the three timing cases) and 17 factory, all green; brand guard scans 34 deployed assets; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged across the run. The containment is proved by execution, not prose: with a stub pi-tui that lacks `ScrollView`/`VStack`, the fixture's first test pins the link error itself (a `SyntaxError` naming the missing export, so the control cannot pass for an unrelated reason) and the second asserts the footer, widget, `/biggz-usage` and `alt+u` all install with the rail absent. The async-gap cases settle a test-held promise rather than sleeping, and both guards were mutation-checked. Independent verification returned PASS WITH FINDINGS and all four items were closed in-unit, including the unchecked cast — now `typeof import(...)`, validated by a scoped `tsc --noEmit` run whose error set is identical before and after. Native review of the same tree: lineage `review-8e81366b1896f49f`, 6 paths, 577 changed lines, `approved`, two advisory findings now in 2.15b. | `e7b5e3bf` |
 | 2.15b | `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; the six timing cases and the dock re-host case individually; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiShellWidget\|TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. 261 rail-suite assertions, 9 in the test directory and 17 factory, all green; brand guard scans 34 deployed assets; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged. Two independent verifications: the first returned PASS WITH FINDINGS with two WARNINGs (the last-step-only dispose test, and a swallow with no diagnostic) and both were closed in-unit; the second returned PASS WITH FINDINGS with three SUGGESTIONs, two of which were closed (the unexecuted `quiet` branch now has a case, the comment now matches the four-step list). Native review of the same tree: lineage `review-e529ee8994efc911`, 4 paths, 313 changed lines, correction budget 157 — and it found a CRITICAL the coverage work could not have caught, `tui.requestRender()` sitting outside the D12 `try`/`catch` on the late install path, so a throwing render could reject the installing promise. A refuter corroborated it; one bounded correction was declared (22 diff lines) and applied; a targeted validator approved the corrected candidate; the review closed `approved` with one advisory finding left (2.15c). | `516a1742` |
 | 2.7a | `node --test internal/assets/pi/biggz-shell/native-pointer-region.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiExtensions\|TestPiAssets\|TestPiShellWidget\|TestPiFooterOwner' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. The port is byte-faithful: `diff -U0` against upstream shows one hunk, the two provenance lines, and the ported suite's assertion stream is identical to upstream's (6 cases, same order). 267 rail-suite assertions, 9 in the test directory and 17 factory, all green; the brand guard now scans 35 deployed assets with the factory count still 16; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged. Independent verification returned PASS with three SUGGESTIONs and no defect — one of them (the derived fixture losing the independent cross-check on `PI_TUI_SHELL_SYMBOLS`) was closed in-unit by asserting that the doctored fixture omits exactly the layout shapes. Native review of the same tree: lineage `review-1bfa97db2f9357cf`, 6 paths, 486 changed lines, `approved`, three advisory findings now tracked as 2.7c. The first reviewer run died on a provider transport error (`Stream ended without finish_reason` after 157s, no mutation) and the fresh-STATUS-then-resubmit route recovered it. | `303e7b55` |
+| 2.7b | `node --test internal/assets/pi/biggz-todo.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiExtensions\|TestPiAssets' -count=1`; `go build ./...`; `go vet ./internal/install/...` | PASS, with one acceptance clause uncovered. 10/10 in the new suite (the tool write/show path, the snapshot in `details`, the branch replay, the finished-list drop, staleness, the collapse key, hover/click, and the R3-001 containment), 267 shell assertions, 9 in the test directory, 18 factory; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged. The brand guard's `gentleTodo` allowlist entry is deleted, not kept, and the factory count moved 16 → 17 in the deploy list and both guards. NOT covered: no test loads the todo and subagents factories together to assert both registrations survive, so 2.7b's coexistence clause rests on the two keys being distinct and each suite asserting its own — recorded as 2.7e. Native review of the same tree: lineage `review-e12d5b1d91db6315`, 8 paths, 683 changed lines, risk `medium`, correction budget 200, one consolidated lens `review-reliability`, `approved`, three advisory findings now in 2.7e. | `fdf89b6e` |
 
 ## Known risks
 
@@ -663,3 +698,18 @@ corroborated the finding, the provider required one bounded correction, the plan
 diff lines against a 157-line budget) and applied, and a targeted validator approved the corrected
 candidate. The lesson worth keeping is operational and now lives in risk 13: declare the plan
 before editing, because the binding carries the frozen target identity.
+
+- 2026-10-11 — Unit 2.7b closed as `fdf89b6e` (the todo producer). The uncommitted slice moved from
+  `feat/pi-native-mcp` to this branch without touching its bytes: the six modified paths are
+  identical at both branch tips, so `git switch` carried them over and `git diff --binary` plus the
+  two new files' digests (`sha256:792cd722…`, `e2be2aef…`) were equal before and after. The review
+  route needed the intended-untracked selection declared up front — `inspect` with
+  `untrackedScope: "select"` naming the two new files, which keeps the unrelated
+  `openspec/changes/fix-archived-change-identity/` out of the candidate — and the first `start` came
+  back `lenses-invalid` until the lens reason dropped its backticks and escaped quotes: the provider
+  validates the reason text, not only the lens names. The provider then consolidated the two
+  selected lenses into one `review-reliability` pass, which came back `approved` on the first
+  reviewer run after a `pi_host_relay` forecast of exactly one model run. One acceptance clause is
+  uncovered (the coexistence test) and became 2.7e item 1; the three review findings are 2.7e
+  items 2-4. Lesson for the next unit: read the acceptance clause by clause before ticking it, not
+  after.
