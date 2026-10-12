@@ -56,9 +56,6 @@ var brandLiteralAllowlist = []string{
 	// gentle-ai.review-integration.status: the same, for the status schema the
 	// parser matches by regex.
 	"gentle-ai.review-integration.status",
-	// gentleTodo: the key the todo tool uses to carry its snapshot in tool-result
-	// details; the producer is wired in task 2.7.
-	"gentleTodo",
 }
 
 // brandLiteralAllowlisted reports whether an already-detected "gentle" literal

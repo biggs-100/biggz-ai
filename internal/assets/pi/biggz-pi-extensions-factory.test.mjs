@@ -12,7 +12,7 @@ const __dirname = path.dirname(__filename);
 // extensions/*.js|*.ts as an extension and crashes on one that does not export
 // `export default function(pi)`. That includes the three TypeScript factories
 // (ask-user-choice.ts, codegraph-tools.ts, skill-registry.ts) an earlier
-// extension-suffix guard silently skipped, so this guard checks all 16. The
+// extension-suffix guard silently skipped, so this guard checks all 17. The
 // sixteen `pi/biggz-shell/*.ts` helpers are factory:false and are NOT listed
 // here: they are covered by the Go layout guard (validatePiExtensionsFactory/
 // Layout, which require every helper to sit under biggz-shell/ and forbid a
@@ -29,6 +29,7 @@ const DEPLOY_LIST = [
   { asset: 'pi/biggz-last-model.js', target: 'biggz-last-model.js', factory: true },
   { asset: 'pi/biggz-subagent-runtime.js', target: 'biggz-subagent-runtime.js', factory: true },
   { asset: 'pi/biggz-shell.ts', target: 'biggz-shell.ts', factory: true },
+  { asset: 'pi/biggz-todo.ts', target: 'biggz-todo.ts', factory: true },
   { asset: 'pi/biggz-tool-pills.js', target: 'biggz-tool-pills.js', factory: true },
   { asset: 'pi/biggz-web-search.js', target: 'biggz-web-search.js', factory: true },
   { asset: 'pi/biggz-question-mouse.js', target: 'biggz-question-mouse.js', factory: true },
@@ -68,11 +69,11 @@ describe('pi extensions must export valid factory', () => {
   it('deploy list covers all expected pi extension factories', () => {
     const factoryCount = DEPLOY_LIST.filter((e) => e.factory).length;
     // Guard against deploy list drift: if pi_extensions.go adds a factory, this test must be updated.
-    // 16, not 13: the three TS factories were deployed and unchecked before this change, so the guard is stricter, not looser.
+    // 17, not 13: the three TS factories were deployed and unchecked before this change, so the guard is stricter, not looser.
     assert.equal(
       factoryCount,
-      16,
-      `expected 16 pi extension factories in deploy list, got ${factoryCount} — the three TS factories were deployed and unchecked before this change, so the guard is stricter, not looser; sync with pi_extensions.go`,
+      17,
+      `expected 17 pi extension factories in deploy list, got ${factoryCount} — the three TS factories were deployed and unchecked before this change, so the guard is stricter, not looser; sync with pi_extensions.go`,
     );
   });
 });

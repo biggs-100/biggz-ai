@@ -21,12 +21,12 @@ import (
 // "Extension does not export a valid factory function" when one has no
 // `export default function(pi)`.
 //
-// The mirror list carries the recorded factory flag and this test checks all 16
+// The mirror list carries the recorded factory flag and this test checks all 17
 // factories, not just the 13 JS ones: ask-user-choice.ts, codegraph-tools.ts and
 // skill-registry.ts were deployed and unchecked before this change, so the guard
 // is stricter, not looser.
 func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
-	// Must mirror the deploy list in pi_extensions.go (16 factories).
+	// Must mirror the deploy list in pi_extensions.go (17 factories).
 	deployList := []piExtension{
 		{asset: "pi/biggz-thinking-wrap.js", target: "biggz-thinking-wrap.js", factory: true},
 		{asset: "pi/biggz-memory-chrome.js", target: "biggz-memory-chrome.js", factory: true},
@@ -37,6 +37,7 @@ func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
 		{asset: "pi/biggz-last-model.js", target: "biggz-last-model.js", factory: true},
 		{asset: "pi/biggz-subagent-runtime.js", target: "biggz-subagent-runtime.js", factory: true},
 		{asset: "pi/biggz-shell.ts", target: "biggz-shell.ts", factory: true},
+		{asset: "pi/biggz-todo.ts", target: "biggz-todo.ts", factory: true},
 		{asset: "pi/biggz-tool-pills.js", target: "biggz-tool-pills.js", factory: true},
 		{asset: "pi/biggz-web-search.js", target: "biggz-web-search.js", factory: true},
 		{asset: "pi/biggz-question-mouse.js", target: "biggz-question-mouse.js", factory: true},
@@ -63,14 +64,44 @@ func TestPiExtensionsGuard_FactoryExport(t *testing.T) {
 			t.Errorf("pi extension %s missing factory function: must contain 'export default function' (pi loader expects factory function) — asset %s", e.asset, e.asset)
 		}
 	}
-	if factoryCount != 16 {
-		t.Errorf("deploy list drift: expected 16 pi extension factories, got %d — the three TS factories were deployed and unchecked before this change, so the guard is stricter, not looser; sync with pi_extensions.go and biggz-pi-extensions-factory.test.mjs", factoryCount)
+	if factoryCount != 17 {
+		t.Errorf("deploy list drift: expected 17 pi extension factories, got %d — the three TS factories were deployed and unchecked before this change, so the guard is stricter, not looser; sync with pi_extensions.go and biggz-pi-extensions-factory.test.mjs", factoryCount)
 	}
 	// Also verify our canonical helper lists the same factory count — catches
 	// drift where pi_extensions.go was updated but this test wasn't (or vice
 	// versa).
 	if helperCount := countFactories(piExtensionsDeployList()); helperCount != factoryCount {
 		t.Errorf("helper drift: piExtensionsDeployList() has %d factories, test list has %d — keep them in sync", helperCount, factoryCount)
+	}
+}
+
+// TestPiExtensionsDeployList_ShellBeforeTodo pins the load-order dependency that
+// keeps the sidebar-visibility race in the shell/todo extensions benign.
+//
+// biggz-shell.ts writes sidebarState(tui).visibility = { todo: ... } inside its
+// footer factory, which pi runs while the extension loads. biggz-todo.ts
+// registers its card from its own session_start, which only runs after every
+// extension has loaded, so the visibility write happens first and any todo
+// widget can only ever read the value already set. That is why the race is
+// benign today. Nothing else pins the order: if biggz-todo.ts were deployed
+// first, its widget could exist before the shell sets visibility, silently
+// turning the benign race into a visible defect. This assertion fails loudly on
+// such a reordering.
+func TestPiExtensionsDeployList_ShellBeforeTodo(t *testing.T) {
+	shellIdx, todoIdx := -1, -1
+	for i, e := range piExtensionsDeployList() {
+		switch e.asset {
+		case "pi/biggz-shell.ts":
+			shellIdx = i
+		case "pi/biggz-todo.ts":
+			todoIdx = i
+		}
+	}
+	if shellIdx == -1 || todoIdx == -1 {
+		t.Fatalf("deploy list must contain both pi/biggz-shell.ts (index %d) and pi/biggz-todo.ts (index %d) to evaluate the ordering guard", shellIdx, todoIdx)
+	}
+	if shellIdx > todoIdx {
+		t.Errorf("pi/biggz-shell.ts (index %d) must be deployed before pi/biggz-todo.ts (index %d): the shell footer factory sets sidebarState(tui).visibility.todo during load and the todo card is registered later from session_start, so loading todo first would expose the visibility write after the widget exists", shellIdx, todoIdx)
 	}
 }
 

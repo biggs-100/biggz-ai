@@ -124,6 +124,7 @@ func piExtensionsDeployList() []piExtension {
 		{asset: "pi/biggz-last-model.js", target: "biggz-last-model.js", factory: true},
 		{asset: "pi/biggz-subagent-runtime.js", target: "biggz-subagent-runtime.js", factory: true},
 		{asset: "pi/biggz-shell.ts", target: "biggz-shell.ts", factory: true},
+		{asset: "pi/biggz-todo.ts", target: "biggz-todo.ts", factory: true},
 		{asset: "pi/biggz-tool-pills.js", target: "biggz-tool-pills.js", factory: true},
 		{asset: "pi/biggz-web-search.js", target: "biggz-web-search.js", factory: true},
 		{asset: "pi/biggz-question-mouse.js", target: "biggz-question-mouse.js", factory: true},
