@@ -487,7 +487,7 @@ unit are marked as such, and all are listed here so they are visible for review.
   rest; a diagnostic that can itself throw defeats exactly that, and the fix is one guarded call.
   Evidence: the reviewer's ledger for lineage `review-e529ee8994efc911`.
 
-- [ ] 2.16 Decide whether the deployed Pi asset suites should be CI-gated. **(for the owner, not a slice)**
+- [x] 2.16 Decide whether the deployed Pi asset suites should be CI-gated. *(done: `7935638b`, merged as `63c34d5e`)*
   What is true today: no `*.test.mjs` under `internal/assets/pi/` runs in CI. `ci.yml` invokes exactly
   three node scripts (`check-skill-lint.mjs`, `check-provider-contract.mjs`,
   `verify-package-files.mjs`), there is no `package.json`, and `scripts/preflight.sh` does not run
@@ -497,6 +497,17 @@ unit are marked as such, and all are listed here so they are visible for review.
   Found while mapping 2.7e, not caused by it.
   Acceptance if it is taken on: one CI job that runs the suites the way this table ran them, so a
   regression in a deployed asset fails a PR instead of waiting for a human to remember the command.
+  Evidence observed: the owner took it on and it is merged. `ci.yml` gained an `asset-suites` job
+  (`needs: format`) that runs every suite in one command - `node --test internal/assets/pi/*.test.mjs
+  internal/assets/pi/biggz-shell/*.test.mjs internal/assets/pi/test/*.test.mjs` - so the numbers in
+  the table below are a merge gate from here on, not a local run. Two requirements came out of
+  running the job rather than assuming it: it installs `@earendil-works/pi-tui@1.1.0` and resolves it
+  through `PI_TUI_DIR`, because the resolver's oracle fallback is link-only (measured 505 tests, 491
+  pass, **10 fail**, 4 skipped - the pointer-region and todo suites cannot link `MouseRegion`, filed
+  as #172); and it pins Node 24 instead of the Node 20 of the other node jobs, because the suites
+  import `.ts` modules directly. Measured: 221 tests on the trunk, 517 on this branch before 2.9 and
+  518 after it, all green, and the job passed on the Linux runner inside the PR that added it
+  (#170, #171).
 
 ## Evidence
 
@@ -836,3 +847,9 @@ before editing, because the binding carries the frozen target identity.
   nobody re-reads is how a port quietly stops being one. The test that closes it previews the
   shipped themes as they ship instead of a doctored fixture, which is the difference between
   covering a role and covering a role-shaped stand-in.
+- 2026-10-11 — Unit 2.16 closed, and it is the only slice in this feature that is repo-wide rather
+  than part of the port: CI now runs every asset suite (`7935638b`, merged as `63c34d5e`). The
+  evidence table above stops being a local claim and becomes a merge gate, which is what the table
+  should have been all along - the suites existed and passed for fifteen units while nothing ran
+  them. Two details only running it could establish: the job must install a real `pi-tui` (the
+  oracle cannot link two of the suites) and it needs Node 24 (the suites import `.ts` directly).
