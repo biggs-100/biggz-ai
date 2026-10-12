@@ -278,7 +278,8 @@ unit are marked as such, and all are listed here so they are visible for review.
   filtered by the rail, and the biggz subagents surface is a plain `setWidget`. Producing it would
   be new work, not parity.
 
-- [ ] 2.7e Close the coverage 2.7b's acceptance asked for and the three findings its review admitted.
+- [x] 2.7e Close the coverage 2.7b's acceptance asked for and the three findings its review admitted.
+  *(verified: PASS; `c5b521c7`)*
   Acceptance: a test loads both the todo and the subagents factories into one host and asserts both
   widget keys survive with the `"todo"` rail part registered; and each of the three advisory
   findings of `review-e12d5b1d91db6315` is either closed by a case that fails before the fix or
@@ -296,6 +297,27 @@ unit are marked as such, and all are listed here so they are visible for review.
   only: the descriptions here are this document's reading of the cited lines, and the reviewer's own
   text stays in the native receipt. Because none of them opened a correction they are later work by
   construction and never a reason to re-review the committed candidate.
+  Evidence observed: **PASS, with one item closed as an explicit non-goal**. `WIDGET_KEY` is now
+  exported from `biggz-todo.ts` so the coexistence case asserts against the real value instead of a
+  copied literal. That case mounts both factories on one host, drives the subagents runtime's own
+  publisher into that host, and asserts both widget keys live in one map with distinct placements
+  (`biggz-subagents` at `belowEditor`; the todo takes pi's default), that the `"todo"` rail part is
+  registered on the same terminal, and that the `todo` tool survives mounting the other factory.
+  R3-002 was closed by a case that failed before the fix: `session_shutdown` dropped the session
+  state but left the widget painted for the next session, and the shell extension already clears its
+  own on shutdown. R3-003 by a case that hovers, clears and asserts exactly one render, and none for
+  a second clear with nothing hovered. R3-001 is **fixed but not tested**: `invalidateSidebar` is a
+  no-op until the lazily imported rail module resolves, so a `show()` before that point never asked
+  the rail to repaint its new part; loading the module now invalidates every live session once.
+  Forcing that ordering deterministically needs an injected loader, and the module keeps its cache in
+  a private symbol, so a test would pin a scheduling detail or reach into another module's private
+  state rather than the contract - recorded here as the non-goal the acceptance allows, not dressed
+  up as verified. Four mutations confirm the new cases discriminate: giving the todo the runtime's
+  key, dropping the runtime's placement, registering the rail part under another key, and removing
+  the render request from `onLeave` each fail exactly the case that covers them, with both modules
+  restored byte-identically (`a7a65c9d...`, `6038ea19...`). Numbers: 13/13 in the todo suite (10
+  upstream + 3 new), 270 shell assertions, 9 in `test/`, 18 factory, `go test
+  ./internal/install/...` green, `go build ./...` and `go vet` clean.
 
 - [ ] 2.8 Custom prompt editor and prompt ownership.
   Acceptance: the prompt editor owner is established once, and competing editor/working
@@ -448,6 +470,17 @@ unit are marked as such, and all are listed here so they are visible for review.
   rest; a diagnostic that can itself throw defeats exactly that, and the fix is one guarded call.
   Evidence: the reviewer's ledger for lineage `review-e529ee8994efc911`.
 
+- [ ] 2.16 Decide whether the deployed Pi asset suites should be CI-gated. **(for the owner, not a slice)**
+  What is true today: no `*.test.mjs` under `internal/assets/pi/` runs in CI. `ci.yml` invokes exactly
+  three node scripts (`check-skill-lint.mjs`, `check-provider-contract.mjs`,
+  `verify-package-files.mjs`), there is no `package.json`, and `scripts/preflight.sh` does not run
+  them either; only two Go tests shell out to node, each driving one specific asset. Every assertion
+  count in the evidence table below - the rail's 270, the test directory's 9, the factory guard's 18,
+  the ported suites - is therefore a **local run**, observed and reported as such, never a merge gate.
+  Found while mapping 2.7e, not caused by it.
+  Acceptance if it is taken on: one CI job that runs the suites the way this table ran them, so a
+  regression in a deployed asset fails a PR instead of waiting for a human to remember the command.
+
 ## Evidence
 
 | Task | Command | Result | Commit |
@@ -472,6 +505,7 @@ unit are marked as such, and all are listed here so they are visible for review.
 | 2.7a | `node --test internal/assets/pi/biggz-shell/native-pointer-region.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiExtensions\|TestPiAssets\|TestPiShellWidget\|TestPiFooterOwner' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. The port is byte-faithful: `diff -U0` against upstream shows one hunk, the two provenance lines, and the ported suite's assertion stream is identical to upstream's (6 cases, same order). 267 rail-suite assertions, 9 in the test directory and 17 factory, all green; the brand guard now scans 35 deployed assets with the factory count still 16; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged. Independent verification returned PASS with three SUGGESTIONs and no defect — one of them (the derived fixture losing the independent cross-check on `PI_TUI_SHELL_SYMBOLS`) was closed in-unit by asserting that the doctored fixture omits exactly the layout shapes. Native review of the same tree: lineage `review-1bfa97db2f9357cf`, 6 paths, 486 changed lines, `approved`, three advisory findings now tracked as 2.7c. The first reviewer run died on a provider transport error (`Stream ended without finish_reason` after 157s, no mutation) and the fresh-STATUS-then-resubmit route recovered it. | `303e7b55` |
 | 2.7b | `node --test internal/assets/pi/biggz-todo.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiExtensions\|TestPiAssets' -count=1`; `go build ./...`; `go vet ./internal/install/...` | PASS, with one acceptance clause uncovered. 10/10 in the new suite (the tool write/show path, the snapshot in `details`, the branch replay, the finished-list drop, staleness, the collapse key, hover/click, and the R3-001 containment), 267 shell assertions, 9 in the test directory, 18 factory; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged. The brand guard's `gentleTodo` allowlist entry is deleted, not kept, and the factory count moved 16 → 17 in the deploy list and both guards. NOT covered: no test loads the todo and subagents factories together to assert both registrations survive, so 2.7b's coexistence clause rests on the two keys being distinct and each suite asserting its own — recorded as 2.7e. Native review of the same tree: lineage `review-e12d5b1d91db6315`, 8 paths, 683 changed lines, risk `medium`, correction budget 200, one consolidated lens `review-reliability`, `approved`, three advisory findings now in 2.7e. | `fdf89b6e` |
 | 2.7c | `node --test internal/assets/pi/biggz-shell/native-pointer-region.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; plus six mutations of the module, each restored byte-identically | PASS. 9/9 in the pointer-region suite (6 upstream + 3 new), 270 shell assertions, 9 in the test directory, 18 factory; both `internal/install` packages green. Every new case is discriminating: six mutations (no sibling clear; sibling clear handed a copy; `disabled` gate dropped; module gating the interactive child; observer requesting a render unconditionally; observer never requesting one) each fail exactly the case that covers them, and `git hash-object` of the module returned to the HEAD blob every time. The coverage exposed a real boundary rather than a defect: `disabled` gates the region's callbacks but not an interactive child, which pi-tui's `MouseRegion` dispatches first. Independent verification returned PASS for all three items, judged the boundary a fidelity requirement of the port, and found no defect (five advisories, all wording or environment). | `901dc435` |
+| 2.7e | `node --test internal/assets/pi/biggz-todo.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; `go build ./...`; `go vet ./internal/install/...`; plus four mutations of the two modules, each restored byte-identically | PASS, with R3-001 closed as a non-goal. 13/13 in the todo suite (10 upstream + 3 new), 270 shell assertions, 9 in `test/`, 18 factory; both `internal/install` packages green; build and vet clean. The coexistence case drives the subagents runtime's own publisher into the same host and asserts one widget map holding both keys with distinct placements plus the registered `"todo"` rail part; R3-002 failed before its fix and passes after (`session_shutdown` now clears the card, matching the shell extension); R3-003 pins exactly one render on a hover clear. R3-001 is fixed without a test by deliberate decision: the pre-load ordering needs an injected loader and the module's cache is private, so the test would pin scheduling rather than the contract. Four mutations (the todo taking the runtime's key, the runtime losing its placement, the rail part under another key, `onLeave` without its render request) each fail exactly the case that covers them. | `c5b521c7` |
 
 ## Known risks
 
@@ -669,16 +703,16 @@ stashing): `internal/agents/pi` 4, `internal/git` 1, `internal/project` 6, `cmd/
 `internal/review` 2. `internal/agents/pi`'s four are the same `PI_CODING_AGENT_DIR`
 hermeticity class of bug and are not yet fixed.
 
-Next step: task 2.7b, the todo producer — the ported extension that registers the `todo` tool,
-replays the session branch on `session_start` and renders through the rail's `"todo"` section.
-Queued behind it are 2.7c (the three coverage findings the review of 2.7a left, which matter the
-moment the helper is wired to a clickable card), then the two defect fixes 2.9 (theme preview on
+Next step: none of the todo slices. 2.7b (the producer), 2.7c (the coverage the review of 2.7a left)
+and 2.7e (the coexistence case plus the three advisories of 2.7b's review) are done.
+Queued behind them are the two defect fixes 2.9 (theme preview on
 terminal-default colours) and 2.11 (review sidebar protocol, now also the owner of the
 lineage/lens/budget facts risk 12 describes), then 2.8 (prompt ownership), 2.12 (the two guards
 2.4's verification found narrower than their invariants), 2.13 (the two reliability findings the
 native review of 2.5 admitted), 2.14 (the banner, deferred by D9) and 2.15c (the one advisory
 finding the review of 2.15b left: a diagnostic that can itself throw inside the release loop's
-catch).
+catch). 2.16 is for the owner rather than a slice: the asset suites everything above rests on are
+not CI-gated at all.
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
@@ -766,3 +800,13 @@ before editing, because the binding carries the frozen target identity.
   stays as upstream has it. The 2.7c coverage is what made the question concrete — without the test,
   the field would still read as a guarantee nobody had measured — and the answer keeps the port's
   byte-fidelity intact while the three new cases hold the real behaviour in place.
+- 2026-10-11 — Unit 2.7e closed as `c5b521c7`: the coexistence clause 2.7b's acceptance asked for and
+  the three advisories its review admitted. Two of those were real defects rather than coverage
+  gaps: `session_shutdown` left the card painted for the next session, and a `show()` that ran before
+  the lazy rail import resolved never asked the rail to repaint. The second is fixed but untestable
+  without an injected loader, so it is recorded as the non-goal the acceptance permits instead of
+  being dressed up as verified. The coexistence case reads the other widget's key from the deployed
+  asset - and `WIDGET_KEY` is now exported for the same reason - because a copied literal is exactly
+  what would hide a collision. Mapping this unit also surfaced 2.16: no `*.test.mjs` suite under
+  `internal/assets/pi/` runs in CI, so every assertion count in the table above is a local run rather
+  than a merge gate.
