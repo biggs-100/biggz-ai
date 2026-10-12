@@ -16,7 +16,7 @@ Use this skill when:
 ## Critical Rules
 
 1. **Blank issues are disabled** — MUST use a template (bug report or feature request)
-2. **No `status:*` label is applied automatically** — the issue templates declare only their `type:*` label and no workflow adds a status, so add `status:needs-review` yourself if you want that state visible
+2. **No `status:*` label is applied automatically** — the issue templates declare only their `type:*` label, and `status:approved` is the only status label this repository defines, so a new issue simply waits until a maintainer approves it
 3. **An issue must be approved before its PR is opened** — either a maintainer added `status:approved`, or a maintainer opened the issue themselves, in which case authorship **is** the approval and the label is only a filterable marker. No CI job reads the label: what CI actually enforces on the PR is its `Closes #<N>` reference, exactly one `type:*` label, and the 400-line budget (`size:exception` to exceed)
 4. **Questions go to [Discussions](https://github.com/biggs-100/biggz-ai/discussions)**, not issues
 
@@ -29,7 +29,7 @@ Use this skill when:
 2. Choose the correct template (Bug Report or Feature Request)
 3. Fill in ALL required fields
 4. Check pre-flight checkboxes
-5. Submit → the template adds its `type:*` label; add `status:needs-review` yourself if you want that state visible
+5. Submit → the template adds its `type:*` label; there is no waiting label, so the issue sits until a maintainer approves it
 6. Get the issue approved: a maintainer adds `status:approved`, or a maintainer authored it and authorship is the approval
 7. Only then open a PR linking this issue
 ```
@@ -41,7 +41,7 @@ Use this skill when:
 ### Bug Report
 
 Template: `.github/ISSUE_TEMPLATE/bug_report.yml`
-Auto-labels: `bug`, `status:needs-review`
+Auto-applied label: `type:bug`
 
 #### Required Fields
 
@@ -108,7 +108,7 @@ zsh: no matches found: skills/*
 ### Feature Request
 
 Template: `.github/ISSUE_TEMPLATE/feature_request.yml`
-Auto-labels: `enhancement`, `status:needs-review`
+Auto-applied label: `type:feature`
 
 #### Required Fields
 
