@@ -31,6 +31,7 @@ unit are marked as such, and all are listed here so they are visible for review.
 | D12 | Behaviour when the pi-tui internals are missing | **Silent, clean no-rail bar** (2.6), superseding risk 1's "task 2.6 must fail visibly instead". Upstream's own behaviour: every absent internal is a silent `state.active = false`. With no runtime signal, the loud detector has to be the suite, so the resolver gained a resolution report and the suite now fails — naming the directory and the missing symbols — when a discovered install stopped exposing a required symbol. The one case no in-module guard can cover is R3-001 (task 2.15): a static import that stops resolving fails at link time, before any guard runs |
 | D13 | Whether biggz ships a todo producer | **Yes, ported whole** (2.7, by the human). Upstream's producer is the extension itself: a `todo` tool whose result carries the state in its `details`, replayed from the session branch on `session_start`. Nothing else in biggz produces a todo list, so without the producer the rail's `"todo"` section can never render and the already-deployed `shell-todo.ts` stays orphaned. This adds a model-facing tool to the deployed harness, which is why it was a decision and not an implementation detail |
 | D14 | The todo port's naming and placement defaults | **`aboveEditor` (upstream's own default, by the human), `TODO_DETAILS_KEY` renamed to `biggzTodo` with the brand allowlist entry deleted, `BIGGZ_TODO` / `BIGGZ_TODO_KEY`, the child guard renamed to the established `PI_SUBAGENT_CHILD`, and the `"agents"` rail section left empty** (2.7). The placement is upstream's, so the todo card never competes with `"biggz-subagents"`; the key rename deletes an allowlist entry whose stated reason was exactly this unit, rather than keeping a brand literal with a resolved reason — the hazard class 2.10 and 2.12 exist for. Porting `GENTLE_PI_AGENTS_CHILD` literally would have been a functional bug, not a brand leak, because biggz's children set `PI_SUBAGENT_CHILD` |
+| D15 | Whether `setDisabled` must gate interactive children too | **No: the child-first boundary IS the port's contract** (2.7c, by the human, on a recommendation). `NativePointerScope.setDisabled(true)` gates the region's own callbacks; a child that consumes natively is dispatched first by pi-tui's `MouseRegion` and never gated, because the check lives in `NativePointerRegion.handlePointer` and that callback never runs — upstream's own order, which the class comment already stated. Widening it would end the byte-fidelity that 2.7a's acceptance verifies (the diff against upstream must stay the two provenance lines) and that the port's whole evidence rests on. Nothing reachable calls the combination: the only consumer is `biggz-todo.ts`, which wraps a passive card with no `handleMouse` and never calls `setDisabled`, and the shell rail implements its own `handleMouse` path rather than using this helper. The 2.7c cases now hold the real contract, so the boundary fails loudly if it ever changes |
 
 ## Tasks
 
@@ -256,10 +257,12 @@ unit are marked as such, and all are listed here so they are visible for review.
   the module is byte-identical to HEAD. Production exposure is nil today — the only consumer is
   `biggz-todo.ts`, which wraps a passive card with no `handleMouse` and never calls `setDisabled`,
   and the shell rail implements its own `handleMouse` path instead of using this helper.
-  Open question for the owner (recorded, not decided): accept that boundary as the port's contract,
-  or diverge from upstream so `setDisabled` gates interactive children too. Recommendation: accept it,
-  because nothing reachable calls that combination and a divergence would end the byte-fidelity this
-  port is verified by.
+  Decision (recorded as **D15**, by the human, on the recommendation below): accept that boundary as
+  the port's contract. The question was whether to diverge from upstream so `setDisabled` gates
+  interactive children too; it stays as upstream has it, because nothing reachable calls that
+  combination and a divergence would end the byte-fidelity this port is verified by. The test pins
+  the real contract, so the boundary is now held by an assertion that fails if it changes, not by
+  documentation.
   Advisory findings of the verification, none of them defects: the fixture-shape guard on the region
   count can only fail if the fixture changes; the first crossing's "no leave" assertion is vacuous
   for the second region because nothing is hovered yet; the class comment documents the child-first
@@ -759,3 +762,7 @@ before editing, because the binding carries the frozen target identity.
   unit was gated by the independent verifier its plan mandates instead of by a review; and this suite
   resolves pi-tui 1.1.0 where 2.7a's evidence cites 0.85.1, which matters only because the
   interactive expectations come from that dispatch.
+- 2026-10-11 — Decision D15 recorded (by the human): the child-first boundary of the `disabled` guard
+  stays as upstream has it. The 2.7c coverage is what made the question concrete — without the test,
+  the field would still read as a guarantee nobody had measured — and the answer keeps the port's
+  byte-fidelity intact while the three new cases hold the real behaviour in place.
