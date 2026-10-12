@@ -6,8 +6,8 @@ license: Apache-2.0
 
 ## Activation Contract
 
-Activate when filing or triaging an issue in `biggs-100/biggz-ai`, or when approving one as
-a maintainer.
+Activate when filing or triaging an issue in `biggs-100/biggz-ai`, or approving one as a
+maintainer.
 
 Do not activate for questions or open-ended ideas (use Discussions), or when an open issue
 already covers the change.
@@ -16,15 +16,17 @@ already covers the change.
 
 - Blank issues are disabled: every issue goes through `bug_report.yml` or
   `feature_request.yml`.
-- The template carries the label and nothing else: `type:bug` or `type:feature`. No workflow
-  applies a `status:*` label, and `status:approved` is the only status label this repository
-  defines, so an issue simply waits until a maintainer approves it.
+- Each template declares its own label: `type:bug` or `type:feature`. The web form applies it,
+  while `gh issue create` needs `--label` (the examples pass it). No workflow applies a
+  `status:*` label, and `status:approved` is the only status label this repository defines, so
+  an issue waits until a maintainer approves it.
 - An issue is approved before its PR opens: a maintainer adds `status:approved`, or a
   maintainer authored the issue, in which case authorship **is** the approval. The label is a
   filterable marker, never a CI gate: `pr-check.yml` reads only a `Closes`, `Fixes` or
   `Resolves #<N>` reference in the PR body, its single `type:*` label and the 400-line budget.
 - Search first, and link the existing issue instead of filing a duplicate.
-- These labels exist and no others: `type:*`, `status:approved`, `size:exception`.
+- Labels in play: `type:*`, `status:approved`, `size:exception`, plus GitHub's defaults. No
+  `priority:*` label.
 
 ## Decision Gates
 
@@ -60,4 +62,3 @@ authorship.
 - `references/issue-flow.md` — both templates field by field, with CLI examples and example
   bodies.
 - `.github/workflows/pr-check.yml` — the three checks that actually gate a PR.
-- `.github/PULL_REQUEST_TEMPLATE.md` — what the PR that closes the issue must contain.

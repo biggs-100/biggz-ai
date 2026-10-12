@@ -39,16 +39,16 @@ substitute yours. Nothing below is copied from a real issue.
 Bug report:
 
 ```bash
-gh issue create --template bug_report.yml \
-  --title "fix(cli): biggz doctor reports the version check as failed after an upgrade" \
+gh issue create --template bug_report.yml --label "type:bug" \
+  --title "fix(cli): biggz doctor reports <check> as failed after an upgrade" \
   --body "
 ### What happened?
-After upgrading, the version check reports FAIL even though the binary matches the release.
+<what you ran, and what it did instead of what the docs say>
 
 ### Steps to reproduce
 1. biggz install --agent pi
 2. biggz doctor
-3. The version check reports FAIL
+3. <the check that misbehaves, and how it misbehaves>
 
 ### Version
 biggz version -> v0.9.x
@@ -58,7 +58,7 @@ Windows 11
 
 ### Relevant output
 \`\`\`
-<the line biggz doctor printed, whose shape is: icon> version: <message>
+<the line biggz doctor printed; its shape is: icon> <check id>: <message>
 \`\`\`
 "
 ```
@@ -66,7 +66,7 @@ Windows 11
 Feature request:
 
 ```bash
-gh issue create --template feature_request.yml \
+gh issue create --template feature_request.yml --label "type:feature" \
   --title "feat(review): report the review budget before the first capture" \
   --body "
 ### Problem
