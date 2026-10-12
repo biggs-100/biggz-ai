@@ -1,5 +1,20 @@
 // Ported from gentle-pi 3.7.0 lib/review-sidebar-state.ts
-// (MIT, Copyright (c) 2025 Mario Zechner). Behaviour unchanged.
+// (MIT, Copyright (c) 2025 Mario Zechner). Behaviour unchanged apart from the
+// adaptation declared here, made by task 2.11.
+//
+// Upstream owns the review tool definitions, so its publisher wraps them
+// (`publisher.tool(definition)`) and reads each result as it passes through.
+// This port does not own them: the review tools belong to the harness. Pi hands
+// an extension the same information through two handlers instead, so the
+// publisher is driven by observation and keeps upstream's resolution logic
+// unchanged:
+//   `tool_call`   carries toolCallId, toolName and the input, which is where
+//                 upstream reads the operation and the correlation it holds;
+//   `tool_result` carries the same input plus the result's `details`.
+// Later calls supersede earlier ones exactly as upstream's generation counter
+// does. One fidelity limit: upstream distinguishes a cancellation from a
+// failure by inspecting the thrown error, which an observer does not receive, so
+// both land on `unavailable` here instead of `unknown` for a cancellation.
 import { sanitizeTerminalText } from "./terminal-theme.ts";
 
 /** Ephemeral display data only; this event grants no review authority. */
@@ -78,4 +93,152 @@ export function isReviewSidebarSnapshot(value: unknown): value is ReviewSidebarS
 	const snapshot = value as Partial<ReviewSidebarSnapshot>;
 	return typeof snapshot.state === "string" && Object.hasOwn(REVIEW_SIDEBAR_LABELS, snapshot.state)
 		&& typeof snapshot.scope === "string" && snapshot.scope.length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// The publisher: local display correlation only, never review authority.
+// ---------------------------------------------------------------------------
+
+/** Correlation the publisher keeps between calls; nothing here is authority. */
+interface ReviewScope {
+	workspace: string;
+	lineage: string;
+	target: string;
+	scope: string;
+	bindings: string[];
+}
+
+function issuedBindings(data: Record<string, unknown>): string[] {
+	return Array.isArray(data.collectBindings)
+		? data.collectBindings.map((entry) => record(entry).collectBinding).filter((binding): binding is string => typeof binding === "string")
+		: [];
+}
+
+function matchesCapture(name: string, input: Record<string, unknown>, prior: ReviewScope | undefined): boolean {
+	if (!prior || input.lineageId !== prior.lineage) return false;
+	if (name === "gentle_review_capture") return typeof input.collectBinding === "string" && prior.bindings.includes(input.collectBinding);
+	return name === "gentle_review_capture_group" && Array.isArray(input.collectBindings) &&
+		prior.bindings.length > 0 && input.collectBindings.length === prior.bindings.length &&
+		input.collectBindings.every((binding, index) => binding === prior.bindings[index]);
+}
+
+// This pathless single-capture envelope is not a status or terminal closure.
+// It can describe idle continuity only with the publisher's issued correlation.
+function isNonterminalReviewerCapture(data: Record<string, unknown>): boolean {
+	const relay = record(data.host_relay);
+	return data.tool === "gentle_review_capture" && data.status === "captured" &&
+		data.outcome === "native-reviewer-result-captured" &&
+		typeof data.lineage_id === "string" && data.lineage_id.length > 0 &&
+		data.result === undefined && data.closure === undefined &&
+		data.native_failure === undefined && data.failure === undefined && data.reconciliation_failure === undefined &&
+		relay.transport === "pi_host_relay" &&
+		[relay.prompt_bytes, relay.result_bytes].every((value) => typeof value === "number" && Number.isSafeInteger(value) && value >= 0) &&
+		typeof relay.submission === "string" && relay.submission.length > 0 &&
+		[relay.lens, relay.order, relay.subject_hash, relay.role].every((value) => value === undefined || (typeof value === "string" && value.length > 0));
+}
+
+// Resolve completion using only local display correlation; never interpret bindings.
+function resolveCompletion(operation: string, name: string, input: Record<string, unknown>, details: unknown,
+	prior: ReviewScope | undefined, boundCapture: boolean, workspace: string): { snapshot: ReviewSidebarSnapshot; scope?: ReviewScope } {
+	const data = record(details);
+	const native = record(data.result);
+	const closure = record(data.closure);
+	const snapshot = reviewSidebarSnapshot(operation, data);
+	const lineage = record(native.authority).lineage_id ?? native.lineage_id ?? data.lineage_id ?? closure.lineage_id;
+	const target = native.target_identity ?? data.target_identity ?? closure.target_identity;
+	const terminalClosure = data.outcome === "native-last-event-closure";
+	const closureMatches = !terminalClosure || (closure.schema === "gentle-ai.review-last-event-closure/v1" &&
+		closure.lineage_id === prior?.lineage && closure.target_identity === prior?.target);
+	const sameCapture = boundCapture && closureMatches &&
+		(lineage === undefined || lineage === prior!.lineage) && (target === undefined || target === prior!.target);
+	const nonterminalSingle = name === "gentle_review_capture" && sameCapture && isNonterminalReviewerCapture(data) &&
+		data.lineage_id === prior!.lineage && (data.target_identity === undefined || data.target_identity === prior!.target);
+	if (nonterminalSingle) {
+		snapshot.state = "in_review";
+		snapshot.scope = prior!.scope;
+	}
+	const healthy = !["unknown", "unavailable", "invalidated", "declined"].includes(snapshot.state);
+	const sameAcknowledgement = operation === "acknowledge-approved" && snapshot.state === "closed" &&
+		prior !== undefined && input.lineageId === prior.lineage && lineage === prior.lineage && target === prior.target;
+	let nextScope: ReviewScope | undefined;
+	if (healthy && (sameCapture || sameAcknowledgement)) {
+		if (snapshot.scope === REVIEW_SCOPE_UNAVAILABLE) snapshot.scope = prior!.scope;
+		nextScope = { ...prior!, scope: snapshot.scope, bindings: snapshot.state === "forecast" ? prior!.bindings :
+			nonterminalSingle ? prior!.bindings.filter((binding) => binding !== input.collectBinding) : [] };
+	}
+	// A fresh native projection replaces correlation, even for the same lineage.
+	if (healthy && native.applicability === "current_target" && snapshot.scope !== REVIEW_SCOPE_UNAVAILABLE && typeof lineage === "string" && lineage && typeof target === "string" && target && native.projection) {
+		nextScope = { workspace, lineage, target, scope: snapshot.scope, bindings: issuedBindings(data) };
+	}
+	return { snapshot, scope: nextScope };
+}
+
+interface PendingObservation {
+	ticket: number;
+	input: Record<string, unknown>;
+	prior: ReviewScope | undefined;
+	boundCapture: boolean;
+	workspace: string;
+	id: string;
+}
+
+/** One in-memory snapshot per live runtime; observation cannot affect tool outcomes. */
+export function createReviewSidebarPublisher(pi: ExtensionAPI) {
+	let active = true;
+	let sessionId: string | undefined;
+	let generation = 0;
+	let scope: ReviewScope | undefined;
+	// Upstream reads the input and the result inside its own wrapper. An observer
+	// sees them in two events, so the correlation between them is held here, keyed
+	// by the tool call pi assigns.
+	const pending = new Map<string, PendingObservation>();
+	const publish = (id: string, snapshot: ReviewSidebarSnapshot): void => {
+		try { pi.events?.emit(REVIEW_SIDEBAR_EVENT, { sessionId: id, snapshot }); } catch { /* Display only. */ }
+	};
+	return {
+		reset(ctx?: ExtensionContext): void {
+			generation += 1;
+			scope = undefined;
+			pending.clear();
+			active = ctx !== undefined;
+			sessionId = ctx?.sessionManager?.getSessionId();
+		},
+		/** The review tool is about to run: announce the operation, keep its correlation. */
+		begin(toolCallId: string, name: string, input: unknown, ctx: ExtensionContext): void {
+			const params = record(input);
+			const operation = String(params.operation ?? name);
+			if (operation === "assess") return;
+			const id = ctx.sessionManager?.getSessionId();
+			if (!active || !id || (sessionId !== undefined && sessionId !== id)) return;
+			sessionId = id;
+			const ticket = ++generation;
+			const workspace = typeof params.workspaceRoot === "string" ? params.workspaceRoot : ctx.cwd;
+			// A raw nested workspaceRoot can differ from canonical ctx.cwd: lose display
+			// correlation rather than canonicalizing paths or inferring authority.
+			const prior = scope?.workspace === workspace ? scope : undefined;
+			const boundCapture = matchesCapture(name, params, prior);
+			// Unbound refreshes and new candidates discard the previous display.
+			scope = undefined;
+			pending.set(toolCallId, { ticket, input: params, prior, boundCapture, workspace, id });
+			publish(id, { state: boundCapture ? "reviewing" : "checking", scope: boundCapture ? prior!.scope : REVIEW_SCOPE_UNAVAILABLE });
+		},
+		/** The review tool finished: resolve the display state, or report the failure. */
+		settle(toolCallId: string, name: string, details: unknown, ctx: ExtensionContext, failed = false): void {
+			const observation = pending.get(toolCallId);
+			if (!observation) return;
+			pending.delete(toolCallId);
+			const id = ctx.sessionManager?.getSessionId();
+			// A superseded call, a reset or another session keeps its snapshot to itself.
+			if (!(active && generation === observation.ticket && sessionId === observation.id && id === observation.id)) return;
+			if (failed) {
+				scope = undefined;
+				publish(observation.id, { state: "unavailable", scope: REVIEW_SCOPE_UNAVAILABLE });
+				return;
+			}
+			const operation = String(observation.input.operation ?? name);
+			const resolved = resolveCompletion(operation, name, observation.input, details, observation.prior, observation.boundCapture, observation.workspace);
+			scope = resolved.scope;
+			publish(observation.id, resolved.snapshot);
+		},
+	};
 }

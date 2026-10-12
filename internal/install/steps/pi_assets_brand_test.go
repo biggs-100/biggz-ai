@@ -46,16 +46,27 @@ var brandLiteralAllowlist = []string{
 	// __gentlePiSkillRegistryExtensionSource: internal global registry key at
 	// skill-registry.ts:31, never user-visible.
 	"__gentlePiSkillRegistryExtensionSource",
-	// gentle-ai:review-sidebar: the upstream review-protocol event the ported
-	// sidebar listens on. Biggz speaks its own contract, so task 2.11 rewires
-	// this; renaming the string now would hide the mismatch instead of fixing
-	// it.
+	// gentle-ai:review-sidebar: the review-protocol event name the publisher
+	// emits and the deployed sidebar subscribes to. Unit 2.11 established with D17
+	// that the sidebar mirrors this provider protocol rather than biggz's own CLI
+	// contract, whose envelopes carry no lifecycle state to display, so this is
+	// the genuine identifier on the wire and not a rename candidate. The reason
+	// this entry carried before 2.11 - "biggz speaks its own contract, so task
+	// 2.11 rewires this" - was the same wrong premise that task started from.
 	"gentle-ai:review-sidebar",
-	// gentle-ai.review-last-event-closure/v1: the same, for the closure schema.
+	// gentle-ai.review-last-event-closure/v1: the closure schema the same
+	// protocol returns, matched when a terminal capture resolves.
 	"gentle-ai.review-last-event-closure/v1",
-	// gentle-ai.review-integration.status: the same, for the status schema the
-	// parser matches by regex.
+	// gentle-ai.review-integration.status: the status schema the parser matches
+	// by regex.
 	"gentle-ai.review-integration.status",
+	// gentle_review_capture and gentle_review_capture_group: the review tool names
+	// the harness registers, which the publisher must recognize to correlate a
+	// capture with the binding it was issued for. They reach users only as the
+	// tool names those users already invoke, so renaming them would break the
+	// correlation without changing anything a reader sees.
+	"gentle_review_capture",
+	"gentle_review_capture_group",
 }
 
 // brandLiteralAllowlisted reports whether an already-detected "gentle" literal

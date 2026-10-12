@@ -94,7 +94,7 @@ function fakeCtx() {
 		hasUI: true,
 		model: undefined,
 		modelRegistry: { isUsingOAuth: () => false, getApiKeyForProvider: async () => undefined },
-		sessionManager: { getCwd: () => "/tmp/x", getSessionName: () => undefined, getEntries: () => [] },
+		sessionManager: { getSessionId: () => "test-session", getCwd: () => "/tmp/x", getSessionName: () => undefined, getEntries: () => [] },
 		getContextUsage: () => undefined,
 		ui,
 	};

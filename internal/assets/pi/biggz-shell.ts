@@ -36,6 +36,12 @@ import {
 } from "./biggz-shell/shell-bar.ts";
 import { sidebarHeader, sidebarPart, sidebarState } from "./biggz-shell/shell-sidebar.ts";
 import {
+	createReviewSidebarPublisher,
+	isReviewSidebarSnapshot,
+	REVIEW_SIDEBAR_EVENT,
+	type ReviewSidebarSnapshot,
+} from "./biggz-shell/review-sidebar-state.ts";
+import {
 	parseProviderUsage,
 	parseUsageSource,
 	UsageSourceRegistry,
@@ -75,6 +81,8 @@ interface BuildOptions {
 	home?: string;
 	dirty?: number;
 	usage?: ProviderUsage;
+	/** Unit 2.11: the review display state, when this session has one. */
+	review?: ReviewSidebarSnapshot;
 }
 
 type Presentation = ReturnType<typeof resolveVisualSettings>["settings"];
@@ -143,6 +151,7 @@ export function buildShellBarModel(
 		costTotal: sessionCost(ctx),
 		subscription: model ? ctx.modelRegistry.isUsingOAuth(model) : false,
 		usage: options.usage,
+		review: options.review,
 		statuses,
 	};
 }
@@ -155,6 +164,7 @@ export function createShellBarComponent(
 	footerData: ShellFooterData,
 	dirty: () => number | undefined = () => undefined,
 	usage: () => ProviderUsage | undefined = () => undefined,
+	review: () => ReviewSidebarSnapshot | undefined = () => undefined,
 	presentation?: () => Presentation,
 ): ShellBarComponent {
 	const unsubscribe = footerData.onBranchChange(() => {
@@ -163,7 +173,7 @@ export function createShellBarComponent(
 	});
 	return {
 		render(width: number) {
-			return renderShellBar(buildShellBarModel(pi, ctx, footerData, { dirty: dirty(), usage: usage() }), theme, width, presentation?.());
+			return renderShellBar(buildShellBarModel(pi, ctx, footerData, { dirty: dirty(), usage: usage(), review: review() }), theme, width, presentation?.());
 		},
 		invalidate() {},
 		dispose() {
@@ -290,6 +300,34 @@ export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
 		if (currentContext?.model?.provider === source.provider) void refreshUsage(currentContext, true);
 	});
 
+	// Unit 2.11. Upstream owns the review tool definitions and wraps them, so its
+	// publisher reads every result as it passes through. This port does not own
+	// them - the harness provides the review tools - and pi hands an extension the
+	// same input and details through `tool_call` and `tool_result`, so the publisher
+	// is driven by observation instead. It emits one snapshot per live session and
+	// the bar paints it as its own group; nothing here grants or reports review
+	// authority, and a session without a snapshot simply never shows the group.
+	const reviewSidebar = createReviewSidebarPublisher(pi);
+	let reviewSnapshot: ReviewSidebarSnapshot | undefined;
+	const redrawReview = (): void => {
+		renderHost?.invalidateSidebar?.();
+		renderHost?.requestRender();
+	};
+	pi.events.on(REVIEW_SIDEBAR_EVENT, (value) => {
+		const event = value as { sessionId?: unknown; snapshot?: unknown } | undefined;
+		if (!currentContext || event?.sessionId !== currentContext.sessionManager.getSessionId()) return;
+		if (!isReviewSidebarSnapshot(event?.snapshot)) return;
+		const { state, scope } = event.snapshot;
+		reviewSnapshot = { state, scope };
+		redrawReview();
+	});
+	pi.on("tool_call", (event, ctx) => {
+		reviewSidebar.begin(event.toolCallId, event.toolName, event.input, ctx);
+	});
+	pi.on("tool_result", (event, ctx) => {
+		reviewSidebar.settle(event.toolCallId, event.toolName, event.details, ctx, event.isError === true);
+	});
+
 	const openUsage = async (ctx: ExtensionContext): Promise<void> => {
 		await refreshUsage(ctx, true);
 		await ctx.ui.custom<null>(
@@ -329,12 +367,17 @@ export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
 		// The event subscription above outlives a session; dropping the context
 		// keeps a late source registration from refreshing a dead session.
 		currentContext = undefined;
+		// The publisher holds display correlation per session too, and a snapshot
+		// must not outlive the session that produced it.
+		reviewSidebar.reset();
+		reviewSnapshot = undefined;
 	});
 
 	pi.on("session_start", (_event, ctx) => {
 		if (!ctx.hasUI) return;
 		presentation = resolveVisualSettings().settings;
 		currentContext = ctx;
+		reviewSidebar.reset(ctx);
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			// Unit 2.6 hands the sidebar hook through host.invalidateSidebar: the
 			// fullscreen rail shares the branch/usage events the narrow footer
@@ -345,14 +388,15 @@ export default function biggzShell(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pr
 			renderHost = host;
 			if (tui.terminal) sidebarState(tui).visibility = { todo: presentation?.visibility.todo };
 			const usageFor = () => usage.get(ctx.model?.provider ?? "");
-			const component = createShellBarComponent(pi, ctx, host, theme, footerData, undefined, usageFor, () => presentation);
+			const reviewFor = () => reviewSnapshot;
+			const component = createShellBarComponent(pi, ctx, host, theme, footerData, undefined, usageFor, reviewFor, () => presentation);
 			// The Status card paints live session state no event re-registers a rail
 			// part for (model, effort, context, cost, session name, extension
 			// statuses), so the rail declares a digest and the fullscreen memo
-			// notices by itself. D10: no review facts reach the rail — no lineage,
-			// lens or budget — because the model never supplies them; unit 2.11 owns
-			// the review protocol wiring.
-			const footerModel = (): ShellBarModel => buildShellBarModel(pi, ctx, footerData, { usage: usageFor() });
+			// notices by itself. D10 still holds: no review lineage, lens or budget
+			// reaches the rail. Unit 2.11 wires the display state and the candidate
+			// scope the producer resolves, which upstream's Status card shows too.
+			const footerModel = (): ShellBarModel => buildShellBarModel(pi, ctx, footerData, { usage: usageFor(), review: reviewFor() });
 			const part = sidebarPart(tui, "footer", component, {
 				digest: () => JSON.stringify([footerModel(), presentation]),
 				render: (width) => renderShellSidebarBar(footerModel(), theme, width, presentation),

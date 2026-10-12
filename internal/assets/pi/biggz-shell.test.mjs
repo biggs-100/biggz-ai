@@ -26,6 +26,7 @@ process.env.BIGGZ_CONFIG_HOME = join(tmpdir(), "biggz-shell-test-config-does-not
 
 const { visibleWidth } = await import(PI_TUI_SPECIFIER);
 const { buildShellBarModel, createShellBarComponent, default: biggzShell } = await import("./biggz-shell.ts");
+const { REVIEW_SIDEBAR_EVENT } = await import("./biggz-shell/review-sidebar-state.ts");
 const { sidebarState } = await import("./biggz-shell/shell-sidebar.ts");
 const { DEFAULT_VISUAL_SETTINGS, HEADER_PLACEMENT, VISUAL_SCHEMA } = await import("./biggz-shell/visual-customization-policy.ts");
 
@@ -159,6 +160,7 @@ function fakeCtx({
 			getApiKeyForProvider: async () => apiKey,
 		},
 		sessionManager: {
+			getSessionId: () => "test-session",
 			getCwd: () => cwd,
 			getSessionName: () => sessionName,
 			getEntries: () => entries,
@@ -188,6 +190,7 @@ function modelCtx({
 		model,
 		modelRegistry: { isUsingOAuth: () => oauth },
 		sessionManager: {
+			getSessionId: () => "test-session",
 			getCwd: () => cwd,
 			getSessionName: () => sessionName,
 			getEntries: () => entries,
@@ -349,14 +352,14 @@ test("factory installs nothing when ctx.hasUI is false", () => {
 test("factory registers the footer, the below-editor header widget, the usage command and its shortcut, and no header or editor", () => {
 	const { calls, handlers, commands, shortcuts, uiCalls, setFooterCalls, setWidgetCalls, eventHandlers, footerFactory } = startSession();
 
-	assert.deepEqual([...handlers.keys()].sort(), ["session_shutdown", "session_start"], "exactly the two session lifecycle handlers, named");
+	assert.deepEqual([...handlers.keys()].sort(), ["session_shutdown", "session_start", "tool_call", "tool_result"], "the two session lifecycle handlers plus the two review observers unit 2.11 added, named deliberately so a silent handler cannot appear");
 	assert.deepEqual([...commands.keys()], ["biggz-usage"], "exactly one usage command, in the biggz namespace");
 	assert.deepEqual([...shortcuts.keys()], ["alt+u"], "exactly one shortcut, with the upstream default");
-	assert.deepEqual([...eventHandlers.keys()], ["biggz-ai:usage-source/v1"], "the only pi.events.on subscription is the usage-source event, and no unexpected subscription is added");
+	assert.deepEqual([...eventHandlers.keys()].sort(), [REVIEW_SIDEBAR_EVENT, "biggz-ai:usage-source/v1"].sort(), "the usage-source subscription plus the review sidebar event unit 2.11 added, and no other");
 	assert.deepEqual(
 		calls.slice().sort(),
-		["events.on:biggz-ai:usage-source/v1", "on", "on", "registerCommand", "registerShortcut"],
-		"the factory subscribes to the usage-source event, wires both lifecycle handlers, and registers exactly one command and one shortcut",
+		["events.on:biggz-ai:usage-source/v1", `events.on:${REVIEW_SIDEBAR_EVENT}`, "on", "on", "on", "on", "registerCommand", "registerShortcut"],
+		"the factory subscribes to the usage-source and review-sidebar events, wires the two lifecycle handlers plus the two review observers unit 2.11 added, and registers exactly one command and one shortcut",
 	);
 	assert.equal(setFooterCalls.length, 1, "exactly one footer registration");
 	assert.equal(typeof setFooterCalls[0][0], "function", "the single footer registration is a component factory");

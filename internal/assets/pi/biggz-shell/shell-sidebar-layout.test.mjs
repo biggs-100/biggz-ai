@@ -458,18 +458,24 @@ test("TODO visibility hides both rail and bottom without mutating the registered
 	assert.deepEqual(todo.render(100), ["todo"]);
 });
 
-test("the rail wiring paints through the deployed Status card and carries no review facts (D10)", (t) => {
+// Unit 2.11 supersedes D10's deferral: the producer D10 left to this unit now
+// exists, so the review display state and its candidate scope reach the rail
+// through the publisher's event. What D10 protected still holds and is asserted
+// below: no lineage, lens or budget ever reaches the rail, because those are
+// authority facts and the rail only ever paints display state.
+test("the rail wiring paints through the deployed Status card and carries display state, never authority facts", (t) => {
 	const f = fixture();
 	t.after(installSidebar(f.tui, theme));
 	const wiring = fs.readFileSync(WIRING_PATH, "utf8");
 	assert.match(wiring, /renderShellSidebarBar\(/, "the rail must reuse the deployed Status card renderer");
+	assert.match(wiring, /REVIEW_SIDEBAR_EVENT/, "the review display state must arrive through the publisher's event, not by reading the store");
 	for (const file of [MODULE_PATH, WIRING_PATH]) {
-		const banned = /\b(lineage|lens|budget)\b|REVIEW_SIDEBAR|model\.review/;
+		const banned = /\b(lineage|lens|budget)\b/;
 		const source = fs.readFileSync(file, "utf8");
 		for (const [index, line] of source.split("\n").entries()) {
 			const trimmed = line.trim();
 			if (trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")) continue;
-			assert.ok(!banned.test(line), `${path.basename(file)}:${index + 1} leaks a review fact into the rail: ${trimmed}`);
+			assert.ok(!banned.test(line), `${path.basename(file)}:${index + 1} leaks a review authority fact into the rail: ${trimmed}`);
 		}
 	}
 });
