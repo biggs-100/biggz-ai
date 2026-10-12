@@ -229,3 +229,155 @@ test("scopes apply disabled and disposed state to later Text regions", () => {
 		"later regions inherit scope disable/disposal while a live scope can be re-enabled",
 	);
 });
+
+// ---------------------------------------------------------------------------
+// biggz coverage, task 2.7c. Not upstream: these three cases close the
+// informational findings the native review of 2.7a admitted
+// (native-pointer-region.ts:145-150, :51-54 and :117).
+// ---------------------------------------------------------------------------
+
+test("two regions in one scope clear the sibling's hover when the pointer enters the other", () => {
+	const scope = createNativePointerScope();
+	const hovered = [];
+	const firstLeaves = [];
+	let secondHovers = 0;
+	let secondHoverEvent;
+	const first = scope.wrap(new Text("First", 0, 0), {
+		onHover: () => {
+			hovered.push("first");
+			return { handled: true, render: true };
+		},
+		onLeave: (event) => firstLeaves.push(event),
+	});
+	const second = scope.wrap(new Text("Second", 0, 0), {
+		onHover: (event) => {
+			secondHovers++;
+			secondHoverEvent = event;
+			return { handled: true, render: true };
+		},
+	});
+	const root = new Container();
+	root.addChild(first);
+	root.addChild(second);
+	const height = root.render(40).length;
+	const observer = scope.createMouseObserver();
+
+	assert.equal(height, 2, "the fixture stacks exactly two single-row regions");
+	assert.equal(dispatch(root, observer, mouse("move", "none", 0, height))?.render, true);
+	assert.deepEqual(
+		[hovered, firstLeaves.length],
+		[["first"], 0],
+		"entering the first region hovers it without firing a single leave",
+	);
+
+	assert.equal(dispatch(root, observer, mouse("move", "none", 1, height))?.render, true);
+	assert.deepEqual(
+		[hovered, firstLeaves.length, secondHovers],
+		[["first"], 1, 1],
+		"entering the second region hovers it and fires the sibling's leave once",
+	);
+	assert.equal(
+		firstLeaves[0],
+		secondHoverEvent,
+		"the sibling clear hands over the very same event object the entering region saw, so it carries that region's local coordinates rather than the root's",
+	);
+
+	dispatch(root, observer, mouse("move", "none", 0, height));
+	assert.deepEqual(
+		[hovered, firstLeaves.length, secondHovers],
+		[["first", "first"], 1, 1],
+		"moving back hovers the first again and leaves the second's absent callback alone",
+	);
+	dispatch(root, observer, mouse("move", "none", 0, height));
+	dispatch(root, observer, mouse("move", "none", 0, height));
+	assert.deepEqual(
+		[hovered.length, firstLeaves.length],
+		[4, 1],
+		"staying inside one region keeps hovering it and never re-fires the sibling clear",
+	);
+});
+
+test("a disabled scope gates its own callbacks, and an interactive child keeps consuming natively", () => {
+	const scope = createNativePointerScope();
+	const regionClicks = [];
+	const passiveRoot = new Container();
+	passiveRoot.addChild(scope.wrap(new Text("Passive", 0, 0), {
+		onClick: () => {
+			regionClicks.push("passive");
+			return { handled: true };
+		},
+	}));
+	const passiveHeight = passiveRoot.render(40).length;
+
+	scope.setDisabled(true);
+	const passiveClick = dispatch(
+		passiveRoot, scope.createMouseObserver(), mouse("click", "left", 0, passiveHeight),
+	);
+	assert.equal(passiveClick?.handled, undefined, "a disabled scope answers nothing for a passive child");
+	assert.deepEqual(regionClicks, [], "and never reaches the region's own click callback");
+
+	// The guard's reach stops there. A child that consumes natively is dispatched
+	// BEFORE the region's callback (that is what keeps an already handled child
+	// result unchanged), so scope disablement cannot gate it: this pins the real
+	// contract instead of assuming the flag protects the whole subtree.
+	let childCalls = 0;
+	const child = {
+		render: () => ["interactive child"],
+		invalidate() {},
+		handleMouse: () => {
+			childCalls++;
+			return { handled: true, focus: true, render: true };
+		},
+	};
+	const interactiveScope = createNativePointerScope();
+	const box = new Box(0, 0);
+	box.addChild(child);
+	const interactiveRoot = new Container();
+	interactiveRoot.addChild(interactiveScope.wrap(box, {
+		onClick: () => {
+			regionClicks.push("interactive");
+			return { handled: true };
+		},
+	}));
+	const interactiveHeight = interactiveRoot.render(40).length;
+	const observer = interactiveScope.createMouseObserver();
+
+	interactiveScope.setDisabled(true);
+	const disabledInteractive = dispatch(
+		interactiveRoot, observer, mouse("click", "left", 0, interactiveHeight),
+	);
+	assert.equal(disabledInteractive?.handled, true, "a disabled scope still lets an interactive child consume");
+	assert.equal(disabledInteractive?.focusTarget, child, "and that child keeps its native focus target");
+	assert.equal(childCalls, 1, "the disabled flag never reaches a child that dispatches first");
+
+	interactiveScope.setDisabled(false);
+	dispatch(interactiveRoot, observer, mouse("click", "left", 0, interactiveHeight));
+	assert.equal(childCalls, 2, "re-enabling adds no gate of its own");
+	assert.deepEqual(regionClicks, [], "the region's callback stays unreached while the child consumes");
+});
+
+test("the mouse observer requests exactly one render when an empty in-root move clears hover", () => {
+	const scope = createNativePointerScope();
+	let renders = 0;
+	const region = scope.wrap(new Text("Hover me", 0, 0), {
+		onHover: () => ({ handled: true, render: true }),
+	});
+	const root = new Container();
+	root.addChild(region);
+	const height = root.render(40).length;
+	const observer = scope.createMouseObserver(() => {
+		renders++;
+	});
+
+	dispatch(root, observer, mouse("move", "none", height, height + 1));
+	assert.equal(renders, 0, "an empty move with nothing hovered asks for no render");
+
+	dispatch(root, observer, mouse("move", "none", 0, height));
+	assert.equal(renders, 0, "the hover render is the region's own result, so the observer adds none");
+
+	dispatch(root, observer, mouse("move", "none", height, height + 1));
+	assert.equal(renders, 1, "clearing a live hover asks for exactly one render");
+
+	dispatch(root, observer, mouse("move", "none", height, height + 1));
+	assert.equal(renders, 1, "a second empty move clears nothing and therefore asks for nothing");
+});
