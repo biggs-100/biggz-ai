@@ -98,8 +98,14 @@ func (a *Adapter) Detect(_ context.Context, homeDir string) (bool, string, strin
 //	rpiv-todo, pi-btw (see piSubagentsInstallCommand + engramInitCommand).
 //
 // Biggz uses BigMem (native Go at cmd/biggz-mcp / `biggz mcp`), not Engram,
-// so it does NOT need gentle-pi, gentle-engram, pi-mcp-adapter, pi-engram init,
-// or rpiv-* / pi-btw. The only runtime dependency beyond the pi CLI itself is
+// so it does NOT need gentle-pi, gentle-engram, pi-engram init, or rpiv-* /
+// pi-btw. Memory is served by pi's own native MCP client: ProvisionBigMemMCP
+// writes the native mcpServers.bigmem entry into mcp.json (settings.json keeps
+// only the package list) and pi reads it directly. The retired pi-mcp-adapter
+// extension is therefore NOT installed —
+// while it is present pi ignores mcp.json and its own servers, so `biggz
+// install` removes it when found (removeLegacyPiMCPAdapter).
+// The only runtime dependency beyond the pi CLI itself is
 // the subagent dispatcher (j0k3r-dev-rgl/pi-subagents-j0k3r, maintained fork
 // of nicobailon/pi-subagents) which provides subagent_run/continue,
 // background delegation, task history and model profiles. Without it pi has
@@ -132,12 +138,10 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	// packages invisible to pi's capability probes and FleetView would never
 	// become ready. `pi install` writes into the agent-owned node_modules
 	// where pi actually discovers packages.
-	// - npm:pi-mcp-adapter@^2 (nicobailon/pi-mcp-adapter, 761k/mo, stdio +
-	//   streamable-http/sse, imports:["opencode"], directTools) is the
-	//   canonical MCP client for Pi — it spawns `biggz-mcp --tools=agent
-	//   --prefix=biggz` and exposes `biggz_mem_*` as native Pi tools with
-	//   `/mcp` health. Pinned `^2` (v2.32.1 shape), idempotent via `pi
-	//   install`, offline-tolerant (MCP JSON remains harmless).
+	// - No MCP adapter source: pi's built-in MCP client loads
+	//   mcpServers.bigmem from mcp.json, so pi-mcp-adapter is deliberately
+	//   absent (installing it makes pi ignore the native client). `biggz
+	//   install` removes any legacy copy instead (removeLegacyPiMCPAdapter).
 	// - npm:pi-subagents-j0k3r@1.6.1 (exact pin, never floating) must use
 	//   `pi install` (not `npm install -g`) — pi loader only scans
 	//   ~/.pi/agent/npm.
@@ -156,7 +160,6 @@ func (a *Adapter) InstallCommand(_ interface{}) ([][]string, error) {
 	//   via `pi install`; it is copied to `~/.pi/agent/extensions/` via
 	//   DeployPiQuestionMouse (filemerge) during `biggz install --agent pi`.
 	cmds := [][]string{
-		{"pi", "install", "npm:pi-mcp-adapter@^2"},
 		{"pi", "install", piSubagentsJ0k3rPinned},
 		{"pi", "install", "npm:@juicesharp/rpiv-ask-user-question"},
 		{"pi", "install", "npm:rpiv-todo"},
@@ -266,21 +269,47 @@ func AgentConfigPath(homeDir string) string {
 	return filepath.Join(ConfigPath(homeDir), "agent")
 }
 
-// ProvisionBigMemMCP atomically merges mcpServers.bigmem pointing at the
-// biggz-mcp binary into both ~/.pi/agent/settings.json and
-// ~/.pi/agent/mcp.json (MCPConfigFile strategy). It drops legacy
-// pi-subagents* package entries from settings.json packages, creates parent
-// dirs if missing, and uses filemerge.WriteFileAtomic for atomicity.
+// ProvisionBigMemMCP atomically merges the native mcpServers.bigmem entry into
+// ~/.pi/agent/mcp.json (MCPConfigFile strategy), reconciles
+// ~/.pi/agent/settings.json packages, prunes the adapter-era
+// mcpServers.bigmem/directTools keys an earlier install left there, and folds
+// every server the retired pi-mcp-adapter used to import into mcp.json in its
+// native shape. It drops legacy pi-subagents* package entries from settings.json
+// packages, creates parent dirs if missing, and uses filemerge.WriteFileAtomic
+// for atomicity.
 //
 // BigMem is Go-native SQLite at ~/.biggz/bigmem/bigmem.db with a native Go
 // MCP server (cmd/biggz-mcp, also exposed via `biggz mcp`). This is NOT
 // Engram (gentle-ai's JS/Python external + Cloud).
 func (a *Adapter) ProvisionBigMemMCP(homeDir string) (bool, []string, error) {
+	report, err := a.ProvisionBigMemMCPReport(homeDir)
+	if err != nil {
+		return false, nil, err
+	}
+	return report.Changed, report.Files, nil
+}
+
+// PiMCPProvisionReport is the observable result of ProvisionBigMemMCPReport: the
+// files the pass reconciled, whether any of them changed, and what the one-time
+// adapter migration folded into mcp.json.
+//
+// The (changed, files, error) triple ProvisionBigMemMCP returns stays intact for
+// install callers; the migrated server names live here instead of being appended
+// to the changed-path list.
+type PiMCPProvisionReport struct {
+	Changed   bool
+	Files     []string
+	Migration MCPMigrationReport
+}
+
+// ProvisionBigMemMCPReport is ProvisionBigMemMCP plus the adapter migration
+// report (unit 1.2).
+func (a *Adapter) ProvisionBigMemMCPReport(homeDir string) (PiMCPProvisionReport, error) {
 	// Never run inside fresh/isolated subagent children — they have empty
 	// sessions and would race settings.json/mcp.json writes. Mirrors
 	// biggz-last-model.js guard: if (process.env.PI_SUBAGENT_CHILD === "1") return;
 	if os.Getenv("PI_SUBAGENT_CHILD") == "1" {
-		return false, nil, nil
+		return PiMCPProvisionReport{}, nil
 	}
 	settingsPath := a.SettingsPath(homeDir)
 	mcpPath := a.MCPConfigPath(homeDir, "")
@@ -288,20 +317,27 @@ func (a *Adapter) ProvisionBigMemMCP(homeDir string) (bool, []string, error) {
 
 	for _, dir := range []string{filepath.Dir(settingsPath), filepath.Dir(mcpPath)} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return false, nil, fmt.Errorf("mkdir %q: %w", dir, err)
+			return PiMCPProvisionReport{}, fmt.Errorf("mkdir %q: %w", dir, err)
 		}
 	}
 
-	changedSettings, err := a.mergePiSettingsBigMem(settingsPath, mcpBinary, homeDir)
+	changedSettings, err := a.mergePiSettingsBigMem(settingsPath, homeDir)
 	if err != nil {
-		return false, nil, err
+		return PiMCPProvisionReport{}, err
 	}
-	changedMCP, err := a.mergePiMCPFileBigMem(mcpPath, mcpBinary)
+	// Migrated servers land in the same atomic mcp.json write as the bigmem
+	// entry: a name that file already defines is skipped, so the pass is
+	// non-destructive and byte-stable on a second run.
+	changedMCP, migration, err := a.mergePiMCPFileBigMemWithMigration(mcpPath, mcpBinary, importedMCPSources(homeDir, settingsPath))
 	if err != nil {
-		return false, nil, err
+		return PiMCPProvisionReport{}, err
 	}
-	changed := changedSettings.Changed || changedSettings.Created || changedMCP.Changed || changedMCP.Created
-	return changed, []string{settingsPath, mcpPath}, nil
+	changed := changedSettings.Changed || changedSettings.Created || changedMCP.Changed || changedMCP.Created || migration.Changed
+	return PiMCPProvisionReport{
+		Changed:   changed,
+		Files:     []string{settingsPath, mcpPath},
+		Migration: migration,
+	}, nil
 }
 
 // ProvisionEngramMCP is kept for backward compatibility. Biggz uses BigMem,
@@ -347,7 +383,7 @@ func (a *Adapter) BiggzMCPPath() string {
 	return "biggz-mcp"
 }
 
-func (a *Adapter) mergePiSettingsBigMem(path, mcpBinary, homeDir string) (filemerge.WriteResult, error) {
+func (a *Adapter) mergePiSettingsBigMem(path, homeDir string) (filemerge.WriteResult, error) {
 	obj, err := readPiJSONObject(path)
 	if err != nil {
 		return filemerge.WriteResult{}, err
@@ -389,20 +425,18 @@ func (a *Adapter) mergePiSettingsBigMem(path, mcpBinary, homeDir string) (fileme
 	// Always set packages as []any with both entries (stable JSON).
 	obj["packages"] = filtered
 
-	servers, _ := obj["mcpServers"].(map[string]any)
-	if servers == nil {
-		servers = map[string]any{}
+	// Legacy prune: earlier installs wrote mcpServers.bigmem and a top-level
+	// directTools list into settings.json (pi-mcp-adapter vocabulary). Native
+	// Pi keeps MCP servers only in mcp.json, so remove the biggz-owned bigmem
+	// entry and directTools here while leaving every other server name and
+	// every other key intact (foreign servers are migrated in unit 1.2).
+	if servers, ok := obj["mcpServers"].(map[string]any); ok {
+		delete(servers, "bigmem")
+		if len(servers) == 0 {
+			delete(obj, "mcpServers")
+		}
 	}
-	servers["bigmem"] = map[string]any{
-		"command": mcpBinary,
-		"args":    []string{"--tools=agent", "--prefix=biggz"},
-		"type":    "local",
-	}
-	obj["mcpServers"] = servers
-
-	// directTools — same allowlist-prune as mcp.json: drop removed BigMem
-	// names, preserve foreign entries. Atomic via WriteFileAtomic below.
-	obj["directTools"] = mergePiDirectTools(obj["directTools"])
+	delete(obj, "directTools")
 
 	encoded, err := json.MarshalIndent(obj, "", "  ")
 	if err != nil {
@@ -413,45 +447,70 @@ func (a *Adapter) mergePiSettingsBigMem(path, mcpBinary, homeDir string) (fileme
 }
 
 func (a *Adapter) mergePiMCPFileBigMem(path, mcpBinary string) (filemerge.WriteResult, error) {
+	result, _, err := a.mergePiMCPFile(path, mcpBinary, nil)
+	return result, err
+}
+
+// mergePiMCPFileBigMemWithMigration is mergePiMCPFileBigMem plus the one-time
+// adapter migration: every server still declared by sources joins mcpServers in
+// the same atomic write, but only under a name mcp.json does not already define.
+func (a *Adapter) mergePiMCPFileBigMemWithMigration(path, mcpBinary string, sources []mcpImportSource) (filemerge.WriteResult, MCPMigrationReport, error) {
+	return a.mergePiMCPFile(path, mcpBinary, sources)
+}
+
+func (a *Adapter) mergePiMCPFile(path, mcpBinary string, sources []mcpImportSource) (filemerge.WriteResult, MCPMigrationReport, error) {
 	obj, err := readPiJSONObject(path)
 	if err != nil {
-		return filemerge.WriteResult{}, err
+		return filemerge.WriteResult{}, MCPMigrationReport{}, err
 	}
+	// Prune adapter-era keys so a reinstall converges an earlier install. Pi
+	// ignores unknown top-level keys, so this is hygiene plus a real signal
+	// that the file no longer carries the adapter contract.
+	delete(obj, "imports")
+	delete(obj, "directTools")
+
 	servers, _ := obj["mcpServers"].(map[string]any)
 	if servers == nil {
 		servers = map[string]any{}
 	}
-	servers["bigmem"] = map[string]any{
-		"command": mcpBinary,
-		"args":    []string{"--tools=agent", "--prefix=biggz"},
-		"type":    "local",
-	}
+	servers["bigmem"] = nativePiBigMemEntry(mcpBinary)
+	migration := migrateMCPServers(servers, sources)
 	obj["mcpServers"] = servers
-
-	// imports:["opencode"] — authoritative, deduped, preserves other imports.
-	// pi-mcp-adapter reuses opencode.json biggez server via imports, while
-	// bigmem remains authoritative in both layers. WriteFileAtomic preserves
-	// other mcpServers and ensures no partials.
-	obj["imports"] = mergePiImports(obj["imports"])
-
-	// directTools — promote BigMem tools to top-level for pi-mcp-adapter.
-	// Unconditional (adapter ignores unknown); mirrors MCP spec filtering.
-	obj["directTools"] = mergePiDirectTools(obj["directTools"])
 
 	encoded, err := json.MarshalIndent(obj, "", "  ")
 	if err != nil {
-		return filemerge.WriteResult{}, fmt.Errorf("marshal pi mcp %q: %w", path, err)
+		return filemerge.WriteResult{}, MCPMigrationReport{}, fmt.Errorf("marshal pi mcp %q: %w", path, err)
 	}
 	encoded = append(encoded, '\n')
-	return filemerge.WriteFileAtomic(path, encoded, 0o644)
+	result, err := filemerge.WriteFileAtomic(path, encoded, 0o644)
+	return result, migration, err
 }
 
-// piDirectTools are BigMem tools promoted to top-level via pi-mcp-adapter directTools.
-// Slim 11-tool allowlist (pi-footprint-slim): relieves 429 pressure while keeping
-// current_project (recommended first call per bigmem-protocol). Promotion-only
-// trim — cmd/biggz-mcp ProfileAgent still exposes all 20 via --tools=agent;
-// the 9 removed stay callable server-side.
-// biggz_ prefix from --prefix=biggz.
+// nativePiBigMemEntry is the native mcp.json entry for the biggz-owned bigmem
+// server (decisions D6/D8): no "type" (Pi infers stdio from "command"),
+// exposure controls the model-facing surface, and toolExposure maps
+// server-declared names to their exposure.
+func nativePiBigMemEntry(mcpBinary string) map[string]any {
+	toolExposure := make(map[string]any, len(piDirectTools))
+	for _, name := range piDirectTools {
+		toolExposure[name] = "direct"
+	}
+	return map[string]any{
+		"command":      mcpBinary,
+		"args":         []string{"--tools=agent", "--prefix=biggz"},
+		"description":  piBigMemDescription,
+		"exposure":     "codemode",
+		"toolExposure": toolExposure,
+	}
+}
+
+// piDirectTools are the BigMem tools promoted to the model as native Pi
+// `direct` tools through the bigmem server's toolExposure map (decision D8).
+// Slim 11-tool allowlist (pi-footprint-slim): relieves 429 pressure while
+// keeping current_project (recommended first call per bigmem-protocol).
+// Promotion-only trim — cmd/biggz-mcp ProfileAgent still exposes all 20 via
+// --tools=agent; the 9 removed stay callable server-side. Keys are the
+// server-declared names; the biggz_ prefix comes from --prefix=biggz.
 var piDirectTools = []string{
 	"biggz_mem_save",
 	"biggz_mem_search",
@@ -466,102 +525,18 @@ var piDirectTools = []string{
 	"biggz_mem_current_project",
 }
 
-// removedPiDirectTools are the 9 BigMem tools dropped from promotion by
-// pi-footprint-slim. mergePiDirectTools prunes exactly these names so
-// reinstall converges existing installs; all other entries are preserved.
-var removedPiDirectTools = map[string]struct{}{
-	"biggz_mem_capture_passive":   {},
-	"biggz_mem_compare":           {},
-	"biggz_mem_delete":            {},
-	"biggz_mem_pin":               {},
-	"biggz_mem_session_end":       {},
-	"biggz_mem_session_start":     {},
-	"biggz_mem_stats":             {},
-	"biggz_mem_suggest_topic_key": {},
-	"biggz_mem_unpin":             {},
+// PromotedBigMemTools returns the BigMem tool names Pi promotes to the model as
+// native `direct` tools — the keys of the bigmem server's toolExposure map.
+// Callers that verify the promoted surface (doctor's pi-native-mcp liveness
+// check) read this instead of duplicating the allowlist. The returned slice is
+// a copy, so callers cannot mutate the promotion set.
+func PromotedBigMemTools() []string {
+	return slices.Clone(piDirectTools)
 }
 
-func mergePiImports(existing any) []any {
-	var out []any
-	seen := map[string]struct{}{}
-	add := func(v string) {
-		if _, ok := seen[v]; ok {
-			return
-		}
-		seen[v] = struct{}{}
-		out = append(out, v)
-	}
-	// Preserve existing imports (handle []any or []string)
-	switch v := existing.(type) {
-	case []any:
-		for _, e := range v {
-			if s, ok := e.(string); ok && s != "" {
-				add(s)
-			}
-		}
-	case []string:
-		for _, s := range v {
-			if s != "" {
-				add(s)
-			}
-		}
-	case string:
-		if v != "" {
-			add(v)
-		}
-	}
-	// Ensure opencode authoritative
-	add("opencode")
-	if out == nil {
-		out = []any{"opencode"}
-	}
-	return out
-}
-
-func mergePiDirectTools(existing any) []any {
-	seen := map[string]struct{}{}
-	var out []any
-	add := func(v string) {
-		if _, ok := seen[v]; ok {
-			return
-		}
-		seen[v] = struct{}{}
-		out = append(out, v)
-	}
-	// Allowlist-prune: drop the 9 removed BigMem names so reinstall
-	// converges existing installs to the 11-tool allowlist; preserve all
-	// foreign (non-BigMem or still-allowlisted) entries.
-	keep := func(s string) bool {
-		if _, dropped := removedPiDirectTools[s]; dropped {
-			return false
-		}
-		return true
-	}
-	switch v := existing.(type) {
-	case []any:
-		for _, e := range v {
-			if s, ok := e.(string); ok && s != "" && keep(s) {
-				add(s)
-			}
-		}
-	case []string:
-		for _, s := range v {
-			if s != "" && keep(s) {
-				add(s)
-			}
-		}
-	}
-	for _, want := range piDirectTools {
-		add(want)
-	}
-	if out == nil {
-		out = []any{}
-		for _, want := range piDirectTools {
-			out = append(out, want)
-		}
-	}
-	return out
-}
+// piBigMemDescription is the one-line summary Pi surfaces for the bigmem
+// server (for example in `pi mcp list`).
+const piBigMemDescription = "BigMem persistent memory for biggz-ai: search, save, timeline, stats, doctor"
 
 func readPiJSONObject(path string) (map[string]any, error) {
 	base, err := os.ReadFile(path)

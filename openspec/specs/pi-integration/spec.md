@@ -167,34 +167,67 @@ The system MUST gate mouse support via `BIGGZ_MOUSE=1` opt-in using `enableMouse
 - WHEN harness evaluates mouse
 - THEN mouse MUST remain disabled and no `enableMouse` call MUST occur
 
-### Requirement: Pi BigMem MCP Provisioning via Adapter
+### Requirement: Pi Native BigMem MCP Provisioning
 
-The system MUST provision `mcpServers.bigmem` with `command=BiggzMCPPath()`, `args=["--tools=agent","--prefix=biggz"]`, `type="local"` plus `imports:["opencode"]` and `directTools` equal to exactly the 11-tool allowlist (`save`, `search`, `get_observation`, `context`, `session_summary`, `save_prompt`, `update`, `timeline`, `review`, `judge`, `current_project`) via `ProvisionBigMemMCP` into BOTH `~/.pi/agent/settings.json` and `~/.pi/agent/mcp.json` atomically via `filemerge.WriteFileAtomic`, preserving other servers; merge MUST be allowlist-prune (drop the 9 removed BigMem names when present, preserve foreign entries); project `.pi/mcp.json` overlays global but `bigmem` MUST stay authoritative; server `ProfileAgent` MUST stay at 20 tools.
+`ProvisionBigMemMCP` MUST write `mcpServers.bigmem` into `~/.pi/agent/mcp.json` only, in Pi's native shape: `command=BiggzMCPPath()`, `args=["--tools=agent","--prefix=biggz"]`, a `description`, `exposure="codemode"`, and `toolExposure` mapping exactly the 11 allowlist names (`biggz_mem_save`, `biggz_mem_search`, `biggz_mem_get_observation`, `biggz_mem_context`, `biggz_mem_session_summary`, `biggz_mem_save_prompt`, `biggz_mem_update`, `biggz_mem_timeline`, `biggz_mem_review`, `biggz_mem_judge`, `biggz_mem_current_project`) to `direct`. The entry MUST carry no `type` (Pi infers stdio from `command`), no top-level `imports` and no top-level `directTools` (both pruned on reinstall). The write MUST be atomic via `filemerge.WriteFileAtomic` and MUST preserve foreign servers and foreign top-level keys; the merge MUST be allowlist-prune (drop the 9 removed BigMem names from `toolExposure` when present). `settings.json` MUST keep only the `packages` reconcile, and any adapter-era `mcpServers.bigmem` or top-level `directTools` there MUST be pruned. Project `.pi/mcp.json` overlays global but `bigmem` MUST stay authoritative; server `ProfileAgent` MUST stay at 20 tools.
 
-#### Scenario: Fresh provision is 11 tools
+#### Scenario: Fresh provision is the native 11-tool shape
 - GIVEN no Pi MCP config exists
 - WHEN `ProvisionBigMemMCP` executes
-- THEN `directTools` MUST equal exactly the 11 allowlist in both files
+- THEN `mcp.json` `mcpServers.bigmem` MUST be native (`command`, `args`, `description`, `exposure="codemode"`, `toolExposure` = the 11 allowlist) with no `type`, and `settings.json` MUST carry no `mcpServers.bigmem` and no `directTools`
 
 #### Scenario: Reinstall prunes stale 9
-- GIVEN `mcp.json` with all 20 `directTools`
+- GIVEN `mcp.json` whose `toolExposure` carries all 20 names
 - WHEN reinstall merges
 - THEN the 9 removed names MUST be dropped, 11 allowlist MUST remain
 
 #### Scenario: Foreign entries preserved atomically
-- GIVEN `settings.json` with `mcpServers.other` plus foreign `directTools`
+- GIVEN `mcp.json` with `mcpServers.other` plus foreign top-level keys
 - WHEN merge runs
-- THEN `other` and foreign entries MUST be preserved; failed write MUST leave target unchanged
+- THEN `other` and foreign keys MUST be preserved; failed write MUST leave target unchanged
+
+#### Scenario: Settings.json reduced to packages
+- GIVEN an earlier install left `mcpServers.bigmem` and `directTools` in `settings.json`
+- WHEN reinstall reconciles
+- THEN both adapter-era keys MUST be pruned and `packages` MUST remain
 
 #### Scenario: Global vs project precedence
 - GIVEN global and project `mcp.json` exist
-- WHEN adapter resolves
+- WHEN Pi resolves servers
 - THEN project MUST overlay global but `bigmem` MUST win in both files
 
 #### Scenario: Server stays at 20
 - GIVEN `--tools=agent` server profile
 - WHEN `tools/list` runs
 - THEN `ProfileAgent` MUST still expose all 20 tools
+
+### Requirement: Adapter MCP Server Migration
+
+`ProvisionBigMemMCPReport` MUST fold, in the same atomic `mcp.json` write, every server the retired `pi-mcp-adapter` used to reach: the Pi `settings.json` `mcpServers` map (skipping the biggz-owned `bigmem`) plus the OpenCode config `mcp`/`mcpServers`. The conversion MUST follow the documented OpenCode-to-Pi shape: a `command` array splits into `command`+`args`, `environment` becomes `env`, `{env:NAME}` becomes `${NAME}`, a remote entry becomes `url`, and adapter-only keys are dropped and reported. A name `mcp.json` already defines MUST never be overwritten, the pass MUST be idempotent (a second run adds nothing and leaves the file byte-stable), and an unreadable source MUST be reported and left alone rather than failing the pass. Migrated, skipped and unreadable detail MUST be reported through `MCPMigrationReport`.
+
+#### Scenario: Adapter-imported servers become native entries
+
+- GIVEN `settings.json` `mcpServers.other` with a `command` array and `environment`, plus an OpenCode `mcp` entry using `{env:NAME}`
+- WHEN `ProvisionBigMemMCPReport` runs
+- THEN `mcp.json` MUST carry both in native shape (`command`+`args`, `env`, `${NAME}`) and `MCPMigrationReport.Migrated` MUST name them
+
+#### Scenario: Existing names are never overwritten
+
+- GIVEN `mcp.json` already defines `other`
+- WHEN the migration pass runs
+- THEN the existing `other` entry MUST remain byte-identical and the name MUST NOT be imported again
+
+#### Scenario: Second run is a fixed point
+
+- GIVEN a completed migration
+- WHEN `ProvisionBigMemMCPReport` runs again
+- THEN it MUST report no migration and leave `mcp.json` byte-stable
+
+#### Scenario: Adapter-only keys dropped and unreadable source reported
+
+- GIVEN an imported entry carrying `type` and a source file that is not valid JSON
+- WHEN the pass runs
+- THEN `type` MUST be dropped and reported in `Dropped`, and the file MUST appear in `Unreadable` without failing the pass
 
 ### Requirement: Slim APPEND_SYSTEM Generation
 
@@ -212,12 +245,12 @@ The system MUST generate `APPEND_SYSTEM.md` with a single REMINDER block, all `<
 
 ### Requirement: Reinstall Convergence and Rollback
 
-The system MUST converge fresh and existing installs to the 11-tool `directTools` plus slim prompt on every `biggz install --agent pi`; revert of sources plus reinstall MUST restore 20-tool promotion and full prompt with no migration.
+The system MUST converge fresh and existing installs to the 11-name `toolExposure` allowlist plus slim prompt on every `biggz install --agent pi`; revert of sources plus reinstall MUST restore 20-tool promotion and full prompt with no migration.
 
 #### Scenario: Existing install converges
-- GIVEN deployed fat 20-tool `mcp.json`
+- GIVEN deployed fat 20-name `mcp.json`
 - WHEN `biggz install --agent pi` re-runs
-- THEN `directTools` MUST equal the 11 allowlist
+- THEN `toolExposure` MUST equal the 11 allowlist
 
 #### Scenario: Rollback restores fat state
 - GIVEN slim sources reverted
@@ -226,23 +259,23 @@ The system MUST converge fresh and existing installs to the 11-tool `directTools
 
 ### Requirement: Native-Only Pi Memory Path
 
-The system MUST serve `biggz_mem_*` via native `/mcp` (`pi-mcp-adapter@^2`) with no wrapper fallback. Provisioning and annotations requirements stay unchanged.
+The system MUST serve `biggz_mem_*` through Pi's own native MCP client reading `mcp.json`, with no wrapper fallback and with no `pi-mcp-adapter`: while that retired extension is installed Pi ignores `mcp.json` and its own servers, so it MUST stay absent. Provisioning and annotations requirements stay unchanged.
 
 #### Scenario: Fresh install serves tools without wrappers
 
 - GIVEN fresh install with both wrappers excluded
-- WHEN operator runs `pi list` or `/mcp`
+- WHEN operator runs `pi mcp list` or `/mcp`
 - THEN native `biggz_mem_*` (at least `biggz_mem_save`) MUST appear
 
 #### Scenario: Doctor gate passes natively
 
-- GIVEN provisioned `settings.json` + `mcp.json`
-- WHEN `biggz doctor` runs `pi-mcp-adapter` check
-- THEN result MUST be PASS (dir present, version `2.x`, `bigmem` valid, `biggz-mcp --help` exit 0)
+- GIVEN provisioned native `mcp.json`
+- WHEN `biggz doctor` runs the `pi-native-mcp` check
+- THEN result MUST be PASS (no `pi-mcp-adapter`, native `bigmem` entry, `settings.json` carries no MCP state, `pi mcp list` reports `bigmem`)
 
 #### Scenario: Native tool handle truthy in harness
 
-- GIVEN Pi harness with native adapter loaded
+- GIVEN Pi harness with its native MCP client loaded
 - WHEN extension calls `pi.getTool("biggz_mem_save")`
 - THEN result MUST be truthy and wrappers MUST stay no-op/absent
 
@@ -258,9 +291,9 @@ The system MUST delete wrapper sources only when ALL criteria pass after one-rel
 
 | # | Criterion |
 |---|-----------|
-| 1 | `doctor pi-mcp-adapter` PASS |
-| 2 | `pi.getTool("biggz_mem_save")` truthy, `pi list` shows `biggz_mem_*` |
-| 3 | `settings.json`+`mcp.json` carry command/args/type/imports/directTools |
+| 1 | `doctor pi-native-mcp` PASS |
+| 2 | `pi.getTool("biggz_mem_save")` truthy, `pi mcp list` shows `bigmem` |
+| 3 | `mcp.json` `bigmem` carries native `command`/`args`/`exposure`/`toolExposure` with no `type`; `settings.json` carries no MCP state |
 | 4 | `go vet` + `go test` + `node --check` green |
 | 5 | One-release soak, zero fallback reports |
 
@@ -288,13 +321,13 @@ The system MUST support single-commit revert restoring wrappers, plus reinstall 
 
 #### Scenario: Remedy re-provisions native path
 
-- GIVEN native adapter missing or stale
-- WHEN operator runs remedy `pi install npm:pi-mcp-adapter@^2`
-- THEN `doctor pi-mcp-adapter` MUST return to PASS
+- GIVEN native MCP config missing or stale
+- WHEN operator runs the remedy `pi remove npm:pi-mcp-adapter` then `biggz install --agent pi`
+- THEN `doctor pi-native-mcp` MUST return to PASS
 
 ### Requirement: BigMem MCP Tool Annotations
 
-`cmd/biggz-mcp:buildToolList` MUST set `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` per BigMem semantics for adapter filtering.
+`cmd/biggz-mcp:buildToolList` MUST set `readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint` per BigMem semantics for Pi's tool-exposure filtering.
 
 #### Scenario: Read-only marked
 - GIVEN `tools/list` after build

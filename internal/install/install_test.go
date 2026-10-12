@@ -3,12 +3,15 @@ package install_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/biggs-100/biggz-ai/internal/agents"
 	"github.com/biggs-100/biggz-ai/internal/assets"
 	"github.com/biggs-100/biggz-ai/internal/install"
 	"github.com/biggs-100/biggz-ai/internal/review"
@@ -512,4 +515,220 @@ func TestInstall_VerifyCheckpointSynthesisHook(t *testing.T) {
 	if err := install.VerifyAskUserQuestionPrecededBySynthesis("no checkpoint"); err == nil {
 		t.Error("hook should fail for missing synthesis")
 	}
+}
+
+// writePiSettings seeds an agent root with a settings.json packages list.
+func writePiSettings(t *testing.T, root string, packages ...string) {
+	t.Helper()
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", root, err)
+	}
+	raw, err := json.Marshal(map[string]any{"packages": packages})
+	if err != nil {
+		t.Fatalf("marshal settings: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "settings.json"), raw, 0o644); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+}
+
+// seedPiMCPAdapterDir leaves the retired extension's npm directory behind, the
+// other presence signal the reconcile must react to.
+func seedPiMCPAdapterDir(t *testing.T, root string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "npm", "node_modules", "pi-mcp-adapter"), 0o755); err != nil {
+		t.Fatalf("mkdir adapter dir: %v", err)
+	}
+}
+
+// writeCommandShim writes a fake executable named name into dir that appends
+// its argv to logPath and exits 0. It lets tests exercise the legacy-adapter
+// reconcile without ever invoking the real pi CLI, which would rewrite the
+// developer's live agent home.
+func writeCommandShim(t *testing.T, dir, name, logPath string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		body := "@echo off\r\necho %*>>\"" + logPath + "\"\r\nexit /b 0\r\n"
+		if err := os.WriteFile(filepath.Join(dir, name+".cmd"), []byte(body), 0o755); err != nil {
+			t.Fatalf("write %s shim: %v", name, err)
+		}
+		return
+	}
+	body := "#!/bin/sh\necho \"$@\" >> \"" + logPath + "\"\nexit 0\n"
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
+		t.Fatalf("write %s shim: %v", name, err)
+	}
+}
+
+// TestPiMCPAdapterPresent covers both presence signals — the package's npm
+// directory and a leftover `npm:pi-mcp-adapter*` settings.json packages entry —
+// under the primary agent home and under the PI_CODING_AGENT_DIR override.
+// PI_CODING_AGENT_DIR is cleared or redirected to a temp dir on every case so
+// the live agent home is never read as evidence.
+func TestPiMCPAdapterPresent(t *testing.T) {
+	tests := []struct {
+		name         string
+		withOverride bool
+		setup        func(t *testing.T, home, overrideRoot string)
+		want         bool
+	}{
+		{
+			name:  "nothing installed",
+			setup: func(*testing.T, string, string) {},
+		},
+		{
+			name: "npm dir under agent home",
+			setup: func(t *testing.T, home, _ string) {
+				seedPiMCPAdapterDir(t, filepath.Join(home, ".pi", "agent"))
+			},
+			want: true,
+		},
+		{
+			name: "leftover packages entry under agent home",
+			setup: func(t *testing.T, home, _ string) {
+				writePiSettings(t, filepath.Join(home, ".pi", "agent"), "npm:@heyhuynhgiabuu/pi-pretty", "npm:pi-mcp-adapter@^2")
+			},
+			want: true,
+		},
+		{
+			name: "unrelated packages are not evidence",
+			setup: func(t *testing.T, home, _ string) {
+				writePiSettings(t, filepath.Join(home, ".pi", "agent"), "npm:pi-subagents-j0k3r@1.6.1", "npm:pi-web-access")
+			},
+		},
+		{
+			name:         "npm dir under PI_CODING_AGENT_DIR override",
+			withOverride: true,
+			setup:        func(t *testing.T, _, overrideRoot string) { seedPiMCPAdapterDir(t, overrideRoot) },
+			want:         true,
+		},
+		{
+			name:         "leftover packages entry under override",
+			withOverride: true,
+			setup:        func(t *testing.T, _, overrideRoot string) { writePiSettings(t, overrideRoot, "npm:pi-mcp-adapter") },
+			want:         true,
+		},
+		{
+			name: "malformed settings is not evidence",
+			setup: func(t *testing.T, home, _ string) {
+				root := filepath.Join(home, ".pi", "agent")
+				if err := os.MkdirAll(root, 0o755); err != nil {
+					t.Fatalf("mkdir: %v", err)
+				}
+				if err := os.WriteFile(filepath.Join(root, "settings.json"), []byte("{not json"), 0o644); err != nil {
+					t.Fatalf("write malformed settings: %v", err)
+				}
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			overrideRoot := t.TempDir()
+			t.Setenv("PI_CODING_AGENT_DIR", "")
+			if tt.withOverride {
+				t.Setenv("PI_CODING_AGENT_DIR", overrideRoot)
+			}
+			tt.setup(t, home, overrideRoot)
+			if got := install.PiMCPAdapterPresent(home); got != tt.want {
+				t.Errorf("PiMCPAdapterPresent() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPiMCPAdapterReconcileIsBestEffort proves the legacy-adapter reconcile
+// never fails a pi install: it uninstalls the retired extension only when it is
+// present and pi resolves, stays silent when pi is missing, and is a no-op when
+// nothing is installed. A fake `pi` on PATH records the invocation so the
+// developer's live agent home is never touched.
+//
+// The test name deliberately avoids "TestInstall": sanitizePath strips PATH
+// entries under Temp\TestInstall*, which would delete the shim's own temp dir.
+func TestPiMCPAdapterReconcileIsBestEffort(t *testing.T) {
+	ctx := context.Background()
+	sep := string(os.PathListSeparator)
+
+	t.Run("uninstalls the adapter when present", func(t *testing.T) {
+		t.Setenv("PI_CODING_AGENT_DIR", "")
+		home := t.TempDir()
+		seedPiMCPAdapterDir(t, filepath.Join(home, ".pi", "agent"))
+		bin := t.TempDir()
+		logPath := filepath.Join(t.TempDir(), "pi.log")
+		writeCommandShim(t, bin, "pi", logPath)
+		t.Setenv("PATH", bin+sep+os.Getenv("PATH"))
+
+		if _, err := install.Run(ctx, newPiTestAgent(home), install.Config{HomeDir: home}); err != nil {
+			t.Fatalf("install Run: %v", err)
+		}
+		logged, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("pi was not invoked for a present adapter: %v", err)
+		}
+		if !strings.Contains(string(logged), "uninstall npm:pi-mcp-adapter") {
+			t.Errorf("pi invoked without the adapter uninstall, log=%q", logged)
+		}
+	})
+
+	t.Run("absent adapter is a silent no-op", func(t *testing.T) {
+		t.Setenv("PI_CODING_AGENT_DIR", "")
+		home := t.TempDir()
+		bin := t.TempDir()
+		logPath := filepath.Join(t.TempDir(), "pi.log")
+		writeCommandShim(t, bin, "pi", logPath)
+		t.Setenv("PATH", bin+sep+os.Getenv("PATH"))
+
+		if _, err := install.Run(ctx, newPiTestAgent(home), install.Config{HomeDir: home}); err != nil {
+			t.Fatalf("install Run: %v", err)
+		}
+		if _, err := os.Stat(logPath); err == nil {
+			t.Error("pi must not be invoked when the adapter is absent")
+		}
+	})
+
+	t.Run("missing pi never fails the install", func(t *testing.T) {
+		t.Setenv("PI_CODING_AGENT_DIR", "")
+		home := t.TempDir()
+		seedPiMCPAdapterDir(t, filepath.Join(home, ".pi", "agent"))
+		// `pi` cannot resolve here, so install must skip the reconcile
+		// silently while system tools like cmd stay available.
+		t.Setenv("PATH", pathWithoutPi())
+
+		if _, err := install.Run(ctx, newPiTestAgent(home), install.Config{HomeDir: home}); err != nil {
+			t.Fatalf("install Run with missing pi: %v", err)
+		}
+	})
+}
+
+// pathWithoutPi returns the inherited PATH minus every directory that holds a
+// `pi` executable, so LookPath("pi") fails while cmd/powershell stay resolvable.
+func pathWithoutPi() string {
+	kept := make([]string, 0)
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" || dirHasPi(dir) {
+			continue
+		}
+		kept = append(kept, dir)
+	}
+	return strings.Join(kept, string(os.PathListSeparator))
+}
+
+// dirHasPi reports whether dir contains a `pi` executable under any spelling
+// exec.LookPath would accept.
+func dirHasPi(dir string) bool {
+	for _, name := range []string{"pi", "pi.exe", "pi.cmd", "pi.bat"} {
+		if st, err := os.Stat(filepath.Join(dir, name)); err == nil && !st.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+// newPiTestAgent returns a FakeAgent that drives Run's pi-specific branch in a
+// temp home (the fake InstallCommand is `echo install pi`, so nothing real is
+// installed).
+func newPiTestAgent(home string) *plugintest.FakeAgent {
+	agent := &plugintest.FakeAgent{Installed: true, AgentID: agents.AgentPi, BinaryPath: "pi"}
+	agent.SetTempDir(home)
+	return agent
 }

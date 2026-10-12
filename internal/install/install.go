@@ -188,7 +188,7 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 	result.PromptsDeployed = overlayStep.PromptsDeployed
 	result.PiAgentsDeployed = piStep.Deployed
 	// MCP binary + config (post-pipeline, not yet in steps).
-	// PR2 ordering: DeployMCPBinaryToHomeDir → ProvisionBigMemMCP (settings.json+mcp.json atomically via WriteFileAtomic, args --prefix=biggz, imports opencode) → pi install (pi-mcp-adapter@^2).
+	// PR2 ordering: DeployMCPBinaryToHomeDir → ProvisionBigMemMCP (settings.json+mcp.json atomically via WriteFileAtomic; the native bigmem entry uses args --tools=agent --prefix=biggz and the adapter-era top-level imports key is pruned) → pi install (native package sources; the retired pi-mcp-adapter is removed, never installed, so pi keeps its own MCP client).
 	// Wrappers retained one release gated on !pi.getTool("biggz_mem_save"); --dry-run zero writes outside TempDir.
 	if !cfg.DryRun {
 		mcpBinPath, err := DeployMCPBinaryToHomeDir(homeDir, cfg.DryRun)
@@ -235,6 +235,10 @@ func Run(ctx context.Context, adapter plugin.AgentAdapter, cfg Config) (*Result,
 		// npm:pi-subagents and npm:pi-subagents-j0k3r installed registers
 		// duplicate subagent_* tools. Never fails the install.
 		removeLegacyPiSubagents(ctx, homeDir)
+		// Best-effort removal of the retired pi-mcp-adapter extension: while it
+		// is installed pi ignores mcp.json and its own MCP servers, so the
+		// native BigMem path would never load. Never fails the install.
+		removeLegacyPiMCPAdapter(ctx, homeDir)
 		if cmds, err := adapter.InstallCommand(nil); err == nil && len(cmds) > 0 {
 			for _, cmd := range cmds {
 				if len(cmd) == 0 {
@@ -1996,6 +2000,83 @@ func removeLegacyPiSubagents(ctx context.Context, homeDir string) {
 		c = exec.CommandContext(ctx, "cmd", append([]string{"/c", piPath}, args...)...)
 	} else {
 		c = exec.CommandContext(ctx, "pi", args...)
+	}
+	platform.EnsureCommandDir(c)
+	_ = c.Run()
+}
+
+// piAgentRoots returns the agent config roots that can hold pi package state:
+// the caller's home under .pi/agent plus, when set, the PI_CODING_AGENT_DIR
+// override. Presence detection and legacy cleanup consider both because an
+// install may run with the override pointing somewhere other than homeDir.
+func piAgentRoots(homeDir string) []string {
+	roots := []string{filepath.Join(homeDir, ".pi", "agent")}
+	if v := strings.TrimSpace(os.Getenv("PI_CODING_AGENT_DIR")); v != "" {
+		roots = append(roots, v)
+	}
+	return roots
+}
+
+// piSettingsHasPackage reports whether root's settings.json packages list still
+// names a package spec starting with prefix. Missing or malformed settings are
+// not evidence — callers only need a best-effort presence signal.
+func piSettingsHasPackage(root, prefix string) bool {
+	raw, err := os.ReadFile(filepath.Join(root, "settings.json"))
+	if err != nil || len(raw) == 0 {
+		return false
+	}
+	var data struct {
+		Packages []any `json:"packages"`
+	}
+	if err := json.Unmarshal(raw, &data); err != nil {
+		return false
+	}
+	for _, pkg := range data.Packages {
+		if s, ok := pkg.(string); ok && strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// PiMCPAdapterPresent reports whether the retired pi-mcp-adapter extension is
+// still installed. Two signals count, checked under every pi agent root: the
+// package's npm directory, and a leftover `npm:pi-mcp-adapter*` entry in that
+// root's settings.json packages list. While the extension is installed pi
+// ignores mcp.json and its own MCP servers, so `biggz install` removes it when
+// either signal is present.
+func PiMCPAdapterPresent(homeDir string) bool {
+	for _, root := range piAgentRoots(homeDir) {
+		if st, err := os.Stat(filepath.Join(root, "npm", "node_modules", "pi-mcp-adapter")); err == nil && st.IsDir() {
+			return true
+		}
+		if piSettingsHasPackage(root, "npm:pi-mcp-adapter") {
+			return true
+		}
+	}
+	return false
+}
+
+// removeLegacyPiMCPAdapter uninstalls the retired pi-mcp-adapter extension when
+// it is still present, so pi keeps its own MCP client and reads mcp.json.
+// Best-effort: pi exits 0 with "No matching package found" when the package is
+// already gone, so the reconcile is safe to run unconditionally. It never
+// fails, blocks, or panics the install, and returns silently when pi is not on
+// PATH.
+func removeLegacyPiMCPAdapter(ctx context.Context, homeDir string) {
+	if !PiMCPAdapterPresent(homeDir) {
+		return
+	}
+	piPath, err := exec.LookPath("pi")
+	if err != nil || piPath == "" {
+		return
+	}
+	args := []string{"uninstall", "npm:pi-mcp-adapter"}
+	var c *exec.Cmd
+	if runtime.GOOS == "windows" {
+		c = exec.CommandContext(ctx, "cmd", append([]string{"/c", piPath}, args...)...)
+	} else {
+		c = exec.CommandContext(ctx, piPath, args...)
 	}
 	platform.EnsureCommandDir(c)
 	_ = c.Run()
