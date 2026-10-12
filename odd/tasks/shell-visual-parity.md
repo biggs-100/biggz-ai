@@ -33,6 +33,7 @@ unit are marked as such, and all are listed here so they are visible for review.
 | D14 | The todo port's naming and placement defaults | **`aboveEditor` (upstream's own default, by the human), `TODO_DETAILS_KEY` renamed to `biggzTodo` with the brand allowlist entry deleted, `BIGGZ_TODO` / `BIGGZ_TODO_KEY`, the child guard renamed to the established `PI_SUBAGENT_CHILD`, and the `"agents"` rail section left empty** (2.7). The placement is upstream's, so the todo card never competes with `"biggz-subagents"`; the key rename deletes an allowlist entry whose stated reason was exactly this unit, rather than keeping a brand literal with a resolved reason — the hazard class 2.10 and 2.12 exist for. Porting `GENTLE_PI_AGENTS_CHILD` literally would have been a functional bug, not a brand leak, because biggz's children set `PI_SUBAGENT_CHILD` |
 | D15 | Whether `setDisabled` must gate interactive children too | **No: the child-first boundary IS the port's contract** (2.7c, by the human, on a recommendation). `NativePointerScope.setDisabled(true)` gates the region's own callbacks; a child that consumes natively is dispatched first by pi-tui's `MouseRegion` and never gated, because the check lives in `NativePointerRegion.handlePointer` and that callback never runs — upstream's own order, which the class comment already stated. Widening it would end the byte-fidelity that 2.7a's acceptance verifies (the diff against upstream must stay the two provenance lines) and that the port's whole evidence rests on. Nothing reachable calls the combination: the only consumer is `biggz-todo.ts`, which wraps a passive card with no `handleMouse` and never calls `setDisabled`, and the shell rail implements its own `handleMouse` path rather than using this helper. The 2.7c cases now hold the real contract, so the boundary fails loudly if it ever changes |
 | D16 | Whether the theme preview may diverge from upstream for the empty colour role | **Yes, by the task's own acceptance** (2.9). Upstream's preview can only render an indexed colour or `#rrggbb` and throws otherwise, but `""` is how pi encodes the terminal's own default and three of the seven themes this repository ships use it for `text`, so the port was unreachable with biggz's own theme set. The empty value now renders the reset-to-default escape (`39` foreground, `49` background) and the deviation is declared in the module header rather than left implicit. The port's fidelity claim is therefore "verbatim apart from that one declared deviation" from here on, and an audit of it has to read the header |
+| D17 | Which review vocabulary the sidebar shows, and whether it supersedes D10 | **The provider's lifecycle protocol, mirroring gentle-shell; D10's deferral ends here** (2.11, by the owner: "así como gentle-shell"). The measurement behind it: `biggz-ai.review-integration/v1` is `{schema, lineage, next_transition}` with no `authority.state`, `action`, `outcome`, `closure` or `projection.paths`, so the display states cannot be derived from biggz's own contract, while the envelopes the review tools return carry exactly those fields. What D10 protected still holds and is still asserted: no `lineage`, `lens` or `budget` reaches the rail, because those are authority facts and the rail paints display state only. D10's remaining sentence - "giving the shell access is a producer problem: risk 12's successor is task 2.11" - is precisely what this unit delivered |
 
 ## Tasks
 
@@ -372,7 +373,9 @@ unit are marked as such, and all are listed here so they are visible for review.
   because it reads as coverage.
   Evidence: `go test ./internal/install/steps/ -run TestPiAssets -v`.
 
-- [ ] 2.11 Wire the review sidebar to biggz's own review protocol.
+- [x] 2.11 Wire the review sidebar to the review protocol it speaks. *(verified: PASS; `c5ad5731`)*
+  Note on the title and the acceptance below: both named the wrong protocol. The unit's evidence records
+  what was measured instead, and D17 records the decision.
   Acceptance: the parser in `review-sidebar-state.ts` matches the schema ids and event name
   biggz actually emits — `biggz-ai.review-integration/v1` and `/v2`, per `internal/review` and
   `contracts/review-integration/` — proven by a test built from a real envelope in
@@ -384,6 +387,33 @@ unit are marked as such, and all are listed here so they are visible for review.
   purpose; this is where it lands, and it is the reason those literals sit in the 2.10
   allowlist instead of being renamed away.
   Evidence: `node --test internal/assets/pi/biggz-shell/review-sidebar-state.test.mjs`.
+  Evidence observed: **PASS, and the premise above was wrong.** Measured, not assumed (D17): biggz's own
+  `biggz-ai.review-integration/v1` is `{schema, lineage, next_transition}` and carries none of
+  `authority.state`, `action`, `outcome`, `closure` or `projection.paths`, so the twelve display states
+  cannot be derived from it, while the envelopes the review tools actually return do carry them
+  (`gentle-ai.review-integration.status/v9`, `gentle-ai.review-last-event-closure/v1`) - two of them are
+  pinned verbatim in the suite from this session's own 2.9 review. What was really missing was the other
+  half of the module: upstream pairs `reviewSidebarSnapshot` with `createReviewSidebarPublisher`, which the
+  port never brought over, so the parser had no caller and `buildShellBarModel` never set `review`. The
+  rail's review group could not render at all, whatever the strings said.
+  Delivered: the publisher ported with upstream's resolution logic unchanged, adapted to observation
+  (`tool_call` carries the input, `tool_result` the input and the details, because this port does not own
+  the review tool definitions and cannot wrap them), wired into `biggz-shell.ts` at factory scope and
+  threaded into the bar model. The adaptation and its one fidelity limit are declared in the module
+  header: without the thrown error a cancellation cannot be told from a failure, so both report
+  `unavailable` where upstream reports `unknown`, and that is the single upstream case this suite does not
+  port.
+  Two findings worth keeping. The real v1 closure nests its target identity under
+  `acknowledgement.binding.target_identity` while upstream's own fixture puts it at the top, so a capture
+  that closes loses the file scope (the state still resolves correctly); the suite pins the observed
+  behaviour and says why. And the D10 guard had to be updated rather than deleted: it still fails if
+  `lineage`, `lens` or `budget` reaches the rail, and it now asserts the display state arrives through the
+  publisher's event; its allowlist gained the two review tool names, and the three review-protocol entries
+  lost the reason they carried for this unit, which was that same wrong premise.
+  Numbers: 528 asset tests with 0 failures (290 in the shell, timing and test-directory suites), `go test
+  ./internal/install/...` green, `go build ./...` and `go vet` clean.
+  **Native review: NOT run.** The session closed at the owner's request, so `c5ad5731` stands un-reviewed
+  and the next session decides whether to review it or fold it into the next candidate.
 
 - [ ] 2.12 Harden the two asset guards that are narrower than their invariants.
   Acceptance: a deploy-manifest parity check fails when the canonical
@@ -535,6 +565,7 @@ unit are marked as such, and all are listed here so they are visible for review.
 | 2.7c | `node --test internal/assets/pi/biggz-shell/native-pointer-region.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; plus six mutations of the module, each restored byte-identically | PASS. 9/9 in the pointer-region suite (6 upstream + 3 new), 270 shell assertions, 9 in the test directory, 18 factory; both `internal/install` packages green. Every new case is discriminating: six mutations (no sibling clear; sibling clear handed a copy; `disabled` gate dropped; module gating the interactive child; observer requesting a render unconditionally; observer never requesting one) each fail exactly the case that covers them, and `git hash-object` of the module returned to the HEAD blob every time. The coverage exposed a real boundary rather than a defect: `disabled` gates the region's callbacks but not an interactive child, which pi-tui's `MouseRegion` dispatches first. Independent verification returned PASS for all three items, judged the boundary a fidelity requirement of the port, and found no defect (five advisories, all wording or environment). | `901dc435` |
 | 2.7e | `node --test internal/assets/pi/biggz-todo.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; `go build ./...`; `go vet ./internal/install/...`; plus four mutations of the two modules, each restored byte-identically | PASS, with R3-001 closed as a non-goal. 13/13 in the todo suite (10 upstream + 3 new), 270 shell assertions, 9 in `test/`, 18 factory; both `internal/install` packages green; build and vet clean. The coexistence case drives the subagents runtime's own publisher into the same host and asserts one widget map holding both keys with distinct placements plus the registered `"todo"` rail part; R3-002 failed before its fix and passes after (`session_shutdown` now clears the card, matching the shell extension); R3-003 pins exactly one render on a hover clear. R3-001 is fixed without a test by deliberate decision: the pre-load ordering needs an injected loader and the module's cache is private, so the test would pin scheduling rather than the contract. Four mutations (the todo taking the runtime's key, the runtime losing its placement, the rail part under another key, `onLeave` without its render request) each fail exactly the case that covers them. | `c5b521c7` |
 | 2.9 | `node --test internal/assets/pi/biggz-shell/theme-customization.test.mjs`; `node --test internal/assets/pi/*.test.mjs internal/assets/pi/biggz-shell/*.test.mjs internal/assets/pi/test/*.test.mjs`; `go test ./internal/install/... -count=1`; `go build ./...`; `go vet ./internal/install/...`; plus a mutation of the module | PASS. Reproduced the throw before the fix and observed the RED case fail with the same error. 4/4 in the theme-customization suite, 518 tests in the full asset run with 0 failures, both `internal/install` packages green, build and vet clean. The new case previews the seven shipped themes exactly as they ship and asserts which ones exercise the empty `text` role, and a mutation rendering `0m` instead of `39m` fails exactly it. First unit in this feature to declare a deviation from upstream in the ported module's own header (D16). Native review of the same tree: lineage `review-8c94163dee5a14e0`, 2 paths, 48 changed lines, risk `medium`, budget 24, one consolidated lens `review-reliability`, `approved`, no findings. | `7dabf94d` |
+| 2.11 | `node --test internal/assets/pi/biggz-shell/review-sidebar-state.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs internal/assets/pi/test/*.test.mjs`; the full asset run (`node --test internal/assets/pi/*.test.mjs internal/assets/pi/biggz-shell/*.test.mjs internal/assets/pi/test/*.test.mjs`); `go test ./internal/install/... -count=1`; `go build ./...`; `go vet ./internal/install/...` | PASS, with the unit's premise corrected in-unit. 528 asset tests, 0 failures (17 in the review-sidebar suite: the 7 that existed plus 10 publisher cases adapted from upstream and pinned with two verbatim envelopes from this session's own review); both `internal/install` packages green; build and vet clean. The brand guard caught the two review tool names as new literals - the allowlist gained them, and correcting their reasons exposed that the three review-protocol entries repeated 2.11's wrong premise. Native review NOT run: the session closed at the owner's request, so this candidate is un-reviewed. | `c5ad5731` |
 
 ## Known risks
 
@@ -732,16 +763,13 @@ stashing): `internal/agents/pi` 4, `internal/git` 1, `internal/project` 6, `cmd/
 `internal/review` 2. `internal/agents/pi`'s four are the same `PI_CODING_AGENT_DIR`
 hermeticity class of bug and are not yet fixed.
 
-Next step: none of the todo slices. 2.7b (the producer), 2.7c (the coverage the review of 2.7a left)
-and 2.7e (the coexistence case plus the three advisories of 2.7b's review) are done.
-Queued behind them are the two defect fixes 2.9 (theme preview on
-terminal-default colours) and 2.11 (review sidebar protocol, now also the owner of the
-lineage/lens/budget facts risk 12 describes), then 2.8 (prompt ownership), 2.12 (the two guards
-2.4's verification found narrower than their invariants), 2.13 (the two reliability findings the
-native review of 2.5 admitted), 2.14 (the banner, deferred by D9) and 2.15c (the one advisory
-finding the review of 2.15b left: a diagnostic that can itself throw inside the release loop's
-catch). 2.16 is for the owner rather than a slice: the asset suites everything above rests on are
-not CI-gated at all.
+Next step: 2.9 and 2.11 are done, and 2.11's candidate `c5ad5731` is committed WITHOUT its native review
+because the owner closed the session, so the first decision of the next session is to review it or fold it
+into the next candidate. Queued behind that: 2.8 (prompt ownership), 2.12 (the two guards 2.4's
+verification found narrower than their invariants), 2.13 (the two reliability findings the native review of
+2.5 admitted), 2.14 (the banner, deferred by D9) and 2.15c (the one advisory finding the review of 2.15b
+left). 2.16 is closed: the asset suites run in CI, so the counts in the table above are a merge gate rather
+than a local claim.
 
 Decided, no longer open: the sixteen biggz SDD agent files the suite rendered into the live
 `~/.gentle-shell/agent/agents/` directory stay in place; task 2.1 revisits the agent deploy
@@ -853,3 +881,15 @@ before editing, because the binding carries the frozen target identity.
   should have been all along - the suites existed and passed for fifteen units while nothing ran
   them. Two details only running it could establish: the job must install a real `pi-tui` (the
   oracle cannot link two of the suites) and it needs Node 24 (the suites import `.ts` directly).
+- 2026-10-11 — Unit 2.11 closed as `c5ad5731`. The unit's own premise was the thing to correct: it said
+  the parser must move to biggz's contract because "biggz speaks a different contract", and measuring showed
+  the opposite - biggz's contract has no lifecycle vocabulary to display, and the ported strings already
+  matched the envelopes the review tools return. The real gap was the module's missing half: upstream pairs
+  the parser with a publisher, the port brought only the parser, so nothing called it and the bar never
+  received a review. Porting that half plus the wiring made the group render for the first time. Three
+  by-products were worth more than the feature: the D10 guard had to be reasoned about rather than deleted
+  (it still bans the authority vocabulary and now asserts the display arrives through the event), the brand
+  guard caught two new literals whose allowlist reasons turned out to repeat the wrong premise, and the real
+  closure envelope turned out to differ from upstream's own fixture in a way that costs the file scope when
+  a capture closes. The native review did not run: the owner closed the session, so the candidate is
+  committed un-reviewed and that is recorded here rather than implied.
