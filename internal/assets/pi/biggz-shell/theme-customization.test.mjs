@@ -13,9 +13,10 @@
 //     realpath indirection is skipped on a platform that cannot make a symlink.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { sourcePalettePreview } from "./theme-customization.ts";
 
 test("installed source palette resolves vars without activating a theme", (t) => {
@@ -60,4 +61,37 @@ test("source palette supports indexed colors and rejects unresolved references",
 	assert.match(sourcePalettePreview("dark", path).sample, /48;5;42m.*38;5;255m/);
 	writeFileSync(path, JSON.stringify({ name: "dark", vars: { a: "b", b: "a" }, colors: { accent: "a", text: "#ffffff" } }));
 	assert.throws(() => sourcePalettePreview("dark", path));
+});
+
+// biggz coverage, task 2.9. Not upstream: the ported suite above overwrites the
+// empty `text` role (see the header) because pi encodes the terminal's default
+// foreground as "", and three of the themes this repository ships use exactly
+// that. A preview that throws on them is unreachable with our own theme set, so
+// this case previews every shipped theme as it ships: no doctored palette, no
+// supplied color.
+test("every shipped theme previews, terminal-default text role included", () => {
+	const themesDir = new URL("../themes/", import.meta.url);
+	const files = readdirSync(themesDir).filter((file) => file.endsWith(".json"));
+	assert.ok(files.length >= 7, `expected the shipped theme set, found ${files.length} files`);
+	const terminalDefaults = [];
+	for (const file of files) {
+		const path = fileURLToPath(new URL(file, themesDir));
+		const document = JSON.parse(readFileSync(path, "utf8"));
+		const preview = sourcePalettePreview(document.name, path);
+		assert.match(preview.title, new RegExp(`${document.name}.*source palette`), `${file} must preview`);
+		assert.match(preview.sample, /sample text/, `${file} must render the sample`);
+		if (document.colors.text === "") {
+			terminalDefaults.push(document.name);
+			assert.match(
+				preview.sample,
+				/\x1b\[39m/,
+				`${file} must render its empty text role as the terminal's default foreground, not as a palette color`,
+			);
+		}
+	}
+	assert.deepEqual(
+		terminalDefaults.sort(),
+		["dark", "light", "titanium"],
+		"the empty text role must be exercised by the shipped themes, not avoided by a fixture",
+	);
 });

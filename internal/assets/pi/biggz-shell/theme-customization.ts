@@ -1,6 +1,11 @@
 // Ported from gentle-pi 3.7.0 lib/theme-customization.ts
-// (MIT, Copyright (c) 2025 Mario Zechner). Behaviour unchanged; no brand token
-// to rename, so this is a verbatim port.
+// (MIT, Copyright (c) 2025 Mario Zechner). No brand token to rename, so this is a
+// verbatim port apart from one deliberate deviation, made by task 2.9:
+//   the empty string is how pi encodes the terminal's own default color, and
+//   three of the themes this repository ships use it for the `text` role. A
+//   preview that can only render an indexed color or #rrggbb throws on them, so
+//   the customize view is unreachable with biggz's own theme set. "" therefore
+//   renders the escape code that resets to that default instead of throwing.
 import { closeSync, constants, fstatSync, openSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 
@@ -39,6 +44,9 @@ export function sourcePalettePreview(name: string, sourcePath: string | undefine
 			value = variables[value];
 		}
 		const prefix = background ? 48 : 38;
+		// Task 2.9: "" is the terminal's own default color, not a palette color, so it
+		// renders as the reset-to-default escape (39 foreground, 49 background).
+		if (value === "") return `\x1b[${background ? 49 : 39}m`;
 		if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 255) return `\x1b[${prefix};5;${value}m`;
 		if (typeof value === "string" && HEX.test(value)) return `\x1b[${prefix};2;${parseInt(value.slice(1, 3), 16)};${parseInt(value.slice(3, 5), 16)};${parseInt(value.slice(5, 7), 16)}m`;
 		throw new Error("Invalid theme palette color.");
