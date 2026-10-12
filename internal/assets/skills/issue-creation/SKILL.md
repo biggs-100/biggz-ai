@@ -175,9 +175,9 @@ carries exactly what `--label` lists and nothing more.
 | Label | When to apply |
 |-------|--------------|
 | `status:approved` | Issue accepted for implementation — its PR can be opened. An issue a maintainer created is already approved without it; the label keeps the list filterable |
-| `priority:high` | Critical bug or urgent feature |
-| `priority:medium` | Important but not blocking |
-| `priority:low` | Nice to have |
+
+This repository defines no `priority:*` label: priority lives in the issue's text, not in a
+label nobody reads.
 
 ---
 
@@ -223,6 +223,6 @@ gh issue edit <number> --add-label "status:approved"
 
 # Not needed for an issue a maintainer created: authorship is the approval
 
-# Maintainer: add priority
-gh issue edit <number> --add-label "priority:high"
+# Maintainer: allow an oversized PR, with the rationale documented
+gh pr edit <number> --add-label "size:exception"
 ```
