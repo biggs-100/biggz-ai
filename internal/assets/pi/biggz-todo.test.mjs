@@ -12,7 +12,7 @@ import { stripAnsi } from "./biggz-shell/terminal-theme.ts";
 // pi-tui is supplied by the repository's test oracle; the factory is imported
 // dynamically so its static pi-tui import resolves after the oracle hook is
 // installed.
-const { default: biggzTodo, todoCollapseKey, todoEnabled } = await import("./biggz-todo.ts");
+const { default: biggzTodo, todoCollapseKey, todoEnabled, WIDGET_KEY: TODO_WIDGET_KEY } = await import("./biggz-todo.ts");
 
 const plainTheme = {
 	fg(_color, text) {
@@ -329,4 +329,117 @@ console.log("biggz-todo rail containment ok");
 	// rather than catch the containment break.
 	assert.equal(result.status, 0, `the rail's import must be contained to the rail\n${result.stdout}\n${result.stderr}`);
 	assert.match(result.stdout, /biggz-todo rail containment ok/, `the child fixture must actually have run\n${result.stdout}\n${result.stderr}`);
+});
+
+// ---------------------------------------------------------------------------
+// biggz coverage, task 2.7e. Not upstream: these close what the native review
+// of 2.7b left as advisories, plus the coexistence clause 2.7b's acceptance
+// asked for and never got.
+// ---------------------------------------------------------------------------
+
+// A host whose widget map and render requests are both observable, and whose
+// terminal is present, so `sidebarPart` registers a rail part instead of
+// degrading to the bottom component alone.
+function coexistHost() {
+	const widgets = new Map();
+	const writes = [];
+	let renders = 0;
+	const tui = {
+		terminal: {},
+		requestRender() {
+			renders++;
+		},
+	};
+	const ui = {
+		setWidget(key, content, options) {
+			writes.push({ key, options });
+			if (content === undefined) widgets.delete(key);
+			else widgets.set(key, content);
+		},
+	};
+	const ctx = {
+		hasUI: true,
+		sessionManager: { getSessionId: () => "coexist", getBranch: () => [] },
+		ui,
+	};
+	return { widgets, writes, tui, ctx, renders: () => renders };
+}
+
+async function mountCardWithTasks() {
+	const host = coexistHost();
+	const { pi, tools, fire } = fakePi();
+	biggzTodo(pi, {});
+	await fire("session_start", host.ctx);
+	await tools.get("todo").execute("c1", { action: "write", tasks: [{ title: "A" }] }, undefined, undefined, host.ctx);
+	await fire("tool_execution_end", host.ctx, { toolName: "todo" });
+	return { host, pi, tools, fire };
+}
+
+test("the todo card coexists with the subagents widget: distinct keys and placements", async () => {
+	// The other widget's identity is read from the deployed asset, never copied:
+	// a duplicated literal could drift and this test would not notice.
+	const runtime = await import("./biggz-subagent-runtime.js");
+	const { sidebarState } = await import("./biggz-shell/shell-sidebar.ts");
+	assert.equal(runtime.WIDGET_KEY, "biggz-subagents");
+	assert.equal(runtime.WIDGET_PLACEMENT, "belowEditor");
+	assert.notEqual(
+		TODO_WIDGET_KEY,
+		runtime.WIDGET_KEY,
+		"distinct keys: pi keeps one keyed map per placement and deletes only the same key",
+	);
+
+	const { host, pi, tools } = await mountCardWithTasks();
+	const write = host.writes.at(-1);
+	assert.equal(write.key, TODO_WIDGET_KEY, "the card registers under its own key");
+	assert.notEqual(
+		write.options?.placement,
+		runtime.WIDGET_PLACEMENT,
+		"and takes pi's default placement, so neither widget displaces the other",
+	);
+
+	const component = host.widgets.get(TODO_WIDGET_KEY)(host.tui, plainTheme);
+	assert.ok(component, "the card factory returns a component");
+	assert.ok(sidebarState(host.tui).parts.has("todo"), "the todo rail part is registered on the same terminal");
+
+	// One host, both factories: the runtime adds its surface without costing the todo its tool.
+	runtime.default(pi);
+	assert.equal(typeof pi._biggzSubagentRuntime, "object", "the subagent runtime mounts on the same host");
+	assert.ok(tools.has("todo"), "the todo tool survives mounting the other factory");
+
+	// The runtime's widget is conditional (it appears with live runs), so it is driven
+	// through its own publisher into the same host: both keys end up in one map.
+	const publisher = runtime.createWidgetPublisher({ env: {}, width: () => 70, terminalRows: () => 24 });
+	publisher.attach({ ui: host.ctx.ui });
+	const rows = publisher.publish([{ id: "s1", agent: "general", state: "running", elapsedMs: 1000, lastStep: "reading" }]);
+	assert.ok(rows.length > 0, "the runtime's publisher renders a row for a live run");
+	assert.ok(host.widgets.has(runtime.WIDGET_KEY), "which it writes under its own key into the same host");
+	assert.ok(host.widgets.has(TODO_WIDGET_KEY), "while the todo card keeps its own key in that same map");
+	assert.deepEqual(
+		host.writes.at(-1).options,
+		{ placement: runtime.WIDGET_PLACEMENT },
+		"and keeps its placement, so neither widget can displace the other in pi's keyed map",
+	);
+});
+
+test("session_shutdown clears the todo widget, so a finished session leaves no card behind", async () => {
+	const { host, fire } = await mountCardWithTasks();
+	assert.ok(host.widgets.has(TODO_WIDGET_KEY), "the card is up while the session lives");
+	await fire("session_shutdown", host.ctx);
+	assert.equal(host.widgets.has(TODO_WIDGET_KEY), false, "session_shutdown must clear the card from the host");
+});
+
+test("clearing the card's hover asks the host for exactly one render", async () => {
+	const { host } = await mountCardWithTasks();
+	const component = host.widgets.get(TODO_WIDGET_KEY)(host.tui, plainTheme);
+	const move = {
+		type: "move", button: "none", x: 1, y: 0, screenX: 1, screenY: 0,
+		width: 70, height: 5, shift: false, alt: false, ctrl: false,
+	};
+	assert.equal(host.renders(), 0);
+	component.handleMouse?.(move);
+	assert.equal(host.renders(), 0, "a hover asks through the region's result, not through the host");
+	component.invalidate?.();
+	assert.equal(host.renders(), 1, "clearing a live hover asks the host for exactly one render");
+	component.invalidate?.();
+	assert.equal(host.renders(), 1, "clearing again with nothing hovered asks for nothing");
 });

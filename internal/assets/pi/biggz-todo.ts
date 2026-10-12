@@ -28,7 +28,7 @@ import {
 // 2025 Mario Zechner). Behaviour unchanged apart from the brand renames, the
 // child guard and the rail-import containment below.
 
-const WIDGET_KEY = "biggz-todo";
+export const WIDGET_KEY = "biggz-todo";
 const COLLAPSE_KEY_DEFAULT = "ctrl+shift+t";
 const TOOL_PARAMETERS = {
 	type: "object",
@@ -114,7 +114,17 @@ export default function biggzTodo(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pro
 	let sidebarLayout: SidebarLayoutModule | undefined;
 	const loadSidebarLayout = (): Promise<SidebarLayoutModule | undefined> =>
 		(sidebarLayoutPromise ??= import("./biggz-shell/shell-sidebar-layout.ts").then(
-			(module) => (sidebarLayout = module),
+			(module) => {
+				sidebarLayout = module;
+				// R3-001: a show() that ran before this module loaded found no invalidator,
+				// so the rail was never asked to repaint its new part. Now that one exists,
+				// every live session with a host gets exactly one deferred invalidation.
+				// The invalidate is a cache-revision bump, so this is cheap and idempotent.
+				for (const current of sessions.values()) {
+					if (current.tui) module.invalidateSidebar(current.tui);
+				}
+				return module;
+			},
 			() => undefined,
 		));
 
@@ -261,6 +271,12 @@ export default function biggzTodo(pi: ExtensionAPI, env: NodeJS.ProcessEnv = pro
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
+		// R3-002: the card is a widget on the host, not session state, so dropping
+		// the map entry is not enough - a session that ends while its card is up
+		// would leave the card painted for the next one. The shell extension clears
+		// its widget on shutdown for the same reason; this is the matching half.
+		const current = sessions.get(sessionKey(ctx));
+		current?.ui?.setWidget(WIDGET_KEY, undefined);
 		sessions.delete(sessionKey(ctx));
 	});
 
