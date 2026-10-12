@@ -51,6 +51,32 @@ jobs:
         with: {node-version: 20}
       - run: node scripts/check-skill-lint.mjs
 
+  # The deployed Pi extensions and shell helpers ship with their own suites, and until
+  # this job existed nothing ran them: a PR could break a deployed asset and still go
+  # green. It runs every suite in one command, which is how they were verified (517
+  # tests across 36 suites on feat/shell-visual-parity, 221 on the trunk where the
+  # shell port is not merged yet).
+  asset-suites:
+    name: Pi Asset Suites
+    needs: format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        # The suites import `.ts` modules directly, which needs Node's own type
+        # stripping: the Node 20 the other node jobs use cannot import TypeScript.
+        with: {node-version: 24}
+      - name: Install the pi-tui the suites link against
+        # The resolver's oracle fallback is link-only - it exports three width helpers
+        # and no MouseRegion - so running against it fails the pointer-region and todo
+        # suites (measured: 10 failures, 4 skips). 1.1.0 is the version all 517 tests
+        # were verified against, resolved through PI_TUI_DIR below.
+        run: npm install --no-save --no-audit --no-fund --prefix "$RUNNER_TEMP/pi-tui" @earendil-works/pi-tui@1.1.0
+      - name: Run the deployed Pi asset suites
+        env:
+          PI_TUI_DIR: ${{ runner.temp }}/pi-tui/node_modules/@earendil-works/pi-tui
+        run: node --test internal/assets/pi/*.test.mjs internal/assets/pi/biggz-shell/*.test.mjs internal/assets/pi/test/*.test.mjs
+
   provider-contract:
     name: Provider Contract
     needs: format
