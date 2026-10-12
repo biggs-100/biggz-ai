@@ -16,8 +16,8 @@ Use this skill when:
 ## Critical Rules
 
 1. **Blank issues are disabled** — MUST use a template (bug report or feature request)
-2. **Every issue gets `status:needs-review` automatically** on creation
-3. **A maintainer MUST add `status:approved`** before any PR can be opened
+2. **No `status:*` label is applied automatically** — the issue templates declare only their `type:*` label, and `status:approved` is the only status label this repository defines, so a new issue simply waits until a maintainer approves it
+3. **An issue must be approved before its PR is opened** — either a maintainer added `status:approved`, or a maintainer opened the issue themselves, in which case authorship **is** the approval and the label is only a filterable marker. No CI job reads the label: what CI actually enforces on the PR is its `Closes #<N>` reference, exactly one `type:*` label, and the 400-line budget (`size:exception` to exceed)
 4. **Questions go to [Discussions](https://github.com/biggs-100/biggz-ai/discussions)**, not issues
 
 ---
@@ -29,8 +29,8 @@ Use this skill when:
 2. Choose the correct template (Bug Report or Feature Request)
 3. Fill in ALL required fields
 4. Check pre-flight checkboxes
-5. Submit → issue gets status:needs-review automatically
-6. Wait for maintainer to add status:approved
+5. Submit → the template adds its `type:*` label; there is no waiting label, so the issue sits until a maintainer approves it
+6. Get the issue approved: a maintainer adds `status:approved`, or a maintainer authored it and authorship is the approval
 7. Only then open a PR linking this issue
 ```
 
@@ -41,7 +41,7 @@ Use this skill when:
 ### Bug Report
 
 Template: `.github/ISSUE_TEMPLATE/bug_report.yml`
-Auto-labels: `bug`, `status:needs-review`
+Auto-applied label: `type:bug`
 
 #### Required Fields
 
@@ -108,7 +108,7 @@ zsh: no matches found: skills/*
 ### Feature Request
 
 Template: `.github/ISSUE_TEMPLATE/feature_request.yml`
-Auto-labels: `enhancement`, `status:needs-review`
+Auto-applied label: `type:feature`
 
 #### Required Fields
 
@@ -159,32 +159,38 @@ Manually symlinking, but that defeats the purpose of the setup script.
 
 ## Label System
 
-### Applied Automatically on Issue Creation
+### Declared by the Templates
 
-| Template | Labels added |
+| Template | Labels declared |
 |----------|-------------|
-| Bug Report | `bug`, `status:needs-review` |
-| Feature Request | `enhancement`, `status:needs-review` |
+| Bug Report | `type:bug` |
+| Feature Request | `type:feature` |
+
+Those are the only automatic labels, and only when the issue is created through the
+template. Nothing applies a `status:*` label: an issue created with `gh issue create`
+carries exactly what `--label` lists and nothing more.
 
 ### Applied by Maintainers
 
 | Label | When to apply |
 |-------|--------------|
-| `status:approved` | Issue accepted for implementation — PRs can now be opened |
-| `priority:high` | Critical bug or urgent feature |
-| `priority:medium` | Important but not blocking |
-| `priority:low` | Nice to have |
+| `status:approved` | Issue accepted for implementation — its PR can be opened. An issue a maintainer created is already approved without it; the label keeps the list filterable |
+
+This repository defines no `priority:*` label: priority lives in the issue's text, not in a
+label nobody reads.
 
 ---
 
 ## Maintainer Approval Workflow
 
 ```
-1. New issue arrives with status:needs-review
+1. Old or new issue needs a decision
 2. Review the issue — is it valid, clear, and in scope?
 3. If YES → add status:approved label
 4. If NO → comment with reason, close if needed
-5. Contributor can now open a PR linking this issue
+5. The author can now open a PR linking this issue
+6. An issue a maintainer opened themselves needs no approval step: authorship is the
+   approval, and no CI job reads the label either way
 ```
 
 ---
@@ -215,6 +221,8 @@ gh issue create --template "feature_request.yml" --title "feat(scope): descripti
 # Maintainer: approve an issue
 gh issue edit <number> --add-label "status:approved"
 
-# Maintainer: add priority
-gh issue edit <number> --add-label "priority:high"
+# Not needed for an issue a maintainer created: authorship is the approval
+
+# Maintainer: allow an oversized PR, with the rationale documented
+gh pr edit <number> --add-label "size:exception"
 ```

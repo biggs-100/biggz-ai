@@ -18,7 +18,7 @@ Load this skill whenever you need to:
 
 ## Critical Rules
 
-1. **Every PR MUST link an approved issue** — `Closes/Fixes/Resolves #<N>` in the PR body, and that issue MUST have `status:approved`. PRs without this are **automatically rejected** by CI.
+1. **Every PR MUST link an issue** — `Closes/Fixes/Resolves #<N>` in the PR body, and CI **rejects** a PR without it. The issue must be approved: either a maintainer added `status:approved`, or a maintainer opened it, in which case authorship is the approval. No CI job reads the label
 2. **Exactly one `type:*` label** — apply exactly ONE type label to the PR. CI will reject PRs with zero or multiple type labels.
 3. **400-line review budget** — keep PRs within 400 changed lines (`additions + deletions`) or request/obtain maintainer-applied `size:exception` with rationale documented.
 4. **Automated checks must pass** — see the Automated Checks table below.
@@ -28,7 +28,7 @@ Load this skill whenever you need to:
 ## Workflow
 
 ```
-1. Confirm the issue has status:approved
+1. Confirm the issue is approved (maintainer-applied `status:approved`, or an issue a maintainer opened)
    gh issue view <N> --repo biggs-100/biggz-ai
 
 2. Create a branch from main using the naming convention below
@@ -79,7 +79,7 @@ Branch names **must** match this pattern:
 
 ## PR Body Format
 
-Fill every section of `.github/PULL_REQUEST_TEMPLATE.md` (required unless marked optional): Linked Issue (`Closes #<N>`), PR Type (exactly one `type:*` checkbox), Summary, Changes table (`| File / Area | What Changed |`), Test Plan (`go test ./...`, `go run ./internal/gofmtcheck`, `cd e2e && ./docker-test.sh`, manual test), Contributor Checklist (issue link + `status:approved`, 400-line budget or `size:exception`, label, tests green, Conventional Commits, no `Co-Authored-By`).
+Fill every section of `.github/PULL_REQUEST_TEMPLATE.md` (required unless marked optional): Linked Issue (`Closes #<N>`), PR Type (exactly one `type:*` checkbox), Summary, Changes table (`| File / Area | What Changed |`), Test Plan (`go test ./...`, `go run ./internal/gofmtcheck`, `cd e2e && ./docker-test.sh`, manual test), Contributor Checklist (issue link + approval — the label or maintainer authorship — 400-line budget or `size:exception`, label, tests green, Conventional Commits, no `Co-Authored-By`).
 
 ---
 
@@ -91,11 +91,14 @@ These checks run on every PR and **all must pass** before merge:
 |-------|-----------------|------------|
 | **Check PR Cognitive Load** | PR stays within 400 changed lines (`additions + deletions`) or has `size:exception` | Split the PR, or request/obtain maintainer-applied `size:exception` and document the rationale |
 | **Check Issue Reference** | PR body contains `Closes/Fixes/Resolves #N` | Add `Closes #<N>` to the PR body |
-| **Check Issue Has `status:approved`** | Linked issue has been approved by a maintainer | Wait for maintainer to add `status:approved` to the issue |
 | **Check PR Has `type:*` Label** | Exactly one `type:*` label is applied to the PR | Ask a maintainer to add the correct label; remove extras |
 | **Unit Tests** | `go test ./...` passes | Fix failing tests before pushing |
 | **Go Format** | `go run ./internal/gofmtcheck` passes | Format malformed Go files before pushing |
 | **E2E Tests** | `cd e2e && ./docker-test.sh` passes | Fix failing E2E scenarios before pushing |
+
+The three `pr-check.yml` jobs listed above (cognitive load, issue reference, exactly one
+`type:*` label) are the mechanical gate. The `status:approved` label is a maintainer
+convention with no job behind it: nothing under `.github/workflows/` reads it.
 
 ---
 
