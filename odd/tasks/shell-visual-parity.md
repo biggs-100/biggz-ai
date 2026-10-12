@@ -224,7 +224,7 @@ unit are marked as such, and all are listed here so they are visible for review.
   `review-reliability`, `approved` — three advisory findings, all `informational`, none opening a
   correction, now tracked as 2.7e.
 
-- [ ] 2.7c Close the three coverage findings the native review of 2.7a admitted.
+- [x] 2.7c Close the three coverage findings the native review of 2.7a admitted. *(verified: PASS; `901dc435`)*
   Acceptance: the scope-level hover coordination is exercised across TWO regions (leave one,
   enter the other, assert the sibling's hover was cleared) instead of only single-region scopes;
   the disabled guard is proved against an interactive child that WOULD consume the event, not only
@@ -234,6 +234,40 @@ unit are marked as such, and all are listed here so they are visible for review.
   (`native-pointer-region.ts:145-150`, `:51-54` and `:117`). They are gaps in upstream's own
   coverage rather than defects introduced here, which is why the port stayed faithful — but 2.7b
   wires this helper to a clickable todo card, so they stop being academic the moment it lands.
+  Evidence observed: **PASS, with one boundary the coverage exposed**. Three cases were appended to
+  `native-pointer-region.test.mjs` (+152 lines) under a "biggz coverage, task 2.7c" banner: the suite
+  goes from 6 to 9 and the shell suites from 267 to 270 assertions. Each case was proved
+  discriminating by mutating the module and confirming that only its own case fails — removing the
+  sibling clear, and handing the sibling a copy of the event instead of the event itself, both fail
+  the two-region case; dropping the `disabled` gate fails the new disabled case and the pre-existing
+  one; making the observer request a render unconditionally, and never requesting it, both fail the
+  observer case. The module was restored byte-identically after every mutation
+  (`sha256:882843f2ae8e81f32879d2cc13b4f6e0521be7adb1d95aa156543ef9baa000f2`, equal to the HEAD blob),
+  so the port's fidelity claim stands.
+  What the coverage found: the `disabled` guard reaches the region's own callbacks and NOT an
+  interactive child. A passive `Text` child stays silent while the scope is disabled, but a child
+  that consumes natively (`Box` + `handleMouse`) is dispatched first by pi-tui's `MouseRegion` and is
+  never gated, because the region's `handlePointer` — where the check lives — is not reached. The
+  test now pins that real contract instead of the guarantee the word `disabled` suggests, and the
+  class comment already documented the order ("Child dispatch stays first, so an already handled
+  child result is unchanged"). Independent verification (`gentle-ai-verify`) returned PASS for all
+  three items with six mutations of its own and no defect, and judged the boundary a fidelity
+  requirement of the port rather than a defect: the behaviour lives in upstream pi-tui's dispatch and
+  the module is byte-identical to HEAD. Production exposure is nil today — the only consumer is
+  `biggz-todo.ts`, which wraps a passive card with no `handleMouse` and never calls `setDisabled`,
+  and the shell rail implements its own `handleMouse` path instead of using this helper.
+  Open question for the owner (recorded, not decided): accept that boundary as the port's contract,
+  or diverge from upstream so `setDisabled` gates interactive children too. Recommendation: accept it,
+  because nothing reachable calls that combination and a divergence would end the byte-fidelity this
+  port is verified by.
+  Advisory findings of the verification, none of them defects: the fixture-shape guard on the region
+  count can only fail if the fixture changes; the first crossing's "no leave" assertion is vacuous
+  for the second region because nothing is hovered yet; the class comment documents the child-first
+  boundary while `setDisabled` itself does not (this one cannot be closed without editing the ported
+  module, which 2.7a's acceptance forbids beyond the two provenance lines, so it stays recorded here).
+  Environment note: this suite resolves pi-tui 1.1.0, while 2.7a's evidence cites 0.85.1, and the
+  interactive expectations derive from pi-tui's `MouseRegion` dispatch — so a future bump is what
+  would move them.
 
 - [ ] 2.7d (not planned) The `"agents"` rail section stays empty on purpose.
   Recorded so nobody re-opens it as a defect: upstream 3.7.0 removed the agents rail part
@@ -434,6 +468,7 @@ unit are marked as such, and all are listed here so they are visible for review.
 | 2.15b | `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; the six timing cases and the dock re-host case individually; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiShellWidget\|TestPiFooterOwner\|TestPiExtensions\|TestPiAssets\|TestPiThemes' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. 261 rail-suite assertions, 9 in the test directory and 17 factory, all green; brand guard scans 34 deployed assets; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged. Two independent verifications: the first returned PASS WITH FINDINGS with two WARNINGs (the last-step-only dispose test, and a swallow with no diagnostic) and both were closed in-unit; the second returned PASS WITH FINDINGS with three SUGGESTIONs, two of which were closed (the unexecuted `quiet` branch now has a case, the comment now matches the four-step list). Native review of the same tree: lineage `review-e529ee8994efc911`, 4 paths, 313 changed lines, correction budget 157 — and it found a CRITICAL the coverage work could not have caught, `tui.requestRender()` sitting outside the D12 `try`/`catch` on the late install path, so a throwing render could reject the installing promise. A refuter corroborated it; one bounded correction was declared (22 diff lines) and applied; a targeted validator approved the corrected candidate; the review closed `approved` with one advisory finding left (2.15c). | `516a1742` |
 | 2.7a | `node --test internal/assets/pi/biggz-shell/native-pointer-region.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiExtensions\|TestPiAssets\|TestPiShellWidget\|TestPiFooterOwner' -v`; `go build ./...`; `go vet ./internal/install/...` | PASS. The port is byte-faithful: `diff -U0` against upstream shows one hunk, the two provenance lines, and the ported suite's assertion stream is identical to upstream's (6 cases, same order). 267 rail-suite assertions, 9 in the test directory and 17 factory, all green; the brand guard now scans 35 deployed assets with the factory count still 16; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged. Independent verification returned PASS with three SUGGESTIONs and no defect — one of them (the derived fixture losing the independent cross-check on `PI_TUI_SHELL_SYMBOLS`) was closed in-unit by asserting that the doctored fixture omits exactly the layout shapes. Native review of the same tree: lineage `review-1bfa97db2f9357cf`, 6 paths, 486 changed lines, `approved`, three advisory findings now tracked as 2.7c. The first reviewer run died on a provider transport error (`Stream ended without finish_reason` after 157s, no mutation) and the fresh-STATUS-then-resubmit route recovered it. | `303e7b55` |
 | 2.7b | `node --test internal/assets/pi/biggz-todo.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; `go test ./internal/install/steps/ -run 'TestPiExtensions\|TestPiAssets' -count=1`; `go build ./...`; `go vet ./internal/install/...` | PASS, with one acceptance clause uncovered. 10/10 in the new suite (the tool write/show path, the snapshot in `details`, the branch replay, the finished-list drop, staleness, the collapse key, hover/click, and the R3-001 containment), 267 shell assertions, 9 in the test directory, 18 factory; both `internal/install` packages green; build and vet clean; `~/.biggz` unchanged. The brand guard's `gentleTodo` allowlist entry is deleted, not kept, and the factory count moved 16 → 17 in the deploy list and both guards. NOT covered: no test loads the todo and subagents factories together to assert both registrations survive, so 2.7b's coexistence clause rests on the two keys being distinct and each suite asserting its own — recorded as 2.7e. Native review of the same tree: lineage `review-e12d5b1d91db6315`, 8 paths, 683 changed lines, risk `medium`, correction budget 200, one consolidated lens `review-reliability`, `approved`, three advisory findings now in 2.7e. | `fdf89b6e` |
+| 2.7c | `node --test internal/assets/pi/biggz-shell/native-pointer-region.test.mjs`; `node --test internal/assets/pi/biggz-shell.test.mjs internal/assets/pi/biggz-shell/*.test.mjs`; `node --test internal/assets/pi/test/*.test.mjs`; `node --test internal/assets/pi/biggz-pi-extensions-factory.test.mjs`; `go test ./internal/install/... -count=1`; plus six mutations of the module, each restored byte-identically | PASS. 9/9 in the pointer-region suite (6 upstream + 3 new), 270 shell assertions, 9 in the test directory, 18 factory; both `internal/install` packages green. Every new case is discriminating: six mutations (no sibling clear; sibling clear handed a copy; `disabled` gate dropped; module gating the interactive child; observer requesting a render unconditionally; observer never requesting one) each fail exactly the case that covers them, and `git hash-object` of the module returned to the HEAD blob every time. The coverage exposed a real boundary rather than a defect: `disabled` gates the region's callbacks but not an interactive child, which pi-tui's `MouseRegion` dispatches first. Independent verification returned PASS for all three items, judged the boundary a fidelity requirement of the port, and found no defect (five advisories, all wording or environment). | `901dc435` |
 
 ## Known risks
 
@@ -713,3 +748,14 @@ before editing, because the binding carries the frozen target identity.
   uncovered (the coexistence test) and became 2.7e item 1; the three review findings are 2.7e
   items 2-4. Lesson for the next unit: read the acceptance clause by clause before ticking it, not
   after.
+- 2026-10-11 — Unit 2.7c closed as `901dc435` (the three coverage findings of the 2.7a review). The
+  work was three cases, and it paid for itself by falsifying an assumption rather than confirming
+  one: proving the disabled guard against an interactive child showed that the guard does not reach
+  it, because pi-tui dispatches the child first and the region's own callback — where the check
+  lives — never runs. The test now pins that contract, the independent verifier called it upstream
+  fidelity rather than a defect, and the open question (accept the boundary or diverge) is recorded in
+  2.7c for the owner. Two operational notes: the native `assess` cannot produce a tier while the
+  unrelated untracked `openspec/changes/fix-archived-change-identity/` is present, so this test-only
+  unit was gated by the independent verifier its plan mandates instead of by a review; and this suite
+  resolves pi-tui 1.1.0 where 2.7a's evidence cites 0.85.1, which matters only because the
+  interactive expectations come from that dispatch.
