@@ -28,7 +28,7 @@ Meta-commands `sdd-new`/`sdd-ff` run inline via the orchestrator (see
 | `comment-writer` | PR feedback, issue replies, reviews, async updates | [`internal/assets/skills/comment-writer/SKILL.md`](internal/assets/skills/comment-writer/SKILL.md) |
 | `go-testing` | Go tests, coverage, golden files | [`internal/assets/skills/go-testing/SKILL.md`](internal/assets/skills/go-testing/SKILL.md) |
 | `hermes-ephemeral-delegation` | Broad exploration, multi-step debug via delegation | [`internal/assets/skills/hermes-ephemeral-delegation/SKILL.md`](internal/assets/skills/hermes-ephemeral-delegation/SKILL.md) |
-| `issue-creation` | Creating GitHub issues, bug reports, feature requests | [`internal/assets/skills/issue-creation/SKILL.md`](internal/assets/skills/issue-creation/SKILL.md) |
+| `issue-creation` | Creating GitHub issues, bug reports, feature requests, issue triage | [`internal/assets/skills/issue-creation/SKILL.md`](internal/assets/skills/issue-creation/SKILL.md) |
 | `issue-root-resolution` | Backlog root audit, resolving issue clusters by root cause | [`internal/assets/skills/issue-root-resolution/SKILL.md`](internal/assets/skills/issue-root-resolution/SKILL.md) |
 | `judgment-day` | Blind dual review, adversarial review | [`internal/assets/skills/judgment-day/SKILL.md`](internal/assets/skills/judgment-day/SKILL.md) |
 | `odd` | Organic non-SDD work, odd/tasks document contract | [`internal/assets/skills/odd/SKILL.md`](internal/assets/skills/odd/SKILL.md) |

@@ -32,19 +32,23 @@ not have to guess.
 
 ## Examples
 
+These two are shape references: the field names, the labels and the flow are this
+repository's, while the reproduced command and the pasted output are the reporter's own —
+substitute yours. Nothing below is copied from a real issue.
+
 Bug report:
 
 ```bash
 gh issue create --template bug_report.yml \
-  --title "fix(doctor): the pi-native-mcp check warns on a healthy install" \
+  --title "fix(cli): biggz doctor reports the version check as failed after an upgrade" \
   --body "
 ### What happened?
-A healthy install reports a warning...
+After upgrading, the version check reports FAIL even though the binary matches the release.
 
 ### Steps to reproduce
 1. biggz install --agent pi
 2. biggz doctor
-3. The pi-native-mcp check reports WARNING
+3. The version check reports FAIL
 
 ### Version
 biggz version -> v0.9.x
@@ -54,7 +58,7 @@ Windows 11
 
 ### Relevant output
 \`\`\`
-pi-native-mcp: WARNING ...
+<the line biggz doctor printed, whose shape is: icon> version: <message>
 \`\`\`
 "
 ```
@@ -87,11 +91,12 @@ Review System
 | `status:approved` | A maintainer accepted the issue for implementation |
 | `size:exception` | A maintainer allows a PR over the 400-line budget, with the rationale documented |
 
-`gh label list` is the source of truth. There is no `priority:*` label in this repository.
+`gh label list` is the source of truth. There is no `priority:*` label in this repository, and
+an issue created with `gh issue create` carries exactly what `--label` lists and nothing more.
 
 ## What ends the flow
 
 `gh issue edit <N> --add-label status:approved`, or the issue being authored by a maintainer.
-After that a PR can open with `Closes #<N>`, exactly one `type:*` label, and the 400-line
-budget (or `size:exception`). Those three are what `.github/workflows/pr-check.yml` enforces;
-nothing reads `status:approved`.
+After that a PR can open with a `Closes`, `Fixes` or `Resolves #<N>` reference, exactly one
+`type:*` label, and the 400-line budget (or `size:exception`). Those three are what
+`.github/workflows/pr-check.yml` enforces; nothing reads `status:approved`.
